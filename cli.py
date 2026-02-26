@@ -27,6 +27,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import time
 import tempfile
 import urllib.request
 import uuid
@@ -210,6 +211,52 @@ def run_update() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Startup update check
+# ---------------------------------------------------------------------------
+
+_UPDATE_CHECK_FILE = ".last-update-check"
+_UPDATE_CHECK_INTERVAL = 86400  # 24 hours
+
+
+def _check_for_update() -> None:
+    """Check for updates on startup (once per day, installed mode only)."""
+    if paths.is_dev_mode():
+        return
+
+    # Rate limit: skip if checked recently
+    check_file = paths.merlin_home() / _UPDATE_CHECK_FILE
+    if check_file.exists():
+        age = time.time() - check_file.stat().st_mtime
+        if age < _UPDATE_CHECK_INTERVAL:
+            return
+
+    current_version = get_version()
+    latest = fetch_latest_tag()
+
+    # Touch the check file regardless of result
+    check_file.parent.mkdir(parents=True, exist_ok=True)
+    check_file.touch()
+
+    if latest is None:
+        return
+
+    current_base = current_version.split("-")[0] if "-" in current_version else current_version
+    if current_base == latest:
+        return
+
+    print(f"\n  New version available: {latest} (current: {current_version})")
+    try:
+        answer = input("  Update now? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+
+    if answer in ("y", "yes"):
+        run_update()
+        print()
+
+
+# ---------------------------------------------------------------------------
 # Setup wizard
 # ---------------------------------------------------------------------------
 
@@ -365,6 +412,8 @@ def cli_main(argv: list[str] | None = None) -> None:
             print("No config found — running first-time setup.\n")
             run_setup()
             print()
+
+        _check_for_update()
 
         import main
         main.start_server(port=port, host=host, no_tunnel=no_tunnel)

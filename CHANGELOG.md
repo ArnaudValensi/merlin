@@ -7,6 +7,7 @@ All notable changes to Merlin are documented in this file.
 ### Added
 - **Public release** — Repo made public at `ArnaudValensi/merlin`. Git history nuked, single clean initial commit, tagged v0.1.0.
 - **Install flow verified** — Full `curl | bash` install tested: download, extract, symlink, launcher, `merlin version`, `merlin update`, `merlin start --no-tunnel` all working.
+- **Startup update check** — `merlin start` now checks for new versions once per day and prompts to update before starting the server. Skipped in dev mode and rate-limited to avoid unnecessary API calls.
 
 ### Changed
 - **Changelog moved to project root** — `merlin-bot/CHANGELOG.md` → `CHANGELOG.md`. Nightly cron job updated to match.
