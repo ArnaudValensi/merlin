@@ -327,6 +327,14 @@ def _check_optional_deps(tunnel_enabled: bool) -> None:
         TUNNEL_ENABLED = False
 
 
+def _disable_bot_plugin() -> None:
+    """Disable the bot plugin at runtime (e.g. missing Discord config)."""
+    global bot_plugin, show_bot_status
+    bot_plugin = None
+    show_bot_status = False
+    nav_items[:] = list(CORE_NAV_ITEMS)
+
+
 def _validate_config(tunnel_enabled: bool) -> None:
     """Validate required configuration. Fails fast with a helpful message."""
     global DASHBOARD_PASS
@@ -359,9 +367,13 @@ def _validate_config(tunnel_enabled: bool) -> None:
     # Check optional deps (warns, doesn't fail)
     _check_optional_deps(tunnel_enabled)
 
-    # Validate bot config if plugin is loaded
+    # Validate bot config if plugin is loaded — degrade gracefully if missing
     if bot_plugin:
-        bot_plugin.validate()
+        try:
+            bot_plugin.validate()
+        except SystemExit:
+            _disable_bot_plugin()
+            logger.warning("Bot disabled — Discord not configured. Run 'merlin setup' to configure.")
 
 
 def start_server(port: int = 3123, host: str = "0.0.0.0", no_tunnel: bool = False) -> None:

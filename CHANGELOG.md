@@ -2,6 +2,18 @@
 
 All notable changes to Merlin are documented in this file.
 
+## 2026-02-26
+
+### Added
+- **Public release** — Repo made public at `ArnaudValensi/merlin`. Git history nuked, single clean initial commit, tagged v0.1.0.
+- **Install flow verified** — Full `curl | bash` install tested: download, extract, symlink, launcher, `merlin version`, `merlin update`, `merlin start --no-tunnel` all working.
+
+### Changed
+- **Changelog moved to project root** — `merlin-bot/CHANGELOG.md` → `CHANGELOG.md`. Nightly cron job updated to match.
+
+### Fixed
+- **Graceful degradation without Discord** — Dashboard no longer crashes when `DISCORD_BOT_TOKEN` is missing. Bot plugin validation errors are logged as warnings and the bot is disabled, allowing the dashboard to start with core modules only (Files, Terminal, Commits, Notes).
+
 ## 2026-02-24
 
 ### Added

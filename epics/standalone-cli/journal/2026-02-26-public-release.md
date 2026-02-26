@@ -60,14 +60,27 @@
 - Set via `git config --local credential.helper store` (was lost when `.git` was nuked)
 - `~/.git-credentials` has the GitHub token
 
+## Session 2 — Install flow testing & graceful degradation
+
+### 8. Tested full install flow
+- `curl -fsSL https://raw.githubusercontent.com/ArnaudValensi/merlin/master/install.sh | bash` — works
+- Downloads v0.1.0 tarball, extracts to `~/.merlin/versions/0.1.0/`, creates `current` symlink and launcher
+- `merlin version` → `0.1.0` ✓
+- `merlin update` → `Already up to date (0.1.0)` ✓
+- `merlin start --no-tunnel` → dashboard + bot + cron all start ✓
+- User also verified manually from their terminal — all steps passed
+
+### 9. Fixed: graceful degradation when Discord not configured
+- **Problem**: `main.py` called `bot_plugin.validate()` which does `sys.exit(1)` if `DISCORD_BOT_TOKEN` or `DISCORD_CHANNEL_IDS` are missing. A fresh install with no Discord config would crash.
+- **Fix**: `_validate_config()` now catches `SystemExit` from `bot_plugin.validate()` and calls `_disable_bot_plugin()` instead
+- `_disable_bot_plugin()` sets `bot_plugin = None`, `show_bot_status = False`, resets nav to core-only
+- Result: missing config errors are still printed (so users know what to set), but dashboard starts with core modules (Files, Terminal, Commits, Notes)
+- Tests: 313 core + 353 bot all pass
+
 ## TODO for next session
 
 ### Must do:
-1. **Test the full install flow** — The repo is now public. Test:
-   - `curl -fsSL https://raw.githubusercontent.com/ArnaudValensi/merlin/master/install.sh | bash` (fresh install)
-   - `merlin version` (should show 0.1.0)
-   - `merlin update` (should say "already up to date")
-   - Verify the installed version can start: `merlin start --no-tunnel`
+1. **Commit, re-tag, and push** — The graceful degradation fix needs to go into the public repo. Amend the initial commit or create a new one, re-tag v0.1.0, force-push.
 
 2. **Test update flow** — Create a v0.1.1 tag, verify `merlin update` picks it up
 
