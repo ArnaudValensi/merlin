@@ -208,6 +208,7 @@ def run_update() -> None:
     atomic_symlink(version_dir, current_link)
 
     print(f"Updated: {current_version} -> {latest}")
+    print(f"  To revert: ln -sfn {paths.merlin_home()}/versions/{current_base} {current_link}")
 
 
 # ---------------------------------------------------------------------------
