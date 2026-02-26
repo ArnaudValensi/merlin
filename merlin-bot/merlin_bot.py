@@ -177,6 +177,10 @@ _channel_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 intents = discord.Intents.default()
 intents.message_content = True
 
+# Suppress "PyNaCl is not installed" — we don't use Discord voice
+logging.getLogger("discord.client").addFilter(
+    lambda r: "PyNaCl" not in r.getMessage()
+)
 client = discord.Client(intents=intents)
 
 
