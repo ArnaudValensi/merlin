@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}Note — Merlin{% endblock %}
+
+{% block content %}
+<div class="note-toolbar">
+    <div class="note-toolbar-left">
+        <button class="palette-trigger" onclick="Palette.open()">
+            Search notes...
+            <kbd>Ctrl+K</kbd>
+        </button>
+    </div>
+    <div class="note-toolbar-right">
+        <button class="btn-icon" id="btn-edit" onclick="NoteView.edit()" title="Edit">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
+        </button>
+        <button class="btn-icon btn-icon-danger" id="btn-delete" onclick="NoteView.delete()" title="Delete">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+        <button class="btn-icon btn-vim" id="btn-vim-toggle" onclick="NoteView.toggleVim()" style="display:none" title="Toggle vim mode">VIM</button>
+        <button class="btn-icon btn-icon-primary" id="btn-save" onclick="NoteView.save()" style="display:none" title="Save">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        </button>
+        <button class="btn-icon" id="btn-cancel" onclick="NoteView.cancel()" style="display:none" title="Cancel">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+        <button class="btn-icon upload-btn" onclick="triggerUpload()" style="display:none" id="btn-upload" title="Upload file">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m17 8-5-5-5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>
+        </button>
+        <input type="file" id="file-upload-input" multiple style="display:none" onchange="handleFileSelect(this)">
+    </div>
+</div>
+
+<!-- Frontmatter header -->
+<div class="note-header" id="note-header" style="display:none"></div>
+
+<!-- Rendered markdown view -->
+<div class="note-content" id="note-content"></div>
+
+<!-- Raw markdown editor -->
+<textarea class="note-editor" id="note-editor"></textarea>
+<div class="note-editor-wrap" id="note-editor-wrap"></div>
+
+<!-- Command Palette -->
+<div class="palette-overlay" id="palette-overlay">
+    <div class="palette">
+        <input class="palette-input" id="palette-input" type="text"
+               placeholder="Search notes... (/ to search content)" autocomplete="off" />
+        <div class="palette-results" id="palette-results"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<link rel="stylesheet" href="/static/notes/notes.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark-dimmed.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/material-darker.min.css">
+<script src="https://cdn.jsdelivr.net/npm/fuse.js@7/dist/fuse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@14/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/markdown/markdown.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/keymap/vim.min.js"></script>
+<script src="/static/notes/notes.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // Configure marked
+    marked.setOptions({
+        gfm: true,
+        breaks: false,
+    });
+
+    Palette.init();
+    NoteView.init('{{ note_path }}', { newNote: {{ new_note | default(false) | tojson }} });
+
+    // Show upload button on mobile when editing
+    const uploadBtn = document.getElementById('btn-upload');
+    const editorWrap = document.getElementById('note-editor-wrap');
+    if (uploadBtn && editorWrap && window.innerWidth <= 768) {
+        const observer = new MutationObserver(() => {
+            uploadBtn.style.display = (editorWrap.style.display !== 'none') ? '' : 'none';
+        });
+        observer.observe(editorWrap, { attributes: true, attributeFilter: ['style'] });
+    }
+});
+</script>
+{% endblock %}

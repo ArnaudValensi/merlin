@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Merlin{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2"></script>
+    <script src="/static/dashboard.js"></script>
+</head>
+<body>
+    <div class="mobile-topbar">
+        <button class="hamburger">&#9776;</button>
+    </div>
+    <div class="sidebar-overlay"></div>
+
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            {% if show_bot_status %}<div class="bot-status" title="Checking..."></div>{% endif %}
+            <h1>Merlin</h1>
+        </div>
+        <nav class="sidebar-nav">
+            {% for item in nav_items %}
+            {% if item.disabled %}
+            <span class="nav-disabled" title="{{ item.tooltip | default('Unavailable') }}">
+                <span class="nav-icon">{{ item.icon | safe }}</span>
+                {{ item.label }}
+            </span>
+            {% else %}
+            <a href="{{ item.url }}">
+                <span class="nav-icon">{{ item.icon | safe }}</span>
+                {{ item.label }}
+            </a>
+            {% endif %}
+            {% endfor %}
+        </nav>
+        <div class="sidebar-footer">
+            <a href="/logout" class="logout-link">Sign out</a>
+        </div>
+    </aside>
+
+    <main class="main">
+        {% block content %}{% endblock %}
+    </main>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

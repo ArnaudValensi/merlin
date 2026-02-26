@@ -1,0 +1,10 @@
+{
+  "description": "Human-readable summary of what this job does",
+  "schedule": "0 9 * * *",
+  "prompt": "The prompt to send to Claude when this job runs",
+  "channel": "YOUR_CHANNEL_ID",
+  "enabled": true,
+  "report_mode": "silent",
+  "max_turns": 20,
+  "created_at": "2026-02-05T09:00:00Z"
+}

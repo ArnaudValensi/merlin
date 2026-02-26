@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Notes — Merlin{% endblock %}
+
+{% block content %}
+<div class="notes-index-header">
+    <div class="notes-index-title">
+        <h1 class="page-title" style="margin-bottom:0">Notes</h1>
+        <span id="notes-stats" style="color:var(--text-muted);font-size:13px;"></span>
+    </div>
+    <button class="palette-trigger" onclick="Palette.open()">
+        Search notes...
+        <kbd>Ctrl+K</kbd>
+    </button>
+</div>
+
+<div class="notes-index-grid">
+    <div class="card">
+        <div class="card-label">Recent Notes</div>
+        <ul class="notes-recent-list" id="notes-recent">
+            <li style="color:var(--text-muted)">Loading...</li>
+        </ul>
+    </div>
+    <div class="card">
+        <div class="card-label">Tags</div>
+        <div class="tag-cloud" id="notes-tags" style="margin-top:12px;">
+            <span style="color:var(--text-muted)">Loading...</span>
+        </div>
+    </div>
+</div>
+
+<!-- Command Palette -->
+<div class="palette-overlay" id="palette-overlay">
+    <div class="palette">
+        <input class="palette-input" id="palette-input" type="text"
+               placeholder="Search notes... (/ to search content)" autocomplete="off" />
+        <div class="palette-results" id="palette-results"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<link rel="stylesheet" href="/static/notes/notes.css">
+<script src="https://cdn.jsdelivr.net/npm/fuse.js@7/dist/fuse.min.js"></script>
+<script src="/static/notes/notes.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    Palette.init();
+    NotesIndex.init();
+});
+</script>
+{% endblock %}

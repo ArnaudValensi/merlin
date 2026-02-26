@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}Logs — Merlin Dashboard{% endblock %}
+
+{% block content %}
+<h2 class="page-title">Logs</h2>
+
+<div class="filters">
+    <select id="filter-status">
+        <option value="">All Status</option>
+        <option value="success">Success</option>
+        <option value="error">Error</option>
+    </select>
+    <input type="date" id="filter-since" placeholder="From">
+    <input type="date" id="filter-until" placeholder="To">
+</div>
+
+<div class="tabs" id="log-tabs">
+    <div class="tab active" data-tab="all">All</div>
+    <div class="tab" data-tab="invocation">Invocations</div>
+    <div class="tab" data-tab="cron_dispatch">Cron</div>
+    <div class="tab" data-tab="bot_event">Bot Events</div>
+</div>
+
+<div id="log-content">
+    <div class="empty-state">
+        <div class="empty-icon">&#128302;</div>
+        <div class="empty-text">No events yet. Waiting for first invocation...</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentTab = 'all';
+let allEvents = [];
+
+async function loadLogs() {
+    const params = new URLSearchParams();
+    if (currentTab !== 'all') params.set('type', currentTab);
+
+    const since = document.getElementById('filter-since').value;
+    const until = document.getElementById('filter-until').value;
+    const status = document.getElementById('filter-status').value;
+    if (since) params.set('since', new Date(since).toISOString());
+    if (until) {
+        const d = new Date(until);
+        d.setDate(d.getDate() + 1);
+        params.set('until', d.toISOString());
+    }
+    if (status) params.set('status', status);
+
+    const events = await API.get('/api/events?' + params.toString());
+    if (!events) return;
+    allEvents = events;
+    renderTable(events);
+}
+
+function renderTable(events) {
+    const container = document.getElementById('log-content');
+
+    if (events.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon">&#128302;</div>
+                <div class="empty-text">No events match your filters.</div>
+            </div>`;
+        return;
+    }
+
+    const reversed = [...events].reverse();
+
+    if (currentTab === 'all') {
+        renderAllTable(reversed, container);
+    } else if (currentTab === 'invocation') {
+        renderInvocationTable(reversed, container);
+    } else if (currentTab === 'cron_dispatch') {
+        renderCronTable(reversed, container);
+    } else if (currentTab === 'bot_event') {
+        renderBotTable(reversed, container);
+    }
+}
+
+function renderAllTable(events, container) {
+    let html = `<table class="log-table"><thead><tr>
+        <th>Time</th><th>Type</th><th>Summary</th><th>Status</th>
+    </tr></thead><tbody>`;
+
+    events.forEach((e, i) => {
+        const isError = e.exit_code != null && e.exit_code !== 0 || e.event === 'error';
+        html += `<tr class="clickable ${isError ? 'error' : ''}" onclick="toggleDetail(${i})">
+            <td title="${utcString(e.timestamp)}">${formatDateTime(e.timestamp)}</td>
+            <td>${typeBadge(e.type)}</td>
+            <td>${escapeHtml(eventSummary(e))}</td>
+            <td>${e.type === 'bot_event' && e.event !== 'error' ? '—' : statusBadge(e)}</td>
+        </tr>
+        <tr class="row-detail" id="detail-${i}"><td colspan="4"><pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre></td></tr>`;
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+function renderInvocationTable(events, container) {
+    let html = `<table class="log-table"><thead><tr>
+        <th>Time</th><th>Caller</th><th>Duration</th><th>Exit</th><th>Turns</th><th>Tokens In</th><th>Tokens Out</th><th></th>
+    </tr></thead><tbody>`;
+
+    events.forEach((e, i) => {
+        const isError = e.exit_code !== 0;
+        const promptPreview = e.prompt ? escapeHtml(e.prompt.substring(0, 120)) + (e.prompt.length > 120 ? '...' : '') : '';
+        const sessionLink = e.session_file
+            ? `<a class="session-link" href="/session/${encodeURIComponent(e.session_file)}" onclick="event.stopPropagation()">View session</a>`
+            : '';
+        html += `<tr class="clickable ${isError ? 'error' : ''}" onclick="toggleDetail(${i})">
+            <td title="${utcString(e.timestamp)}">${formatDateTime(e.timestamp)}</td>
+            <td>${escapeHtml(e.caller || '—')}</td>
+            <td class="duration">${formatDuration(e.duration || 0)}</td>
+            <td class="${isError ? 'status-err' : 'status-ok'}">${e.exit_code}</td>
+            <td>${e.num_turns || '—'}</td>
+            <td>${(e.tokens_in || 0).toLocaleString()}</td>
+            <td>${(e.tokens_out || 0).toLocaleString()}</td>
+            <td>${sessionLink}</td>
+        </tr>
+        <tr class="row-detail" id="detail-${i}"><td colspan="8">${e.prompt ? '<div class="detail-section"><strong>Prompt:</strong><pre>' + escapeHtml(e.prompt) + '</pre></div>' : ''}<pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre></td></tr>`;
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+function renderCronTable(events, container) {
+    let html = `<table class="log-table"><thead><tr>
+        <th>Time</th><th>Job</th><th>Event</th><th>Duration</th><th>Exit</th>
+    </tr></thead><tbody>`;
+
+    events.forEach((e, i) => {
+        const isError = e.event === 'failed' || (e.exit_code != null && e.exit_code !== 0);
+        html += `<tr class="clickable ${isError ? 'error' : ''}" onclick="toggleDetail(${i})">
+            <td title="${utcString(e.timestamp)}">${formatDateTime(e.timestamp)}</td>
+            <td><a href="/performance" style="color: var(--accent-blue); text-decoration: none;">${escapeHtml(e.job_id || '—')}</a></td>
+            <td>${escapeHtml(e.event || '—')}</td>
+            <td class="duration">${e.duration ? formatDuration(e.duration) : '—'}</td>
+            <td class="${isError ? 'status-err' : 'status-ok'}">${e.exit_code ?? '—'}</td>
+        </tr>
+        <tr class="row-detail" id="detail-${i}"><td colspan="5"><pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre></td></tr>`;
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+function renderBotTable(events, container) {
+    let html = `<table class="log-table"><thead><tr>
+        <th>Time</th><th>Event</th><th>Details</th><th>Duration</th>
+    </tr></thead><tbody>`;
+
+    events.forEach((e, i) => {
+        const isError = e.event === 'error';
+        let details;
+        if (e.event === 'transcription' && e.content) {
+            details = '🎤 ' + escapeHtml(e.content.substring(0, 120)) + (e.content.length > 120 ? '...' : '');
+        } else if (e.event === 'message_received' && e.content) {
+            details = escapeHtml(e.content.substring(0, 120)) + (e.content.length > 120 ? '...' : '');
+        } else {
+            details = escapeHtml(e.details || '—');
+        }
+        const duration = e.duration != null ? `<span class="duration">${formatDuration(e.duration)}</span>` : '—';
+        html += `<tr class="clickable ${isError ? 'error' : ''}" onclick="toggleDetail(${i})">
+            <td title="${utcString(e.timestamp)}">${formatDateTime(e.timestamp)}</td>
+            <td>${escapeHtml(e.event || '—')}</td>
+            <td>${details}</td>
+            <td>${duration}</td>
+        </tr>
+        <tr class="row-detail" id="detail-${i}"><td colspan="4">${e.content ? '<div class="detail-section"><strong>' + (e.event === 'transcription' ? 'Transcription' : 'Message') + ':</strong><pre>' + escapeHtml(e.content) + '</pre></div>' : ''}<pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre></td></tr>`;
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+function toggleDetail(index) {
+    const el = document.getElementById('detail-' + index);
+    if (el) el.classList.toggle('open');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Tab switching
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            currentTab = tab.dataset.tab;
+            loadLogs();
+        });
+    });
+
+    // Filter changes
+    document.getElementById('filter-status').addEventListener('change', loadLogs);
+    document.getElementById('filter-since').addEventListener('change', loadLogs);
+    document.getElementById('filter-until').addEventListener('change', loadLogs);
+
+    // Check URL params for pre-filtering
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('type') === 'error') {
+        document.getElementById('filter-status').value = 'error';
+    }
+
+    loadLogs();
+    Refresh.register(loadLogs);
+    Refresh.start(5000);
+});
+</script>
+{% endblock %}

@@ -1,0 +1,429 @@
+/* File browser — mobile-first dark theme */
+
+/* Layout */
+.files-view {
+    padding: 16px;
+}
+
+.files-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    min-height: 36px;
+}
+
+.files-header h2 {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* Back button */
+.back-btn {
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.back-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+/* Breadcrumbs */
+.breadcrumbs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px;
+    margin-bottom: 16px;
+    font-family: 'Geist Mono', monospace;
+    font-size: 13px;
+    padding: 8px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    min-height: 36px;
+}
+
+.breadcrumb-segment {
+    color: var(--accent-blue);
+    text-decoration: none;
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+.breadcrumb-segment:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+.breadcrumb-current {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+.breadcrumb-sep {
+    color: var(--text-muted);
+    user-select: none;
+}
+
+/* Directory entries */
+.dir-entries {
+    display: flex;
+    flex-direction: column;
+}
+
+.dir-entry {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.15s;
+    min-height: 44px;
+}
+.dir-entry:first-child {
+    border-top: 1px solid var(--border);
+}
+.dir-entry:hover {
+    background: var(--bg-hover);
+}
+.dir-entry:active {
+    background: var(--bg-card);
+}
+
+/* Hidden files (dotfiles) */
+.dir-entry-hidden {
+    opacity: 0.6;
+}
+.dir-entry-hidden:hover {
+    opacity: 1;
+}
+
+/* Entry icon */
+.dir-entry-icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+}
+.icon-folder { color: var(--accent-blue); }
+.icon-image { color: var(--accent-green); }
+.icon-file { color: var(--text-muted); }
+
+/* Entry name */
+.dir-entry-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 14px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Entry size */
+.dir-entry-size {
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    min-width: 60px;
+    text-align: right;
+    font-family: 'Geist Mono', monospace;
+}
+
+/* Entry time */
+.dir-entry-time {
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    min-width: 60px;
+    text-align: right;
+}
+
+/* Loading / empty / error states */
+.loading-indicator {
+    text-align: center;
+    padding: 24px;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 48px 16px;
+    color: var(--text-muted);
+}
+.empty-state svg {
+    margin-bottom: 12px;
+    opacity: 0.5;
+}
+
+.error-state {
+    text-align: center;
+    padding: 48px 16px;
+    color: var(--accent-red);
+}
+.error-state svg {
+    margin-bottom: 12px;
+    opacity: 0.7;
+}
+
+/* File viewer header */
+.file-meta {
+    flex: 1;
+    min-width: 0;
+}
+.file-meta .file-meta-path {
+    font-family: 'Geist Mono', monospace;
+    font-size: 14px;
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
+.file-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.wrap-toggle-btn {
+    padding: 4px 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    min-height: 28px;
+}
+.wrap-toggle-btn:hover {
+    color: var(--text-primary);
+}
+.wrap-toggle-btn.active {
+    color: var(--accent-blue);
+    border-color: var(--accent-blue);
+}
+
+.download-btn {
+    width: 34px;
+    height: 34px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+}
+.download-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+/* File content container */
+.file-content {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* File table (text viewer) */
+.file-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    line-height: 1.2;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+.file-table td {
+    padding: 0;
+    vertical-align: top;
+}
+
+.file-line-no {
+    width: 38px;
+    min-width: 38px;
+    text-align: right;
+    padding-right: 8px !important;
+    padding-left: 4px !important;
+    color: var(--text-muted);
+    font-size: 10px;
+    user-select: none;
+    opacity: 0.5;
+}
+
+.file-line-content {
+    padding: 0 12px !important;
+    white-space: pre;
+}
+
+.file-content.wrapped .file-line-content {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* Truncation notice */
+.truncation-notice {
+    padding: 12px 16px;
+    text-align: center;
+    color: var(--accent-yellow);
+    font-size: 13px;
+    border-top: 1px solid var(--border);
+    background: rgba(251, 191, 36, 0.08);
+}
+.truncation-notice a {
+    color: var(--accent-blue);
+    text-decoration: underline;
+}
+
+/* File error */
+.file-error {
+    padding: 24px;
+    text-align: center;
+    color: var(--accent-red);
+    font-size: 14px;
+}
+
+/* Image preview */
+.image-preview {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px;
+}
+
+.image-preview img {
+    max-width: 100%;
+    max-height: 70vh;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+}
+
+.image-meta {
+    margin-top: 12px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+/* Binary file info */
+.binary-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 48px 16px;
+}
+
+.binary-icon {
+    color: var(--text-muted);
+    opacity: 0.5;
+    margin-bottom: 16px;
+}
+
+.binary-name {
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+    word-break: break-all;
+    text-align: center;
+}
+
+.binary-details {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 20px;
+}
+
+.binary-download-btn {
+    display: inline-block;
+    padding: 10px 24px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--accent-blue);
+    font-size: 14px;
+    font-family: inherit;
+    text-decoration: none;
+    cursor: pointer;
+    min-height: 44px;
+    line-height: 24px;
+}
+.binary-download-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+    .main:has(#files-app) {
+        padding: 0;
+    }
+
+    .files-view {
+        padding: 12px 8px;
+    }
+
+    /* File view: zero padding, headers get their own */
+    #file-view {
+        padding: 12px 0;
+    }
+    #file-view .files-header {
+        padding: 0 8px;
+    }
+
+    /* Code blocks go edge-to-edge */
+    .file-content {
+        border-radius: 0;
+        border-left: none;
+        border-right: none;
+    }
+
+    .files-header h2 {
+        font-size: 18px;
+    }
+
+    /* Hide size and time columns on mobile */
+    .dir-entry-size,
+    .dir-entry-time {
+        display: none;
+    }
+
+    .dir-entry {
+        padding: 10px 8px;
+    }
+
+    .breadcrumbs {
+        font-size: 12px;
+        padding: 6px 8px;
+    }
+
+    .file-line-no {
+        width: 1px;
+    }
+
+    .image-preview {
+        padding: 16px 0;
+    }
+
+    .image-preview img {
+        border-radius: 0;
+        border-left: none;
+        border-right: none;
+    }
+}

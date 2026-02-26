@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}Commits — Merlin Dashboard{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="/static/commits/commits.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/styles/github-dark-dimmed.min.css">
+
+<div id="commits-app">
+    <!-- View 1: Commit List -->
+    <div id="commit-list-view" class="commits-view">
+        <div class="commits-header">
+            <h2>Commits</h2>
+        </div>
+        <div class="commits-filters">
+            <input type="text" id="search-input" placeholder="Search commits..." class="commits-search">
+            <div class="commits-date-filters">
+                <input type="date" id="since-input" class="commits-date" title="Since">
+                <input type="date" id="until-input" class="commits-date" title="Until">
+            </div>
+        </div>
+        <div id="commit-list" class="commit-list"></div>
+        <div id="list-empty" class="empty-state" style="display:none">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><line x1="12" y1="3" x2="12" y2="9"/><line x1="12" y1="15" x2="12" y2="21"/></svg>
+            <p>No commits found</p>
+        </div>
+        <button id="load-more-btn" class="load-more-btn" style="display:none">Load more</button>
+        <div id="list-loading" class="loading-indicator">Loading commits...</div>
+    </div>
+
+    <!-- View 2: Commit Diff -->
+    <div id="commit-diff-view" class="commits-view" style="display:none">
+        <div class="commits-header">
+            <button id="diff-back-btn" class="back-btn" title="Back to list">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <div class="commit-meta" id="diff-meta"></div>
+        </div>
+        <div id="file-list-toggle" class="file-list-toggle" style="display:none">
+            <button id="file-list-toggle-btn" class="file-list-toggle-btn">
+                <span id="file-list-count"></span> files changed
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div id="file-list-panel" class="file-list-panel" style="display:none"></div>
+        </div>
+        <div id="diff-content" class="diff-content"></div>
+        <div id="diff-loading" class="loading-indicator">Loading diff...</div>
+    </div>
+
+    <!-- View 3: Full File with Gutters -->
+    <div id="file-view" class="commits-view" style="display:none">
+        <div class="commits-header">
+            <button id="file-back-btn" class="back-btn" title="Back to diff">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <div class="file-meta" id="file-meta"></div>
+            <button id="wrap-toggle" class="wrap-toggle-btn" title="Toggle line wrap">Wrap</button>
+        </div>
+        <div id="file-content" class="file-content"></div>
+        <div id="file-loading" class="loading-indicator">Loading file...</div>
+        <!-- FAB for gutter navigation -->
+        <div id="gutter-fab" class="gutter-fab" style="display:none">
+            <button id="fab-prev" class="fab-btn fab-prev" title="Previous change">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+            </button>
+            <span id="fab-counter" class="fab-counter">0/0</span>
+            <button id="diff-toggle" class="fab-diff-btn" title="Toggle diff mode">Diff</button>
+            <button id="fab-next" class="fab-btn fab-next" title="Next change">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
+<script src="/static/commits/commits.js"></script>
+{% endblock %}

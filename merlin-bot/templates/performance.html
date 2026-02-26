@@ -1,0 +1,289 @@
+{% extends "base.html" %}
+{% block title %}Performance — Merlin Dashboard{% endblock %}
+
+{% block content %}
+<h2 class="page-title">Performance</h2>
+
+<div class="time-range" id="time-range">
+    <button data-range="1" class="active">24h</button>
+    <button data-range="7">7d</button>
+    <button data-range="30">30d</button>
+    <button data-range="0">All</button>
+</div>
+
+<div class="stat-row">
+    <div class="chart-container" style="flex: 2;">
+        <div class="chart-title">Execution Time Over Time</div>
+        <canvas id="scatter-chart" class="chart-canvas"></canvas>
+    </div>
+    <div class="stat-box">
+        <div class="chart-title">Success Rate</div>
+        <canvas id="donut-chart" style="max-height: 200px;"></canvas>
+        <div id="success-rate-text" style="text-align: center; margin-top: 12px; font-size: 14px; color: var(--text-secondary);"></div>
+    </div>
+</div>
+
+<div class="chart-container">
+    <div class="chart-title">Execution Time by Job</div>
+    <canvas id="bar-chart" class="chart-canvas"></canvas>
+</div>
+
+<div class="chart-container">
+    <div class="chart-title">Cost by Job</div>
+    <canvas id="cost-chart" class="chart-canvas"></canvas>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let scatterChart, barChart, donutChart, costChart;
+let currentRange = 1;
+
+function getSinceDate(days) {
+    if (days === 0) return null;
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    return d.toISOString();
+}
+
+async function loadPerformance() {
+    configureChartDefaults();
+    const since = getSinceDate(currentRange);
+    let url = '/api/invocations';
+    if (since) url += '?since=' + encodeURIComponent(since);
+
+    const invocations = await API.get(url);
+    if (!invocations) return;
+
+    renderScatterChart(invocations);
+    renderBarChart(invocations);
+    renderDonutChart(invocations);
+    renderCostChart(invocations);
+}
+
+function renderScatterChart(data) {
+    const ctx = document.getElementById('scatter-chart');
+
+    const discord = data.filter(e => e.caller === 'discord').map(e => ({
+        x: new Date(e.timestamp), y: e.duration
+    }));
+    const cron = data.filter(e => e.caller !== 'discord').map(e => ({
+        x: new Date(e.timestamp), y: e.duration
+    }));
+
+    if (scatterChart) scatterChart.destroy();
+    scatterChart = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+            datasets: [
+                {
+                    label: 'Discord',
+                    data: discord,
+                    backgroundColor: 'rgba(74, 158, 255, 0.7)',
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                },
+                {
+                    label: 'Cron',
+                    data: cron,
+                    backgroundColor: 'rgba(251, 146, 60, 0.7)',
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                x: {
+                    type: 'time',
+                    time: { tooltipFormat: 'MMM d, HH:mm' },
+                    grid: { color: '#2e3347' },
+                },
+                y: {
+                    title: { display: true, text: 'Duration (s)' },
+                    grid: { color: '#2e3347' },
+                    beginAtZero: true,
+                }
+            },
+            plugins: {
+                zoom: {
+                    zoom: {
+                        wheel: { enabled: true },
+                        pinch: { enabled: true },
+                        mode: 'x',
+                    },
+                    pan: { enabled: true, mode: 'x' },
+                },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => {
+                            const d = ctx.raw;
+                            return `${ctx.dataset.label}: ${d.y.toFixed(1)}s`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderBarChart(data) {
+    const ctx = document.getElementById('bar-chart');
+
+    // Group by caller
+    const byJob = {};
+    data.forEach(e => {
+        const key = e.caller || 'unknown';
+        if (!byJob[key]) byJob[key] = [];
+        byJob[key].push(e.duration);
+    });
+
+    const labels = Object.keys(byJob).sort();
+    const avgData = labels.map(k => {
+        const d = byJob[k];
+        return d.reduce((a, b) => a + b, 0) / d.length;
+    });
+    const p95Data = labels.map(k => {
+        const d = byJob[k].sort((a, b) => a - b);
+        return d[Math.floor(d.length * 0.95)] || 0;
+    });
+
+    if (barChart) barChart.destroy();
+    barChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Avg',
+                    data: avgData,
+                    backgroundColor: 'rgba(74, 158, 255, 0.7)',
+                },
+                {
+                    label: 'P95',
+                    data: p95Data,
+                    backgroundColor: 'rgba(251, 146, 60, 0.5)',
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    title: { display: true, text: 'Duration (s)' },
+                    grid: { color: '#2e3347' },
+                    beginAtZero: true,
+                },
+                x: { grid: { color: '#2e3347' } }
+            }
+        }
+    });
+}
+
+function renderDonutChart(data) {
+    const ctx = document.getElementById('donut-chart');
+    const success = data.filter(e => e.exit_code === 0).length;
+    const errors = data.filter(e => e.exit_code !== 0).length;
+    const total = success + errors;
+    const rate = total > 0 ? Math.round((success / total) * 100) : 0;
+
+    document.getElementById('success-rate-text').textContent =
+        total > 0 ? `${rate}% success (${total} total)` : 'No data';
+
+    if (donutChart) donutChart.destroy();
+    donutChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Success', 'Error'],
+            datasets: [{
+                data: [success, errors],
+                backgroundColor: ['rgba(52, 211, 153, 0.8)', 'rgba(248, 113, 113, 0.8)'],
+                borderWidth: 0,
+            }]
+        },
+        options: {
+            responsive: true,
+            cutout: '65%',
+            plugins: { legend: { display: false } }
+        }
+    });
+}
+
+function renderCostChart(data) {
+    const ctx = document.getElementById('cost-chart');
+
+    // Group by caller, sum cost
+    const byJob = {};
+    data.forEach(e => {
+        const key = e.caller || 'unknown';
+        if (!byJob[key]) byJob[key] = { total: 0, count: 0 };
+        byJob[key].total += (e.cost_usd || 0);
+        byJob[key].count++;
+    });
+
+    // Sort by total cost descending
+    const sorted = Object.entries(byJob).sort((a, b) => b[1].total - a[1].total);
+    const labels = sorted.map(([k]) => k);
+    const totalData = sorted.map(([, v]) => v.total);
+    const avgData = sorted.map(([, v]) => v.count > 0 ? v.total / v.count : 0);
+
+    if (costChart) costChart.destroy();
+    costChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Total',
+                    data: totalData,
+                    backgroundColor: 'rgba(52, 211, 153, 0.7)',
+                },
+                {
+                    label: 'Avg per run',
+                    data: avgData,
+                    backgroundColor: 'rgba(167, 139, 250, 0.5)',
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    title: { display: true, text: 'Cost (USD)' },
+                    grid: { color: '#2e3347' },
+                    beginAtZero: true,
+                    ticks: {
+                        callback: (v) => '$' + v.toFixed(2)
+                    }
+                },
+                x: { grid: { color: '#2e3347' } }
+            },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => `${ctx.dataset.label}: $${ctx.raw.toFixed(4)}`
+                    }
+                }
+            }
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Time range buttons
+    document.querySelectorAll('.time-range button').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.time-range button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentRange = parseInt(btn.dataset.range);
+            loadPerformance();
+        });
+    });
+
+    loadPerformance();
+    Refresh.register(loadPerformance);
+    Refresh.start(5000);
+});
+</script>
+{% endblock %}

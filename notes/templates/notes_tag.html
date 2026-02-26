@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}#{{ tag }} — Notes — Merlin{% endblock %}
+
+{% block content %}
+<div class="notes-index-header">
+    <div class="notes-index-title">
+        <a href="/notes" class="tag-back" title="All notes">&larr;</a>
+        <h1 class="page-title" style="margin-bottom:0">#{{ tag }}</h1>
+        <span id="tag-count" style="color:var(--text-muted);font-size:13px;"></span>
+    </div>
+    <div class="tag-sort" id="tag-sort">
+        <button class="sort-btn active" data-sort="recent">Recent</button>
+        <button class="sort-btn" data-sort="name">Name</button>
+        <button class="sort-btn" data-sort="connections">Connections</button>
+    </div>
+</div>
+
+<div class="tag-notes-list" id="tag-notes">
+    <div style="color:var(--text-muted);padding:20px 0;">Loading...</div>
+</div>
+
+<!-- Command Palette -->
+<div class="palette-overlay" id="palette-overlay">
+    <div class="palette">
+        <input class="palette-input" id="palette-input" type="text"
+               placeholder="Search notes..." autocomplete="off" />
+        <div class="palette-results" id="palette-results"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<link rel="stylesheet" href="/static/notes/notes.css">
+<script src="https://cdn.jsdelivr.net/npm/fuse.js@7/dist/fuse.min.js"></script>
+<script src="/static/notes/notes.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    Palette.init();
+    TagPage.init('{{ tag }}');
+});
+</script>
+{% endblock %}

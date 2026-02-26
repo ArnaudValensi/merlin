@@ -1,0 +1,296 @@
+{% extends "base.html" %}
+{% block title %}Session — Merlin Dashboard{% endblock %}
+
+{% block content %}
+<div class="session-back">
+    <a href="/logs">&larr; Back to Logs</a>
+</div>
+
+<div id="session-header" class="card session-header">
+    <div class="session-header-loading">Loading session...</div>
+</div>
+
+<div id="session-timeline">
+    <div class="empty-state">
+        <div class="empty-icon">&#9203;</div>
+        <div class="empty-text">Loading session transcript...</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SESSION_FILE = "{{ filename }}";
+const COLLAPSE_THRESHOLD = 12;
+
+async function loadSession() {
+    const events = await API.get('/api/session/' + encodeURIComponent(SESSION_FILE));
+    if (!events || !events.length) {
+        document.getElementById('session-timeline').innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon">&#128302;</div>
+                <div class="empty-text">No events found in this session.</div>
+            </div>`;
+        return;
+    }
+
+    renderHeader(events);
+    renderTimeline(events);
+}
+
+function renderHeader(events) {
+    const init = events.find(e => e.type === 'system' && e.subtype === 'init');
+    const result = events.find(e => e.type === 'result');
+
+    const model = init ? init.model : '—';
+    const sessionId = init ? init.session_id : '—';
+    const version = init ? init.claude_code_version : '';
+
+    const duration = result ? formatDuration(result.duration_ms / 1000) : '—';
+    const turns = result ? result.num_turns : '—';
+    const cost = result && result.total_cost_usd != null
+        ? '$' + result.total_cost_usd.toFixed(4)
+        : '—';
+    const isError = result ? result.is_error : false;
+    const exitStatus = result
+        ? (isError
+            ? '<span class="session-status error">Error</span>'
+            : '<span class="session-status success">Success</span>')
+        : '';
+
+    // Token summary from result event
+    let tokensHtml = '';
+    if (result && result.usage) {
+        const u = result.usage;
+        const inTokens = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+        const outTokens = u.output_tokens || 0;
+        tokensHtml = `<div class="session-meta-item"><span class="meta-label">Tokens</span><span class="meta-value">${inTokens.toLocaleString()} in / ${outTokens.toLocaleString()} out</span></div>`;
+    }
+
+    document.getElementById('session-header').innerHTML = `
+        <div class="session-header-row">
+            <div class="session-header-title">
+                <span class="session-model">${escapeHtml(model)}</span>
+                ${exitStatus}
+            </div>
+            <div class="session-meta">
+                <div class="session-meta-item">
+                    <span class="meta-label">Duration</span>
+                    <span class="meta-value">${duration}</span>
+                </div>
+                <div class="session-meta-item">
+                    <span class="meta-label">Turns</span>
+                    <span class="meta-value">${turns}</span>
+                </div>
+                <div class="session-meta-item">
+                    <span class="meta-label">Cost</span>
+                    <span class="meta-value">${cost}</span>
+                </div>
+                ${tokensHtml}
+            </div>
+        </div>
+        <div class="session-header-sub">
+            <span class="meta-muted">Session: ${escapeHtml(sessionId.substring(0, 8))}...</span>
+            ${version ? '<span class="meta-muted">Claude Code v' + escapeHtml(version) + '</span>' : ''}
+        </div>
+    `;
+}
+
+function renderTimeline(events) {
+    const container = document.getElementById('session-timeline');
+    let html = '';
+
+    // Group assistant events with same message.id
+    let i = 0;
+    while (i < events.length) {
+        const e = events[i];
+
+        if (e.type === 'system' && e.subtype === 'init') {
+            html += renderSystemInit(e);
+        } else if (e.type === 'assistant') {
+            html += renderAssistant(e);
+        } else if (e.type === 'user') {
+            html += renderToolResult(e);
+        } else if (e.type === 'result') {
+            html += renderResultFooter(e);
+        }
+
+        i++;
+    }
+
+    container.innerHTML = html;
+}
+
+function renderSystemInit(e) {
+    const tools = e.tools ? e.tools.join(', ') : '—';
+    const skills = e.skills ? e.skills.join(', ') : '';
+
+    return `
+        <div class="timeline-item timeline-system">
+            <div class="timeline-badge badge-system" onclick="toggleCollapse(this)">
+                <span class="badge-icon">&#9881;</span>
+                <span>System Init</span>
+                <span class="collapse-arrow">&#9662;</span>
+            </div>
+            <div class="timeline-content collapsed">
+                <div class="system-detail"><strong>Model:</strong> ${escapeHtml(e.model || '—')}</div>
+                <div class="system-detail"><strong>CWD:</strong> ${escapeHtml(e.cwd || '—')}</div>
+                <div class="system-detail"><strong>Tools:</strong> ${escapeHtml(tools)}</div>
+                ${skills ? '<div class="system-detail"><strong>Skills:</strong> ' + escapeHtml(skills) + '</div>' : ''}
+                ${e.claude_code_version ? '<div class="system-detail"><strong>Version:</strong> ' + escapeHtml(e.claude_code_version) + '</div>' : ''}
+            </div>
+        </div>`;
+}
+
+function renderAssistant(e) {
+    const content = e.message && e.message.content ? e.message.content : [];
+
+    let html = '';
+    for (const block of content) {
+        if (block.type === 'text') {
+            html += renderAssistantText(block.text);
+        } else if (block.type === 'tool_use') {
+            html += renderToolCall(block);
+        }
+    }
+    return html;
+}
+
+function renderAssistantText(text) {
+    if (!text || !text.trim()) return '';
+
+    return `
+        <div class="timeline-item timeline-assistant">
+            <div class="timeline-badge badge-assistant">
+                <span class="badge-icon">&#9733;</span>
+                <span>Claude</span>
+            </div>
+            <div class="timeline-content">
+                <pre class="assistant-text">${escapeHtml(text)}</pre>
+            </div>
+        </div>`;
+}
+
+function renderToolCall(block) {
+    const name = block.name || 'Unknown';
+    const input = block.input || {};
+    const inputStr = JSON.stringify(input, null, 2);
+    const lines = inputStr.split('\n').length;
+    const isLong = lines > COLLAPSE_THRESHOLD;
+
+    return `
+        <div class="timeline-item timeline-tool-call">
+            <div class="timeline-badge badge-tool-call">
+                <span class="badge-icon">&#9881;</span>
+                <span>${escapeHtml(name)}</span>
+            </div>
+            <div class="timeline-content${isLong ? ' collapsed' : ''}">
+                ${isLong ? '<div class="collapse-toggle" onclick="toggleContent(this)">' + lines + ' lines — click to expand</div>' : ''}
+                <pre class="tool-input">${escapeHtml(inputStr)}</pre>
+            </div>
+        </div>`;
+}
+
+function renderToolResult(e) {
+    const content = e.message && e.message.content ? e.message.content : [];
+    const meta = e.tool_use_result || {};
+
+    let html = '';
+    for (const block of content) {
+        if (block.type === 'tool_result') {
+            html += renderToolResultBlock(block, meta);
+        }
+    }
+    return html;
+}
+
+function renderToolResultBlock(block, meta) {
+    const rawContent = typeof block.content === 'string'
+        ? block.content
+        : JSON.stringify(block.content, null, 2);
+
+    const lines = rawContent.split('\n').length;
+    const isLong = lines > COLLAPSE_THRESHOLD;
+
+    // Build summary from metadata
+    let summary = '';
+    if (meta.file) {
+        summary = meta.file.filePath
+            ? escapeHtml(meta.file.filePath) + ' — ' + (meta.file.numLines || meta.file.totalLines || lines) + ' lines'
+            : lines + ' lines';
+    } else {
+        summary = lines + ' lines';
+    }
+
+    return `
+        <div class="timeline-item timeline-tool-result">
+            <div class="timeline-badge badge-tool-result">
+                <span class="badge-icon">&#8617;</span>
+                <span>Result</span>
+                <span class="result-summary">${summary}</span>
+            </div>
+            <div class="timeline-content${isLong ? ' collapsed' : ''}">
+                ${isLong ? '<div class="collapse-toggle" onclick="toggleContent(this)">Show output (' + lines + ' lines)</div>' : ''}
+                <pre class="tool-output${isLong ? ' scrollable' : ''}">${escapeHtml(rawContent)}</pre>
+            </div>
+        </div>`;
+}
+
+function renderResultFooter(e) {
+    const duration = e.duration_ms ? formatDuration(e.duration_ms / 1000) : '—';
+    const cost = e.total_cost_usd != null ? '$' + e.total_cost_usd.toFixed(4) : '—';
+    const turns = e.num_turns || '—';
+    const isError = e.is_error;
+
+    let tokensHtml = '';
+    if (e.usage) {
+        const u = e.usage;
+        const inTokens = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+        const outTokens = u.output_tokens || 0;
+        tokensHtml = `<span class="result-stat">${inTokens.toLocaleString()} in / ${outTokens.toLocaleString()} out</span>`;
+    }
+
+    return `
+        <div class="timeline-item timeline-result">
+            <div class="result-footer ${isError ? 'result-error' : 'result-success'}">
+                <span class="result-stat">${duration}</span>
+                <span class="result-stat">${turns} turns</span>
+                <span class="result-stat">${cost}</span>
+                ${tokensHtml}
+            </div>
+        </div>`;
+}
+
+function toggleCollapse(badge) {
+    const content = badge.nextElementSibling;
+    if (content) {
+        content.classList.toggle('collapsed');
+        const arrow = badge.querySelector('.collapse-arrow');
+        if (arrow) {
+            arrow.textContent = content.classList.contains('collapsed') ? '\u25BE' : '\u25B4';
+        }
+    }
+}
+
+function toggleContent(toggle) {
+    const content = toggle.parentElement;
+    content.classList.toggle('collapsed');
+    if (content.classList.contains('collapsed')) {
+        toggle.textContent = toggle.dataset.expandText || toggle.textContent;
+    } else {
+        toggle.dataset.expandText = toggle.textContent;
+        toggle.textContent = 'Collapse';
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadSession();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Overview — Merlin Dashboard{% endblock %}
+
+{% block content %}
+<h2 class="page-title">Overview</h2>
+
+<div class="card-grid" id="status-cards">
+    <div class="card">
+        <div class="card-label">Bot Status</div>
+        <div class="card-value" id="card-bot-status">—</div>
+        <div class="card-detail" id="card-bot-detail"></div>
+    </div>
+    <div class="card">
+        <div class="card-label">Invocations Today</div>
+        <div class="card-value blue" id="card-invocations">—</div>
+        <div class="card-detail" id="card-invocations-detail"></div>
+    </div>
+    <div class="card">
+        <div class="card-label">Avg Response Time</div>
+        <div class="card-value" id="card-avg-duration">—</div>
+        <div class="card-detail">today</div>
+    </div>
+    <div class="card">
+        <div class="card-label">Cost Today</div>
+        <div class="card-value" id="card-cost">—</div>
+        <div class="card-detail" id="card-cost-detail">today</div>
+    </div>
+    <div class="card">
+        <div class="card-label">Errors (24h)</div>
+        <div class="card-value" id="card-errors">—</div>
+        <div class="card-detail" id="card-cron-failures"></div>
+    </div>
+    <div class="card" id="tunnel-card" style="display:none">
+        <div class="card-label">Tunnel</div>
+        <div class="card-value" id="card-tunnel-status">—</div>
+        <div class="card-detail" id="card-tunnel-url"></div>
+    </div>
+</div>
+
+<div id="error-card-container"></div>
+
+<div class="feed" id="activity-feed">
+    <div class="feed-header">Recent Activity</div>
+    <div id="feed-items">
+        <div class="empty-state">
+            <div class="empty-icon">&#128302;</div>
+            <div class="empty-text">No events yet. Waiting for first invocation...</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadOverview() {
+    const health = await API.get('/api/health');
+    if (!health) return;
+
+    // Bot status
+    const botCard = document.getElementById('card-bot-status');
+    const botDetail = document.getElementById('card-bot-detail');
+    if (health.bot_start_time) {
+        botCard.textContent = 'Online';
+        botCard.className = 'card-value green';
+        botDetail.textContent = 'since ' + timeAgo(health.bot_start_time);
+        botDetail.title = utcString(health.bot_start_time);
+    } else {
+        botCard.textContent = 'Unknown';
+        botCard.className = 'card-value';
+    }
+
+    // Invocations
+    document.getElementById('card-invocations').textContent = health.invocations_today;
+
+    // Avg duration
+    const avgEl = document.getElementById('card-avg-duration');
+    avgEl.textContent = formatDuration(health.avg_duration_today);
+
+    // Cost
+    const costEl = document.getElementById('card-cost');
+    costEl.textContent = formatCost(health.cost_today);
+    costEl.className = 'card-value ' + (health.cost_today > 5 ? 'orange' : '');
+
+    // Errors
+    const errEl = document.getElementById('card-errors');
+    errEl.textContent = health.errors_24h;
+    errEl.className = 'card-value ' + (health.errors_24h > 0 ? 'red' : 'green');
+    document.getElementById('card-cron-failures').textContent =
+        health.cron_failures_24h > 0 ? `${health.cron_failures_24h} cron failure(s)` : 'all clear';
+
+    // Tunnel
+    if (health.tunnel_status && health.tunnel_status !== 'stopped') {
+        const tunnelCard = document.getElementById('tunnel-card');
+        tunnelCard.style.display = '';
+        const tunnelStatus = document.getElementById('card-tunnel-status');
+        const tunnelUrl = document.getElementById('card-tunnel-url');
+        tunnelStatus.textContent = health.tunnel_status === 'running' ? 'Active' : health.tunnel_status;
+        tunnelStatus.className = 'card-value ' + (health.tunnel_status === 'running' ? 'green' : 'orange');
+        if (health.tunnel_url) {
+            const short = escapeHtml(health.tunnel_url.replace('https://', ''));
+            tunnelUrl.innerHTML = `<a href="${escapeHtml(health.tunnel_url)}" target="_blank" style="color:var(--accent-blue);text-decoration:none">${short}</a> <button onclick="copyTunnelUrl(event, '${escapeHtml(health.tunnel_url)}')" class="copy-btn" title="Copy URL">&#128203;</button>`;
+        }
+    }
+
+    // Last error card
+    const errContainer = document.getElementById('error-card-container');
+    if (health.last_error) {
+        const e = health.last_error;
+        errContainer.innerHTML = `
+            <div class="error-card" onclick="navigateTo('/logs', {type: 'error'})">
+                <div class="error-title">Last Error</div>
+                <div class="error-detail">${escapeHtml(eventSummary(e))}</div>
+                <div class="error-time" title="${utcString(e.timestamp)}">${formatDateTime(e.timestamp)}</div>
+            </div>`;
+    } else {
+        errContainer.innerHTML = '';
+    }
+
+    // Activity feed
+    const events = await API.get('/api/events');
+    if (!events) return;
+    const feedEl = document.getElementById('feed-items');
+    const recent = events.slice(-15).reverse();
+
+    if (recent.length === 0) {
+        feedEl.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon">&#128302;</div>
+                <div class="empty-text">No events yet. Waiting for first invocation...</div>
+            </div>`;
+        return;
+    }
+
+    feedEl.innerHTML = recent.map(e => `
+        <div class="feed-item" onclick="navigateTo('/logs')" title="${utcString(e.timestamp)}">
+            <span class="feed-time">${formatTime(e.timestamp)}</span>
+            ${typeBadge(e.type)}
+            <span class="feed-summary">${escapeHtml(eventSummary(e))}</span>
+        </div>
+    `).join('');
+}
+
+function copyTunnelUrl(e, url) {
+    e.preventDefault();
+    e.stopPropagation();
+    navigator.clipboard.writeText(url).then(() => {
+        const btn = e.target;
+        btn.textContent = '\u2713';
+        setTimeout(() => btn.textContent = '\uD83D\uDCCB', 1500);
+    });
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadOverview();
+    Refresh.register(loadOverview);
+    Refresh.start(5000);
+});
+</script>
+{% endblock %}
