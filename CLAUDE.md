@@ -45,9 +45,7 @@ merlin/
 │   ├── .env                   # Bot token (gitignored)
 │   ├── tests/                 # Bot-specific tests
 │   └── logs/                  # Invocation logs (gitignored)
-├── epics/                     # Project management
-│   ├── <epic-name>/           # Active epics
-│   └── archive/               # Completed epics
+├── (epics managed in merlin-saas repo)
 ├── docs/                      # Reference documentation (see list below)
 ```
 
@@ -252,21 +250,7 @@ Web-based dashboard served by FastAPI on port 3123, started by `main.py`.
 
 ## Project Management
 
-Work is organized into **epics** under `epics/`. Each epic contains:
-- `requirements.md` — Goals and acceptance criteria
-- `tasks.md` — Concrete tasks with status, assignee, dependencies
-- `journal/` — Timestamped work logs for context restoration
-
-### Workflow
-
-1. Discuss → 2. Create epic → 3. Plan tasks → 4. Work (with journal entries) → 5. Validate → 6. Archive
-
-### Validation
-
-Every task needs validation before marking done:
-- Preferred: pytest unit tests
-- Alternative: smoke tests, integration scripts, dry-run verification
-- Document validation method in journal entry
+Epics and project planning are managed in the private `merlin-saas` repo under `epics/cli/`.
 
 ## Key Patterns and Conventions
 
