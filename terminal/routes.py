@@ -133,20 +133,21 @@ async def terminal_ws(websocket: WebSocket):
     if pid == 0:
         # Child process — start in CWD (or project root)
         os.chdir(_cwd or str(PROJECT_ROOT))
-        os.execvp(
-            "tmux",
-            [
-                "tmux",
-                "new-session",
-                "-A",  # attach if exists, create if not
-                "-s",
-                TMUX_SESSION,
-                "-x",
-                "120",
-                "-y",
-                "40",
-            ],
-        )
+        tmux_conf = TERMINAL_DIR / "tmux.conf"
+        tmux_args = ["tmux"]
+        if tmux_conf.exists():
+            tmux_args += ["-f", str(tmux_conf)]
+        tmux_args += [
+            "new-session",
+            "-A",  # attach if exists, create if not
+            "-s",
+            TMUX_SESSION,
+            "-x",
+            "120",
+            "-y",
+            "40",
+        ]
+        os.execvp("tmux", tmux_args)
         os._exit(1)
 
     # Parent process — bridge WebSocket <-> PTY
