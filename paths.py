@@ -43,7 +43,7 @@ def is_dev_mode() -> bool:
         return True
     if env_val in ("0", "false", "no"):
         return False
-    return (_THIS_DIR / ".git").is_dir()
+    return (_THIS_DIR / ".git").exists()
 
 
 def merlin_home() -> Path:
