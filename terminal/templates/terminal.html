@@ -14,6 +14,7 @@
         <button class="tk tk-mod" data-mod="Control">Ctrl</button>
         <button class="tk tk-mod" data-mod="Alt">Alt</button>
         <button class="tk tk-mod" data-mod="Shift">Shift</button>
+        <button class="tk tk-mod" data-mod="Enter">↵</button>
         <span class="toolbar-sep"></span>
         <button class="tk tk-fn" data-key="F3">◀</button>
         <button class="tk tk-fn" data-key="F2">+</button>
@@ -617,6 +618,10 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (key === 'ShiftTab') {
             sendToTerminal('\x1b[Z');
         }
+        // Enter: send carriage return
+        else if (key === 'Enter') {
+            sendToTerminal('\r');
+        }
         // Function keys and arrows: send ANSI sequence
         else if (KEY_SEQUENCES[key]) {
             let seq = KEY_SEQUENCES[key];
@@ -650,8 +655,8 @@ document.addEventListener('DOMContentLoaded', () => {
             e.preventDefault();
             const mod = btn.dataset.mod;
 
-            // Esc and Tab are direct-send, not sticky
-            if (mod === 'Escape' || mod === 'Tab') {
+            // Esc, Tab, Enter are direct-send, not sticky
+            if (mod === 'Escape' || mod === 'Tab' || mod === 'Enter') {
                 sendKey(mod);
                 return;
             }
