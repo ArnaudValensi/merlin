@@ -316,6 +316,27 @@ def run_setup(config_path: Path | None = None) -> None:
     if not token and current_token:
         token = current_token
 
+    # OpenAI API key (voice transcription)
+    print("\n─── Voice Transcription ───\n")
+    print("Merlin can transcribe voice input using OpenAI's Whisper API")
+    print("for faster, lighter transcription. This is optional — without")
+    print("an API key, Merlin uses local transcription (faster-whisper),")
+    print("which works offline but requires a ~1.5GB model download.\n")
+    print("The Whisper API costs ~$0.006 per minute of audio.")
+    print("Get a key: https://platform.openai.com/api-keys\n")
+
+    current_openai = existing.get("OPENAI_API_KEY", "")
+    if current_openai:
+        masked_openai = current_openai[:3] + "..." + current_openai[-4:] if len(current_openai) > 7 else "***"
+        prompt = f"OpenAI API key [{masked_openai}] (Enter to keep, 'clear' to remove): "
+    else:
+        prompt = "OpenAI API key (Enter to skip): "
+    openai_key = input(prompt).strip()
+    if openai_key.lower() == "clear":
+        openai_key = ""
+    elif not openai_key and current_openai:
+        openai_key = current_openai
+
     # Write config
     target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -326,9 +347,11 @@ def run_setup(config_path: Path | None = None) -> None:
     ]
     if token:
         lines.append(f"DISCORD_BOT_TOKEN={token}")
+    if openai_key:
+        lines.append(f"OPENAI_API_KEY={openai_key}")
 
     # Preserve any extra keys from existing config
-    known_keys = {"DASHBOARD_PASS", "TUNNEL_ENABLED", "DISCORD_BOT_TOKEN"}
+    known_keys = {"DASHBOARD_PASS", "TUNNEL_ENABLED", "DISCORD_BOT_TOKEN", "OPENAI_API_KEY"}
     for key, val in existing.items():
         if key not in known_keys:
             lines.append(f"{key}={val}")

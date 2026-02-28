@@ -73,6 +73,25 @@ merlin setup                     # Interactive config wizard
 merlin update                    # Update to latest release
 ```
 
+### Voice Transcription
+
+Merlin supports voice input in the terminal UI and Discord voice messages. Audio is transcribed using one of two backends:
+
+| Backend | Setup | Speed | Requirements |
+|---------|-------|-------|-------------|
+| **OpenAI Whisper API** | Set `OPENAI_API_KEY` | ~1s | API key (~$0.006/min) |
+| **Local (faster-whisper)** | None (default) | 2-5s | ~1.5GB model download, ffmpeg |
+
+To use the OpenAI API:
+
+```bash
+merlin setup                    # Prompts for API key
+# or manually:
+echo "OPENAI_API_KEY=sk-your-key" >> ~/.merlin/config.env
+```
+
+Get an API key at [platform.openai.com/api-keys](https://platform.openai.com/api-keys).
+
 ### Tests
 
 ```bash
