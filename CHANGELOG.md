@@ -2,6 +2,19 @@
 
 All notable changes to Merlin are documented in this file.
 
+## 2026-02-27
+
+### Added
+- **Bundled tmux config** — Web terminal now ships its own `tmux.conf` with Dracula theme, icon-based tab indicators (● ○), F2–F5 keybinds for tab management, mouse support, and OSC 52 clipboard integration.
+- **Enter button on terminal toolbar** — Mobile toolbar now includes an Enter key that sends directly without triggering the virtual keyboard.
+
+### Changed
+- **Terminal toolbar icons** — Replaced F2/F3/F4/F5 text labels with visual icons (◀ ▶ + ✕) for tab navigation and management.
+- **Epics moved to private repo** — Project planning and epic files moved to the private `merlin-saas` repository to keep the public repo focused on code.
+
+### Fixed
+- **Dev mode detection in submodules** — `paths.py` now uses `.exists()` instead of `.is_dir()` for `.git` detection, since git submodules use a `.git` file rather than a directory.
+
 ## 2026-02-26
 
 ### Added
