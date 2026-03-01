@@ -2,6 +2,11 @@
 
 All notable changes to Merlin are documented in this file.
 
+## 2026-02-28
+
+### Added
+- **OpenAI Whisper API transcription** — Voice transcription now supports three backends: OpenAI Whisper API (cloud, fast), SaaS proxy (stub), and local faster-whisper (default). Backend is auto-selected based on available API keys. Setup wizard and config updated accordingly.
+
 ## 2026-02-27
 
 ### Added
