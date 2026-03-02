@@ -2,6 +2,12 @@
 
 All notable changes to Merlin are documented in this file.
 
+## 2026-03-01
+
+### Added
+- **Python/FastAPI code review skill** — Senior engineer code review covering async correctness, FastAPI patterns, Pydantic v2, security (SSTI, injection, path traversal), PEP 723/uv conventions, and modern Python type hints.
+- **Wizard hat favicon** — Custom favicon in SVG, ICO, and apple-touch-icon formats.
+
 ## 2026-02-28
 
 ### Added
