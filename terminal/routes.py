@@ -6,10 +6,12 @@ import json
 import logging
 import os
 import pty
+import secrets
 import signal
 import struct
 import tempfile
 import termios
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -31,6 +33,10 @@ templates = Jinja2Templates(
 router = APIRouter()
 
 TMUX_SESSION = "merlin-dev"
+
+# Clipboard image upload directory
+CLIPBOARD_DIR = Path("/tmp/merlin-clipboard")
+CLIPBOARD_MAX_AGE = 3600  # 1 hour
 
 # CWD — set by main.py at startup, determines terminal starting directory
 _cwd: str | None = None
@@ -115,6 +121,47 @@ async def transcribe_audio(file: UploadFile, language: str = Form("en"), _auth=D
                 os.unlink(tmp_path)
             except OSError:
                 pass
+
+
+def _cleanup_clipboard() -> None:
+    """Delete clipboard images older than CLIPBOARD_MAX_AGE."""
+    if not CLIPBOARD_DIR.exists():
+        return
+    now = time.time()
+    for f in CLIPBOARD_DIR.iterdir():
+        try:
+            if now - f.stat().st_mtime > CLIPBOARD_MAX_AGE:
+                f.unlink()
+        except OSError:
+            pass
+
+
+_IMAGE_EXT = {
+    "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif",
+    "image/webp": ".webp", "image/svg+xml": ".svg",
+}
+
+
+@router.post("/api/upload-image")
+async def upload_image(file: UploadFile, _auth=Depends(require_auth)):
+    """Save an uploaded image to /tmp/merlin-clipboard/ and return its path."""
+    ct = (file.content_type or "").lower()
+    if not ct.startswith("image/"):
+        return JSONResponse({"error": "Not an image"}, status_code=400)
+
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        return JSONResponse({"error": "Image too large (10MB max)"}, status_code=413)
+
+    _cleanup_clipboard()
+    CLIPBOARD_DIR.mkdir(exist_ok=True)
+
+    ext = _IMAGE_EXT.get(ct, Path(file.filename or "image.png").suffix or ".png")
+    name = f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}{ext}"
+    path = CLIPBOARD_DIR / name
+    path.write_bytes(content)
+
+    return JSONResponse({"path": str(path)})
 
 
 @router.websocket("/ws/terminal")
