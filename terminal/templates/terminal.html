@@ -333,6 +333,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const v = (name) => cs.getPropertyValue(name).trim();
 
     const term = new Terminal({
+        macOptionIsMeta: true,
         cursorBlink: true,
         cursorStyle: 'block',
         fontSize: 11,
@@ -732,6 +733,22 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('mousedown', (e) => { if (e.button === 0) startRepeat(e); });
         btn.addEventListener('mouseup', stopRepeat);
         btn.addEventListener('mouseleave', stopRepeat);
+    });
+
+    // Alt/Option key: send ESC + key for tmux M- bindings
+    // macOptionIsMeta doesn't always work because the browser may deliver
+    // a composed character (e.g. Option+h → ˙) in e.key. Use e.code instead.
+    term.attachCustomKeyEventHandler((e) => {
+        if (e.type === 'keydown' && e.altKey && !e.ctrlKey && !e.metaKey) {
+            const m = e.code.match(/^Key([A-Z])$/);
+            if (m) {
+                const ch = e.shiftKey ? m[1] : m[1].toLowerCase();
+                sendToTerminal('\x1b' + ch);
+                e.preventDefault();
+                return false;
+            }
+        }
+        return true;
     });
 
     // Sticky modifiers from toolbar: apply to next keypress
