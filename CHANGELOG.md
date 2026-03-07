@@ -2,6 +2,15 @@
 
 All notable changes to Merlin are documented in this file.
 
+## 2026-03-06
+
+### Added
+- **Clipboard image upload in web terminal** — Upload images via paste, drag-and-drop, or file picker. Images are saved to a temp directory (auto-cleaned after 1 hour) and the file path is injected into the terminal for use with CLI tools.
+- **NeoVim-friendly tmux settings** — Bundled tmux config now includes escape-time, focus-events, true color, undercurl support, and increased history limit. User `~/.tmux.conf` is sourced if present.
+
+### Fixed
+- **Alt key handling in web terminal** — Fixed Alt/Option key on macOS producing composed characters instead of sending Alt sequences. Uses `macOptionIsMeta` and a custom key handler based on `e.code`.
+
 ## 2026-03-01
 
 ### Added
