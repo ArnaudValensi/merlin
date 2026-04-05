@@ -1,0 +1,1261 @@
+{% extends "base.html" %}
+{% block title %}Cron Jobs — Merlin{% endblock %}
+
+{% block content %}
+<style>
+/* Cron page styles — scoped to .cron-page */
+.cron-page .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+.cron-page .page-header h1 {
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.cron-page .btn {
+    padding: 7px 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    transition: background 0.15s, color 0.15s;
+}
+
+.cron-page .btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.cron-page .btn-primary { background: var(--accent-blue); color: white; border-color: var(--accent-blue); }
+.cron-page .btn-primary:hover { opacity: 0.9; }
+.cron-page .btn-danger { background: var(--accent-red); color: white; border-color: var(--accent-red); }
+.cron-page .btn-danger:hover { opacity: 0.9; }
+.cron-page .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+/* Job cards */
+.cron-job-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cron-job-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 20px;
+    transition: border-color 0.15s;
+}
+
+/* Disabled card: dim content, keep controls interactive */
+.cron-job-card.disabled {
+    border-color: var(--bg-hover);
+}
+
+.cron-job-card.disabled .job-info {
+    opacity: 0.5;
+}
+
+.cron-job-card.disabled .job-actions {
+    opacity: 1;
+}
+
+.paused-tag {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    background: var(--bg-hover);
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+
+.cron-job-card .job-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.cron-job-card .job-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.cron-job-card .job-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.cron-job-card .job-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+.cron-job-card .job-meta {
+    display: flex;
+    gap: 16px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+}
+
+.cron-job-card .job-meta-item {
+    font-size: 11px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.cron-job-card .job-meta-item .meta-label {
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.cron-job-card .job-meta-item .meta-value {
+    color: var(--text-secondary);
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    font-weight: 400;
+}
+
+.cron-job-card .job-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+/* Status indicator */
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.status-dot.success { background: var(--accent-green); }
+.status-dot.error { background: var(--accent-red); }
+.status-dot.pending { background: var(--text-muted); }
+
+/* Discord badge */
+.discord-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    background: rgba(74, 158, 255, 0.12);
+    color: var(--accent-blue);
+}
+
+/* Toggle switch — uses shared .toggle-switch from dashboard.css */
+
+/* Action menu */
+.action-menu {
+    position: relative;
+}
+
+.action-menu-btn {
+    width: 34px;
+    height: 34px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    transition: all 0.15s;
+}
+
+.action-menu-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.action-menu-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    min-width: 140px;
+    padding: 4px;
+    z-index: 50;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.action-menu-dropdown.open { display: block; }
+
+.action-menu-item {
+    display: block;
+    width: 100%;
+    padding: 6px 12px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s;
+}
+
+.action-menu-item:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.action-menu-item.danger { color: var(--accent-red); }
+.action-menu-item.danger:hover { background: rgba(248, 113, 113, 0.1); }
+
+/* Log viewer */
+.job-logs {
+    display: none;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.job-logs.open { display: block; }
+
+.job-logs .log-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.job-logs .log-entry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+.job-logs .log-entry:last-child { border-bottom: none; }
+.job-logs .log-entry:hover { background: var(--bg-hover); }
+
+.job-logs .log-time {
+    color: var(--text-muted);
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    min-width: 120px;
+}
+
+.job-logs .log-duration {
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    color: var(--text-secondary);
+    min-width: 60px;
+}
+
+.job-logs .log-cost {
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    color: var(--text-secondary);
+    min-width: 60px;
+}
+
+.job-logs .log-status {
+    font-size: 12px;
+}
+
+.log-output {
+    display: none;
+    margin-top: 8px;
+    padding: 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.log-output.open { display: block; }
+
+.log-output pre {
+    margin: 0;
+    white-space: pre-wrap;
+    font-family: 'Geist Mono', monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+/* Toast */
+.cron-toast {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 10px 20px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 13px;
+    z-index: 1000;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    transition: opacity 0.3s;
+}
+
+.cron-toast.success { border-color: var(--accent-green); }
+.cron-toast.error { border-color: var(--accent-red); }
+
+/* Modal — fullscreen on mobile, centered on desktop (same pattern as picker-modal / video-scenes) */
+.cron-modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+}
+
+.cron-modal-overlay.open {
+    display: block;
+}
+
+.cron-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+}
+
+.cron-modal {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-primary);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.cron-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.cron-modal-header h2 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+    font-family: 'Geist Mono', monospace;
+}
+
+.cron-modal-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 24px;
+    cursor: pointer;
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+.cron-modal-close:hover { color: var(--text-primary); }
+
+.cron-modal-body {
+    padding: 16px 20px;
+}
+
+.cron-modal .modal-actions {
+    display: flex;
+    gap: 8px;
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+}
+
+.cron-modal .modal-actions .btn {
+    flex: 1;
+    min-height: 44px;
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: 500;
+}
+
+@media (min-width: 769px) {
+    .cron-modal {
+        top: 50%;
+        left: 50%;
+        right: auto;
+        bottom: auto;
+        transform: translate(-50%, -50%);
+        width: 560px;
+        max-width: 95vw;
+        max-height: 85vh;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+    }
+
+    .cron-modal .modal-actions .btn { flex: none; min-height: 36px; }
+}
+
+.cron-modal .form-group {
+    margin-bottom: 16px;
+}
+
+.cron-modal .form-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    display: block;
+}
+
+.cron-modal .form-input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 16px;
+    font-family: 'Geist Mono', monospace;
+}
+
+@media (min-width: 769px) {
+    .cron-modal .form-input {
+        font-size: 13px;
+    }
+}
+
+.cron-modal .form-input:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+}
+
+.cron-modal textarea.form-input {
+    min-height: 200px;
+    resize: vertical;
+    font-family: 'Geist Mono', monospace;
+}
+
+.cron-modal select.form-input {
+    font-family: 'Geist', -apple-system, system-ui, sans-serif;
+}
+
+.cron-modal .form-help {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 3px;
+}
+
+.cron-modal .form-row {
+    display: flex;
+    gap: 12px;
+}
+
+.cron-modal .form-row .form-group {
+    flex: 1;
+}
+
+.cron-modal .schedule-preview {
+    font-size: 12px;
+    margin-top: 4px;
+    padding: 6px 10px;
+    border-radius: 4px;
+}
+
+.cron-modal .schedule-preview.valid {
+    background: rgba(74, 222, 128, 0.1);
+    color: var(--accent-green);
+}
+
+.cron-modal .schedule-preview.invalid {
+    background: rgba(248, 113, 113, 0.1);
+    color: var(--accent-red);
+}
+
+.cron-modal .modal-actions {
+    display: flex;
+    gap: 8px;
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+}
+
+.cron-modal .modal-actions button {
+    flex: 1;
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    min-height: 44px;
+}
+
+.cron-modal .modal-actions .modal-cancel-btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+}
+.cron-modal .modal-actions .modal-cancel-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.cron-modal .modal-actions .modal-submit-btn {
+    background: var(--accent-blue);
+    border: none;
+    color: white;
+}
+.cron-modal .modal-actions .modal-submit-btn:hover {
+    opacity: 0.9;
+}
+
+.cron-modal .discord-section {
+    padding: 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-top: 4px;
+}
+
+.cron-modal .discord-section label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.cron-modal .discord-section input[type="checkbox"] {
+    accent-color: var(--accent-blue);
+}
+
+/* Error text */
+.form-error {
+    color: var(--accent-red);
+    font-size: 11px;
+    margin-top: 3px;
+}
+
+/* Crash banner */
+.crash-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: rgba(248, 113, 113, 0.1);
+    border: 1px solid var(--accent-red);
+    border-radius: 6px;
+    color: var(--accent-red);
+    font-size: 13px;
+    margin-bottom: 16px;
+}
+.crash-icon { font-size: 16px; }
+.crash-dismiss {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--accent-red);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0 4px;
+}
+
+/* Mobile-first: base styles are mobile, scale up with min-width */
+.cron-page .page-header { flex-wrap: wrap; gap: 8px; }
+.cron-job-card .job-row { flex-direction: column; }
+.cron-job-card .job-actions { justify-content: flex-end; width: 100%; }
+.cron-modal .form-row { flex-direction: column; }
+
+@media (min-width: 769px) {
+    .cron-page .page-header { flex-wrap: nowrap; gap: 0; }
+    .cron-job-card .job-row { flex-direction: row; }
+    .cron-job-card .job-actions { justify-content: flex-start; width: auto; }
+    .cron-modal .form-row { flex-direction: row; }
+}
+</style>
+
+<div class="cron-page">
+    <div class="page-header">
+        <h1>Cron Jobs</h1>
+        <button class="btn btn-primary" onclick="Cron.openCreateModal()">+ New Job</button>
+    </div>
+
+    <div class="tabs" id="cron-tabs">
+        <div class="tab active" data-tab="jobs">Jobs</div>
+        <div class="tab" data-tab="logs">Logs</div>
+    </div>
+
+    <!-- ── Jobs tab ── -->
+    <div class="cron-tab-content" id="cron-tab-jobs">
+
+    {% if crashes %}
+    <div class="crash-banner" id="crash-banner">
+        <span class="crash-icon">&#9888;</span>
+        <span>{{ crashes|length }} cron scheduler crash{{ 'es' if crashes|length > 1 else '' }} in the last 24h</span>
+        <button class="crash-dismiss" onclick="document.getElementById('crash-banner').style.display='none'">&times;</button>
+    </div>
+    {% endif %}
+
+    {% if jobs %}
+    <div class="cron-job-list" id="cron-job-list">
+        {% for job in jobs %}
+        <div class="cron-job-card{% if not job.get('enabled', true) %} disabled{% endif %}" id="job-card-{{ job.id }}" data-job-id="{{ job.id }}">
+            <div class="job-row">
+                <div class="job-info">
+                    <div class="job-name">
+                        {% if job.last_status is none %}
+                        <span class="status-dot pending" title="Never run"></span>
+                        {% elif job.last_status == 0 %}
+                        <span class="status-dot success" title="Last run succeeded"></span>
+                        {% else %}
+                        <span class="status-dot error" title="Last run failed (exit {{ job.last_status }})"></span>
+                        {% endif %}
+                        <span>{{ job.id }}</span>
+                        {% if not job.get('enabled', true) %}
+                        <span class="paused-tag">paused</span>
+                        {% endif %}
+                        {% if bot_loaded and job.get('discord_channel') %}
+                        <span class="discord-badge" title="Discord notifications enabled">
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                        </span>
+                        {% endif %}
+                    </div>
+                    {% if job.get('description') %}
+                    <div class="job-desc">{{ job.description }}</div>
+                    {% endif %}
+                    <div class="job-meta">
+                        <div class="job-meta-item">
+                            <span class="meta-label">Schedule</span>
+                            <span class="meta-value" title="{{ job.get('schedule', '') }}">{{ job.schedule_human }}</span>
+                        </div>
+                        {% if job.next_run %}
+                        <div class="job-meta-item">
+                            <span class="meta-label">Next</span>
+                            <span class="meta-value job-next-run" data-iso="{{ job.next_run }}"></span>
+                        </div>
+                        {% endif %}
+                        {% if job.last_run %}
+                        <div class="job-meta-item">
+                            <span class="meta-label">Last</span>
+                            <span class="meta-value job-last-run" data-iso="{{ job.last_run }}" title="{{ job.last_run }}"></span>
+                        </div>
+                        {% endif %}
+                        {% if job.last_cost is not none %}
+                        <div class="job-meta-item">
+                            <span class="meta-label">Cost</span>
+                            <span class="meta-value">${{ "%.4f"|format(job.last_cost) }}</span>
+                        </div>
+                        {% endif %}
+                        {% if job.last_duration is not none %}
+                        <div class="job-meta-item">
+                            <span class="meta-label">Duration</span>
+                            <span class="meta-value">{{ "%.1f"|format(job.last_duration) }}s</span>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="job-actions">
+                    <label class="toggle-switch" title="{% if job.get('enabled', true) %}Disable{% else %}Enable{% endif %} job">
+                        <input type="checkbox" {% if job.get('enabled', true) %}checked{% endif %} onchange="Cron.toggleJob('{{ job.id }}')">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <div class="action-menu">
+                        <button class="action-menu-btn" onclick="Cron.toggleMenu(this)" title="Actions">&#8942;</button>
+                        <div class="action-menu-dropdown">
+                            <button class="action-menu-item" onclick="Cron.openEditModal('{{ job.id }}')">Edit</button>
+                            <button class="action-menu-item" onclick="Cron.runJob('{{ job.id }}')">Run Now</button>
+                            <button class="action-menu-item" onclick="Cron.showJobLogs('{{ job.id }}')">View Logs</button>
+                            <button class="action-menu-item danger" onclick="Cron.deleteJob('{{ job.id }}')">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="job-logs" id="logs-{{ job.id }}">
+                <div class="log-list" id="log-list-{{ job.id }}">
+                    <div style="color: var(--text-muted); font-size: 12px; padding: 8px 0;">Loading...</div>
+                </div>
+                <div class="log-output" id="log-output-{{ job.id }}">
+                    <pre></pre>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state" id="cron-empty">
+        <div class="empty-icon">&#9201;</div>
+        <div class="empty-text">No cron jobs configured</div>
+        <div style="margin-top: 16px;">
+            <button class="btn btn-primary" onclick="Cron.openCreateModal()">+ New Job</button>
+        </div>
+    </div>
+    {% endif %}
+    </div><!-- /cron-tab-jobs -->
+
+    <!-- ── Logs tab ── -->
+    <div class="cron-tab-content" id="cron-tab-logs" style="display:none">
+        <div style="margin-bottom: 12px;">
+            <select class="btn" id="cron-log-filter" onchange="Cron.loadAllLogs()" style="font-family: 'Geist Mono', monospace; font-size: 13px;">
+                <option value="">All jobs</option>
+                {% for job in jobs %}
+                <option value="{{ job.id }}">{{ job.id }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div id="cron-log-content" class="log-table-wrap">
+            <div class="empty-state">
+                <div class="empty-icon">&#128302;</div>
+                <div class="empty-text">Loading logs...</div>
+            </div>
+        </div>
+    </div><!-- /cron-tab-logs -->
+
+</div>
+
+<!-- Create/Edit Modal -->
+<div class="cron-modal-overlay" id="cron-modal-overlay">
+    <div class="cron-modal-backdrop" onclick="Cron.closeModal()"></div>
+    <div class="cron-modal">
+        <div class="cron-modal-header">
+            <h2 id="modal-title">New Cron Job</h2>
+            <button class="cron-modal-close" onclick="Cron.closeModal()">&times;</button>
+        </div>
+        <form onsubmit="event.preventDefault(); Cron.submitJob();">
+        <div class="cron-modal-body">
+            <div class="form-group">
+                <label class="form-label">Job ID</label>
+                <input class="form-input" id="field-id" placeholder="daily-report" maxlength="30" pattern="[a-z][a-z0-9]*(-[a-z0-9]+)*" title="Lowercase letters, digits, and single hyphens. Must start with a letter. No consecutive hyphens." required oninput="this.value = this.value.toLowerCase().replace(/[^a-z0-9-]/g, '')">
+                <div class="form-help">Lowercase letters, digits, and hyphens. Starts with a letter.</div>
+                <div class="form-error" id="error-id"></div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <input class="form-input" id="field-description" placeholder="What does this job do?" style="font-family: 'Geist', -apple-system, system-ui, sans-serif;">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Schedule (cron expression)</label>
+                <input class="form-input" id="field-schedule" placeholder="0 9 * * *" required oninput="Cron.debounceValidate()">
+                <div class="form-help">minute hour day-of-month month day-of-week</div>
+                <div class="schedule-preview" id="schedule-preview" style="display:none"></div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Prompt</label>
+                <textarea class="form-input" id="field-prompt" placeholder="The prompt to send to Claude..." required></textarea>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Report Mode</label>
+                    <select class="form-input" id="field-report-mode">
+                        <option value="always">Always report</option>
+                        <option value="silent">Silent (noteworthy only)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Max Turns</label>
+                    <input class="form-input" id="field-max-turns" type="number" min="0" value="0" style="font-family: 'Geist Mono', monospace;">
+                    <div class="form-help">0 = unlimited</div>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Grace Minutes</label>
+                    <input class="form-input" id="field-grace-minutes" type="number" min="0" value="15" style="font-family: 'Geist Mono', monospace;">
+                    <div class="form-help">Skip if previous run ended within this window</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Session Mode</label>
+                    <select class="form-input" id="field-ephemeral">
+                        <option value="true">Fresh session each run</option>
+                        <option value="false">Persistent session (keeps context)</option>
+                    </select>
+                    <div class="form-help">Fresh: each run starts clean (recommended). Persistent: Claude remembers previous runs, but costs grow over time.</div>
+                </div>
+            </div>
+            {% if bot_loaded %}
+            <div class="form-group">
+                <label class="form-label">Discord Notifications</label>
+                <div class="discord-section">
+                    <label>
+                        <input type="checkbox" id="field-discord-enabled">
+                        Notify via Discord on completion
+                    </label>
+                    <div class="form-help" id="discord-default-hint" style="display:none; margin-top: 4px;">Uses default channel. <a href="#" id="discord-show-override" style="color: var(--accent-blue);">Override channel</a></div>
+                    <div class="form-group" id="discord-channel-group" style="margin-top: 10px; display: none;">
+                        <label class="form-label">Channel ID override</label>
+                        <input class="form-input" id="field-discord-channel" placeholder="Leave empty for default channel">
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div><!-- /.cron-modal-body -->
+            <div class="modal-actions">
+                <button type="button" class="modal-cancel-btn" onclick="Cron.closeModal()">Cancel</button>
+                <button type="submit" class="modal-submit-btn" id="modal-submit-btn">Create Job</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Toast container -->
+<div id="cron-toast-container"></div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Tab switching ──
+function switchCronTab(tab) {
+    document.querySelectorAll('#cron-tabs .tab').forEach(t => t.classList.remove('active'));
+    document.querySelector(`#cron-tabs .tab[data-tab="${tab}"]`).classList.add('active');
+    document.querySelectorAll('.cron-tab-content').forEach(c => c.style.display = 'none');
+    document.getElementById('cron-tab-' + tab).style.display = '';
+    if (tab === 'logs') Cron.loadAllLogs();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('#cron-tabs .tab').forEach(t => {
+        t.addEventListener('click', () => switchCronTab(t.dataset.tab));
+    });
+});
+
+const Cron = {
+    _editingJobId: null,
+    _validateTimer: null,
+
+    // ── Logs tab ──
+    async loadAllLogs(filterJobId) {
+        const filter = filterJobId || document.getElementById('cron-log-filter').value;
+        let url = '/api/cron/logs?limit=100';
+        if (filter) url += '&job_id=' + encodeURIComponent(filter);
+
+        const container = document.getElementById('cron-log-content');
+        const entries = await API.get(url);
+        if (!entries || entries.length === 0) {
+            container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#128302;</div><div class="empty-text">No execution logs yet.</div></div>';
+            return;
+        }
+
+        let html = '<table class="log-table"><thead><tr><th>Time</th><th>Job</th><th>Status</th><th>Duration</th><th>Cost</th><th></th></tr></thead><tbody>';
+        entries.forEach(e => {
+            const isError = e.exit_code != null && e.exit_code !== 0;
+            const ts = e.timestamp || '';
+            const time = ts ? formatDateTime(ts) : '—';
+            const duration = e.duration_seconds != null ? formatDuration(e.duration_seconds) : '—';
+            const cost = e.cost_usd != null ? '$' + e.cost_usd.toFixed(4) : '—';
+            const status = isError
+                ? '<span class="feed-badge badge-error">Error</span>'
+                : '<span class="feed-badge badge-success">OK</span>';
+            const sessionLink = e.session_file
+                ? `<a class="session-link" href="/session/${encodeURIComponent(e.session_file)}?back=cron">View session</a>`
+                : '';
+            html += `<tr title="${utcString(ts)}">
+                <td>${time}</td>
+                <td class="duration">${(e.job_id || '—')}</td>
+                <td>${status}</td>
+                <td class="duration">${duration}</td>
+                <td class="duration">${cost}</td>
+                <td>${sessionLink}</td>
+            </tr>`;
+        });
+        container.innerHTML = html + '</tbody></table>';
+    },
+
+    showJobLogs(jobId) {
+        // Switch to Logs tab and filter by job
+        const select = document.getElementById('cron-log-filter');
+        if (select) select.value = jobId;
+        switchCronTab('logs');
+    },
+
+    // ── Modal ──
+    openCreateModal() {
+        this._editingJobId = null;
+        document.getElementById('modal-title').textContent = 'New Cron Job';
+        document.getElementById('modal-submit-btn').textContent = 'Create Job';
+        document.getElementById('field-id').value = '';
+        document.getElementById('field-id').disabled = false;
+        document.getElementById('field-description').value = '';
+        document.getElementById('field-schedule').value = '';
+        document.getElementById('field-prompt').value = '';
+        document.getElementById('field-report-mode').value = 'always';
+        document.getElementById('field-max-turns').value = '0';
+        document.getElementById('field-grace-minutes').value = '15';
+        document.getElementById('field-ephemeral').value = 'true';
+        const preview = document.getElementById('schedule-preview');
+        if (preview) preview.style.display = 'none';
+        const errorId = document.getElementById('error-id');
+        if (errorId) errorId.textContent = '';
+        const discordEnabled = document.getElementById('field-discord-enabled');
+        if (discordEnabled) {
+            discordEnabled.checked = true;
+            const hint = document.getElementById('discord-default-hint');
+            if (hint) hint.style.display = 'block';
+            document.getElementById('discord-channel-group').style.display = 'none';
+            document.getElementById('field-discord-channel').value = '';
+        }
+        document.getElementById('cron-modal-overlay').classList.add('open');
+    },
+
+    async openEditModal(jobId) {
+        this.closeAllMenus();
+        const resp = await fetch(`/api/cron/jobs/${jobId}`);
+        if (!resp.ok) { this.toast('Failed to load job', 'error'); return; }
+        const job = await resp.json();
+
+        this._editingJobId = jobId;
+        document.getElementById('modal-title').textContent = 'Edit Job';
+        document.getElementById('modal-submit-btn').textContent = 'Save Changes';
+        document.getElementById('field-id').value = jobId;
+        document.getElementById('field-id').disabled = true;
+        document.getElementById('field-description').value = job.description || '';
+        document.getElementById('field-schedule').value = job.schedule || '';
+        document.getElementById('field-prompt').value = job.prompt || '';
+        document.getElementById('field-report-mode').value = job.report_mode || 'always';
+        document.getElementById('field-max-turns').value = String(job.max_turns || 0);
+        document.getElementById('field-grace-minutes').value = String(job.grace_minutes || 15);
+        document.getElementById('field-ephemeral').value = job.ephemeral === false ? 'false' : 'true';
+        const preview = document.getElementById('schedule-preview');
+        if (preview) preview.style.display = 'none';
+        const errorId = document.getElementById('error-id');
+        if (errorId) errorId.textContent = '';
+        const discordEnabled = document.getElementById('field-discord-enabled');
+        if (discordEnabled) {
+            // Old jobs have "channel", new jobs have "discord_channel"
+            const hasDiscord = !!(job.discord_channel || job.channel);
+            discordEnabled.checked = hasDiscord;
+            // Show channel input only if a specific channel ID is set (not "default")
+            const specificChannel = job.discord_channel && job.discord_channel !== 'default' ? job.discord_channel : '';
+            const hint = document.getElementById('discord-default-hint');
+            const channelGroup = document.getElementById('discord-channel-group');
+            if (specificChannel) {
+                if (hint) hint.style.display = 'none';
+                if (channelGroup) channelGroup.style.display = 'block';
+                document.getElementById('field-discord-channel').value = specificChannel;
+            } else {
+                if (hint) hint.style.display = hasDiscord ? 'block' : 'none';
+                if (channelGroup) channelGroup.style.display = 'none';
+                document.getElementById('field-discord-channel').value = '';
+            }
+        }
+        document.getElementById('cron-modal-overlay').classList.add('open');
+
+        // Validate the existing schedule
+        if (job.schedule) this.validateSchedule();
+    },
+
+    closeModal() {
+        document.getElementById('cron-modal-overlay').classList.remove('open');
+        this._editingJobId = null;
+    },
+
+    async submitJob() {
+        const id = document.getElementById('field-id').value.trim();
+        const schedule = document.getElementById('field-schedule').value.trim();
+        const prompt = document.getElementById('field-prompt').value.trim();
+
+        if (!schedule || !prompt) {
+            this.toast('Schedule and prompt are required', 'error');
+            return;
+        }
+
+        const body = {
+            description: document.getElementById('field-description').value.trim(),
+            schedule: schedule,
+            prompt: prompt,
+            report_mode: document.getElementById('field-report-mode').value,
+            max_turns: parseInt(document.getElementById('field-max-turns').value) || 0,
+            grace_minutes: parseInt(document.getElementById('field-grace-minutes').value) || 15,
+            ephemeral: document.getElementById('field-ephemeral').value === 'true',
+        };
+
+        // Discord notification: "default" = use bot's default channel, specific ID = override, null = disabled
+        const discordEnabled = document.getElementById('field-discord-enabled');
+        if (discordEnabled && discordEnabled.checked) {
+            const ch = document.getElementById('field-discord-channel').value.trim();
+            body.discord_channel = ch || 'default';
+        } else {
+            body.discord_channel = null;
+        }
+
+        let resp;
+        if (this._editingJobId) {
+            resp = await fetch(`/api/cron/jobs/${this._editingJobId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+        } else {
+            if (!id) { this.toast('Job ID is required', 'error'); return; }
+            body.id = id;
+            resp = await fetch('/api/cron/jobs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+        }
+
+        if (resp.ok) {
+            this.closeModal();
+            this.toast(this._editingJobId ? 'Job updated' : 'Job created', 'success');
+            setTimeout(() => location.reload(), 300);
+        } else {
+            const data = await resp.json().catch(() => ({}));
+            const detail = data.detail || JSON.stringify(data);
+            const errorId = document.getElementById('error-id');
+            if (resp.status === 409 && errorId) {
+                errorId.textContent = 'A job with this ID already exists';
+            } else if (resp.status === 422) {
+                // Validation error
+                const msg = Array.isArray(detail) ? detail.map(e => e.msg || e).join(', ') : detail;
+                this.toast(msg, 'error');
+            } else {
+                this.toast('Error: ' + detail, 'error');
+            }
+        }
+    },
+
+    // ── Actions ──
+    async toggleJob(jobId) {
+        const resp = await fetch(`/api/cron/jobs/${jobId}/toggle`, { method: 'POST' });
+        if (resp.ok) {
+            const job = await resp.json();
+            const card = document.getElementById('job-card-' + jobId);
+            if (card) {
+                card.classList.toggle('disabled', !job.enabled);
+            }
+        } else {
+            this.toast('Failed to toggle job', 'error');
+        }
+    },
+
+    async runJob(jobId) {
+        this.closeAllMenus();
+        const resp = await fetch(`/api/cron/jobs/${jobId}/run`, { method: 'POST' });
+        if (resp.ok) {
+            this.toast('Job triggered', 'success');
+        } else {
+            this.toast('Failed to trigger job', 'error');
+        }
+    },
+
+    async deleteJob(jobId) {
+        this.closeAllMenus();
+        if (!confirm(`Delete job "${jobId}"? This will remove the job and all its logs.`)) return;
+
+        const resp = await fetch(`/api/cron/jobs/${jobId}`, { method: 'DELETE' });
+        if (resp.ok || resp.status === 204) {
+            const card = document.getElementById('job-card-' + jobId);
+            if (card) {
+                card.style.transition = 'opacity 0.3s';
+                card.style.opacity = '0';
+                setTimeout(() => {
+                    card.remove();
+                    // Show empty state if no jobs left
+                    const list = document.getElementById('cron-job-list');
+                    if (list && list.children.length === 0) {
+                        location.reload();
+                    }
+                }, 300);
+            }
+            this.toast('Job deleted', 'success');
+        } else {
+            this.toast('Failed to delete job', 'error');
+        }
+    },
+
+    // ── Logs ──
+    async toggleLogs(jobId) {
+        this.closeAllMenus();
+        const el = document.getElementById('logs-' + jobId);
+        if (!el) return;
+
+        if (el.classList.contains('open')) {
+            el.classList.remove('open');
+            return;
+        }
+
+        el.classList.add('open');
+        await this.loadLogs(jobId);
+    },
+
+    async loadLogs(jobId) {
+        const listEl = document.getElementById('log-list-' + jobId);
+        if (!listEl) return;
+
+        const resp = await fetch(`/api/cron/jobs/${jobId}/logs`);
+        if (!resp.ok) {
+            listEl.innerHTML = '<div style="color:var(--accent-red);font-size:12px;padding:8px 0;">Failed to load logs</div>';
+            return;
+        }
+
+        const entries = await resp.json();
+        if (entries.length === 0) {
+            listEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:8px 0;">No executions yet</div>';
+            return;
+        }
+
+        listEl.innerHTML = entries.map((entry, i) => {
+            const isError = entry.exit_code !== 0;
+            const ts = entry.timestamp ? formatDateTime(entry.timestamp) : '—';
+            const dur = entry.duration_seconds != null ? formatDuration(entry.duration_seconds) : '—';
+            const cost = entry.cost_usd != null ? formatCost(entry.cost_usd) : '—';
+            const icon = isError ? '<span style="color:var(--accent-red)">&#10007;</span>' : '<span style="color:var(--accent-green)">&#10003;</span>';
+
+            return `<div class="log-entry" onclick="Cron.loadLogDetail('${jobId}', '${entry.timestamp || ''}')">
+                <span class="log-time">${ts}</span>
+                <span class="log-duration">${dur}</span>
+                <span class="log-cost">${cost}</span>
+                <span class="log-status">${icon}</span>
+            </div>`;
+        }).join('');
+    },
+
+    async loadLogDetail(jobId, timestamp) {
+        const outputEl = document.getElementById('log-output-' + jobId);
+        if (!outputEl) return;
+
+        if (outputEl.classList.contains('open') && outputEl.dataset.ts === timestamp) {
+            outputEl.classList.remove('open');
+            return;
+        }
+
+        outputEl.dataset.ts = timestamp;
+        outputEl.querySelector('pre').textContent = 'Loading...';
+        outputEl.classList.add('open');
+
+        const resp = await fetch(`/api/cron/jobs/${jobId}/logs/${encodeURIComponent(timestamp)}`);
+        if (!resp.ok) {
+            outputEl.querySelector('pre').textContent = 'Failed to load log detail';
+            return;
+        }
+
+        const data = await resp.json();
+        let text = data.output || '(no output)';
+        if (data.output_truncated) text += '\n\n[Output truncated at 100KB]';
+        outputEl.querySelector('pre').textContent = text;
+    },
+
+    // ── Schedule validation ──
+    debounceValidate() {
+        clearTimeout(this._validateTimer);
+        this._validateTimer = setTimeout(() => this.validateSchedule(), 400);
+    },
+
+    async validateSchedule() {
+        const schedule = document.getElementById('field-schedule').value.trim();
+        const preview = document.getElementById('schedule-preview');
+        if (!preview) return;
+
+        if (!schedule) {
+            preview.style.display = 'none';
+            return;
+        }
+
+        const resp = await fetch('/api/cron/validate-schedule', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ schedule }),
+        });
+
+        const data = await resp.json();
+        preview.style.display = 'block';
+
+        if (data.valid) {
+            const runs = data.next_runs.map(r => formatDateTimeFull(r)).join(', ');
+            preview.className = 'schedule-preview valid';
+            preview.textContent = data.human + ' — next: ' + runs;
+        } else {
+            preview.className = 'schedule-preview invalid';
+            preview.textContent = data.error || 'Invalid cron expression';
+        }
+    },
+
+    // ── Action menu ──
+    toggleMenu(btn) {
+        const dropdown = btn.nextElementSibling;
+        const wasOpen = dropdown.classList.contains('open');
+        this.closeAllMenus();
+        if (!wasOpen) dropdown.classList.add('open');
+    },
+
+    closeAllMenus() {
+        document.querySelectorAll('.action-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+    },
+
+    // ── Toast ──
+    toast(message, type = 'success') {
+        const container = document.getElementById('cron-toast-container');
+        const toast = document.createElement('div');
+        toast.className = 'cron-toast ' + type;
+        toast.textContent = message;
+        container.appendChild(toast);
+        setTimeout(() => { toast.style.opacity = '0'; }, 2500);
+        setTimeout(() => { toast.remove(); }, 3000);
+    },
+};
+
+// Close menus on outside click
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.action-menu')) {
+        Cron.closeAllMenus();
+    }
+});
+
+// Discord checkbox toggle
+document.addEventListener('DOMContentLoaded', () => {
+    const discordEnabled = document.getElementById('field-discord-enabled');
+    const discordHint = document.getElementById('discord-default-hint');
+    const discordChannelGroup = document.getElementById('discord-channel-group');
+    const discordShowOverride = document.getElementById('discord-show-override');
+
+    if (discordEnabled) {
+        discordEnabled.addEventListener('change', () => {
+            if (discordEnabled.checked) {
+                // Show hint, hide override by default
+                if (discordHint) discordHint.style.display = 'block';
+                if (discordChannelGroup) discordChannelGroup.style.display = 'none';
+            } else {
+                if (discordHint) discordHint.style.display = 'none';
+                if (discordChannelGroup) discordChannelGroup.style.display = 'none';
+            }
+        });
+    }
+    if (discordShowOverride) {
+        discordShowOverride.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (discordHint) discordHint.style.display = 'none';
+            if (discordChannelGroup) discordChannelGroup.style.display = 'block';
+        });
+    }
+
+    // Populate relative times
+    document.querySelectorAll('.job-next-run').forEach(el => {
+        const iso = el.dataset.iso;
+        if (iso) el.textContent = timeAgo(iso).replace(' ago', '').replace('just now', 'now');
+    });
+    document.querySelectorAll('.job-last-run').forEach(el => {
+        const iso = el.dataset.iso;
+        if (iso) el.textContent = timeAgo(iso);
+    });
+});
+</script>
+{% endblock %}

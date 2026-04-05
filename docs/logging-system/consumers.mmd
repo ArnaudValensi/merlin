@@ -1,0 +1,40 @@
+flowchart LR
+    subgraph Storage["Log Files"]
+        EL["engine-log.jsonl"]
+        RS["logs/raw-sessions/*.jsonl"]
+        CLG["cron-logs/job/*.json"]
+        ML["merlin.log"]
+        SS["sessions/*.jsonl"]
+    end
+
+    subgraph Dashboard["Dashboard Pages"]
+        BO["Bot Overview\n/bot\n(health cards)"]
+        BP["Bot Performance\n/bot/performance\n(charts)"]
+        BLG["Bot Logs\n/bot/logs\n(event tables)"]
+        SV["Session Viewer\n/session/{file}\n(full transcript)"]
+        CD["Cron Dashboard\n/cron\n(history, crashes)"]
+    end
+
+    subgraph Internal["Internal"]
+        ER["Engine resume\n(rebuild history\nfor --resume)"]
+        DBG["Manual debugging\n(SSH + read)"]
+    end
+
+    EL --> BO
+    EL --> BP
+    EL --> BLG
+    EL --> CD
+
+    RS --> SV
+
+    CLG --> CD
+
+    SS --> ER
+
+    ML --> DBG
+
+    style EL fill:#1e3a2f,stroke:#4ade80
+    style RS fill:#1e3a2f,stroke:#4ade80
+    style CLG fill:#1e2d4a,stroke:#60a5fa
+    style SS fill:#1e2d4a,stroke:#60a5fa
+    style ML fill:#1e3a2f,stroke:#4ade80

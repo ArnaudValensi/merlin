@@ -1,0 +1,1001 @@
+"""
+Merlin — Portable mobile dev environment.
+
+Launch on any Linux machine to get a web-based development environment
+accessible from anywhere via Cloudflare tunnel.
+
+Core modules: File browser, Terminal, Commit browser, Notes editor.
+Apps: Optional plugins (e.g., merlin-bot) that add pages to the sidebar.
+
+Usage:
+    uv run main.py                    # Start on port 3123, CWD = current dir
+    uv run main.py --port 8080        # Custom port
+    uv run main.py --no-tunnel        # Local access only (no Cloudflare tunnel)
+    uv run main.py --host 127.0.0.1   # Bind to localhost only
+"""
+
+import argparse
+import asyncio
+import json
+import logging
+import os
+import secrets
+import shutil
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from urllib.parse import quote
+
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+import paths
+
+PROJECT_ROOT = paths.app_dir()
+STATIC_DIR = PROJECT_ROOT / "static"
+TEMPLATES_DIR = PROJECT_ROOT / "templates"
+MERLIN_BOT_DIR = PROJECT_ROOT / "merlin-bot"
+
+# Add project root and lib/ to sys.path for module imports
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "lib"))
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+load_dotenv(paths.config_path())
+load_dotenv(paths.bot_config_path())  # Bot-specific vars (Discord token, etc.)
+
+DASHBOARD_USER = os.getenv("DASHBOARD_USER", "admin")
+DASHBOARD_PASS = os.getenv("DASHBOARD_PASS", "")
+TUNNEL_ENABLED = os.getenv("TUNNEL_ENABLED", "true").lower() in ("true", "1", "yes")
+TUNNEL_TOKEN = os.getenv("TUNNEL_TOKEN", "")
+TUNNEL_HOSTNAME = os.getenv("TUNNEL_HOSTNAME", "")
+MERLIN_SAAS_TOKEN = os.getenv("MERLIN_SAAS_TOKEN", "")
+MERLIN_SAAS_API = os.getenv("MERLIN_SAAS_API", "https://merlincloud.dev")
+
+# CWD = where the user launched main.py
+CWD = Path.cwd().resolve()
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("merlin")
+
+
+def _setup_logging() -> None:
+    """Configure the unified merlin.* logger hierarchy with rotating file handler."""
+    if logger.handlers:
+        return  # Already configured
+    from logging.handlers import RotatingFileHandler
+
+    log_dir = paths.logs_dir()
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+    file_handler = RotatingFileHandler(
+        log_dir / "merlin.log", maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+    )
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)-8s [%(name)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    )
+    logger.addHandler(file_handler)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(console_handler)
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+
+from auth import (
+    _AuthRedirect,
+    _SaaSAuthRedirect,
+    configure as configure_auth,
+    require_auth,
+    set_auth_cookie,
+    clear_auth_cookie,
+)
+
+configure_auth(DASHBOARD_PASS)
+
+# ---------------------------------------------------------------------------
+# Nav items
+# ---------------------------------------------------------------------------
+
+# Icons (Lucide SVGs)
+ICON_FILES = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>'
+ICON_TERMINAL = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>'
+ICON_COMMITS = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><line x1="12" y1="3" x2="12" y2="9"/><line x1="12" y1="15" x2="12" y2="21"/></svg>'
+ICON_NOTES = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><rect x="6" y="2" width="16" height="20" rx="2"/><path d="M10 8h8"/><path d="M10 12h8"/><path d="M10 16h8"/></svg>'
+ICON_EXTENSIONS = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.315 8.685a.98.98 0 0 1 .837-.276c.47.07.802.48.968.925a2.501 2.501 0 1 0 3.214-3.214c-.446-.166-.855-.497-.925-.968a.979.979 0 0 1 .276-.837l1.61-1.61a2.404 2.404 0 0 1 1.705-.707c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>'
+
+ICON_CRON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'
+
+CORE_NAV_ITEMS = [
+    {"url": "/files", "icon": ICON_FILES, "label": "Files"},
+    {"url": "/terminal", "icon": ICON_TERMINAL, "label": "Terminal"},
+    {"url": "/commits", "icon": ICON_COMMITS, "label": "Commits"},
+    {"url": "/cron", "icon": ICON_CRON, "label": "Cron"},
+]
+
+# Extensions nav item — always visible, appended after all extension nav items
+EXTENSIONS_NAV_ITEM = {"url": "/extensions", "icon": ICON_EXTENSIONS, "label": "Extensions"}
+
+# Will be extended by extensions
+nav_items: list[dict] = list(CORE_NAV_ITEMS)
+show_bot_status: bool = False
+
+# Optional dependency availability (set by _check_optional_deps)
+TMUX_AVAILABLE: bool = True
+
+# fd binary name (fdfind on Ubuntu/Debian, fd elsewhere) — set by _check_fd()
+FD_BINARY: str = ""
+
+# ---------------------------------------------------------------------------
+# Extension system
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ExtensionInfo:
+    id: str                          # Folder name (e.g., "video-scenes")
+    tier: str                        # "core" | "built-in" | "installed"
+    enabled: bool                    # User's choice (or default)
+    loaded: bool                     # Successfully imported?
+    error: str | None                # Import/validate error message
+    meta: dict = field(default_factory=dict)
+    has_start: bool = False          # Has async start() hook
+    has_tunnel_hook: bool = False    # Has on_tunnel_url() hook
+    module: object | None = None     # The imported module (if loaded)
+
+
+extension_registry: dict[str, ExtensionInfo] = {}
+
+# Built-in extension defaults (hardcoded, not declared by extensions)
+BUILT_IN_DEFAULTS: dict[str, bool] = {"notes": True, "merlin-bot": False}
+
+
+def _load_extensions_state() -> dict:
+    """Read extensions.json. Returns {} if file missing or invalid."""
+    state_path = paths.extensions_state_path()
+    if not state_path.exists():
+        return {}
+    try:
+        data = json.loads(state_path.read_text())
+        if isinstance(data, dict):
+            return data
+        return {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_extensions_state(state: dict) -> None:
+    """Write extensions.json."""
+    state_path = paths.extensions_state_path()
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, indent=2) + "\n")
+
+
+def _resolve_enabled(ext_id: str, tier: str, state: dict) -> bool:
+    """Determine if an extension is enabled.
+
+    Priority: explicit state > built-in defaults > installed default (True).
+    Core extensions are always enabled regardless of state.
+    """
+    if tier == "core":
+        return True
+    if ext_id in state:
+        return bool(state[ext_id])
+    if tier == "built-in":
+        return BUILT_IN_DEFAULTS.get(ext_id, True)
+    # Installed extensions default to enabled
+    return True
+
+# ---------------------------------------------------------------------------
+# FastAPI app
+# ---------------------------------------------------------------------------
+
+app = FastAPI(title="Merlin", docs_url=None, redoc_url=None)
+
+
+class NoCacheStaticMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+
+app.add_middleware(NoCacheStaticMiddleware)
+
+_http_logger = logging.getLogger("merlin.http")
+
+
+class ErrorLoggingMiddleware(BaseHTTPMiddleware):
+    """Log non-2xx/3xx HTTP responses for debugging."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if response.status_code >= 400:
+            _http_logger.warning(
+                "%s %s → %d", request.method, request.url.path, response.status_code
+            )
+        return response
+
+
+app.add_middleware(ErrorLoggingMiddleware)
+
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+def _template_context(request: Request, **extra) -> dict:
+    """Build template context with nav items included."""
+    return {
+        "request": request,
+        "nav_items": nav_items,
+        "show_bot_status": show_bot_status,
+        "extensions_error_count": _extensions_with_errors,
+        **extra,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Auth routes
+# ---------------------------------------------------------------------------
+
+
+@app.exception_handler(_AuthRedirect)
+async def _auth_redirect_handler(request: Request, exc: _AuthRedirect):
+    return RedirectResponse(url=f"/login?next={quote(exc.next_url)}", status_code=303)
+
+
+@app.exception_handler(_SaaSAuthRedirect)
+async def _saas_auth_redirect_handler(request: Request, exc: _SaaSAuthRedirect):
+    return RedirectResponse(url="https://merlincloud.dev", status_code=303)
+
+
+def _safe_next_url(url: str) -> str:
+    """Sanitize ?next= redirect target to prevent open redirects."""
+    if url and url.startswith("/") and not url.startswith("//"):
+        return url
+    return "/files"
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, next: str = "/files", error: str = ""):
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "next_url": _safe_next_url(next),
+        "error": error,
+    })
+
+
+@app.post("/login")
+def login_submit(
+    request: Request,
+    password: str = Form(...),
+    next: str = Form("/files"),
+):
+    safe_next = _safe_next_url(next)
+
+    if not DASHBOARD_PASS:
+        return RedirectResponse(url=safe_next, status_code=303)
+
+    if not secrets.compare_digest(password.encode(), DASHBOARD_PASS.encode()):
+        return templates.TemplateResponse("login.html", {
+            "request": request,
+            "next_url": safe_next,
+            "error": "Wrong password",
+        }, status_code=401)
+
+    secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    response = RedirectResponse(url=safe_next, status_code=303)
+    set_auth_cookie(response, DASHBOARD_USER, DASHBOARD_PASS, secure=secure)
+    return response
+
+
+@app.get("/logout")
+def logout():
+    response = RedirectResponse(url="/login", status_code=303)
+    clear_auth_cookie(response)
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Root redirect
+# ---------------------------------------------------------------------------
+
+
+@app.get("/", response_class=RedirectResponse)
+def root(_auth=Depends(require_auth)):
+    return RedirectResponse(url="/terminal")
+
+
+# ---------------------------------------------------------------------------
+# SaaS proxy: /api/environments
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/environments")
+async def api_environments(_auth=Depends(require_auth)):
+    """Proxy environment list from the portal API (avoids CORS)."""
+    if not MERLIN_SAAS_TOKEN:
+        return []
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{MERLIN_SAAS_API}/api/environments",
+                headers={"Authorization": f"Bearer {MERLIN_SAAS_TOKEN}"},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Extensions API
+# ---------------------------------------------------------------------------
+
+
+@app.get("/extensions", response_class=HTMLResponse)
+def extensions_page(request: Request, _auth=Depends(require_auth)):
+    """Extensions management page."""
+    exts = _build_extensions_list()
+    return templates.TemplateResponse("extensions.html", _template_context(request, extensions=exts))
+
+
+@app.get("/api/extensions")
+def api_extensions(_auth=Depends(require_auth)):
+    """List all extensions with status."""
+    return _build_extensions_list()
+
+
+@app.post("/api/extensions/{ext_id}/toggle")
+def api_toggle_extension(ext_id: str, _auth=Depends(require_auth)):
+    """Toggle an extension's enabled state."""
+    from fastapi.responses import JSONResponse
+    info = extension_registry.get(ext_id)
+    if not info:
+        return JSONResponse({"detail": "Extension not found"}, status_code=404)
+    if info.tier == "core":
+        return JSONResponse({"detail": "Core extensions cannot be toggled"}, status_code=400)
+
+    state = _load_extensions_state()
+    new_enabled = not info.enabled
+    state[ext_id] = new_enabled
+    _save_extensions_state(state)
+    info.enabled = new_enabled  # Update in-memory state for consistent API
+    return {"id": ext_id, "enabled": new_enabled}
+
+
+def _read_config_env() -> dict[str, str]:
+    """Read config.env into a dict."""
+    cfg_path = paths.config_path()
+    result = {}
+    if cfg_path.exists():
+        for line in cfg_path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                result[k.strip()] = v.strip()
+    return result
+
+
+def _write_config_env(data: dict[str, str]) -> None:
+    """Write dict to config.env with 0600 permissions."""
+    cfg_path = paths.config_path()
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text("\n".join(f"{k}={v}" for k, v in data.items()) + "\n")
+    cfg_path.chmod(0o600)
+
+
+@app.post("/api/extensions/{ext_id}/config")
+async def api_save_extension_config(ext_id: str, request: Request, _auth=Depends(require_auth)):
+    """Save extension config fields to config.env."""
+    from fastapi.responses import JSONResponse
+    info = extension_registry.get(ext_id)
+    if not info:
+        return JSONResponse({"detail": "Extension not found"}, status_code=404)
+
+    # Only allow keys declared in the extension's config_fields
+    allowed_keys = set()
+    if info.meta.get("config_fields"):
+        allowed_keys = {f["key"] for f in info.meta["config_fields"]}
+
+    body = await request.json()
+    existing = _read_config_env()
+    for key, value in body.items():
+        if key not in allowed_keys:
+            continue
+        if value:
+            existing[key] = value
+        else:
+            existing.pop(key, None)
+    _write_config_env(existing)
+
+    masked = {key: ("***" if existing.get(key, "") else "") for key in body if key in allowed_keys}
+    return {"ok": True, "values": masked}
+
+
+@app.post("/api/restart")
+def api_restart(_auth=Depends(require_auth)):
+    """Restart Merlin via restart.sh."""
+    import subprocess
+    restart_script = paths.app_dir() / "restart.sh"
+    if restart_script.exists():
+        subprocess.Popen(["bash", str(restart_script)], start_new_session=True)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Settings API
+# ---------------------------------------------------------------------------
+
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request, _auth=Depends(require_auth)):
+    """Settings page."""
+    cfg = _read_config_env()
+    return templates.TemplateResponse("settings.html", _template_context(
+        request,
+        openai_key_set=bool(cfg.get("OPENAI_API_KEY")),
+    ))
+
+
+@app.get("/api/settings")
+def api_get_settings(_auth=Depends(require_auth)):
+    """Current settings state — booleans + masked values, never raw secrets."""
+    cfg = _read_config_env()
+
+    # Engine info
+    from lib.engine import _registry, get_engine
+    engine_name = cfg.get("AGENT_ENGINE", "claude-code")
+    try:
+        engine = get_engine(engine_name)
+        engine_valid = engine.validate() is None
+    except ValueError:
+        engine_valid = False
+
+    return {
+        "password_set": bool(cfg.get("DASHBOARD_PASS")),
+        "openai_key_set": bool(cfg.get("OPENAI_API_KEY")),
+        "agent_engine": engine_name,
+        "agent_engine_valid": engine_valid,
+        "available_engines": sorted(_registry.keys()),
+    }
+
+
+@app.post("/api/settings")
+async def api_save_settings(request: Request, _auth=Depends(require_auth)):
+    """Update settings in config.env."""
+    body = await request.json()
+    cfg = _read_config_env()
+
+    password_changed = False
+    for key, value in body.items():
+        if key not in ("DASHBOARD_PASS", "OPENAI_API_KEY", "AGENT_ENGINE"):
+            continue
+        if value:
+            if key == "DASHBOARD_PASS" and cfg.get(key) != value:
+                password_changed = True
+            cfg[key] = value
+        elif key != "AGENT_ENGINE":
+            # Don't delete AGENT_ENGINE when empty — it has a default
+            cfg.pop(key, None)
+
+    _write_config_env(cfg)
+
+    # Reconfigure auth if password changed
+    if password_changed:
+        configure_auth(cfg.get("DASHBOARD_PASS", ""))
+
+    return {
+        "ok": True,
+        "password_set": bool(cfg.get("DASHBOARD_PASS")),
+        "openai_key_set": bool(cfg.get("OPENAI_API_KEY")),
+        "restart_required": password_changed,
+    }
+
+
+def _build_extensions_list() -> list[dict]:
+    """Build extension list for API/template use."""
+    config_env = _read_config_env()
+    result = []
+    for info in extension_registry.values():
+        # Get first nav icon if available
+        nav_icon = None
+        if info.module and hasattr(info.module, "NAV_ITEMS"):
+            items = info.module.NAV_ITEMS
+            if items:
+                nav_icon = items[0].get("icon")
+
+        meta = dict(info.meta)
+        # Enrich config_fields with current values from config.env
+        if "config_fields" in meta:
+            enriched = []
+            for field in meta["config_fields"]:
+                field = dict(field)
+                value = config_env.get(field["key"], "")
+                field["has_value"] = bool(value)
+                if field.get("secret") and value:
+                    field["current_value"] = "••••••••"
+                else:
+                    field["current_value"] = value
+                # Resolve dynamic placeholder from callable
+                placeholder_fn = field.pop("placeholder_fn", None)
+                if callable(placeholder_fn) and not field.get("placeholder"):
+                    field["placeholder"] = placeholder_fn()
+                enriched.append(field)
+            meta["config_fields"] = enriched
+
+        ext_data = {
+            "id": info.id,
+            "tier": info.tier,
+            "enabled": info.enabled,
+            "loaded": info.loaded,
+            "error": info.error,
+            "meta": meta,
+            "nav_icon": nav_icon,
+        }
+        result.append(ext_data)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Core modules
+# ---------------------------------------------------------------------------
+
+from files import router as files_router, FILES_STATIC_DIR
+from files.routes import set_cwd as files_set_cwd
+from commits import router as commits_router, COMMITS_STATIC_DIR
+from commits.routes import set_startup_cwd as commits_set_startup_cwd
+from terminal import router as terminal_router
+from terminal.routes import set_cwd as terminal_set_cwd
+
+# Pass CWD to modules
+files_set_cwd(str(CWD))
+terminal_set_cwd(str(CWD))
+commits_set_startup_cwd(str(CWD))
+
+app.include_router(files_router, dependencies=[Depends(require_auth)])
+app.include_router(commits_router, dependencies=[Depends(require_auth)])
+app.include_router(terminal_router)  # WebSocket auth handled internally
+
+# Cron API + page
+from cron.routes import cron_page_router, cron_router
+app.include_router(cron_router, dependencies=[Depends(require_auth)])
+app.include_router(cron_page_router, dependencies=[Depends(require_auth)])
+
+# Module statics BEFORE general static (more specific path first)
+app.mount("/static/files", StaticFiles(directory=str(FILES_STATIC_DIR)), name="files-static")
+app.mount("/static/commits", StaticFiles(directory=str(COMMITS_STATIC_DIR)), name="commits-static")
+
+# Register core modules in extension registry
+extension_registry["files"] = ExtensionInfo(
+    id="files", tier="core", enabled=True, loaded=True, error=None,
+    meta={"name": "Files", "description": "File browser with code viewer"},
+)
+extension_registry["terminal"] = ExtensionInfo(
+    id="terminal", tier="core", enabled=True, loaded=True, error=None,
+    meta={"name": "Terminal", "description": "Web terminal (tmux)"},
+)
+extension_registry["commits"] = ExtensionInfo(
+    id="commits", tier="core", enabled=True, loaded=True, error=None,
+    meta={"name": "Commits", "description": "Git commit browser with diffs"},
+)
+
+# ---------------------------------------------------------------------------
+# Extension loader (built-in + installed)
+# ---------------------------------------------------------------------------
+
+_extensions_with_errors: int = 0
+_ext_state = _load_extensions_state()
+
+
+def _load_extension(ext_id: str, tier: str, module_loader, static_name: str | None = None) -> None:
+    """Load a single extension into the registry and wire it up if enabled."""
+    global _extensions_with_errors, show_bot_status
+
+    enabled = _resolve_enabled(ext_id, tier, _ext_state)
+
+    if not enabled:
+        extension_registry[ext_id] = ExtensionInfo(
+            id=ext_id, tier=tier, enabled=False, loaded=False, error=None,
+        )
+        logger.info(f"Extension disabled: {ext_id}")
+        return
+
+    try:
+        mod = module_loader()
+    except Exception as e:
+        _extensions_with_errors += 1
+        extension_registry[ext_id] = ExtensionInfo(
+            id=ext_id, tier=tier, enabled=True, loaded=False, error=str(e),
+        )
+        logger.warning(f"Extension {ext_id} failed to load: {e}")
+        return
+
+    # Inject a properly namespaced logger so extensions get it for free
+    if not hasattr(mod, "logger"):
+        from merlin_ext import get_logger as _ext_logger
+        mod.logger = _ext_logger(ext_id)
+
+    # Wire up router + statics
+    app.include_router(mod.router, dependencies=[Depends(require_auth)])
+    static_dir = getattr(mod, "STATIC_DIR", None)
+    if static_dir:
+        mount_name = static_name or ext_id
+        app.mount(f"/static/{mount_name}", StaticFiles(directory=str(static_dir)), name=f"{mount_name}-static")
+
+    # Collect nav items
+    ext_nav = getattr(mod, "NAV_ITEMS", [])
+    if ext_nav:
+        nav_items.extend(ext_nav)
+
+    # Track bot status
+    if ext_id == "merlin-bot":
+        show_bot_status = True
+
+    # Build metadata
+    meta = getattr(mod, "EXTENSION_META", {})
+    if not meta.get("name"):
+        meta["name"] = ext_id.replace("-", " ").title()
+
+    info = ExtensionInfo(
+        id=ext_id,
+        tier=tier,
+        enabled=True,
+        loaded=True,
+        error=None,
+        meta=meta,
+        has_start=hasattr(mod, "start"),
+        has_tunnel_hook=hasattr(mod, "on_tunnel_url"),
+        module=mod,
+    )
+    extension_registry[ext_id] = info
+    logger.info(f"Extension loaded: {ext_id}")
+
+
+# --- Built-in: Notes ---
+def _load_notes():
+    import notes as _mod
+    _mod.STATIC_DIR = _mod.NOTES_STATIC_DIR  # Normalize to STATIC_DIR for the loader
+    return _mod
+
+_load_extension("notes", "built-in", _load_notes)
+
+# --- Built-in: Merlin Bot ---
+# merlin-bot/ must be on sys.path regardless of enabled state (transcribe.py lives there)
+sys.path.insert(0, str(MERLIN_BOT_DIR))
+
+def _load_bot():
+    import merlin_bot as _bot
+    return _bot
+
+_load_extension("merlin-bot", "built-in", _load_bot, static_name="merlin-app")
+
+# --- Installed extensions (~/.merlin/extensions/) ---
+EXTENSIONS_DIR = paths.extensions_dir()
+
+if EXTENSIONS_DIR.is_dir():
+    for ext_dir in sorted(EXTENSIONS_DIR.iterdir()):
+        if not ext_dir.is_dir():
+            continue
+        ext_name = ext_dir.name
+
+        def _make_loader(d=ext_dir, n=ext_name):
+            def _loader():
+                sys.path.insert(0, str(d))
+                return __import__(n.replace("-", "_"))
+            return _loader
+
+        _load_extension(ext_name, "installed", _make_loader())
+
+# Extensions nav item — always last in nav, before sidebar footer
+nav_items.append(EXTENSIONS_NAV_ITEM)
+
+# General static mount (must be last)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+# ---------------------------------------------------------------------------
+# Inject nav_items into all template responses
+# ---------------------------------------------------------------------------
+
+from starlette.routing import Route, Mount
+
+
+def _patch_template_responses():
+    """Patch all Jinja2Templates instances to include nav_items in context."""
+    # Override the Jinja2Templates render to inject nav_items
+    import functools
+
+    original_response = Jinja2Templates.TemplateResponse
+
+    @functools.wraps(original_response)
+    def patched_response(self, *args, **kwargs):
+        # Handle both old-style (name, context) and new-style (request, name) calls
+        defaults = {
+            "nav_items": nav_items,
+            "show_bot_status": show_bot_status,
+            "saas_mode": bool(MERLIN_SAAS_TOKEN),
+            "saas_api_url": MERLIN_SAAS_API,
+            "extensions_error_count": _extensions_with_errors,
+        }
+        # Old-style: TemplateResponse(name_str, {context_with_request})
+        # New Starlette expects: TemplateResponse(request, name, context=...)
+        if args and isinstance(args[0], str):
+            name = args[0]
+            context = args[1] if len(args) >= 2 and isinstance(args[1], dict) else kwargs.pop("context", None) or {}
+            request_obj = context.pop("request", None)
+            for k, v in defaults.items():
+                context.setdefault(k, v)
+            if request_obj is not None:
+                extra = {k: v for k, v in kwargs.items() if k != "context"}
+                return original_response(self, request_obj, name, context=context, **extra)
+            context["request"] = request_obj
+            return original_response(self, *args, **kwargs)
+        # New-style: inject defaults into context kwarg
+        if "context" in kwargs and isinstance(kwargs["context"], dict):
+            for k, v in defaults.items():
+                kwargs["context"].setdefault(k, v)
+        return original_response(self, *args, **kwargs)
+
+    Jinja2Templates.TemplateResponse = patched_response
+
+
+_patch_template_responses()
+
+
+# ---------------------------------------------------------------------------
+# Startup
+# ---------------------------------------------------------------------------
+
+
+def _detect_pkg_manager() -> str:
+    """Detect the system package manager."""
+    for mgr in ("apt", "pacman", "brew"):
+        if shutil.which(mgr):
+            return mgr
+    return ""
+
+
+def _install_cmd(pkg: str) -> str:
+    """Return the install command for a package on the detected package manager."""
+    mgr = _detect_pkg_manager()
+    cmds = {
+        "apt": f"sudo apt install -y {pkg}",
+        "pacman": f"sudo pacman -S --noconfirm {pkg}",
+        "brew": f"brew install {pkg}",
+    }
+    return cmds.get(mgr, f"install {pkg} using your package manager")
+
+
+def _check_fd() -> None:
+    """Check that fd is installed. Hard requirement — exit if missing."""
+    global FD_BINARY
+    fd = shutil.which("fdfind") or shutil.which("fd")
+    if not fd:
+        print(
+            "Error: fd is not installed\n"
+            "\n"
+            "    Ubuntu/Debian:  sudo apt install fd-find\n"
+            "    Other systems:  https://github.com/sharkdp/fd",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    FD_BINARY = Path(fd).name
+
+
+def _check_optional_deps(tunnel_enabled: bool) -> None:
+    """Check optional dependencies and set up graceful degradation."""
+    global TMUX_AVAILABLE, TUNNEL_ENABLED
+
+    if not shutil.which("tmux"):
+        TMUX_AVAILABLE = False
+        cmd = _install_cmd("tmux")
+        logger.warning("tmux not found — terminal disabled (install: %s)", cmd)
+        # Mark terminal nav item as disabled
+        for item in nav_items:
+            if item.get("url") == "/terminal":
+                item["disabled"] = True
+                item["tooltip"] = f"tmux required — install: {cmd}"
+
+    if tunnel_enabled and not shutil.which("cloudflared"):
+        cmd = _install_cmd("cloudflared")
+        logger.warning("cloudflared not found — tunnel disabled (install: %s)", cmd)
+        TUNNEL_ENABLED = False
+
+
+def _disable_bot_extension() -> None:
+    """Disable the bot extension at runtime (e.g. missing Discord config)."""
+    global show_bot_status
+    show_bot_status = False
+    bot_info = extension_registry.get("merlin-bot")
+    if bot_info and bot_info.module:
+        # Collect bot nav URLs before clearing
+        bot_nav_urls = {item.get("url") for item in getattr(bot_info.module, "NAV_ITEMS", [])}
+        nav_items[:] = [i for i in nav_items if i.get("url") not in bot_nav_urls]
+        bot_info.enabled = False
+        bot_info.loaded = False
+        bot_info.module = None
+
+
+def _validate_config(tunnel_enabled: bool) -> None:
+    """Validate required configuration. Fails fast with a helpful message."""
+    global DASHBOARD_PASS
+    env_path = paths.config_path()
+    errors: list[str] = []
+
+    if not env_path.exists() and not MERLIN_SAAS_TOKEN:
+        errors.append(
+            f"Config file not found at {env_path}\n"
+            f"  Run the setup wizard to create it:\n"
+            f"    merlin setup"
+        )
+
+    # Fail fast before doing anything else (like generating passwords)
+    if errors:
+        msg = "Configuration error(s):\n\n" + "\n\n".join(f"  {i+1}. {e}" for i, e in enumerate(errors))
+        print(msg, file=sys.stderr)
+        raise SystemExit(1)
+
+    if not DASHBOARD_PASS and tunnel_enabled and not MERLIN_SAAS_TOKEN:
+        generated = secrets.token_urlsafe(12)
+        logger.warning("DASHBOARD_PASS not set — auto-generating password for tunnel security")
+        DASHBOARD_PASS = generated
+        os.environ["DASHBOARD_PASS"] = generated
+        configure_auth(DASHBOARD_PASS)
+        print(f"  Auto-generated login: {DASHBOARD_USER} / {generated}")
+    elif not DASHBOARD_PASS:
+        logger.warning("DASHBOARD_PASS not set — running without auth (local-only is fine)")
+
+    # fd is a hard requirement
+    _check_fd()
+
+    # Check optional deps (warns, doesn't fail)
+    _check_optional_deps(tunnel_enabled)
+
+    # Validate bot config if extension is loaded — degrade gracefully if missing
+    bot_info = extension_registry.get("merlin-bot")
+    if bot_info and bot_info.loaded and bot_info.module:
+        try:
+            bot_info.module.validate()
+        except SystemExit:
+            _disable_bot_extension()
+            logger.warning("Bot disabled — Discord not configured. Run 'merlin setup' to configure.")
+
+
+def start_server(port: int = 3123, host: str = "0.0.0.0", no_tunnel: bool = False) -> None:
+    """Start the Merlin dashboard server. Called by cli.py or main()."""
+    import uvicorn
+
+    _setup_logging()
+
+    # Clean up old log files at startup
+    try:
+        from structured_log import cleanup_old_logs
+        cleanup_old_logs()
+    except Exception:
+        logger.warning("Failed to clean up old logs", exc_info=True)
+
+    if no_tunnel:
+        global TUNNEL_ENABLED
+        TUNNEL_ENABLED = False
+
+    _validate_config(TUNNEL_ENABLED)
+
+    from structured_log import log_event
+    extensions_loaded = [eid for eid, info in extension_registry.items() if info.loaded]
+    log_event("app_started", host=host, port=port, cwd=str(CWD), extensions=extensions_loaded)
+
+    print(f"Merlin starting on http://{host}:{port}")
+    print(f"CWD: {CWD}")
+    bot_info = extension_registry.get("merlin-bot")
+    if bot_info and bot_info.loaded:
+        print("Merlin Bot extension: loaded")
+
+    async def _notify_tunnel_url(url: str) -> None:
+        """Send the tunnel URL to extensions with on_tunnel_url() hooks."""
+        notified = False
+        for info in extension_registry.values():
+            if info.loaded and info.has_tunnel_hook and info.module:
+                try:
+                    await info.module.on_tunnel_url(url)
+                    logger.info("Tunnel URL sent to %s: %s", info.id, url)
+                    notified = True
+                except Exception:
+                    logger.exception("Could not send tunnel URL to %s", info.id)
+        if not notified:
+            logger.info("Tunnel URL: %s (no extensions to notify)", url)
+
+    async def _run():
+        config = uvicorn.Config(app, host=host, port=port, log_level="info")
+        server = uvicorn.Server(config)
+
+        tasks = [asyncio.create_task(server.serve())]
+
+        if MERLIN_SAAS_TOKEN:
+            from saas_tunnel import start_saas_tunnel
+            tasks.append(asyncio.create_task(start_saas_tunnel(
+                token=MERLIN_SAAS_TOKEN,
+                local_port=port,
+            )))
+
+            # Start SSH server in SaaS mode (container-side, localhost only)
+            from ssh_server import start_ssh_server, stop_ssh_server
+            ssh_acceptor = await start_ssh_server()
+
+        elif TUNNEL_ENABLED:
+            from tunnel import start_tunnel
+            tasks.append(asyncio.create_task(start_tunnel(
+                port=port,
+                tunnel_token=TUNNEL_TOKEN,
+                tunnel_hostname=TUNNEL_HOSTNAME,
+                on_url=_notify_tunnel_url,
+            )))
+
+        # Start the cron scheduler (core feature, always runs)
+        import cron
+        await cron.start()
+
+        # Start all extensions with start() hooks
+        for info in extension_registry.values():
+            if info.loaded and info.has_start and info.module:
+                tasks.append(asyncio.create_task(info.module.start()))
+
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            # Cleanup SSH server on shutdown
+            if MERLIN_SAAS_TOKEN:
+                await stop_ssh_server()
+            log_event("app_stopped")
+
+    asyncio.run(_run())
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Merlin — Portable mobile dev environment.",
+        epilog="""
+Examples:
+  uv run main.py                    # Start with defaults
+  uv run main.py --port 8080        # Custom port
+  uv run main.py --no-tunnel        # Local only
+  uv run main.py --host 127.0.0.1   # Localhost only
+
+Environment variables (from .env or shell):
+  DASHBOARD_USER    Auth username (default: admin)
+  DASHBOARD_PASS    Auth password (required for security)
+  TUNNEL_ENABLED    Enable Cloudflare tunnel (default: true)
+  TUNNEL_TOKEN      Named tunnel token (optional)
+  TUNNEL_HOSTNAME   Named tunnel hostname (optional)
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--port", type=int, default=3123, help="Port to serve on (default: 3123)")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)")
+    parser.add_argument("--no-tunnel", action="store_true", help="Disable Cloudflare tunnel")
+    args = parser.parse_args()
+
+    start_server(port=args.port, host=args.host, no_tunnel=args.no_tunnel)
+
+
+if __name__ == "__main__":
+    main()

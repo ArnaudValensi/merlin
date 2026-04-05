@@ -1,0 +1,19 @@
+sequenceDiagram
+    participant T as Trigger<br/>(Discord / Cron)
+    participant E as engine.py<br/>invoke()
+    participant EN as Engine<br/>(Claude Code)
+    participant SS as sessions/<br/>{session_id}.jsonl
+    participant RS as logs/raw-sessions/<br/>{timestamp}.jsonl
+    participant EL as engine-log.jsonl
+
+    T->>E: invoke(prompt, caller, session_id, request_id)
+    E->>EN: engine.invoke(prompt, history)
+    EN-->>E: AgentResult (content, raw_output,<br/>stderr, usage, cost, tool_calls)
+
+    par Write to 3 locations
+        E->>SS: append_turn()<br/>user + assistant + tool_calls
+        E->>RS: _save_session_file()<br/>raw stdout (stream-json)
+        E->>EL: log_event("invocation")<br/>metadata + stderr + request_id
+    end
+
+    E-->>T: AgentResult

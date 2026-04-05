@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Clipboard Diagnostic</title>
+<style>
+  body { background: #1e1e2e; color: #cdd6f4; font-family: monospace; padding: 20px; }
+  h2 { color: #89b4fa; margin-top: 24px; }
+  .log { background: #181825; border: 1px solid #313244; padding: 12px; margin: 8px 0;
+         border-radius: 6px; white-space: pre-wrap; font-size: 13px; max-height: 300px; overflow-y: auto; }
+  button { background: #313244; color: #cdd6f4; border: 1px solid #45475a; padding: 8px 16px;
+           border-radius: 4px; cursor: pointer; margin: 4px; font-family: monospace; }
+  button:hover { background: #45475a; }
+  textarea { background: #181825; color: #cdd6f4; border: 1px solid #313244; padding: 8px;
+             width: 100%; height: 60px; font-family: monospace; border-radius: 4px; }
+  .ok { color: #a6e3a1; }
+  .err { color: #f38ba8; }
+  .warn { color: #fab387; }
+  #log { max-height: 600px; }
+</style>
+</head><body>
+
+<h1>Clipboard Diagnostic — Brave / Wayland</h1>
+<p>Open browser console (F12) for extra details. All results are logged below.</p>
+
+<h2>1. Paste Event Test (Ctrl+V here)</h2>
+<p>Click in the box below, then press Ctrl+V. This shows exactly what the browser gives us.</p>
+<textarea id="paste-target" placeholder="Click here and press Ctrl+V..."></textarea>
+<div id="paste-log" class="log">Waiting for paste event...</div>
+
+<h2>2. Async Clipboard API Tests</h2>
+<p>These buttons test the APIs we use. Each click is a user gesture.</p>
+<button id="btn-readtext">navigator.clipboard.readText()</button>
+<button id="btn-read">navigator.clipboard.read()</button>
+<button id="btn-writetext">navigator.clipboard.writeText("test123")</button>
+<button id="btn-perm">permissions.query('clipboard-read')</button>
+<div id="api-log" class="log">Click a button...</div>
+
+<h2>3. Combined Log</h2>
+<div id="log" class="log"></div>
+
+<script>
+const pasteLog = document.getElementById('paste-log');
+const apiLog = document.getElementById('api-log');
+const log = document.getElementById('log');
+
+function ts() { return new Date().toISOString().slice(11, 23); }
+
+function addLog(target, cls, msg) {
+  const line = document.createElement('div');
+  line.className = cls;
+  line.textContent = `[${ts()}] ${msg}`;
+  target.prepend(line);
+  // Also to combined log
+  const line2 = line.cloneNode(true);
+  log.prepend(line2);
+  console.log(msg);
+}
+
+// ---------------------------------------------------------------
+// 1. Paste event — log EVERYTHING about clipboardData
+// ---------------------------------------------------------------
+document.getElementById('paste-target').addEventListener('paste', (e) => {
+  addLog(pasteLog, '', '--- PASTE EVENT ---');
+
+  // clipboardData existence
+  if (!e.clipboardData) {
+    addLog(pasteLog, 'err', 'e.clipboardData is NULL');
+    return;
+  }
+
+  // getData for common types
+  const textPlain = e.clipboardData.getData('text/plain');
+  const textHtml = e.clipboardData.getData('text/html');
+  const textUri = e.clipboardData.getData('text/uri-list');
+
+  addLog(pasteLog, textPlain ? 'ok' : 'err',
+    `getData('text/plain'): ${textPlain ? JSON.stringify(textPlain.slice(0, 200)) : 'EMPTY'} (length: ${textPlain.length})`);
+  addLog(pasteLog, textHtml ? 'ok' : 'warn',
+    `getData('text/html'): ${textHtml ? JSON.stringify(textHtml.slice(0, 200)) : 'empty'} (length: ${textHtml.length})`);
+
+  // types array
+  addLog(pasteLog, '', `clipboardData.types: ${JSON.stringify(Array.from(e.clipboardData.types))}`);
+
+  // items
+  const items = e.clipboardData.items;
+  if (!items) {
+    addLog(pasteLog, 'err', 'clipboardData.items is NULL');
+  } else {
+    addLog(pasteLog, '', `clipboardData.items.length: ${items.length}`);
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      addLog(pasteLog, item.type.startsWith('image/') ? 'warn' : '',
+        `  item[${i}]: kind=${item.kind}, type=${item.type}`);
+      if (item.kind === 'file') {
+        const file = item.getAsFile();
+        addLog(pasteLog, 'warn',
+          `    getAsFile(): ${file ? `name=${file.name}, size=${file.size}, type=${file.type}` : 'NULL'}`);
+      }
+      if (item.kind === 'string') {
+        item.getAsString((s) => {
+          addLog(pasteLog, '',
+            `    getAsString(): ${JSON.stringify(s.slice(0, 200))} (length: ${s.length})`);
+        });
+      }
+    }
+  }
+
+  // files
+  if (e.clipboardData.files && e.clipboardData.files.length) {
+    addLog(pasteLog, 'warn', `clipboardData.files.length: ${e.clipboardData.files.length}`);
+    for (let i = 0; i < e.clipboardData.files.length; i++) {
+      const f = e.clipboardData.files[i];
+      addLog(pasteLog, 'warn', `  file[${i}]: name=${f.name}, size=${f.size}, type=${f.type}`);
+    }
+  }
+});
+
+// Also listen on document to see if xterm.js would get the same data
+document.addEventListener('paste', (e) => {
+  if (e.target.id === 'paste-target') return; // already handled above
+  addLog(pasteLog, 'warn', '--- PASTE on document (not textarea) ---');
+  const text = e.clipboardData?.getData('text/plain');
+  addLog(pasteLog, text ? 'ok' : 'err', `document paste getData('text/plain'): ${text ? JSON.stringify(text.slice(0, 100)) : 'EMPTY'}`);
+});
+
+// ---------------------------------------------------------------
+// 2. Async API tests
+// ---------------------------------------------------------------
+document.getElementById('btn-readtext').addEventListener('click', async () => {
+  addLog(apiLog, '', '--- readText() ---');
+  try {
+    const text = await navigator.clipboard.readText();
+    addLog(apiLog, 'ok', `readText() OK: ${JSON.stringify(text.slice(0, 200))} (length: ${text.length})`);
+  } catch (err) {
+    addLog(apiLog, 'err', `readText() FAILED: ${err.name}: ${err.message}`);
+  }
+});
+
+document.getElementById('btn-read').addEventListener('click', async () => {
+  addLog(apiLog, '', '--- read() ---');
+  try {
+    const items = await navigator.clipboard.read();
+    addLog(apiLog, 'ok', `read() OK: ${items.length} items`);
+    for (let i = 0; i < items.length; i++) {
+      addLog(apiLog, '', `  item[${i}].types: ${JSON.stringify(items[i].types)}`);
+      for (const t of items[i].types) {
+        try {
+          const blob = await items[i].getType(t);
+          addLog(apiLog, '', `    ${t}: size=${blob.size}`);
+        } catch (e) {
+          addLog(apiLog, 'err', `    ${t}: getType failed: ${e.message}`);
+        }
+      }
+    }
+  } catch (err) {
+    addLog(apiLog, 'err', `read() FAILED: ${err.name}: ${err.message}`);
+  }
+});
+
+document.getElementById('btn-writetext').addEventListener('click', async () => {
+  addLog(apiLog, '', '--- writeText("test123") ---');
+  try {
+    await navigator.clipboard.writeText('test123');
+    addLog(apiLog, 'ok', 'writeText() OK');
+  } catch (err) {
+    addLog(apiLog, 'err', `writeText() FAILED: ${err.name}: ${err.message}`);
+  }
+});
+
+document.getElementById('btn-perm').addEventListener('click', async () => {
+  addLog(apiLog, '', '--- permissions.query ---');
+  try {
+    const status = await navigator.permissions.query({ name: 'clipboard-read' });
+    addLog(apiLog, status.state === 'granted' ? 'ok' : 'warn',
+      `clipboard-read: ${status.state}`);
+  } catch (err) {
+    addLog(apiLog, 'err', `clipboard-read query FAILED: ${err.message}`);
+  }
+  try {
+    const status = await navigator.permissions.query({ name: 'clipboard-write' });
+    addLog(apiLog, status.state === 'granted' ? 'ok' : 'warn',
+      `clipboard-write: ${status.state}`);
+  } catch (err) {
+    addLog(apiLog, 'err', `clipboard-write query FAILED: ${err.message}`);
+  }
+});
+
+addLog(log, '', `User-Agent: ${navigator.userAgent}`);
+addLog(log, '', `Platform: ${navigator.platform}`);
+addLog(log, '', `Clipboard API available: ${!!navigator.clipboard}`);
+addLog(log, '', `readText available: ${!!navigator.clipboard?.readText}`);
+addLog(log, '', `writeText available: ${!!navigator.clipboard?.writeText}`);
+addLog(log, '', `read available: ${!!navigator.clipboard?.read}`);
+</script>
+</body></html>

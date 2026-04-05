@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Settings — Merlin{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="/static/settings.css">
+
+<h1 class="page-title">Settings</h1>
+
+<div class="restart-banner" id="restart-banner">
+    <span class="restart-banner-text">Password changed — restart required to take effect.</span>
+    <button class="restart-btn" onclick="Settings.restart()">Restart</button>
+</div>
+
+<div class="settings-section">
+    <div class="settings-section-title">Authentication</div>
+    <div class="settings-card">
+        {% if saas_mode %}
+        <div class="settings-managed">Authentication is managed by Merlin Cloud.</div>
+        {% else %}
+        <div class="settings-field">
+            <label class="settings-label" for="password-input">Dashboard Password</label>
+            <div class="settings-input-row">
+                <input class="settings-input" id="password-input" name="DASHBOARD_PASS"
+                    type="password" placeholder="Enter password" autocomplete="new-password">
+                <button class="settings-reveal" onclick="Settings.toggleReveal('password-input')" type="button" aria-label="Show password">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+            </div>
+        </div>
+        <button class="settings-save" onclick="Settings.savePassword()">Save</button>
+        <span class="settings-toast" id="toast-password"></span>
+        {% endif %}
+    </div>
+</div>
+
+<div class="settings-section">
+    <div class="settings-section-title">Voice Transcription</div>
+    <div class="settings-card">
+        {% if saas_mode %}
+        <div class="settings-managed">Voice transcription is provided by Merlin Cloud.</div>
+        {% else %}
+        <div class="settings-field">
+            <label class="settings-label" for="openai-input">OpenAI API Key</label>
+            <div class="settings-input-row">
+                <input class="settings-input" id="openai-input" name="OPENAI_API_KEY"
+                    type="password" placeholder="sk-..." autocomplete="off">
+                <button class="settings-reveal" onclick="Settings.toggleReveal('openai-input')" type="button" aria-label="Show API key">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+            </div>
+            {% if openai_key_set %}
+            <div class="settings-help">Using OpenAI Whisper API (~$0.006/min).</div>
+            {% else %}
+            <div class="settings-help">No API key set — using local transcription (CPU, slower). Add an OpenAI key for faster cloud transcription, or use <a href="https://merlincloud.dev" class="settings-link">Merlin Cloud</a> which includes voice transcription.</div>
+            {% endif %}
+        </div>
+        <button class="settings-save" onclick="Settings.saveOpenAIKey()">Save</button>
+        <span class="settings-toast" id="toast-openai"></span>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/settings.js"></script>
+{% endblock %}

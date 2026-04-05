@@ -1,0 +1,68 @@
+flowchart TB
+    subgraph Triggers["What Triggers Logging"]
+        DM["Discord\nmessage"]
+        CJ["Cron\njob"]
+        HTTP["HTTP\nrequest"]
+        WS["WebSocket\n(terminal)"]
+        TUN["Tunnel\nlifecycle"]
+    end
+
+    subgraph Loggers["Unified merlin.* Logger Hierarchy → merlin.log"]
+        direction TB
+        ML_BOT["merlin.bot\n(message, transcription,\nengine result, errors)"]
+        ML_TERM["merlin.terminal\n(WS connect/disconnect,\nPTY errors)"]
+        ML_TUN["merlin.tunnel\n(Cloudflare lifecycle,\nURL, restarts)"]
+        ML_SAAS["merlin.saas_tunnel\n(portal tunnel,\nport forwarding)"]
+        ML_SSH["merlin.ssh\n(host key, sessions)"]
+        ML_ENG["merlin.engine\n(invocation warnings)"]
+        ML_CRON["merlin.cron\n(dispatch, complete, fail)"]
+        ML_MAIN["merlin\n(extensions, startup)"]
+    end
+
+    subgraph Structured["Engine Log Writers"]
+        SE_INV["engine.py\nlog_event(invocation)"]
+        SE_BOT["merlin_bot.py\nlog_event(bot_event)"]
+        SE_CRON["runner.py\nlog_event(cron_dispatch)"]
+        SE_APP["main.py\nlog_event(app_started/stopped)"]
+    end
+
+    subgraph PerFile["Per-Invocation Writers"]
+        PF_SESSION["engine.py\n_save_session_file()"]
+        PF_TURN["session.py\nappend_turn()"]
+        PF_CRON["cron/logs.py\nwrite_log()"]
+    end
+
+    subgraph Storage["Disk"]
+        F_ML["logs/merlin.log\n🔄 10 MB × 5 backups"]
+        F_EL["logs/engine-log.jsonl\n🔄 180-day retention"]
+        F_RS["logs/raw-sessions/*.jsonl\n🔄 90-day retention"]
+        F_SS["sessions/*.jsonl\n(conversation state)"]
+        F_CLG["cron-logs/job/*.json\n🔄 50 per job"]
+    end
+
+    DM --> ML_BOT
+    CJ --> ML_CRON
+    HTTP --> ML_MAIN
+    WS --> ML_TERM
+    TUN --> ML_TUN & ML_SAAS
+
+    DM --> SE_BOT
+    CJ --> SE_CRON
+
+    DM & CJ --> SE_INV
+    DM & CJ --> PF_SESSION
+    DM & CJ --> PF_TURN
+    CJ --> PF_CRON
+
+    Loggers --> F_ML
+
+    SE_INV & SE_BOT & SE_CRON & SE_APP --> F_EL
+    PF_SESSION --> F_RS
+    PF_TURN --> F_SS
+    PF_CRON --> F_CLG
+
+    style F_ML fill:#1e3a2f,stroke:#4ade80
+    style F_EL fill:#1e3a2f,stroke:#4ade80
+    style F_RS fill:#1e3a2f,stroke:#4ade80
+    style F_SS fill:#1e2d4a,stroke:#60a5fa
+    style F_CLG fill:#1e2d4a,stroke:#60a5fa

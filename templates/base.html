@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Merlin{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <script>if(localStorage.getItem('sidebar-collapsed')==='1')document.documentElement.classList.add('sc')</script>
+    <link rel="stylesheet" href="/static/vendor/geist-fonts.css">
+    <link rel="stylesheet" href="/static/dashboard.css">
+    <script src="/static/vendor/chart.min.js"></script>
+    <script src="/static/vendor/chartjs-adapter-date-fns.min.js"></script>
+    <script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>
+    <script src="/static/dashboard.js"></script>
+</head>
+<body>
+    <div class="mobile-topbar">
+        <button class="hamburger">&#9776;</button>
+    </div>
+    <div class="sidebar-overlay"></div>
+
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-logo">
+                <svg aria-hidden="true" viewBox="0 0 512 512" fill="currentColor">
+                    <path d="M64 416L168.6 180.7c15.3-34.4 40.3-63.5 72-83.7l146.9-94c3-1.9 6.5-2.9 10-2.9C407.7 0 416 8.3 416 18.6v1.6c0 2.6-.5 5.1-1.4 7.5L354.8 176.9c-1.9 4.7-2.8 9.7-2.8 14.7c0 5.5 1.2 11 3.4 16.1L448 416H240.9l11.8-35.4 40.4-13.5c6.5-2.2 10.9-8.3 10.9-15.2s-4.4-13-10.9-15.2l-40.4-13.5-13.5-40.4C237 276.4 230.9 272 224 272s-13 4.4-15.2 10.9l-13.5 40.4-40.4 13.5C148.4 339 144 345.1 144 352s4.4 13 10.9 15.2l40.4 13.5L207.1 416H64zM279.6 141.5c-1.1-3.3-4.1-5.5-7.6-5.5s-6.5 2.2-7.6 5.5l-6.7 20.2-20.2 6.7c-3.3 1.1-5.5 4.1-5.5 7.6s2.2 6.5 5.5 7.6l20.2 6.7 6.7 20.2c1.1 3.3 4.1 5.5 7.6 5.5s6.5-2.2 7.6-5.5l6.7-20.2 20.2-6.7c3.3-1.1 5.5-4.1 5.5-7.6s-2.2-6.5-5.5-7.6l-20.2-6.7-6.7-20.2zM32 448H480c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32z"/>
+                </svg>
+            </div>
+            <h1>Merlin</h1>
+            <div class="sidebar-settings" id="sidebar-settings">
+                <button class="sidebar-settings-btn" id="sidebar-settings-btn" title="Settings">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                </button>
+                <div class="sidebar-settings-dropdown" id="sidebar-settings-dropdown">
+                    <a href="/settings" class="sidebar-settings-item">Settings</a>
+                    <a href="/logout" class="sidebar-settings-item">Sign out</a>
+                </div>
+            </div>
+        </div>
+        <div class="sidebar-body">
+            <nav class="sidebar-nav">
+                {% for item in nav_items %}
+                {% if item.disabled %}
+                <span class="nav-disabled" title="{{ item.tooltip | default('Unavailable') }}" data-tooltip="{{ item.label }}">
+                    <span class="nav-icon">{{ item.icon | safe }}</span>
+                    <span class="nav-label">{{ item.label }}</span>
+                </span>
+                {% else %}
+                <a href="{{ item.url }}" data-tooltip="{{ item.label }}">
+                    <span class="nav-icon">{{ item.icon | safe }}{% if item.url == '/extensions' and extensions_error_count is defined and extensions_error_count > 0 %}<span class="nav-badge"></span>{% endif %}</span>
+                    <span class="nav-label">{{ item.label }}</span>
+                </a>
+                {% endif %}
+                {% endfor %}
+            </nav>
+            {% if saas_mode %}
+            <div class="env-switcher" id="env-switcher" data-api-url="{{ saas_api_url }}">
+                <div class="env-switcher-label">Environments</div>
+                <div class="env-switcher-list"></div>
+            </div>
+            {% endif %}
+        </div>
+        <div class="sidebar-footer">
+            <button class="sidebar-collapse-btn" id="sidebar-collapse-btn" title="Collapse sidebar">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <line x1="9" y1="3" x2="9" y2="21"/>
+                </svg>
+            </button>
+        </div>
+    </aside>
+
+    <main class="main">
+        {% block content %}{% endblock %}
+    </main>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

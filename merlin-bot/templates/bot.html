@@ -1,0 +1,469 @@
+{% extends "base.html" %}
+{% block title %}Bot — Merlin Dashboard{% endblock %}
+
+{% block content %}
+<h2 class="page-title">Bot</h2>
+
+<div class="tabs" id="bot-tabs">
+    <div class="tab{% if active_tab == 'overview' %} active{% endif %}" data-tab="overview">Overview</div>
+    <div class="tab{% if active_tab == 'performance' %} active{% endif %}" data-tab="performance">Performance</div>
+    <div class="tab{% if active_tab == 'logs' %} active{% endif %}" data-tab="logs">Logs</div>
+</div>
+
+<!-- ── Overview tab ── -->
+<div class="bot-tab-content" id="tab-overview"{% if active_tab != 'overview' %} style="display:none"{% endif %}>
+<div class="card-grid" id="status-cards">
+    <div class="card">
+        <div class="card-label">Bot Status</div>
+        <div class="card-value" id="card-bot-status">—</div>
+        <div class="card-detail" id="card-bot-detail"></div>
+    </div>
+    <div class="card">
+        <div class="card-label">Invocations Today</div>
+        <div class="card-value blue" id="card-invocations">—</div>
+        <div class="card-detail" id="card-invocations-detail"></div>
+    </div>
+    <div class="card">
+        <div class="card-label">Avg Response Time</div>
+        <div class="card-value" id="card-avg-duration">—</div>
+        <div class="card-detail">today</div>
+    </div>
+    <div class="card">
+        <div class="card-label">Cost Today</div>
+        <div class="card-value" id="card-cost">—</div>
+        <div class="card-detail" id="card-cost-detail">today</div>
+    </div>
+    <div class="card">
+        <div class="card-label">Errors (24h)</div>
+        <div class="card-value" id="card-errors">—</div>
+        <div class="card-detail" id="card-cron-failures"></div>
+    </div>
+    <div class="card" id="tunnel-card" style="display:none">
+        <div class="card-label">Tunnel</div>
+        <div class="card-value" id="card-tunnel-status">—</div>
+        <div class="card-detail" id="card-tunnel-url"></div>
+    </div>
+</div>
+<div id="error-card-container"></div>
+<div class="feed" id="activity-feed">
+    <div class="feed-header">Recent Activity</div>
+    <div id="feed-items">
+        <div class="empty-state">
+            <div class="empty-icon">&#128302;</div>
+            <div class="empty-text">No events yet. Waiting for first invocation...</div>
+        </div>
+    </div>
+</div>
+</div>
+
+<!-- ── Performance tab ── -->
+<div class="bot-tab-content" id="tab-performance"{% if active_tab != 'performance' %} style="display:none"{% endif %}>
+<div class="time-range" id="time-range">
+    <button data-range="1" class="active">24h</button>
+    <button data-range="7">7d</button>
+    <button data-range="30">30d</button>
+    <button data-range="0">All</button>
+</div>
+<div class="stat-row">
+    <div class="chart-container" style="flex: 2;">
+        <div class="chart-title">Execution Time Over Time</div>
+        <canvas id="scatter-chart" class="chart-canvas"></canvas>
+    </div>
+    <div class="stat-box">
+        <div class="chart-title">Success Rate</div>
+        <canvas id="donut-chart" style="max-height: 200px;"></canvas>
+        <div id="success-rate-text" style="text-align: center; margin-top: 12px; font-size: 14px; color: var(--text-secondary);"></div>
+    </div>
+</div>
+<div class="chart-container">
+    <div class="chart-title">Execution Time by Job</div>
+    <canvas id="bar-chart" class="chart-canvas"></canvas>
+</div>
+<div class="chart-container">
+    <div class="chart-title">Cost by Job</div>
+    <canvas id="cost-chart" class="chart-canvas"></canvas>
+</div>
+</div>
+
+<!-- ── Logs tab ── -->
+<div class="bot-tab-content" id="tab-logs"{% if active_tab != 'logs' %} style="display:none"{% endif %}>
+<div class="filters">
+    <select id="filter-status">
+        <option value="">All Status</option>
+        <option value="success">Success</option>
+        <option value="error">Error</option>
+    </select>
+    <input type="date" id="filter-since" placeholder="From">
+    <input type="date" id="filter-until" placeholder="To">
+</div>
+<div class="tabs" id="log-tabs">
+    <div class="tab active" data-tab="invocation">Invocations</div>
+    <div class="tab" data-tab="bot_event">Bot Events</div>
+</div>
+<div id="log-content" class="log-table-wrap">
+    <div class="empty-state">
+        <div class="empty-icon">&#128302;</div>
+        <div class="empty-text">No events yet. Waiting for first invocation...</div>
+    </div>
+</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Tab switching ──
+const tabUrls = { overview: '/bot', performance: '/bot/performance', logs: '/bot/logs' };
+
+function switchTab(tab) {
+    document.querySelectorAll('#bot-tabs .tab').forEach(t => t.classList.remove('active'));
+    document.querySelector(`#bot-tabs .tab[data-tab="${tab}"]`).classList.add('active');
+    document.querySelectorAll('.bot-tab-content').forEach(c => c.style.display = 'none');
+    document.getElementById('tab-' + tab).style.display = '';
+    history.pushState(null, '', tabUrls[tab]);
+
+    // Initialize tab data on first view
+    if (tab === 'overview' && !_overviewLoaded) loadOverview();
+    if (tab === 'performance' && !_perfLoaded) loadPerformance();
+    if (tab === 'logs' && !_logsLoaded) loadLogs();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('#bot-tabs .tab').forEach(t => {
+        t.addEventListener('click', () => switchTab(t.dataset.tab));
+    });
+
+    // Initialize active tab
+    const activeTab = '{{ active_tab }}';
+    if (activeTab === 'overview') loadOverview();
+    if (activeTab === 'performance') loadPerformance();
+    if (activeTab === 'logs') loadLogs();
+});
+
+// ── Overview ──
+let _overviewLoaded = false;
+
+async function loadOverview() {
+    _overviewLoaded = true;
+    const health = await API.get('/api/health');
+    if (!health) return;
+
+    const botCard = document.getElementById('card-bot-status');
+    const botDetail = document.getElementById('card-bot-detail');
+    if (health.bot_start_time) {
+        botCard.textContent = 'Online';
+        botCard.className = 'card-value green';
+        botDetail.textContent = 'since ' + timeAgo(health.bot_start_time);
+        botDetail.title = utcString(health.bot_start_time);
+    } else {
+        botCard.textContent = 'Unknown';
+        botCard.className = 'card-value';
+    }
+
+    document.getElementById('card-invocations').textContent = health.invocations_today;
+    document.getElementById('card-avg-duration').textContent = formatDuration(health.avg_duration_today);
+
+    const costEl = document.getElementById('card-cost');
+    costEl.textContent = formatCost(health.cost_today);
+    costEl.className = 'card-value ' + (health.cost_today > 5 ? 'orange' : '');
+
+    const errEl = document.getElementById('card-errors');
+    errEl.textContent = health.errors_24h;
+    errEl.className = 'card-value ' + (health.errors_24h > 0 ? 'red' : 'green');
+    document.getElementById('card-cron-failures').textContent = 'all clear';
+
+    if (health.tunnel_status && health.tunnel_status !== 'stopped') {
+        const tunnelCard = document.getElementById('tunnel-card');
+        tunnelCard.style.display = '';
+        const tunnelStatus = document.getElementById('card-tunnel-status');
+        const tunnelUrl = document.getElementById('card-tunnel-url');
+        tunnelStatus.textContent = health.tunnel_status === 'running' ? 'Active' : health.tunnel_status;
+        tunnelStatus.className = 'card-value ' + (health.tunnel_status === 'running' ? 'green' : 'orange');
+        if (health.tunnel_url) {
+            const short = escapeHtml(health.tunnel_url.replace('https://', ''));
+            tunnelUrl.innerHTML = `<a href="${escapeHtml(health.tunnel_url)}" target="_blank" style="color:var(--accent-blue);text-decoration:none">${short}</a> <button onclick="copyTunnelUrl(event, '${escapeHtml(health.tunnel_url)}')" class="copy-btn" title="Copy URL">&#128203;</button>`;
+        }
+    }
+
+    const errContainer = document.getElementById('error-card-container');
+    if (health.last_error) {
+        const e = health.last_error;
+        errContainer.innerHTML = `
+            <div class="error-card" onclick="switchTab('logs')">
+                <div class="error-title">Last Error</div>
+                <div class="error-detail">${escapeHtml(eventSummary(e))}</div>
+                <div class="error-time" title="${utcString(e.timestamp)}">${formatDateTime(e.timestamp)}</div>
+            </div>`;
+    } else {
+        errContainer.innerHTML = '';
+    }
+
+    const events = await API.get('/api/events');
+    if (!events) return;
+    // Filter to Discord-only: bot_event + Discord invocations (no cron)
+    const discordEvents = events.filter(e =>
+        e.type === 'bot_event' ||
+        (e.type === 'invocation' && (!e.caller || !e.caller.startsWith('cron-')))
+    );
+    const feedEl = document.getElementById('feed-items');
+    const recent = discordEvents.slice(-15).reverse();
+
+    if (recent.length === 0) {
+        feedEl.innerHTML = `<div class="empty-state"><div class="empty-icon">&#128302;</div><div class="empty-text">No events yet. Waiting for first invocation...</div></div>`;
+        return;
+    }
+
+    feedEl.innerHTML = recent.map(e => `
+        <div class="feed-item" onclick="switchTab('logs')" title="${utcString(e.timestamp)}">
+            <span class="feed-time">${formatTime(e.timestamp)}</span>
+            ${typeBadge(e.type)}
+            <span class="feed-summary">${escapeHtml(eventSummary(e))}</span>
+        </div>
+    `).join('');
+}
+
+function copyTunnelUrl(e, url) {
+    e.preventDefault();
+    e.stopPropagation();
+    navigator.clipboard.writeText(url).then(() => {
+        const btn = e.target;
+        btn.textContent = '\u2713';
+        setTimeout(() => btn.textContent = '\uD83D\uDCCB', 1500);
+    });
+}
+
+// ── Performance ──
+let _perfLoaded = false;
+let scatterChart, barChart, donutChart, costChart;
+let currentRange = 1;
+
+function getSinceDate(days) {
+    if (days === 0) return null;
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    return d.toISOString();
+}
+
+async function loadPerformance() {
+    _perfLoaded = true;
+    configureChartDefaults();
+    const since = getSinceDate(currentRange);
+    let url = '/api/invocations';
+    if (since) url += '?since=' + encodeURIComponent(since);
+
+    const invocations = await API.get(url);
+    if (!invocations) return;
+    // Filter to Discord-only
+    const discordInvocations = invocations.filter(e => !e.caller || !e.caller.startsWith('cron-'));
+
+    renderScatterChart(discordInvocations);
+    renderBarChart(discordInvocations);
+    renderDonutChart(discordInvocations);
+    renderCostChart(discordInvocations);
+}
+
+function renderScatterChart(data) {
+    const ctx = document.getElementById('scatter-chart');
+    const points = data.map(e => ({ x: new Date(e.timestamp), y: e.duration }));
+
+    if (scatterChart) scatterChart.destroy();
+    scatterChart = new Chart(ctx, {
+        type: 'scatter',
+        data: { datasets: [
+            { label: 'Discord', data: points, backgroundColor: 'rgba(74, 158, 255, 0.7)', pointRadius: 5, pointHoverRadius: 7 }
+        ]},
+        options: { responsive: true, scales: {
+            x: { type: 'time', time: { tooltipFormat: 'MMM d, HH:mm' }, grid: { color: '#2e3347' } },
+            y: { title: { display: true, text: 'Duration (s)' }, grid: { color: '#2e3347' }, beginAtZero: true }
+        }, plugins: { zoom: { zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }, pan: { enabled: true, mode: 'x' } },
+            tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw.y.toFixed(1)}s` } } } }
+    });
+}
+
+function renderBarChart(data) {
+    const ctx = document.getElementById('bar-chart');
+    const byJob = {};
+    data.forEach(e => { const k = e.caller || 'unknown'; if (!byJob[k]) byJob[k] = []; byJob[k].push(e.duration); });
+    const labels = Object.keys(byJob).sort();
+    const avgData = labels.map(k => { const d = byJob[k]; return d.reduce((a, b) => a + b, 0) / d.length; });
+    const p95Data = labels.map(k => { const d = byJob[k].sort((a, b) => a - b); return d[Math.floor(d.length * 0.95)] || 0; });
+
+    if (barChart) barChart.destroy();
+    barChart = new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets: [
+            { label: 'Avg', data: avgData, backgroundColor: 'rgba(74, 158, 255, 0.7)' },
+            { label: 'P95', data: p95Data, backgroundColor: 'rgba(251, 146, 60, 0.5)' }
+        ]},
+        options: { responsive: true, scales: {
+            y: { title: { display: true, text: 'Duration (s)' }, grid: { color: '#2e3347' }, beginAtZero: true },
+            x: { grid: { color: '#2e3347' } }
+        }}
+    });
+}
+
+function renderDonutChart(data) {
+    const ctx = document.getElementById('donut-chart');
+    const success = data.filter(e => e.exit_code === 0).length;
+    const errors = data.filter(e => e.exit_code !== 0).length;
+    const total = success + errors;
+    document.getElementById('success-rate-text').textContent = total > 0 ? `${Math.round((success / total) * 100)}% success (${total} total)` : 'No data';
+
+    if (donutChart) donutChart.destroy();
+    donutChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: { labels: ['Success', 'Error'], datasets: [{ data: [success, errors], backgroundColor: ['rgba(52, 211, 153, 0.8)', 'rgba(248, 113, 113, 0.8)'], borderWidth: 0 }] },
+        options: { responsive: true, cutout: '65%', plugins: { legend: { display: false } } }
+    });
+}
+
+function renderCostChart(data) {
+    const ctx = document.getElementById('cost-chart');
+    const byJob = {};
+    data.forEach(e => { const k = e.caller || 'unknown'; if (!byJob[k]) byJob[k] = { total: 0, count: 0 }; byJob[k].total += (e.cost_usd || 0); byJob[k].count++; });
+    const sorted = Object.entries(byJob).sort((a, b) => b[1].total - a[1].total);
+    const labels = sorted.map(([k]) => k);
+    const totalData = sorted.map(([, v]) => v.total);
+    const avgData = sorted.map(([, v]) => v.count > 0 ? v.total / v.count : 0);
+
+    if (costChart) costChart.destroy();
+    costChart = new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets: [
+            { label: 'Total', data: totalData, backgroundColor: 'rgba(52, 211, 153, 0.7)' },
+            { label: 'Avg per run', data: avgData, backgroundColor: 'rgba(167, 139, 250, 0.5)' }
+        ]},
+        options: { responsive: true, scales: {
+            y: { title: { display: true, text: 'Cost (USD)' }, grid: { color: '#2e3347' }, beginAtZero: true, ticks: { callback: (v) => '$' + v.toFixed(2) } },
+            x: { grid: { color: '#2e3347' } }
+        }, plugins: { tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: $${ctx.raw.toFixed(4)}` } } } }
+    });
+}
+
+// Time range buttons (performance tab)
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.time-range button').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.time-range button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentRange = parseInt(btn.dataset.range);
+            loadPerformance();
+        });
+    });
+});
+
+// ── Logs ──
+let _logsLoaded = false;
+let currentLogTab = 'invocation';
+
+async function loadLogs() {
+    _logsLoaded = true;
+    const params = new URLSearchParams();
+    params.set('type', currentLogTab);
+
+    const sinceEl = document.getElementById('filter-since');
+    const untilEl = document.getElementById('filter-until');
+    const statusEl = document.getElementById('filter-status');
+    if (sinceEl && sinceEl.value) params.set('since', new Date(sinceEl.value).toISOString());
+    if (untilEl && untilEl.value) {
+        const d = new Date(untilEl.value);
+        d.setDate(d.getDate() + 1);
+        params.set('until', d.toISOString());
+    }
+    if (statusEl && statusEl.value) params.set('status', statusEl.value);
+
+    const events = await API.get('/api/events?' + params.toString());
+    if (!events) return;
+    renderLogTable(events);
+}
+
+function renderLogTable(events) {
+    const container = document.getElementById('log-content');
+    if (events.length === 0) {
+        container.innerHTML = `<div class="empty-state"><div class="empty-icon">&#128302;</div><div class="empty-text">No events match your filters.</div></div>`;
+        return;
+    }
+    const reversed = [...events].reverse();
+    if (currentLogTab === 'invocation') renderInvocationTable(reversed, container);
+    else if (currentLogTab === 'bot_event') renderBotTable(reversed, container);
+}
+
+function renderInvocationTable(events, container) {
+    events = events.filter(e => !e.caller || !e.caller.startsWith('cron-'));
+    let html = `<table class="log-table"><thead><tr><th>Time</th><th>Caller</th><th>Duration</th><th>Exit</th><th>Turns</th><th>Tokens In</th><th>Tokens Out</th><th></th></tr></thead><tbody>`;
+    events.forEach((e, i) => {
+        const isError = e.exit_code !== 0;
+        const sessionLink = e.session_file ? `<a class="session-link" href="/session/${encodeURIComponent(e.session_file)}?back=bot" onclick="event.stopPropagation()">View session</a>` : '';
+        html += `<tr class="clickable ${isError ? 'error' : ''}" onclick="toggleDetail(${i})">
+            <td title="${utcString(e.timestamp)}">${formatDateTime(e.timestamp)}</td>
+            <td>${escapeHtml(e.caller || '—')}</td>
+            <td class="duration">${formatDuration(e.duration || 0)}</td>
+            <td class="${isError ? 'status-err' : 'status-ok'}">${e.exit_code}</td>
+            <td>${e.num_turns || '—'}</td>
+            <td>${(e.tokens_in || 0).toLocaleString()}</td>
+            <td>${(e.tokens_out || 0).toLocaleString()}</td>
+            <td>${sessionLink}</td>
+        </tr><tr class="row-detail" id="detail-${i}"><td colspan="8">${e.prompt ? '<div class="detail-section"><strong>Prompt:</strong><pre>' + escapeHtml(e.prompt) + '</pre></div>' : ''}<pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre></td></tr>`;
+    });
+    container.innerHTML = html + '</tbody></table>';
+}
+
+function renderBotTable(events, container) {
+    let html = `<table class="log-table"><thead><tr><th>Time</th><th>Event</th><th>Details</th><th>Duration</th></tr></thead><tbody>`;
+    events.forEach((e, i) => {
+        const isError = e.event === 'error';
+        let details;
+        if (e.event === 'transcription' && e.content) details = '🎤 ' + escapeHtml(e.content.substring(0, 120)) + (e.content.length > 120 ? '...' : '');
+        else if (e.event === 'message_received' && e.content) details = escapeHtml(e.content.substring(0, 120)) + (e.content.length > 120 ? '...' : '');
+        else details = escapeHtml(e.details || '—');
+        const duration = e.duration != null ? `<span class="duration">${formatDuration(e.duration)}</span>` : '—';
+        html += `<tr class="clickable ${isError ? 'error' : ''}" onclick="toggleDetail(${i})">
+            <td title="${utcString(e.timestamp)}">${formatDateTime(e.timestamp)}</td>
+            <td>${escapeHtml(e.event || '—')}</td>
+            <td>${details}</td>
+            <td>${duration}</td>
+        </tr><tr class="row-detail" id="detail-${i}"><td colspan="4">${e.content ? '<div class="detail-section"><strong>' + (e.event === 'transcription' ? 'Transcription' : 'Message') + ':</strong><pre>' + escapeHtml(e.content) + '</pre></div>' : ''}<pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre></td></tr>`;
+    });
+    container.innerHTML = html + '</tbody></table>';
+}
+
+function toggleDetail(index) {
+    const el = document.getElementById('detail-' + index);
+    if (el) el.classList.toggle('open');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Logs tab sub-tabs and filters
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('#log-tabs .tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('#log-tabs .tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            currentLogTab = tab.dataset.tab;
+            loadLogs();
+        });
+    });
+
+    const statusEl = document.getElementById('filter-status');
+    const sinceEl = document.getElementById('filter-since');
+    const untilEl = document.getElementById('filter-until');
+    if (statusEl) statusEl.addEventListener('change', loadLogs);
+    if (sinceEl) sinceEl.addEventListener('change', loadLogs);
+    if (untilEl) untilEl.addEventListener('change', loadLogs);
+
+    Refresh.register(() => {
+        const activeTab = document.querySelector('#bot-tabs .tab.active');
+        if (!activeTab) return;
+        const tab = activeTab.dataset.tab;
+        if (tab === 'overview') loadOverview();
+        else if (tab === 'performance') loadPerformance();
+        else if (tab === 'logs') loadLogs();
+    });
+    Refresh.start(5000);
+});
+</script>
+{% endblock %}

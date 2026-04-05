@@ -1,0 +1,14 @@
+__pycache__/
+.venv/
+.pytest_cache/
+node_modules/
+test-results/
+.env
+NEXT_SESSION.md
+screenshots/
+nohup.out
+merlin-bot/logs/
+merlin-bot/notes/
+cron-jobs/.history.json
+cron-jobs/.locks/
+cron-jobs/.state/

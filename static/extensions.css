@@ -1,0 +1,277 @@
+/* Extensions page */
+
+.ext-section {
+    margin-bottom: 32px;
+}
+
+.ext-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+}
+
+/* Extension card */
+.ext-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 8px;
+}
+
+.ext-card.has-error {
+    border-color: var(--accent-red);
+    border-left-width: 3px;
+}
+
+.ext-icon {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+    background: var(--bg-hover);
+    border-radius: 6px;
+}
+
+.ext-icon svg {
+    width: 18px;
+    height: 18px;
+}
+
+.ext-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.ext-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.ext-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.ext-error {
+    font-size: 12px;
+    color: var(--accent-red);
+    margin-top: 6px;
+    font-family: 'Geist Mono', monospace;
+}
+
+.ext-error::before {
+    content: "\26A0\FE0F ";
+}
+
+.ext-actions {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 2px;
+}
+
+/* Toggle switch */
+/* Toggle uses shared .toggle-switch from dashboard.css — ext-toggle kept as alias */
+.ext-toggle { /* alias for backward compat */ }
+.ext-toggle-slider { /* alias for backward compat */ }
+
+/* Lock icon for core */
+.ext-lock {
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+}
+
+.ext-lock svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* Config section */
+.ext-config-toggle {
+    font-size: 12px;
+    color: var(--accent-blue);
+    cursor: pointer;
+    margin-top: 6px;
+    display: inline-block;
+}
+
+.ext-config-toggle:hover {
+    text-decoration: underline;
+}
+
+.ext-config {
+    display: none;
+    margin-top: 10px;
+    padding: 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+.ext-config.open {
+    display: block;
+}
+
+.ext-config-field {
+    margin-bottom: 10px;
+}
+
+.ext-config-field:last-child {
+    margin-bottom: 0;
+}
+
+.ext-config-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    display: block;
+}
+
+.ext-config-help {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.ext-config-input {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: 'Geist Mono', monospace;
+}
+
+.ext-config-input:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+}
+
+.ext-config-checkbox {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    margin-right: 8px;
+    accent-color: var(--accent-blue);
+    flex-shrink: 0;
+}
+
+.ext-config-checkbox-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    cursor: pointer;
+}
+
+.ext-config-required {
+    color: var(--accent-yellow);
+    font-size: 11px;
+    margin-top: 2px;
+}
+
+.ext-config-save {
+    margin-top: 10px;
+    padding: 6px 16px;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent-blue);
+    color: white;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+
+.ext-config-save:hover {
+    opacity: 0.85;
+}
+
+/* Restart banner */
+.restart-banner {
+    display: none;
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 500;
+    padding: 10px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--accent-yellow);
+    border-radius: 8px;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    color: var(--accent-yellow);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(8px);
+}
+
+.restart-banner.visible {
+    display: flex;
+}
+
+.restart-banner-text {
+    flex: 1;
+}
+
+.restart-btn {
+    padding: 5px 14px;
+    border: 1px solid var(--accent-yellow);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--accent-yellow);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+}
+
+.restart-btn:hover {
+    background: rgba(251, 191, 36, 0.15);
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+    .ext-card {
+        flex-wrap: wrap;
+    }
+
+    .ext-actions {
+        width: 100%;
+        justify-content: flex-end;
+        padding-top: 8px;
+    }
+
+    .restart-banner {
+        flex-direction: column;
+        text-align: center;
+        gap: 8px;
+    }
+
+    .restart-btn {
+        width: 100%;
+        padding: 10px;
+    }
+}

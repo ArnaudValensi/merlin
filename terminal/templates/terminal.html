@@ -1,0 +1,1702 @@
+{% extends "base.html" %}
+{% block title %}Terminal — Merlin{% endblock %}
+
+{% block content %}
+<div id="terminal-container">
+    <div id="touch-overlay"></div>
+    <button id="copy-toast">Copy</button>
+    <button id="paste-toast">Paste</button>
+</div>
+<div id="terminal-toolbar">
+    <div class="toolbar-row">
+        <button class="tk tk-mod" data-mod="Escape">Esc</button>
+        <button class="tk tk-mod" data-mod="Tab">Tab</button>
+        <button class="tk tk-fn" data-key="ShiftTab">⇧Tab</button>
+        <button class="tk tk-mod" data-mod="Control">Ctrl</button>
+        <button class="tk tk-mod" data-mod="Alt">Alt</button>
+        <button class="tk tk-mod" data-mod="Shift">Shift</button>
+        <button class="tk tk-mod" data-mod="Enter">↵</button>
+        <span class="toolbar-sep"></span>
+        <button class="tk tk-fn" data-key="F3">◀</button>
+        <button class="tk tk-fn" data-key="F2">+</button>
+        <button class="tk tk-fn" data-key="F4">▶</button>
+        <button class="tk tk-fn" data-key="F5">✕</button>
+        <span class="toolbar-sep"></span>
+        <button class="tk tk-arrow tk-repeat" data-key="ArrowLeft">&larr;</button>
+        <button class="tk tk-arrow tk-repeat" data-key="ArrowUp">&uarr;</button>
+        <button class="tk tk-arrow tk-repeat" data-key="ArrowDown">&darr;</button>
+        <button class="tk tk-arrow tk-repeat" data-key="ArrowRight">&rarr;</button>
+        <span class="toolbar-sep"></span>
+        <button class="tk" id="paste-btn" title="Paste from clipboard">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+        </button>
+        <button class="tk" id="image-btn" title="Paste image from clipboard or pick file">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+        </button>
+        <button class="tk" id="commits-btn" title="View commits for current repo">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+        </button>
+    </div>
+</div>
+<input type="file" id="image-file-input" accept="image/*" style="display:none">
+<div id="terminal-status">
+    <button id="status-menu" title="Menu">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
+    </button>
+    <span id="status-dot"></span>
+    <span id="status-text">Connecting...</span>
+    <button id="clipboard-perm" title="Click to enable clipboard">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+        <span id="clipboard-perm-badge">?</span>
+    </button>
+    <select id="mic-lang" title="Transcription language">
+        <option value="en">EN</option>
+        <option value="fr">FR</option>
+    </select>
+    <button id="auto-enter-btn" title="Auto-submit voice input (Enter after transcription)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
+    </button>
+    <button id="mic-btn" title="Voice input (tap to record)">
+        <svg id="mic-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+        <span id="mic-warn-badge">!</span>
+    </button>
+    <button id="toolbar-toggle" title="Toggle keyboard toolbar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M6 16h12"/></svg>
+    </button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<link rel="stylesheet" href="/static/vendor/geistmono-nerd-font.css">
+<link rel="stylesheet" href="/static/vendor/xterm.min.css">
+<script src="/static/vendor/xterm.min.js"></script>
+<script src="/static/vendor/xterm-addon-fit.min.js"></script>
+<script src="/static/vendor/xterm-addon-web-links.min.js"></script>
+<style>
+    /* Prevent iOS rubber-band bounce — no position:fixed (breaks keyboard) */
+    html, body {
+        overflow: hidden !important;
+        overscroll-behavior: none;
+        height: 100%;
+    }
+
+    /* Hide mobile topbar on terminal page — status bar has its own menu button */
+    .mobile-topbar { display: none !important; }
+
+    .main {
+        padding: 0 !important;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        height: 100dvh;
+        min-height: 0 !important; /* override dashboard.css min-height: 100vh */
+        overflow: hidden;
+    }
+
+    #terminal-container {
+        flex: 1;
+        min-height: 0; /* allow flex shrink below content size */
+        overflow: hidden;
+        position: relative;
+    }
+
+    /* Invisible overlay that catches all touch events. Sits on top of xterm
+       so the touch target is always this stable element — never an xterm <span>
+       that gets removed on re-render (which would fire touchcancel). */
+    #touch-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 10;
+        touch-action: none;
+        pointer-events: none; /* transparent to mouse on desktop */
+    }
+    @media (pointer: coarse) {
+        #touch-overlay { pointer-events: auto; }
+    }
+
+    #terminal-container .xterm {
+        height: 100%;
+        padding: 4px 0 0 4px;
+    }
+
+    /* --- Toolbar --- */
+    #terminal-toolbar {
+        display: none;
+        background: var(--bg-secondary);
+        border-top: 1px solid var(--border);
+        flex-shrink: 0;
+        padding: 6px 8px;
+    }
+
+    #terminal-toolbar.visible { display: block; }
+
+    .toolbar-row {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+        overflow-x: auto;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+    .toolbar-row::-webkit-scrollbar { display: none; }
+
+    .toolbar-sep {
+        width: 1px;
+        height: 20px;
+        background: var(--border);
+        margin: 0 2px;
+        flex-shrink: 0;
+    }
+
+    .tk {
+        font-family: 'GeistMono Nerd Font', 'Geist Mono', monospace;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 0 10px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg-card);
+        color: var(--text-secondary);
+        cursor: pointer;
+        text-align: center;
+        flex-shrink: 0;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+        touch-action: manipulation;
+    }
+
+    .tk:active { background: var(--bg-hover); color: var(--text-primary); }
+
+    .tk-mod.active {
+        background: rgba(74, 158, 255, 0.15);
+        border-color: rgba(74, 158, 255, 0.4);
+        color: var(--accent-blue);
+    }
+
+    .tk-arrow { font-size: 14px; padding: 0 8px; }
+
+    #paste-btn, #image-btn, #commits-btn { padding: 0 8px; }
+    #image-btn.uploading {
+        color: var(--accent-yellow);
+        border-color: var(--accent-yellow);
+    }
+
+    #copy-toast {
+        display: none;
+        position: absolute;
+        z-index: 20;
+        padding: 8px 18px;
+        background: var(--bg-card);
+        border: 1px solid var(--accent-green);
+        border-radius: 8px;
+        color: var(--accent-green);
+        font-family: 'GeistMono Nerd Font', 'Geist Mono', monospace;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+    }
+    #copy-toast:active { background: rgba(80, 250, 123, 0.15); }
+
+    #paste-toast {
+        display: none;
+        position: absolute;
+        z-index: 20;
+        padding: 8px 18px;
+        background: var(--bg-card);
+        border: 1px solid var(--accent-blue);
+        border-radius: 8px;
+        color: var(--accent-blue);
+        font-family: 'GeistMono Nerd Font', 'Geist Mono', monospace;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+    }
+    #paste-toast:active { background: rgba(74, 158, 255, 0.15); }
+
+    /* --- Status bar --- */
+    #terminal-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        background: var(--bg-secondary);
+        border-top: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--text-muted);
+        flex-shrink: 0;
+    }
+
+    #status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--text-muted);
+    }
+
+    #status-dot.connected { background: var(--accent-green); box-shadow: 0 0 4px var(--accent-green); }
+    #status-dot.disconnected { background: var(--accent-red); }
+    #status-dot.connecting { background: var(--accent-yellow); }
+
+    #toolbar-toggle {
+        margin-left: auto;
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-muted);
+        padding: 2px 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        height: 24px;
+    }
+    #toolbar-toggle:hover { color: var(--text-primary); border-color: var(--text-muted); }
+    #toolbar-toggle.active { color: var(--accent-blue); border-color: rgba(74, 158, 255, 0.4); }
+
+    #status-menu {
+        display: none; /* hidden on desktop — sidebar is visible */
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-muted);
+        padding: 2px 6px;
+        cursor: pointer;
+        align-items: center;
+        height: 24px;
+    }
+    #status-menu:hover { color: var(--text-primary); border-color: var(--text-muted); }
+
+    #mic-lang {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-muted);
+        padding: 0 4px;
+        font-size: 11px;
+        line-height: 22px;
+        margin-left: auto;
+        cursor: pointer;
+        -webkit-appearance: none;
+        appearance: none;
+        text-align: center;
+        text-align-last: center;
+        width: 36px;
+        height: 24px;
+    }
+    #mic-lang:focus { outline: none; border-color: var(--text-muted); }
+
+    #auto-enter-btn {
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-muted);
+        padding: 2px 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        height: 24px;
+    }
+    #auto-enter-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+    #auto-enter-btn.active {
+        color: var(--accent-green);
+        border-color: var(--accent-green);
+    }
+
+    #mic-btn {
+        position: relative;
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-muted);
+        padding: 2px 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        height: 24px;
+    }
+    #mic-warn-badge {
+        display: none;
+        font-size: 9px;
+        font-weight: 700;
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        background: var(--accent-yellow);
+        color: var(--bg-secondary);
+        border-radius: 50%;
+        width: 12px;
+        height: 12px;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+    }
+    #mic-btn.voice-unavailable { color: var(--accent-yellow); border-color: var(--accent-yellow); }
+    #mic-btn.voice-unavailable #mic-warn-badge { display: flex; }
+    #mic-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+    #mic-btn.recording {
+        color: var(--accent-red);
+        border-color: var(--accent-red);
+        animation: pulse-mic 1s ease-in-out infinite;
+    }
+    #mic-btn.uploading {
+        position: relative;
+        color: var(--accent-blue, #7aa2f7);
+        border-color: var(--accent-blue, #7aa2f7);
+        overflow: hidden;
+    }
+    #mic-btn.uploading::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: calc(var(--upload-progress, 0) * 100%);
+        background: var(--accent-blue, #7aa2f7);
+        opacity: 0.2;
+        border-radius: inherit;
+        transition: height 0.1s;
+        pointer-events: none;
+    }
+    #mic-btn.upload-done {
+        color: var(--accent-green);
+        border-color: var(--accent-green);
+    }
+    #mic-btn.retry-pending {
+        color: var(--accent-yellow, #e0af68);
+        border-color: var(--accent-yellow, #e0af68);
+        animation: pulse-mic 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse-mic {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+
+    /* Shift toolbar-toggle to not use margin-left auto when mic is present */
+    #toolbar-toggle { margin-left: 4px; }
+
+    #clipboard-perm {
+        display: none;
+        position: relative;
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 2px 6px;
+        cursor: pointer;
+        align-items: center;
+        color: var(--accent-yellow);
+        border-color: var(--accent-yellow);
+    }
+    #clipboard-perm.visible { display: flex; }
+    #clipboard-perm.denied {
+        color: var(--accent-red);
+        border-color: var(--accent-red);
+    }
+    #clipboard-perm:hover { opacity: 0.8; }
+    #clipboard-perm-badge {
+        font-size: 9px;
+        font-weight: 700;
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        background: var(--accent-yellow);
+        color: var(--bg-secondary);
+        border-radius: 50%;
+        width: 12px;
+        height: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+    }
+    #clipboard-perm.denied #clipboard-perm-badge {
+        background: var(--accent-red);
+    }
+
+    #status-text.copied {
+        color: var(--accent-green);
+        transition: color 0.2s;
+    }
+    #status-text.uploading {
+        color: var(--accent-yellow);
+        transition: color 0.2s;
+    }
+
+    #terminal-container.drag-over::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border: 2px solid var(--accent-blue);
+        border-radius: 4px;
+        pointer-events: none;
+        z-index: 20;
+    }
+
+    @media (max-width: 768px) {
+        .main {
+            margin-left: 0 !important;
+        }
+        #status-menu { display: flex; }
+    }
+</style>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const container = document.getElementById('terminal-container');
+    const touchOverlay = document.getElementById('touch-overlay');
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+    const toolbar = document.getElementById('terminal-toolbar');
+    const toolbarToggle = document.getElementById('toolbar-toggle');
+    const mainEl = document.querySelector('.main');
+
+    // Menu button opens the sidebar (replaces hidden mobile topbar)
+    const menuBtn = document.getElementById('status-menu');
+    menuBtn.addEventListener('click', () => {
+        const sidebar = document.querySelector('.sidebar');
+        const overlay = document.querySelector('.sidebar-overlay');
+        if (sidebar) sidebar.classList.toggle('open');
+        if (overlay) overlay.classList.toggle('open');
+    });
+
+    // Read CSS variables from :root to keep xterm.js theme in sync with dashboard
+    const cs = getComputedStyle(document.documentElement);
+    const v = (name) => cs.getPropertyValue(name).trim();
+
+    const term = new Terminal({
+        macOptionIsMeta: true,
+        cursorBlink: true,
+        cursorStyle: 'block',
+        fontSize: 11,
+        fontFamily: "'GeistMono Nerd Font', 'Geist Mono', monospace",
+        lineHeight: 1.2,
+        scrollback: 5000,
+        theme: {
+            background: '#282a36',
+            foreground: '#f8f8f2',
+            cursor: '#f8f8f2',
+            cursorAccent: '#282a36',
+            selectionBackground: 'rgba(68, 71, 90, 0.5)',
+            black: '#21222c',
+            red: '#ff5555',
+            green: '#50fa7b',
+            yellow: '#f1fa8c',
+            blue: '#bd93f9',
+            magenta: '#ff79c6',
+            cyan: '#8be9fd',
+            white: '#f8f8f2',
+            brightBlack: '#6272a4',
+            brightRed: '#ff6e6e',
+            brightGreen: '#69ff94',
+            brightYellow: '#ffffa5',
+            brightBlue: '#d6acff',
+            brightMagenta: '#ff92df',
+            brightCyan: '#a4ffff',
+            brightWhite: '#ffffff',
+        },
+    });
+
+    const fitAddon = new FitAddon.FitAddon();
+    const webLinksAddon = new WebLinksAddon.WebLinksAddon();
+    term.loadAddon(fitAddon);
+    term.loadAddon(webLinksAddon);
+    term.open(container);
+    fitAddon.fit();
+
+    // -----------------------------------------------------------------------
+    // OSC 52 clipboard: tmux sends selected text via escape sequence
+    // -----------------------------------------------------------------------
+
+    let copiedTimer = null;
+    let baseStatusText = null;
+    let baseStatusClass = null;
+    function showStatusFlash(msg, cssClass) {
+        if (!copiedTimer) {
+            baseStatusText = statusText.textContent;
+            baseStatusClass = statusText.className;
+        }
+        statusText.textContent = msg;
+        statusText.className = cssClass || '';
+        clearTimeout(copiedTimer);
+        copiedTimer = setTimeout(() => {
+            statusText.textContent = baseStatusText;
+            statusText.className = baseStatusClass;
+            copiedTimer = null;
+        }, 1500);
+    }
+    function showCopiedFeedback() { showStatusFlash('Copied!', 'copied'); }
+    function showPastedFeedback() { showStatusFlash('Pasted!', 'copied'); }
+
+    let lastOsc52Text = null;
+    let touchSelectText = null; // dedicated var for touch-select (avoids OSC 52 race)
+    let bracketedPasteActive = false; // tracks if shell has bracketed paste enabled
+    const PASTE_MAX_BYTES = 1024 * 1024; // 1MB paste limit
+
+    // Wrap text in bracketed paste sequences if the shell expects them
+    function pasteToTerminal(text) {
+        if (!text) return;
+        if (text.length > PASTE_MAX_BYTES) {
+            text = text.slice(0, PASTE_MAX_BYTES);
+            showStatusFlash('Paste truncated (1MB max)', '');
+        }
+        if (bracketedPasteActive) {
+            sendToTerminal('\x1b[200~' + text + '\x1b[201~');
+        } else {
+            sendToTerminal(text);
+        }
+        showPastedFeedback();
+    }
+
+    // Send clipboard text to server for sync file (/tmp/merlin-clipboard/current.txt)
+    function syncClipboard(text) {
+        if (ws && ws.readyState === WebSocket.OPEN && text) {
+            ws.send(JSON.stringify({ type: 'clipboard_sync', text: text }));
+        }
+    }
+
+    // Unified paste handler: prefer text (terminal use case), image only
+    // when clipboard has no text (e.g., screenshot). Used by paste button,
+    // right-click, Ctrl+Shift+V, and paste toast (mobile long-press).
+    async function handlePaste() {
+        // Try text first (the 99% terminal use case)
+        try {
+            const text = await navigator.clipboard.readText();
+            if (text) {
+                pasteToTerminal(text);
+                syncClipboard(text);
+                term.focus();
+                return;
+            }
+        } catch (err) {
+            // readText failed — try image, then fallback
+        }
+
+        // No text — try image (e.g., screenshot paste)
+        try {
+            const clipItems = await navigator.clipboard.read();
+            for (const item of clipItems) {
+                const imgType = item.types.find(t => t.startsWith('image/'));
+                if (imgType) {
+                    const blob = await item.getType(imgType);
+                    await uploadAndInjectImage(blob, 'clipboard.png');
+                    term.focus();
+                    return;
+                }
+            }
+        } catch (_) {}
+
+        // Both failed — fallback
+        if (lastOsc52Text) {
+            pasteToTerminal(lastOsc52Text);
+        } else {
+            showStatusFlash('Clipboard blocked — use Ctrl+V', '');
+        }
+        term.focus();
+    }
+
+    // Read text from xterm.js buffer between two cell positions (1-based).
+    // Used by touch-select to grab text synchronously during touchend
+    // (while user activation is live) instead of waiting for OSC 52.
+    function extractBufferText(col1, row1, col2, row2) {
+        const buffer = term.buffer.active;
+        const baseY = buffer.viewportY;
+
+        // Normalize: ensure start is before end
+        let sr = row1, sc = col1, er = row2, ec = col2;
+        if (sr > er || (sr === er && sc > ec)) {
+            [sr, sc, er, ec] = [er, ec, sr, sc];
+        }
+
+        if (sr === er) {
+            const line = buffer.getLine(baseY + sr - 1);
+            if (!line) return '';
+            return line.translateToString(false, sc - 1, ec).trimEnd();
+        }
+
+        const parts = [];
+        for (let r = sr; r <= er; r++) {
+            const line = buffer.getLine(baseY + r - 1);
+            if (!line) continue;
+            if (r === sr) {
+                parts.push(line.translateToString(true, sc - 1));
+            } else if (r === er) {
+                parts.push(line.translateToString(false, 0, ec));
+            } else {
+                parts.push(line.translateToString(true));
+            }
+        }
+        return parts.join('\n').trimEnd();
+    }
+
+    // Floating "Copy" pill — appears after touch-select, provides a click
+    // event (which Brave/Safari accept for clipboard access, unlike touchend)
+    const copyToast = document.getElementById('copy-toast');
+    let toastTimer = null;
+
+    function showCopyToast(clientX, clientY) {
+        const rect = container.getBoundingClientRect();
+        copyToast.style.left = Math.max(8, Math.min(clientX - 30, rect.width - 80)) + 'px';
+        copyToast.style.top = Math.max(8, clientY - rect.top - 44) + 'px';
+        copyToast.style.display = 'block';
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(hideCopyToast, 3000);
+    }
+
+    function hideCopyToast() {
+        copyToast.style.display = 'none';
+        clearTimeout(toastTimer);
+    }
+
+    copyToast.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const text = touchSelectText || lastOsc52Text;
+        if (text) {
+            syncClipboard(text);
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => {
+                    showCopiedFeedback();
+                }).catch(() => {});
+            }
+        }
+        hideCopyToast();
+        term.focus();
+    });
+
+    // Floating "Paste" pill — appears on long-press, provides a click
+    // event (user gesture) so the browser allows clipboard.readText().
+    const pasteToast = document.getElementById('paste-toast');
+    let pasteToastTimer = null;
+
+    function showPasteToast(clientX, clientY) {
+        hideCopyToast(); // hide copy toast if visible
+        const rect = container.getBoundingClientRect();
+        pasteToast.style.left = Math.max(8, Math.min(clientX - 30, rect.width - 80)) + 'px';
+        pasteToast.style.top = Math.max(8, clientY - rect.top - 44) + 'px';
+        pasteToast.style.display = 'block';
+        clearTimeout(pasteToastTimer);
+        pasteToastTimer = setTimeout(hidePasteToast, 3000);
+    }
+
+    function hidePasteToast() {
+        pasteToast.style.display = 'none';
+        clearTimeout(pasteToastTimer);
+    }
+
+    pasteToast.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handlePaste(); // click IS a valid user gesture — clipboard.readText() works
+        hidePasteToast();
+    });
+
+    // OSC 52: tmux sends clipboard content after mouse select or copy-mode.
+    // Also handles clipboard queries (payload '?') from container programs
+    // requesting to read the browser clipboard (reverse direction).
+    term.parser.registerOscHandler(52, (data) => {
+        const parts = data.split(';');
+        const b64 = parts.length > 1 ? parts[parts.length - 1] : parts[0];
+
+        // Clipboard query: container is asking to READ browser clipboard
+        if (b64 === '?' || b64 === '') {
+            (async () => {
+                let text = null;
+                try {
+                    text = await navigator.clipboard.readText();
+                } catch (_) {
+                    text = lastOsc52Text; // fallback to cached
+                }
+                if (text) {
+                    const resp = btoa(unescape(encodeURIComponent(text)));
+                    sendToTerminal('\x1b]52;c;' + resp + '\x1b\\');
+                    syncClipboard(text);
+                }
+            })();
+            return true;
+        }
+
+        try {
+            const text = decodeURIComponent(escape(atob(b64)));
+            lastOsc52Text = text;
+
+            // Try direct clipboard write (works on desktop with mouse gesture).
+            // Only show "Copied!" if it actually succeeds — on mobile the
+            // write fails silently and the copy toast handles feedback instead.
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => {
+                    showCopiedFeedback();
+                }).catch(() => {
+                    // writeText failed — sync to server so merlin-clip paste works
+                    syncClipboard(text);
+                    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                        // Touch: show copy pill for user gesture
+                        const rect = container.getBoundingClientRect();
+                        showCopyToast(rect.left + rect.width / 2, rect.top + 40);
+                    } else {
+                        // Desktop: Ctrl+Shift+C provides the gesture browsers need
+                        showStatusFlash('Copied — Ctrl+Shift+C for system', 'copied');
+                    }
+                });
+            }
+        } catch (_) {}
+        return true;
+    });
+
+    // Touch → tmux: we fully own touch events and translate them to SGR
+    // mouse sequences. This prevents xterm.js/browser mouse synthesis from
+    // interfering with tmux (which caused scroll to fail intermittently).
+    //
+    // Gestures:
+    //   Vertical swipe → scroll (SGR btn 64/65)
+    //   Tap            → click  (SGR btn 0 press + release)
+    //   Drag           → select (SGR btn 0 press + motion + release)
+    (function enableTouchGestures() {
+        const PX_PER_LINE = 20;
+        const GESTURE_THRESHOLD = 8; // px — movement to decide scroll vs select
+        const LONGPRESS_MS = 500;    // hold duration for paste gesture
+
+        let tracking = false;
+        let startX = 0, startY = 0;   // initial touch position (for gesture detection)
+        let lastY = 0;                 // tracks incremental Y for scroll accumulation
+        let accum = 0;
+        let mode = 'pending';          // 'pending' | 'scroll' | 'select' | 'longpress'
+        let selStart = null;           // {col, row} for selection start
+        let longPressTimer = null;
+
+        // Convert pixel position to terminal cell (1-based, for SGR)
+        function pixelToCell(clientX, clientY) {
+            const screen = container.querySelector('.xterm-screen');
+            if (!screen) return { col: 1, row: 1 };
+            const rect = screen.getBoundingClientRect();
+            const dims = fitAddon.proposeDimensions();
+            if (!dims) return { col: 1, row: 1 };
+            const col = Math.max(1, Math.min(dims.cols, Math.floor((clientX - rect.left) / (rect.width / dims.cols)) + 1));
+            const row = Math.max(1, Math.min(dims.rows, Math.floor((clientY - rect.top) / (rect.height / dims.rows)) + 1));
+            return { col, row };
+        }
+
+        // SGR mouse sequences
+        function sgrPress(col, row)   { sendToTerminal(`\x1b[<0;${col};${row}M`); }
+        function sgrMotion(col, row)  { sendToTerminal(`\x1b[<32;${col};${row}M`); }
+        function sgrRelease(col, row) { sendToTerminal(`\x1b[<0;${col};${row}m`); }
+        function sgrScrollUp()        { sendToTerminal('\x1b[<64;1;1M'); }
+        function sgrScrollDown()      { sendToTerminal('\x1b[<65;1;1M'); }
+
+        touchOverlay.addEventListener('touchstart', (e) => {
+            if (e.touches.length !== 1) return;
+            e.preventDefault();
+            const t = e.touches[0];
+            startX = t.clientX;
+            startY = t.clientY;
+            lastY = t.clientY;
+            tracking = true;
+            mode = 'pending';
+            accum = 0;
+            selStart = null;
+            clearTimeout(longPressTimer);
+            longPressTimer = setTimeout(() => {
+                if (mode === 'pending') {
+                    mode = 'longpress';
+                    // Show "Paste" pill — its click event provides the user
+                    // gesture that mobile browsers need for clipboard access.
+                    showPasteToast(startX, startY);
+                }
+            }, LONGPRESS_MS);
+        }, { passive: false });
+
+        touchOverlay.addEventListener('touchmove', (e) => {
+            if (!tracking || e.touches.length !== 1) return;
+            e.preventDefault();
+            const t = e.touches[0];
+            const dx = t.clientX - startX;
+            const dy = t.clientY - startY;
+
+            // Decide gesture on first significant movement
+            if (mode === 'pending') {
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < GESTURE_THRESHOLD) return;
+                clearTimeout(longPressTimer); // movement = not a long-press
+                if (Math.abs(dy) >= Math.abs(dx)) {
+                    mode = 'scroll';
+                } else {
+                    mode = 'select';
+                    selStart = pixelToCell(startX, startY);
+                    sgrPress(selStart.col, selStart.row);
+                }
+            }
+
+            if (mode === 'scroll') {
+                const delta = lastY - t.clientY;
+                lastY = t.clientY;
+                accum += delta;
+                const lines = Math.trunc(accum / PX_PER_LINE);
+                if (lines !== 0) {
+                    const fn = lines > 0 ? sgrScrollUp : sgrScrollDown;
+                    for (let i = 0; i < Math.abs(lines); i++) fn();
+                    accum -= lines * PX_PER_LINE;
+                }
+            } else if (mode === 'select') {
+                const pos = pixelToCell(t.clientX, t.clientY);
+                sgrMotion(pos.col, pos.row);
+            }
+        }, { passive: false });
+
+        touchOverlay.addEventListener('touchend', (e) => {
+            if (!tracking) return;
+            clearTimeout(longPressTimer);
+
+            if (mode === 'longpress') {
+                // Long-press already handled paste — nothing to do
+            } else if (mode === 'pending') {
+                // No significant movement — it's a tap (click)
+                hideCopyToast();
+                hidePasteToast();
+                const pos = pixelToCell(startX, startY);
+                sgrPress(pos.col, pos.row);
+                sgrRelease(pos.col, pos.row);
+                term.focus();
+            } else if (mode === 'select') {
+                // End selection: grab text from xterm.js buffer and show
+                // a floating "Copy" pill. The pill's click event gives us
+                // the user activation that Brave/Safari need for clipboard.
+                const t = e.changedTouches[0];
+                const pos = pixelToCell(t.clientX, t.clientY);
+                if (selStart) {
+                    const text = extractBufferText(selStart.col, selStart.row, pos.col, pos.row);
+                    if (text) {
+                        touchSelectText = text;
+                        showCopyToast(t.clientX, t.clientY);
+                    }
+                }
+                sgrRelease(pos.col, pos.row);
+            }
+            // scroll mode: nothing to clean up
+
+            tracking = false;
+            mode = 'pending';
+        });
+    })();
+
+    let ws = null;
+
+    function sendToTerminal(data) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(data);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Toolbar: sticky modifiers + direct keys
+    // -----------------------------------------------------------------------
+
+    const activeModifiers = new Set();
+
+    // ANSI escape sequences for special keys
+    const KEY_SEQUENCES = {
+        'F2':         '\x1bOQ',
+        'F3':         '\x1bOR',
+        'F4':         '\x1bOS',
+        'F5':         '\x1b[15~',
+        'ArrowLeft':  '\x1b[D',
+        'ArrowRight': '\x1b[C',
+        'ArrowUp':    '\x1b[A',
+        'ArrowDown':  '\x1b[B',
+    };
+
+    function sendKey(key) {
+        const hasCtrl  = activeModifiers.has('Control');
+        const hasAlt   = activeModifiers.has('Alt');
+        const hasShift = activeModifiers.has('Shift');
+
+        // Esc: send escape byte
+        if (key === 'Escape') {
+            sendToTerminal('\x1b');
+        }
+        // Tab: send tab byte (Shift+Tab = reverse tab)
+        else if (key === 'Tab') {
+            sendToTerminal(hasShift ? '\x1b[Z' : '\t');
+        }
+        // Shift+Tab direct button
+        else if (key === 'ShiftTab') {
+            sendToTerminal('\x1b[Z');
+        }
+        // Enter: send carriage return
+        else if (key === 'Enter') {
+            sendToTerminal('\r');
+        }
+        // Function keys and arrows: send ANSI sequence
+        else if (KEY_SEQUENCES[key]) {
+            let seq = KEY_SEQUENCES[key];
+            // Modifier encoding for CSI sequences: \x1b[1;{mod}{letter}
+            if ((hasCtrl || hasAlt || hasShift) && seq.startsWith('\x1b[') && seq.length >= 4) {
+                const mod = 1 + (hasShift ? 1 : 0) + (hasAlt ? 2 : 0) + (hasCtrl ? 4 : 0);
+                // Convert \x1b[A -> \x1b[1;5A (for Ctrl), etc.
+                const letter = seq[seq.length - 1];
+                const middle = seq.slice(2, -1);  // e.g., '' for arrows, '15' for F5
+                if (middle === '') {
+                    seq = `\x1b[1;${mod}${letter}`;
+                } else {
+                    seq = `\x1b[${middle};${mod}${letter}`;
+                }
+            }
+            sendToTerminal(seq);
+        }
+
+        // Clear modifiers after keypress
+        clearModifiers();
+    }
+
+    function clearModifiers() {
+        activeModifiers.clear();
+        toolbar.querySelectorAll('.tk-mod').forEach(btn => btn.classList.remove('active'));
+    }
+
+    // Modifier buttons: toggle on/off
+    toolbar.querySelectorAll('.tk-mod').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const mod = btn.dataset.mod;
+
+            // Esc, Tab, Enter are direct-send, not sticky
+            if (mod === 'Escape' || mod === 'Tab' || mod === 'Enter') {
+                sendKey(mod);
+                return;
+            }
+
+            if (activeModifiers.has(mod)) {
+                activeModifiers.delete(mod);
+                btn.classList.remove('active');
+            } else {
+                activeModifiers.add(mod);
+                btn.classList.add('active');
+            }
+            term.focus();
+        });
+    });
+
+    // Function keys: single click
+    toolbar.querySelectorAll('.tk-fn:not(.tk-repeat)').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            sendKey(btn.dataset.key);
+            term.focus();
+        });
+    });
+
+    // Repeatable buttons (arrows, backspace): hold to repeat
+    toolbar.querySelectorAll('.tk-repeat').forEach(btn => {
+        let repeatDelay = null, repeatInterval = null;
+
+        function fire() {
+            sendKey(btn.dataset.key);
+        }
+
+        function startRepeat(e) {
+            e.preventDefault();
+            fire();
+            repeatDelay = setTimeout(() => {
+                repeatInterval = setInterval(fire, 60);
+            }, 400);
+        }
+
+        function stopRepeat() {
+            clearTimeout(repeatDelay);
+            clearInterval(repeatInterval);
+            repeatDelay = null;
+            repeatInterval = null;
+        }
+
+        btn.addEventListener('touchstart', startRepeat, { passive: false });
+        btn.addEventListener('touchend', stopRepeat);
+        btn.addEventListener('touchcancel', stopRepeat);
+        btn.addEventListener('mousedown', (e) => { if (e.button === 0) startRepeat(e); });
+        btn.addEventListener('mouseup', stopRepeat);
+        btn.addEventListener('mouseleave', stopRepeat);
+    });
+
+    // Single key handler — xterm.js replaces the handler on each call to
+    // attachCustomKeyEventHandler (simple assignment, not a list), so all
+    // custom key logic must live in one function.
+    term.attachCustomKeyEventHandler((e) => {
+        if (e.type !== 'keydown') return true;
+
+        // Ctrl+V → let browser fire native paste event.
+        // xterm.js sends ^V (0x16) to the terminal otherwise.
+        if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyV') {
+            return false;
+        }
+
+        // Ctrl+Shift+C: copy terminal selection (or last OSC 52 text)
+        if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+            e.preventDefault();
+            const text = term.getSelection() || lastOsc52Text;
+            if (text) {
+                syncClipboard(text);
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(() => {
+                        showCopiedFeedback();
+                    }).catch(() => {
+                        showStatusFlash('Copied (server only)', 'copied');
+                    });
+                } else {
+                    showStatusFlash('Copied (server only)', 'copied');
+                }
+            }
+            return false;
+        }
+
+        // Ctrl+Shift+V: paste from clipboard
+        if (e.ctrlKey && e.shiftKey && e.key === 'V') {
+            e.preventDefault();
+            handlePaste();
+            return false;
+        }
+
+        // Alt+letter: send ESC + key for tmux M- bindings.
+        // macOptionIsMeta doesn't always work because the browser may
+        // deliver a composed character (e.g. Option+h → ˙).
+        if (e.altKey && !e.ctrlKey && !e.metaKey) {
+            const m = e.code.match(/^Key([A-Z])$/);
+            if (m) {
+                const ch = e.shiftKey ? m[1] : m[1].toLowerCase();
+                sendToTerminal('\x1b' + ch);
+                e.preventDefault();
+                return false;
+            }
+        }
+
+        // Sticky modifiers from toolbar: apply to next keypress
+        if (activeModifiers.size > 0) {
+            if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return true;
+
+            const hasCtrl = activeModifiers.has('Control') || e.ctrlKey;
+            const hasAlt  = activeModifiers.has('Alt') || e.altKey;
+
+            if (hasCtrl && e.key.length === 1) {
+                const code = e.key.toLowerCase().charCodeAt(0) - 96;
+                if (code >= 1 && code <= 26) {
+                    if (hasAlt) sendToTerminal('\x1b');
+                    sendToTerminal(String.fromCharCode(code));
+                    clearModifiers();
+                    e.preventDefault();
+                    return false;
+                }
+            }
+            if (hasAlt && e.key.length === 1) {
+                sendToTerminal('\x1b' + e.key);
+                clearModifiers();
+                e.preventDefault();
+                return false;
+            }
+            clearModifiers();
+        }
+
+        return true;
+    });
+
+    // Show toolbar on touch devices by default, hidden on desktop
+    const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    if (isTouchDevice) {
+        toolbar.classList.add('visible');
+        toolbarToggle.classList.add('active');
+    }
+
+    toolbarToggle.addEventListener('click', () => {
+        toolbar.classList.toggle('visible');
+        toolbarToggle.classList.toggle('active');
+        setTimeout(() => fitAddon.fit(), 50);
+    });
+
+    // Paste button: unified paste handler (text-first, image fallback)
+    const pasteBtn = document.getElementById('paste-btn');
+    pasteBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        handlePaste();
+    });
+
+    // -----------------------------------------------------------------------
+    // Image paste / drop / picker
+    // -----------------------------------------------------------------------
+
+    const imageBtn = document.getElementById('image-btn');
+    const imageFileInput = document.getElementById('image-file-input');
+
+    async function uploadAndInjectImage(blob, filename) {
+        imageBtn.classList.add('uploading');
+        showStatusFlash('Uploading...', 'uploading');
+        try {
+            const form = new FormData();
+            form.append('file', blob, filename || 'image.png');
+            const resp = await fetch('/api/upload-image', { method: 'POST', body: form });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.error || `Upload failed: ${resp.status}`);
+            }
+            const { path } = await resp.json();
+            sendToTerminal(path);
+            showStatusFlash('Image ready', 'copied');
+        } catch (err) {
+            showStatusFlash('Upload failed', '');
+            term.write(`\r\n\x1b[31m[Image upload error: ${err.message}]\x1b[0m\r\n`);
+        } finally {
+            imageBtn.classList.remove('uploading');
+            term.focus();
+        }
+    }
+
+    // Paste event (fires after Ctrl+V key handler returns false).
+    // xterm.js handles text paste natively via clipboardData — we just
+    // sync for merlin-clip and handle image-only paste (screenshots).
+    document.addEventListener('paste', async (e) => {
+        const text = e.clipboardData?.getData('text/plain');
+        if (text) {
+            // xterm.js already pasted the text — just sync for merlin-clip
+            syncClipboard(text);
+            return;
+        }
+        // No text — check for pure image paste (screenshot)
+        const items = e.clipboardData?.items;
+        if (items) {
+            for (const item of items) {
+                if (item.type.startsWith('image/') && item.kind === 'file') {
+                    const blob = item.getAsFile();
+                    if (blob) {
+                        e.preventDefault();
+                        await uploadAndInjectImage(blob, 'clipboard.png');
+                        return;
+                    }
+                }
+            }
+        }
+    });
+
+    // Right-click paste (desktop): prevent context menu, paste clipboard
+    container.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        handlePaste();
+    });
+
+    // Drag and drop
+    container.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        container.classList.add('drag-over');
+    });
+    container.addEventListener('dragleave', (e) => {
+        if (!container.contains(e.relatedTarget)) container.classList.remove('drag-over');
+    });
+    container.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        container.classList.remove('drag-over');
+        for (const file of e.dataTransfer.files) {
+            if (file.type.startsWith('image/')) {
+                await uploadAndInjectImage(file, file.name);
+                return;
+            }
+        }
+    });
+
+    // Image toolbar button: open file picker (clipboard images handled by paste button / Ctrl+V)
+
+    imageBtn.addEventListener('click', () => {
+        imageFileInput.click();
+    });
+
+    imageFileInput.addEventListener('change', async () => {
+        const file = imageFileInput.files[0];
+        if (file && file.type.startsWith('image/')) {
+            await uploadAndInjectImage(file, file.name);
+        }
+        imageFileInput.value = '';
+    });
+
+    // Commits button: navigate to commits for current terminal CWD
+    const commitsBtn = document.getElementById('commits-btn');
+    commitsBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try {
+            const resp = await fetch('/api/terminal/cwd');
+            if (!resp.ok) throw new Error('Failed to get CWD');
+            const cwd = await resp.json();
+            if (cwd.is_git_repo && cwd.repo_root) {
+                window.location.href = '/commits?repo=' + encodeURIComponent(cwd.repo_root);
+                return;
+            }
+            showStatusFlash('Not a git repo', '');
+        } catch (_) {
+            showStatusFlash('Not a git repo', '');
+        }
+        term.focus();
+    });
+
+    // Prevent toolbar buttons from stealing focus from terminal
+    toolbar.addEventListener('mousedown', (e) => e.preventDefault());
+    toolbar.addEventListener('touchstart', (e) => {
+        // Only prevent default on the toolbar itself, not the buttons
+        // (buttons need click events to fire)
+        if (e.target === toolbar || e.target.classList.contains('toolbar-row')) {
+            e.preventDefault();
+        }
+    }, { passive: false });
+
+    // -----------------------------------------------------------------------
+    // Voice input (microphone -> transcription -> terminal)
+    // -----------------------------------------------------------------------
+
+    const micBtn = document.getElementById('mic-btn');
+    const micLang = document.getElementById('mic-lang');
+    const autoEnterBtn = document.getElementById('auto-enter-btn');
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let voiceRetryPending = false;
+
+    // Voice availability (server-side detection)
+    const voiceAvailable = {{ voice_available | tojson }};
+    let voiceWarnShown = false;
+    if (!voiceAvailable) {
+        micBtn.classList.add('voice-unavailable');
+    }
+
+    const MAX_AUDIO_SIZE = 25 * 1024 * 1024;
+    const RETRY_BACKOFF = [1000, 2000];
+    const VOICE_DB_KEY = 'pending_voice';
+
+    // Restore saved language preference
+    const savedLang = localStorage.getItem('mic-lang');
+    if (savedLang) micLang.value = savedLang;
+    micLang.addEventListener('change', () => localStorage.setItem('mic-lang', micLang.value));
+
+    // Auto-enter toggle
+    if (localStorage.getItem('auto-enter') === 'true') {
+        autoEnterBtn.classList.add('active');
+    }
+    autoEnterBtn.addEventListener('click', () => {
+        autoEnterBtn.classList.toggle('active');
+        localStorage.setItem('auto-enter', autoEnterBtn.classList.contains('active') ? 'true' : 'false');
+    });
+
+    function showUploadDone() {
+        micBtn.classList.add('upload-done');
+        setTimeout(() => micBtn.classList.remove('upload-done'), 500);
+    }
+
+    // -------------------------------------------------------------------
+    // IndexedDB helpers — persist audio across network failures / reloads
+    // -------------------------------------------------------------------
+
+    function openVoiceDB() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open('merlin-voice', 1);
+            req.onupgradeneeded = () => {
+                const db = req.result;
+                if (!db.objectStoreNames.contains('audio')) {
+                    db.createObjectStore('audio');
+                }
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    async function saveVoiceToDB(blob, language, autoEnter) {
+        const db = await openVoiceDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('audio', 'readwrite');
+            tx.objectStore('audio').put(
+                { blob, language, autoEnter, timestamp: Date.now() },
+                VOICE_DB_KEY
+            );
+            tx.oncomplete = () => { db.close(); resolve(); };
+            tx.onerror = () => { db.close(); reject(tx.error); };
+        });
+    }
+
+    async function loadVoiceFromDB() {
+        try {
+            const db = await openVoiceDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction('audio', 'readonly');
+                const req = tx.objectStore('audio').get(VOICE_DB_KEY);
+                req.onsuccess = () => { db.close(); resolve(req.result || null); };
+                req.onerror = () => { db.close(); resolve(null); };
+            });
+        } catch { return null; }
+    }
+
+    async function deleteVoiceFromDB() {
+        try {
+            const db = await openVoiceDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction('audio', 'readwrite');
+                tx.objectStore('audio').delete(VOICE_DB_KEY);
+                tx.oncomplete = () => { db.close(); resolve(); };
+                tx.onerror = () => { db.close(); resolve(); };
+            });
+        } catch { /* ignore */ }
+    }
+
+    async function hasVoiceInDB() {
+        try {
+            const db = await openVoiceDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction('audio', 'readonly');
+                const req = tx.objectStore('audio').count(VOICE_DB_KEY);
+                req.onsuccess = () => { db.close(); resolve(req.result > 0); };
+                req.onerror = () => { db.close(); resolve(false); };
+            });
+        } catch { return false; }
+    }
+
+    // -------------------------------------------------------------------
+    // Upload with retry
+    // -------------------------------------------------------------------
+
+    function uploadVoice(blob, language, autoEnter) {
+        return new Promise((resolve, reject) => {
+            const ext = blob.type.includes('mp4') ? '.mp4' : blob.type.includes('wav') ? '.wav' : '.webm';
+            const formData = new FormData();
+            formData.append('file', blob, 'recording' + ext);
+            formData.append('language', language);
+            formData.append('auto_enter', autoEnter ? 'true' : 'false');
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/transcribe');
+
+            xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) {
+                    micBtn.style.setProperty('--upload-progress', (e.loaded / e.total).toString());
+                }
+            };
+
+            xhr.onload = () => {
+                micBtn.style.removeProperty('--upload-progress');
+                if (xhr.status === 202) {
+                    resolve('accepted');
+                } else if (xhr.status === 200) {
+                    try {
+                        const data = JSON.parse(xhr.responseText);
+                        if (data.text) {
+                            sendToTerminal(data.text + (autoEnter ? '\r' : ''));
+                        } else if (data.error) {
+                            term.write(`\r\n\x1b[31m[Voice error: ${data.error}]\x1b[0m\r\n`);
+                        }
+                    } catch (e) {
+                        term.write(`\r\n\x1b[31m[Voice error: bad response]\x1b[0m\r\n`);
+                    }
+                    resolve('fallback');
+                } else {
+                    reject(new Error(`server ${xhr.status}`));
+                }
+            };
+
+            xhr.onerror = () => {
+                micBtn.style.removeProperty('--upload-progress');
+                reject(new Error('network error'));
+            };
+
+            xhr.send(formData);
+        });
+    }
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    async function uploadWithRetry(blob, language, autoEnter) {
+        micBtn.classList.add('uploading');
+        micBtn.style.setProperty('--upload-progress', '0');
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                await uploadVoice(blob, language, autoEnter);
+                // Success — clean up
+                micBtn.classList.remove('uploading');
+                await deleteVoiceFromDB();
+                showUploadDone();
+                term.focus();
+                return;
+            } catch (err) {
+                if (attempt < 2) {
+                    micBtn.style.setProperty('--upload-progress', '0');
+                    await sleep(RETRY_BACKOFF[attempt]);
+                }
+            }
+        }
+
+        // All 3 retries failed — enter retry state
+        micBtn.classList.remove('uploading');
+        micBtn.style.removeProperty('--upload-progress');
+        enterRetryState();
+        term.focus();
+    }
+
+    // -------------------------------------------------------------------
+    // Retry state — orange pulsing mic, tap to retry
+    // -------------------------------------------------------------------
+
+    function enterRetryState() {
+        voiceRetryPending = true;
+        micBtn.classList.add('retry-pending');
+        micBtn.title = 'Voice upload failed — tap to retry';
+    }
+
+    function exitRetryState() {
+        voiceRetryPending = false;
+        micBtn.classList.remove('retry-pending');
+        micBtn.title = 'Voice input (tap to record)';
+    }
+
+    async function retryFromDB() {
+        const pending = await loadVoiceFromDB();
+        if (!pending) {
+            exitRetryState();
+            return;
+        }
+        exitRetryState();
+        await uploadWithRetry(pending.blob, pending.language, pending.autoEnter);
+    }
+
+    // -------------------------------------------------------------------
+    // Page load recovery — check for unsent audio
+    // -------------------------------------------------------------------
+
+    (async function checkPendingVoice() {
+        if (await hasVoiceInDB()) enterRetryState();
+    })();
+
+    // -------------------------------------------------------------------
+    // Mic button click handler
+    // -------------------------------------------------------------------
+
+    micBtn.addEventListener('click', async () => {
+        if (!voiceAvailable) {
+            if (!voiceWarnShown) {
+                term.write('\r\n\x1b[33m[Voice unavailable — set OPENAI_API_KEY or MERLIN_SAAS_TOKEN in .env]\x1b[0m\r\n');
+                voiceWarnShown = true;
+            }
+            // Dismiss: remove warning icon
+            micBtn.classList.remove('voice-unavailable');
+            term.focus();
+            return;
+        }
+
+        if (micBtn.classList.contains('uploading')) return; // busy
+
+        // Retry pending audio
+        if (voiceRetryPending) {
+            retryFromDB();
+            return;
+        }
+
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+            // Stop recording
+            mediaRecorder.stop();
+            return;
+        }
+
+        // Start recording
+        try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                term.write('\r\n\x1b[31m[Voice requires HTTPS — mic API unavailable over HTTP]\x1b[0m\r\n');
+                return;
+            }
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioChunks = [];
+            const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/wav']
+                .find(t => MediaRecorder.isTypeSupported(t)) || '';
+            mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) audioChunks.push(e.data);
+            };
+
+            mediaRecorder.onstop = async () => {
+                stream.getTracks().forEach(t => t.stop());
+                micBtn.classList.remove('recording');
+
+                const blob = new Blob(audioChunks, { type: mimeType || 'audio/webm' });
+
+                // Size check
+                if (blob.size > MAX_AUDIO_SIZE) {
+                    term.write('\r\n\x1b[31m[Voice error: recording too large (>25 MB)]\x1b[0m\r\n');
+                    term.focus();
+                    return;
+                }
+
+                const language = document.getElementById('mic-lang').value;
+                const autoEnter = autoEnterBtn.classList.contains('active');
+
+                // Exit retry state if active (new recording replaces old)
+                if (voiceRetryPending) exitRetryState();
+
+                // Save to IndexedDB before uploading (survives network failure)
+                try {
+                    await saveVoiceToDB(blob, language, autoEnter);
+                } catch (e) {
+                    // IndexedDB unavailable — proceed without persistence
+                }
+
+                await uploadWithRetry(blob, language, autoEnter);
+            };
+
+            mediaRecorder.start();
+            micBtn.classList.add('recording');
+        } catch (err) {
+            if (err.name === 'NotAllowedError') {
+                term.write('\r\n\x1b[31m[Microphone permission denied]\x1b[0m\r\n');
+            } else {
+                term.write(`\r\n\x1b[31m[Mic error: ${err.message}]\x1b[0m\r\n`);
+            }
+        }
+    });
+
+    // -----------------------------------------------------------------------
+    // WebSocket connection
+    // -----------------------------------------------------------------------
+
+    function setStatus(state, text) {
+        statusDot.className = state;
+        statusText.textContent = text;
+    }
+
+    let reconnectDelay = 1000;
+    const MAX_RECONNECT_DELAY = 30000;
+    let reconnectTimer = null;
+
+    function scheduleReconnect() {
+        if (reconnectTimer) return;
+        setStatus('connecting', `Reconnecting in ${Math.round(reconnectDelay / 1000)}s...`);
+        reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            connect();
+            reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
+        }, reconnectDelay);
+    }
+
+    function connect() {
+        if (ws) { try { ws.close(); } catch (_) {} }
+        setStatus('connecting', 'Connecting...');
+
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${proto}//${location.host}/ws/terminal`);
+
+        ws.onopen = () => {
+            reconnectDelay = 1000; // reset backoff on success
+            setStatus('connected', 'Connected');
+            term.focus();
+            const dims = fitAddon.proposeDimensions();
+            if (dims) {
+                ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+            }
+        };
+
+        ws.onmessage = (e) => {
+            term.write(e.data);
+        };
+
+        ws.onclose = (e) => {
+            if (e.code === 4401) {
+                setStatus('disconnected', 'Unauthorized — reload page');
+                return; // don't reconnect on auth failure
+            }
+            setStatus('disconnected', 'Disconnected');
+            scheduleReconnect();
+        };
+
+        ws.onerror = () => {
+            // onclose will fire after onerror, which handles reconnect
+        };
+    }
+
+    // Terminal input -> WebSocket
+    term.onData((data) => { sendToTerminal(data); });
+
+    // Resize handling
+    function onResize() {
+        fitAddon.fit();
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            const dims = fitAddon.proposeDimensions();
+            if (dims) {
+                ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+            }
+        }
+    }
+
+    const resizeObserver = new ResizeObserver(() => onResize());
+    resizeObserver.observe(container);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', () => setTimeout(onResize, 100));
+
+    // -----------------------------------------------------------------------
+    // Bracketed paste mode tracking
+    // -----------------------------------------------------------------------
+    // Watch terminal output for DECSET/DECRST 2004 to know if shell expects
+    // bracketed paste sequences around pasted text.
+    term.parser.registerCsiHandler({ final: 'h' }, (params) => {
+        if (params[0] === 2004) bracketedPasteActive = true;
+        return false; // let xterm.js also process it
+    });
+    term.parser.registerCsiHandler({ final: 'l' }, (params) => {
+        if (params[0] === 2004) bracketedPasteActive = false;
+        return false;
+    });
+
+    // -----------------------------------------------------------------------
+    // Clipboard permission detection
+    // -----------------------------------------------------------------------
+    const clipboardPermBtn = document.getElementById('clipboard-perm');
+    const clipboardPermBadge = document.getElementById('clipboard-perm-badge');
+
+    function updateClipboardIcon(state) {
+        if (state === 'granted') {
+            clipboardPermBtn.classList.remove('visible', 'denied');
+        } else if (state === 'denied') {
+            clipboardPermBtn.classList.add('visible', 'denied');
+            clipboardPermBtn.title = 'Clipboard blocked — enable in browser settings';
+            clipboardPermBadge.textContent = '\u2715';
+        } else {
+            // 'prompt' or unknown
+            clipboardPermBtn.classList.add('visible');
+            clipboardPermBtn.classList.remove('denied');
+            clipboardPermBtn.title = 'Click to enable clipboard';
+            clipboardPermBadge.textContent = '?';
+        }
+    }
+
+    async function checkClipboardPermission() {
+        try {
+            const status = await navigator.permissions.query({ name: 'clipboard-read' });
+            updateClipboardIcon(status.state);
+            status.addEventListener('change', () => updateClipboardIcon(status.state));
+        } catch (_) {
+            // Safari/Firefox don't support clipboard-read permission query.
+            // No persistent permission on these browsers — every readText()
+            // needs a user gesture. The paste pill/button already handle that,
+            // so the icon would just be noise. Hide it.
+        }
+    }
+
+    clipboardPermBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try {
+            await navigator.clipboard.readText();
+            updateClipboardIcon('granted');
+            showStatusFlash('Clipboard enabled!', 'copied');
+        } catch (_) {
+            updateClipboardIcon('denied');
+            showStatusFlash('Clipboard blocked', '');
+        }
+        term.focus();
+    });
+
+    checkClipboardPermission();
+
+    connect();
+});
+</script>
+{% endblock %}
