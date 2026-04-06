@@ -277,6 +277,25 @@ Web-based dashboard served by FastAPI on port 3123, started by `main.py`.
 
 Epics and project planning are managed in the private `merlin-saas` repo under `epics/cli/`.
 
+## Notes & Knowledge Base
+
+The notes directory is **configurable** — never hardcode paths like `~/.merlin/notes/` or `~/.merlin/memory/`. Always discover it dynamically:
+
+```bash
+merlin config notes-dir    # prints the resolved notes directory
+```
+
+The notes directory contains:
+
+| Path | Content |
+|------|---------|
+| `<notes-dir>/kb/` | Knowledge base (Zettelkasten notes, `_index.md`) |
+| `<notes-dir>/logs/` | Daily conversation logs |
+| `<notes-dir>/user.md` | User profile and facts |
+| `<notes-dir>/media/` | Uploaded media files |
+
+**For cron jobs and skills**: do not put absolute paths in prompts. The agent reads this CLAUDE.md and knows how to find the notes directory. Just refer to "the knowledge base" or "the user profile" — the agent will resolve the path.
+
 ## Key Patterns and Conventions
 
 - **pyproject.toml + uv.lock**: All dependencies declared in `pyproject.toml`, pinned by `uv.lock` for reproducible installs. Run `uv lock` after changing dependencies. Standalone Claude Code scripts (`.claude/skills/`) may still use PEP 723 inline metadata.
