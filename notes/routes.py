@@ -251,12 +251,25 @@ def api_search_notes(q: str = ""):
 
 @router.get("/api/notes/sync-status")
 def api_sync_status():
-    """Return git sync status including any conflicted files."""
-    from .sync import conflicted_files
+    """Return git sync status including push state and any conflicted files."""
+    from .sync import conflicted_files, sync_state
     return {
         "conflicted_files": list(conflicted_files),
         "has_conflicts": len(conflicted_files) > 0,
+        **sync_state,
     }
+
+
+@router.post("/api/notes/sync-test")
+async def api_sync_test(request: Request):
+    """Test if a git remote URL is accessible (runs git ls-remote)."""
+    body = await request.json()
+    remote_url = body.get("remote_url", "").strip()
+    if not remote_url:
+        raise HTTPException(status_code=400, detail="No remote URL provided")
+    from .sync import test_remote
+    ok, message = await test_remote(remote_url, _notes_dir())
+    return {"ok": ok, "message": message}
 
 
 @router.get("/api/notes/{path:path}")

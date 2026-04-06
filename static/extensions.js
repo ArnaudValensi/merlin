@@ -100,6 +100,121 @@ const Extensions = {
         document.querySelectorAll('.ext-config-checkbox').forEach(cb => {
             this.onCheckboxChange(cb);
         });
+        this._initNotesSync();
+    },
+
+    // ---------------------------------------------------------------
+    // Notes git sync: status line + test button
+    // ---------------------------------------------------------------
+
+    _initNotesSync() {
+        const remoteInput = document.querySelector('input[name="NOTES_GIT_REMOTE"]');
+        if (!remoteInput) return;
+
+        const remoteField = remoteInput.closest('.ext-config-field');
+        if (!remoteField) return;
+
+        // Test connection row — insert after remote URL field
+        const testRow = document.createElement('div');
+        testRow.className = 'ext-config-field sync-test-row';
+        testRow.setAttribute('data-depends-on', 'NOTES_GIT_SYNC');
+        testRow.style.display = 'none';
+        testRow.innerHTML = `
+            <button class="sync-test-btn" type="button">Test Connection</button>
+            <span class="sync-test-result" id="sync-test-result"></span>
+        `;
+        remoteField.after(testRow);
+
+        testRow.querySelector('.sync-test-btn').addEventListener('click', () => this._testSync());
+
+        // Sync status line — insert before the Save button
+        const form = remoteInput.closest('.ext-config');
+        const saveBtn = form?.querySelector('.ext-config-save');
+        if (form && saveBtn) {
+            const statusLine = document.createElement('div');
+            statusLine.className = 'ext-config-field sync-status-line';
+            statusLine.id = 'sync-status-line';
+            statusLine.setAttribute('data-depends-on', 'NOTES_GIT_SYNC');
+            statusLine.style.display = 'none';
+            saveBtn.before(statusLine);
+        }
+
+        // Re-run dependency visibility so new elements respect checkbox state
+        const checkbox = document.querySelector('input[name="NOTES_GIT_SYNC"]');
+        if (checkbox) this.onCheckboxChange(checkbox);
+
+        // Load current sync status
+        this._loadSyncStatus();
+    },
+
+    async _testSync() {
+        const remoteInput = document.querySelector('input[name="NOTES_GIT_REMOTE"]');
+        const result = document.getElementById('sync-test-result');
+        const btn = document.querySelector('.sync-test-btn');
+        if (!remoteInput || !result || !btn) return;
+
+        const url = remoteInput.value.trim();
+        if (!url) {
+            result.textContent = 'Enter a remote URL first';
+            result.className = 'sync-test-result error';
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Testing\u2026';
+        result.textContent = '';
+        result.className = 'sync-test-result';
+
+        try {
+            const resp = await fetch('/api/notes/sync-test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ remote_url: url }),
+            });
+            const data = await resp.json();
+            result.textContent = data.ok ? 'Connection successful' : data.message;
+            result.className = `sync-test-result ${data.ok ? 'ok' : 'error'}`;
+        } catch {
+            result.textContent = 'Test failed';
+            result.className = 'sync-test-result error';
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Test Connection';
+        }
+    },
+
+    async _loadSyncStatus() {
+        const line = document.getElementById('sync-status-line');
+        if (!line) return;
+
+        try {
+            const resp = await fetch('/api/notes/sync-status');
+            if (!resp.ok) return;
+            const data = await resp.json();
+
+            if (data.last_push_ok === true) {
+                line.textContent = `Last sync: ${this._timeAgo(data.last_push_at)}`;
+                line.classList.add('ok');
+            } else if (data.last_push_ok === false) {
+                line.textContent = `Push failed: ${data.last_error || 'unknown error'}`;
+                line.classList.add('error');
+            } else {
+                line.textContent = 'No sync yet';
+                line.classList.add('muted');
+            }
+        } catch { /* ignore */ }
+    },
+
+    _timeAgo(isoStr) {
+        if (!isoStr) return 'never';
+        const seconds = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000);
+        if (seconds < 60) return 'just now';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        const days = Math.floor(hours / 24);
+        return `${days}d ago`;
     },
 
     _showBanner() {

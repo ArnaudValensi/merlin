@@ -252,6 +252,65 @@
     background: rgba(251, 191, 36, 0.15);
 }
 
+/* Sync test + status */
+.sync-test-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sync-test-btn {
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 0.15s;
+}
+
+.sync-test-btn:hover {
+    border-color: var(--accent-blue);
+    color: var(--text-primary);
+}
+
+.sync-test-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.sync-test-result {
+    font-size: 12px;
+    font-family: 'Geist Mono', monospace;
+}
+
+.sync-test-result.ok {
+    color: var(--accent-green);
+}
+
+.sync-test-result.error {
+    color: var(--accent-red);
+}
+
+.sync-status-line {
+    font-size: 12px;
+    padding: 6px 0;
+}
+
+.sync-status-line.ok {
+    color: var(--accent-green);
+}
+
+.sync-status-line.error {
+    color: var(--accent-red);
+}
+
+.sync-status-line.muted {
+    color: var(--text-muted);
+}
+
 /* Mobile */
 @media (max-width: 768px) {
     .ext-card {

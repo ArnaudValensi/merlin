@@ -11,12 +11,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger("merlin.notes.sync")
 
 # Sync state — visible to the notes UI for conflict banners
 conflicted_files: list[str] = []
+
+# Sync state — visible to the extensions page for status display
+sync_state: dict = {
+    "last_push_at": None,   # ISO timestamp string
+    "last_push_ok": None,   # True/False/None (never pushed)
+    "last_error": None,     # error string or None
+}
 
 # Internal state
 _sync_task: asyncio.Task | None = None
@@ -157,12 +165,18 @@ async def _pull(notes_dir: Path) -> None:
 
 
 async def _push(notes_dir: Path) -> None:
-    """Push to remote (best effort)."""
+    """Push to remote (best effort). Updates sync_state."""
     if not await _has_remote(notes_dir):
         return
     rc, _, stderr = await _run_git("push", "-u", "origin", "main", cwd=notes_dir)
     if rc != 0:
         logger.warning("git push failed: %s", stderr)
+        sync_state["last_push_ok"] = False
+        sync_state["last_error"] = stderr
+    else:
+        sync_state["last_push_at"] = datetime.now(timezone.utc).isoformat()
+        sync_state["last_push_ok"] = True
+        sync_state["last_error"] = None
 
 
 async def _sync_cycle(notes_dir: Path) -> bool:
@@ -238,6 +252,26 @@ async def _update_conflict_state(notes_dir: Path) -> None:
         return still
 
     conflicted_files = await asyncio.to_thread(_scan)
+
+
+async def test_remote(remote_url: str, notes_dir: Path) -> tuple[bool, str]:
+    """Test if a remote URL is accessible via git ls-remote. Returns (ok, message)."""
+    await _ensure_git_repo(notes_dir)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "ls-remote", remote_url,
+            cwd=str(notes_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=15)
+        if proc.returncode == 0:
+            return True, "Connection successful"
+        return False, stderr_bytes.decode().strip() or "Unknown error"
+    except asyncio.TimeoutError:
+        return False, "Connection timed out (15s)"
+    except Exception as e:
+        return False, str(e)
 
 
 async def start_sync(notes_dir: Path) -> None:
