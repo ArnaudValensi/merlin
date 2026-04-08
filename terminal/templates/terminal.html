@@ -566,47 +566,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Unified paste handler for all paste paths: Ctrl+V, paste button,
     // right-click, Ctrl+Shift+V, and paste toast (mobile long-press).
+    // Uses clipboard.read() first — one call returns both text and image
+    // items, preserving the user gesture (critical on iOS Safari).
+    // Falls back to readText() if read() isn't supported.
     const isTouchDevice = ('ontouchstart' in window || navigator.maxTouchPoints > 0);
 
     async function handlePaste() {
-        // Mobile (iOS/Android): use readText() directly.
-        // iOS Safari consumes the user gesture on clipboard.read(),
-        // making a subsequent readText() fail. readText() alone is
-        // reliable on mobile (images use the image button instead).
-        if (isTouchDevice) {
-            try {
-                const text = await navigator.clipboard.readText();
-                if (text) {
-                    pasteToTerminal(text);
-                    syncClipboard(text);
-                    term.focus();
-                    return;
-                }
-            } catch (_) {}
-            if (lastOsc52Text) {
-                pasteToTerminal(lastOsc52Text);
-            } else {
-                showStatusFlash('Clipboard blocked', '');
-            }
-            term.focus();
-            return;
-        }
-
-        // Desktop: use read() to get both text and images in one call.
         try {
             const clipItems = await navigator.clipboard.read();
-            // Image-only items first (has image/* but NOT text/plain).
-            // Items with both types are text with phantom image — skip.
+            // Check for images first
             for (const item of clipItems) {
                 const imgType = item.types.find(t => t.startsWith('image/'));
-                if (imgType && !item.types.includes('text/plain')) {
+                if (imgType) {
                     const blob = await item.getType(imgType);
                     await uploadAndInjectImage(blob, 'clipboard.png');
                     term.focus();
                     return;
                 }
             }
-            // Text items from read()
+            // No image — check for text
             for (const item of clipItems) {
                 if (item.types.includes('text/plain')) {
                     const blob = await item.getType('text/plain');
@@ -620,7 +598,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         } catch (_) {
-            // read() unavailable — try readText()
+            // read() not supported or blocked — fall back to readText()
             try {
                 const text = await navigator.clipboard.readText();
                 if (text) {
