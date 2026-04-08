@@ -564,42 +564,79 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Unified paste handler: prefer text (terminal use case), image only
-    // when clipboard has no text (e.g., screenshot). Used by paste button,
+    // Unified paste handler for all paste paths: Ctrl+V, paste button,
     // right-click, Ctrl+Shift+V, and paste toast (mobile long-press).
+    const isTouchDevice = ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+
     async function handlePaste() {
-        // Try text first (the 99% terminal use case)
-        try {
-            const text = await navigator.clipboard.readText();
-            if (text) {
-                pasteToTerminal(text);
-                syncClipboard(text);
-                term.focus();
-                return;
+        // Mobile (iOS/Android): use readText() directly.
+        // iOS Safari consumes the user gesture on clipboard.read(),
+        // making a subsequent readText() fail. readText() alone is
+        // reliable on mobile (images use the image button instead).
+        if (isTouchDevice) {
+            try {
+                const text = await navigator.clipboard.readText();
+                if (text) {
+                    pasteToTerminal(text);
+                    syncClipboard(text);
+                    term.focus();
+                    return;
+                }
+            } catch (_) {}
+            if (lastOsc52Text) {
+                pasteToTerminal(lastOsc52Text);
+            } else {
+                showStatusFlash('Clipboard blocked', '');
             }
-        } catch (err) {
-            // readText failed — try image, then fallback
+            term.focus();
+            return;
         }
 
-        // No text — try image (e.g., screenshot paste)
+        // Desktop: use read() to get both text and images in one call.
         try {
             const clipItems = await navigator.clipboard.read();
+            // Image-only items first (has image/* but NOT text/plain).
+            // Items with both types are text with phantom image — skip.
             for (const item of clipItems) {
                 const imgType = item.types.find(t => t.startsWith('image/'));
-                if (imgType) {
+                if (imgType && !item.types.includes('text/plain')) {
                     const blob = await item.getType(imgType);
                     await uploadAndInjectImage(blob, 'clipboard.png');
                     term.focus();
                     return;
                 }
             }
-        } catch (_) {}
+            // Text items from read()
+            for (const item of clipItems) {
+                if (item.types.includes('text/plain')) {
+                    const blob = await item.getType('text/plain');
+                    const text = await blob.text();
+                    if (text) {
+                        pasteToTerminal(text);
+                        syncClipboard(text);
+                        term.focus();
+                        return;
+                    }
+                }
+            }
+        } catch (_) {
+            // read() unavailable — try readText()
+            try {
+                const text = await navigator.clipboard.readText();
+                if (text) {
+                    pasteToTerminal(text);
+                    syncClipboard(text);
+                    term.focus();
+                    return;
+                }
+            } catch (_) {}
+        }
 
-        // Both failed — fallback
+        // All clipboard APIs failed — last resort
         if (lastOsc52Text) {
             pasteToTerminal(lastOsc52Text);
         } else {
-            showStatusFlash('Clipboard blocked — use Ctrl+V', '');
+            showStatusFlash('Clipboard blocked', '');
         }
         term.focus();
     }
@@ -1028,9 +1065,14 @@ document.addEventListener('DOMContentLoaded', () => {
     term.attachCustomKeyEventHandler((e) => {
         if (e.type !== 'keydown') return true;
 
-        // Ctrl+V → let browser fire native paste event.
-        // xterm.js sends ^V (0x16) to the terminal otherwise.
+        // Ctrl+V → paste via handlePaste() (same as paste button).
+        // We can't rely on the native paste event because xterm.js 5.x
+        // calls stopPropagation() in its paste handler, so our document-
+        // level listener never fires. handlePaste() uses the async
+        // Clipboard API instead.
         if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyV') {
+            e.preventDefault();
+            handlePaste();
             return false;
         }
 
@@ -1103,7 +1145,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Show toolbar on touch devices by default, hidden on desktop
-    const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     if (isTouchDevice) {
         toolbar.classList.add('visible');
         toolbarToggle.classList.add('active');
@@ -1151,32 +1192,6 @@ document.addEventListener('DOMContentLoaded', () => {
             term.focus();
         }
     }
-
-    // Paste event (fires after Ctrl+V key handler returns false).
-    // xterm.js handles text paste natively via clipboardData — we just
-    // sync for merlin-clip and handle image-only paste (screenshots).
-    document.addEventListener('paste', async (e) => {
-        const text = e.clipboardData?.getData('text/plain');
-        if (text) {
-            // xterm.js already pasted the text — just sync for merlin-clip
-            syncClipboard(text);
-            return;
-        }
-        // No text — check for pure image paste (screenshot)
-        const items = e.clipboardData?.items;
-        if (items) {
-            for (const item of items) {
-                if (item.type.startsWith('image/') && item.kind === 'file') {
-                    const blob = item.getAsFile();
-                    if (blob) {
-                        e.preventDefault();
-                        await uploadAndInjectImage(blob, 'clipboard.png');
-                        return;
-                    }
-                }
-            }
-        }
-    });
 
     // Right-click paste (desktop): prevent context menu, paste clipboard
     container.addEventListener('contextmenu', (e) => {

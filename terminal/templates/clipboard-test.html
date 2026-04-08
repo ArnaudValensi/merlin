@@ -27,7 +27,13 @@
 <textarea id="paste-target" placeholder="Click here and press Ctrl+V..."></textarea>
 <div id="paste-log" class="log">Waiting for paste event...</div>
 
-<h2>2. Async Clipboard API Tests</h2>
+<h2>2. Ctrl+V Async API Test (proposed fix)</h2>
+<p>Click in the box below, then press Ctrl+V. This tests whether <code>navigator.clipboard.readText()</code>
+and <code>navigator.clipboard.read()</code> work from a Ctrl+V keydown — which is what the fix would do.</p>
+<textarea id="ctrlv-async-target" placeholder="Click here and press Ctrl+V to test async API from keydown..."></textarea>
+<div id="ctrlv-log" class="log">Waiting for Ctrl+V...</div>
+
+<h2>3. Async Clipboard API Tests</h2>
 <p>These buttons test the APIs we use. Each click is a user gesture.</p>
 <button id="btn-readtext">navigator.clipboard.readText()</button>
 <button id="btn-read">navigator.clipboard.read()</button>
@@ -35,7 +41,7 @@
 <button id="btn-perm">permissions.query('clipboard-read')</button>
 <div id="api-log" class="log">Click a button...</div>
 
-<h2>3. Combined Log</h2>
+<h2>4. Combined Log</h2>
 <div id="log" class="log"></div>
 
 <script>
@@ -124,7 +130,47 @@ document.addEventListener('paste', (e) => {
 });
 
 // ---------------------------------------------------------------
-// 2. Async API tests
+// 2. Ctrl+V → async clipboard API (simulates proposed fix)
+// ---------------------------------------------------------------
+const ctrlvLog = document.getElementById('ctrlv-log');
+
+document.getElementById('ctrlv-async-target').addEventListener('keydown', async (e) => {
+  if (!(e.ctrlKey && !e.shiftKey && e.code === 'KeyV')) return;
+  e.preventDefault(); // prevent native paste — this is what the fix would do
+  addLog(ctrlvLog, '', '--- Ctrl+V keydown: testing async clipboard API ---');
+
+  // Test 1: readText()
+  try {
+    const text = await navigator.clipboard.readText();
+    addLog(ctrlvLog, text ? 'ok' : 'warn',
+      `readText(): ${text ? JSON.stringify(text.slice(0, 200)) + ' (length: ' + text.length + ')' : 'EMPTY string'}`);
+  } catch (err) {
+    addLog(ctrlvLog, 'err', `readText() FAILED: ${err.name}: ${err.message}`);
+  }
+
+  // Test 2: read() — this is how we get images
+  try {
+    const items = await navigator.clipboard.read();
+    addLog(ctrlvLog, 'ok', `read() OK: ${items.length} item(s)`);
+    for (let i = 0; i < items.length; i++) {
+      addLog(ctrlvLog, '', `  item[${i}].types: ${JSON.stringify(items[i].types)}`);
+      for (const t of items[i].types) {
+        try {
+          const blob = await items[i].getType(t);
+          addLog(ctrlvLog, t.startsWith('image/') ? 'warn' : '',
+            `    ${t}: size=${blob.size}${t.startsWith('image/') ? ' ← IMAGE FOUND' : ''}`);
+        } catch (e) {
+          addLog(ctrlvLog, 'err', `    ${t}: getType failed: ${e.message}`);
+        }
+      }
+    }
+  } catch (err) {
+    addLog(ctrlvLog, 'err', `read() FAILED: ${err.name}: ${err.message}`);
+  }
+});
+
+// ---------------------------------------------------------------
+// 3. Async API tests (button clicks)
 // ---------------------------------------------------------------
 document.getElementById('btn-readtext').addEventListener('click', async () => {
   addLog(apiLog, '', '--- readText() ---');
