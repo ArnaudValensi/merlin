@@ -2,6 +2,24 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.17.0 (2026-04-08)
+
+### Added
+- **Notes sync** — Git-backed sync for your notes directory with automatic conflict handling, configurable debounce, and pull-on-startup.
+- **`merlin config` command** — New CLI command to view and set configuration (e.g. `merlin config notes-dir`).
+- **Git sync status** — Extensions settings page now shows live git sync status and a test connection button.
+
+### Changed
+- **Renamed "memory" to "notes"** — The memory system is now called "notes" throughout the UI, CLI, and configuration.
+
+### Fixed
+- **Clipboard paste** — Ctrl+V now correctly pastes images on desktop, and iOS text paste works reliably.
+- **Mobile sidebar scroll** — Sidebar no longer inherits collapsed state from desktop, fixing scroll on mobile.
+- **Notes sync conflicts** — Conflict markers are no longer pushed to remote; sync pulls on startup to stay current.
+- **Route shadowing** — Sync-status API route no longer shadowed by catch-all path parameter.
+- **Parse seconds crash** — Invalid duration input no longer crashes the debounce parser.
+- **Notes extension UX** — Fixed layout and usability issues from UX review.
+
 ## v0.16.3 (2026-04-03)
 
 ### Added
