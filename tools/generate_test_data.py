@@ -85,14 +85,20 @@ def generate(days: int = 7) -> list[dict]:
     start = now - timedelta(days=days)
 
     # Bot ready event at the start
-    events.append(gen_bot_event(random_ts(start, 0), "ready", "Bot started as Merlin#0000"))
+    events.append(
+        gen_bot_event(random_ts(start, 0), "ready", "Bot started as Merlin#0000")
+    )
 
     for day in range(days):
         day_base = start + timedelta(days=day)
 
         # Bot restart occasionally (every 2-3 days)
         if day > 0 and random.random() < 0.35:
-            events.append(gen_bot_event(random_ts(day_base, random.uniform(0, 2)), "ready", "Bot restarted"))
+            events.append(
+                gen_bot_event(
+                    random_ts(day_base, random.uniform(0, 2)), "ready", "Bot restarted"
+                )
+            )
 
         # Discord messages (3-10 per day)
         n_discord = random.randint(3, 10)
@@ -101,28 +107,37 @@ def generate(days: int = 7) -> list[dict]:
             ts = random_ts(day_base, hour)
             is_error = random.random() < 0.08
             events.append(gen_invocation(ts, "discord", is_error=is_error))
-            events.append(gen_bot_event(
-                random_ts(day_base, hour - 0.001),
-                "message_received",
-                f"Message from user in 1234567890123456789",
-            ))
+            events.append(
+                gen_bot_event(
+                    random_ts(day_base, hour - 0.001),
+                    "message_received",
+                    "Message from user in 1234567890123456789",
+                )
+            )
 
         # Cron jobs (each runs once per day at roughly the right time)
         for job_id in CRON_JOBS:
-            hour = {"daily-digest": 7.5, "daily-python-check": 8.0, "kb-gardening": 21.0, "echo-merlinsessionid-every-minute": 9.5}.get(job_id, 12)
+            hour = {
+                "daily-digest": 7.5,
+                "daily-python-check": 8.0,
+                "kb-gardening": 21.0,
+                "echo-merlinsessionid-every-minute": 9.5,
+            }.get(job_id, 12)
             ts = random_ts(day_base, hour)
             is_error = random.random() < 0.1
             caller = f"cron-{job_id}"
 
             # cron_dispatch started
-            events.append({
-                "type": "cron_dispatch",
-                "timestamp": ts,
-                "job_id": job_id,
-                "event": "started",
-                "duration": 0,
-                "exit_code": 0,
-            })
+            events.append(
+                {
+                    "type": "cron_dispatch",
+                    "timestamp": ts,
+                    "job_id": job_id,
+                    "event": "started",
+                    "duration": 0,
+                    "exit_code": 0,
+                }
+            )
 
             # invocation
             events.append(gen_invocation(ts, caller, is_error=is_error))
@@ -134,7 +149,9 @@ def generate(days: int = 7) -> list[dict]:
         if random.random() < 0.15:
             hour = random.uniform(0, 23)
             ts = random_ts(day_base, hour)
-            events.append(gen_bot_event(ts, "error", "Exception invoking Claude: timeout"))
+            events.append(
+                gen_bot_event(ts, "error", "Exception invoking Claude: timeout")
+            )
 
     # Sort by timestamp
     events.sort(key=lambda e: e["timestamp"])
@@ -152,8 +169,12 @@ Examples:
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--days", type=int, default=7, help="Number of days to generate (default: 7)")
-    parser.add_argument("--clear", action="store_true", help="Clear existing log before generating")
+    parser.add_argument(
+        "--days", type=int, default=7, help="Number of days to generate (default: 7)"
+    )
+    parser.add_argument(
+        "--clear", action="store_true", help="Clear existing log before generating"
+    )
 
     args = parser.parse_args()
 
@@ -169,7 +190,9 @@ Examples:
         for event in events:
             f.write(json.dumps(event, default=str) + "\n")
 
-    print(f"Generated {len(events)} events spanning {args.days} days → {STRUCTURED_LOG_PATH}")
+    print(
+        f"Generated {len(events)} events spanning {args.days} days → {STRUCTURED_LOG_PATH}"
+    )
 
 
 if __name__ == "__main__":

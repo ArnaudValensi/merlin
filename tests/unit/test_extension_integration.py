@@ -4,31 +4,26 @@ Lifecycle tests that exercise the full flow across state management,
 registry, API, and config.
 """
 
-import json
 import sys
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 import main as app_mod
 from main import (
-    ExtensionInfo,
     _load_extensions_state,
     _save_extensions_state,
     _resolve_enabled,
     _load_extension,
     _read_config_env,
-    _write_config_env,
     extension_registry,
-    nav_items,
-    BUILT_IN_DEFAULTS,
 )
 
 
 @pytest.fixture(autouse=True)
 def _disable_auth(monkeypatch):
     import auth
+
     monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
     monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
     auth.configure("")

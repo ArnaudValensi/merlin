@@ -4,18 +4,12 @@ Tests cover: paths, state management, resolve_enabled logic, ExtensionInfo
 dataclass, registry population, error handling, and folder naming.
 """
 
-import json
 import sys
-from pathlib import Path
-from types import ModuleType
-from unittest.mock import patch
 
-import pytest
 
 import paths
 from main import (
     ExtensionInfo,
-    BUILT_IN_DEFAULTS,
     _load_extensions_state,
     _save_extensions_state,
     _resolve_enabled,
@@ -169,22 +163,24 @@ class TestRegistry:
             # Bot might have been enabled by state or loaded successfully
             # Test the principle: create a synthetic disabled entry
             info = ExtensionInfo(
-                id="disabled-test", tier="built-in", enabled=False,
-                loaded=False, error=None, module=None,
+                id="disabled-test",
+                tier="built-in",
+                enabled=False,
+                loaded=False,
+                error=None,
+                module=None,
             )
             assert info.loaded is False
             assert info.module is None
 
     def test_registry_broken_extension_tracked(self, tmp_path, monkeypatch):
         """Extension with import error has loaded=False, error set."""
-        from main import _load_extension, _extensions_with_errors
+        from main import _load_extension
 
         # Create a broken extension
         ext_dir = tmp_path / "extensions" / "broken-ext"
         ext_dir.mkdir(parents=True)
         (ext_dir / "broken_ext.py").write_text("raise ImportError('missing dep')")
-
-        prev_errors = _extensions_with_errors
 
         def broken_loader():
             sys.path.insert(0, str(ext_dir))
@@ -241,16 +237,22 @@ class TestRegistry:
         extension_registry.pop("my-ext", None)
         # Remove the nav item we added
         from main import nav_items
+
         nav_items[:] = [i for i in nav_items if i.get("url") != "/my-ext"]
 
     def test_nav_items_reflect_enabled_state(self):
         """Disabled extension's nav items not in sidebar."""
-        from main import nav_items, _load_extension
+        from main import nav_items
+
         # A disabled extension should not add nav items
         # Test by checking that an extension we explicitly disable doesn't add nav
-        info = ExtensionInfo(
-            id="test-disabled", tier="built-in", enabled=False,
-            loaded=False, error=None, module=None,
+        ExtensionInfo(
+            id="test-disabled",
+            tier="built-in",
+            enabled=False,
+            loaded=False,
+            error=None,
+            module=None,
         )
         test_nav_url = "/test-disabled-page"
         assert not any(i.get("url") == test_nav_url for i in nav_items)

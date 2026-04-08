@@ -13,7 +13,9 @@ import session_registry
 def _use_tmp_registry(tmp_path, monkeypatch):
     """Redirect registry to a temp directory for every test."""
     monkeypatch.setattr(session_registry, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(session_registry, "REGISTRY_PATH", tmp_path / "session_registry.json")
+    monkeypatch.setattr(
+        session_registry, "REGISTRY_PATH", tmp_path / "session_registry.json"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -107,7 +107,9 @@ def verify_cookie(cookie_value: str, password: str) -> str | None:
     return username
 
 
-def set_auth_cookie(response: Response, username: str, password: str, secure: bool = True) -> None:
+def set_auth_cookie(
+    response: Response, username: str, password: str, secure: bool = True
+) -> None:
     """Set the signed session cookie on a response."""
     expiry = int(time.time()) + COOKIE_MAX_AGE
     value = sign_cookie(username, expiry, password)
@@ -177,12 +179,14 @@ def require_auth(request: Request) -> None:
 
 class _AuthRedirect(Exception):
     """Raised by require_auth to trigger a redirect to /login."""
+
     def __init__(self, next_url: str):
         self.next_url = next_url
 
 
 class _SaaSAuthRedirect(Exception):
     """Raised by require_auth in SaaS mode to redirect to the portal."""
+
     pass
 
 

@@ -1,12 +1,8 @@
 """Tests for files/fs_helpers.py — path validation, directory listing, file reading."""
 
-import os
-import stat
-
 import pytest
 
 from files.fs_helpers import (
-    BLOCKED_PREFIXES,
     IMAGE_EXTENSIONS,
     TEXT_MAX_BYTES,
     _check_not_shallow,
@@ -393,6 +389,7 @@ class TestFileRoutes:
     def _disable_auth(self, monkeypatch):
         import main as app_mod
         import auth
+
         monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
         monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
         auth.configure("")
@@ -401,6 +398,7 @@ class TestFileRoutes:
     def client(self):
         from fastapi.testclient import TestClient
         import main as app_mod
+
         return TestClient(app_mod.app)
 
     def test_files_page_returns_html(self, client):
@@ -565,6 +563,7 @@ class TestUploadRoutes:
     def _disable_auth(self, monkeypatch):
         import main as app_mod
         import auth
+
         monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
         monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
         auth.configure("")
@@ -573,11 +572,15 @@ class TestUploadRoutes:
     def client(self):
         from fastapi.testclient import TestClient
         import main as app_mod
+
         return TestClient(app_mod.app)
 
     def test_upload_single_file(self, client, tmp_path):
-        resp = client.post("/api/files/upload", data={"directory": str(tmp_path)},
-                           files=[("files", ("test.txt", b"hello world", "text/plain"))])
+        resp = client.post(
+            "/api/files/upload",
+            data={"directory": str(tmp_path)},
+            files=[("files", ("test.txt", b"hello world", "text/plain"))],
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert len(data["uploaded"]) == 1
@@ -585,11 +588,14 @@ class TestUploadRoutes:
         assert (tmp_path / "test.txt").read_text() == "hello world"
 
     def test_upload_multiple_files(self, client, tmp_path):
-        resp = client.post("/api/files/upload", data={"directory": str(tmp_path)},
-                           files=[
-                               ("files", ("a.txt", b"aaa", "text/plain")),
-                               ("files", ("b.txt", b"bbb", "text/plain")),
-                           ])
+        resp = client.post(
+            "/api/files/upload",
+            data={"directory": str(tmp_path)},
+            files=[
+                ("files", ("a.txt", b"aaa", "text/plain")),
+                ("files", ("b.txt", b"bbb", "text/plain")),
+            ],
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert len(data["uploaded"]) == 2
@@ -598,52 +604,76 @@ class TestUploadRoutes:
 
     def test_upload_overwrite_existing(self, client, tmp_path):
         (tmp_path / "test.txt").write_text("old content")
-        resp = client.post("/api/files/upload", data={"directory": str(tmp_path)},
-                           files=[("files", ("test.txt", b"new content", "text/plain"))])
+        resp = client.post(
+            "/api/files/upload",
+            data={"directory": str(tmp_path)},
+            files=[("files", ("test.txt", b"new content", "text/plain"))],
+        )
         assert resp.status_code == 200
         assert (tmp_path / "test.txt").read_text() == "new content"
 
     def test_upload_preserves_binary_content(self, client, tmp_path):
         binary_data = bytes(range(256)) * 100
-        resp = client.post("/api/files/upload", data={"directory": str(tmp_path)},
-                           files=[("files", ("data.bin", binary_data, "application/octet-stream"))])
+        resp = client.post(
+            "/api/files/upload",
+            data={"directory": str(tmp_path)},
+            files=[("files", ("data.bin", binary_data, "application/octet-stream"))],
+        )
         assert resp.status_code == 200
         assert (tmp_path / "data.bin").read_bytes() == binary_data
 
     def test_upload_to_blocked_path(self, client):
-        resp = client.post("/api/files/upload", data={"directory": "/proc"},
-                           files=[("files", ("test.txt", b"x", "text/plain"))])
+        resp = client.post(
+            "/api/files/upload",
+            data={"directory": "/proc"},
+            files=[("files", ("test.txt", b"x", "text/plain"))],
+        )
         assert resp.status_code == 403
 
     def test_upload_to_nonexistent_dir(self, client):
-        resp = client.post("/api/files/upload", data={"directory": "/nonexistent_xyz_123"},
-                           files=[("files", ("test.txt", b"x", "text/plain"))])
+        resp = client.post(
+            "/api/files/upload",
+            data={"directory": "/nonexistent_xyz_123"},
+            files=[("files", ("test.txt", b"x", "text/plain"))],
+        )
         assert resp.status_code == 404
 
     def test_upload_to_file_not_dir(self, client, tmp_path):
         f = tmp_path / "afile.txt"
         f.write_text("hi")
-        resp = client.post("/api/files/upload", data={"directory": str(f)},
-                           files=[("files", ("test.txt", b"x", "text/plain"))])
+        resp = client.post(
+            "/api/files/upload",
+            data={"directory": str(f)},
+            files=[("files", ("test.txt", b"x", "text/plain"))],
+        )
         assert resp.status_code == 400
 
     def test_upload_path_traversal_filename(self, client, tmp_path):
-        resp = client.post("/api/files/upload", data={"directory": str(tmp_path)},
-                           files=[("files", ("../../etc/passwd", b"hacked", "text/plain"))])
+        resp = client.post(
+            "/api/files/upload",
+            data={"directory": str(tmp_path)},
+            files=[("files", ("../../etc/passwd", b"hacked", "text/plain"))],
+        )
         assert resp.status_code == 200
         # File should be written as "passwd" in the target directory
         assert (tmp_path / "passwd").read_bytes() == b"hacked"
         assert not (tmp_path / ".." / ".." / "etc" / "passwd").exists()
 
     def test_upload_returns_size(self, client, tmp_path):
-        resp = client.post("/api/files/upload", data={"directory": str(tmp_path)},
-                           files=[("files", ("test.txt", b"12345", "text/plain"))])
+        resp = client.post(
+            "/api/files/upload",
+            data={"directory": str(tmp_path)},
+            files=[("files", ("test.txt", b"12345", "text/plain"))],
+        )
         assert resp.status_code == 200
         assert resp.json()["uploaded"][0]["size"] == 5
 
     def test_upload_special_characters_filename(self, client, tmp_path):
-        resp = client.post("/api/files/upload", data={"directory": str(tmp_path)},
-                           files=[("files", ("my file (1).jpg", b"\x89PNG", "image/jpeg"))])
+        resp = client.post(
+            "/api/files/upload",
+            data={"directory": str(tmp_path)},
+            files=[("files", ("my file (1).jpg", b"\x89PNG", "image/jpeg"))],
+        )
         assert resp.status_code == 200
         assert (tmp_path / "my file (1).jpg").exists()
 
@@ -753,6 +783,7 @@ class TestRenameItem:
     def test_rename_shallow_path_blocked(self):
         """Cannot rename top-level directories like /home."""
         from pathlib import Path
+
         with pytest.raises(PermissionError, match="Cannot modify system path"):
             rename_item(Path("/tmp"), "newtmp")
 
@@ -806,12 +837,14 @@ class TestDeleteItem:
     def test_delete_root_blocked(self):
         """Cannot delete the filesystem root."""
         from pathlib import Path
+
         with pytest.raises(PermissionError, match="Cannot modify system path"):
             delete_item(Path("/"))
 
     def test_delete_top_level_dir_blocked(self):
         """Cannot delete top-level directories like /home, /tmp, /usr."""
         from pathlib import Path
+
         with pytest.raises(PermissionError, match="Cannot modify system path"):
             delete_item(Path("/home"))
 
@@ -831,16 +864,19 @@ class TestDeleteItem:
 class TestCheckNotShallow:
     def test_root_blocked(self):
         from pathlib import Path
+
         with pytest.raises(PermissionError, match="Cannot modify system path"):
             _check_not_shallow(Path("/"))
 
     def test_top_level_blocked(self):
         from pathlib import Path
+
         with pytest.raises(PermissionError, match="Cannot modify system path"):
             _check_not_shallow(Path("/home"))
 
     def test_depth_2_allowed(self):
         from pathlib import Path
+
         _check_not_shallow(Path("/home/user"))  # should not raise
 
     def test_deep_path_allowed(self, tmp_path):
@@ -857,6 +893,7 @@ class TestCreateRoutes:
     def _disable_auth(self, monkeypatch):
         import main as app_mod
         import auth
+
         monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
         monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
         auth.configure("")
@@ -865,45 +902,59 @@ class TestCreateRoutes:
     def client(self):
         from fastapi.testclient import TestClient
         import main as app_mod
+
         return TestClient(app_mod.app)
 
     def test_create_file_endpoint(self, client, tmp_path):
-        resp = client.post("/api/files/create", json={
-            "path": str(tmp_path), "name": "new.txt", "type": "file"})
+        resp = client.post(
+            "/api/files/create",
+            json={"path": str(tmp_path), "name": "new.txt", "type": "file"},
+        )
         assert resp.status_code == 200
         assert resp.json()["name"] == "new.txt"
         assert (tmp_path / "new.txt").exists()
 
     def test_create_dir_endpoint(self, client, tmp_path):
-        resp = client.post("/api/files/create", json={
-            "path": str(tmp_path), "name": "newdir", "type": "dir"})
+        resp = client.post(
+            "/api/files/create",
+            json={"path": str(tmp_path), "name": "newdir", "type": "dir"},
+        )
         assert resp.status_code == 200
         assert (tmp_path / "newdir").is_dir()
 
     def test_create_conflict_returns_409(self, client, tmp_path):
         (tmp_path / "exists.txt").write_text("hi")
-        resp = client.post("/api/files/create", json={
-            "path": str(tmp_path), "name": "exists.txt", "type": "file"})
+        resp = client.post(
+            "/api/files/create",
+            json={"path": str(tmp_path), "name": "exists.txt", "type": "file"},
+        )
         assert resp.status_code == 409
 
     def test_create_in_blocked_path(self, client):
-        resp = client.post("/api/files/create", json={
-            "path": "/proc", "name": "test", "type": "file"})
+        resp = client.post(
+            "/api/files/create", json={"path": "/proc", "name": "test", "type": "file"}
+        )
         assert resp.status_code == 403
 
     def test_create_in_nonexistent_dir(self, client):
-        resp = client.post("/api/files/create", json={
-            "path": "/nonexistent_xyz_123", "name": "test", "type": "file"})
+        resp = client.post(
+            "/api/files/create",
+            json={"path": "/nonexistent_xyz_123", "name": "test", "type": "file"},
+        )
         assert resp.status_code == 404
 
     def test_create_invalid_type(self, client, tmp_path):
-        resp = client.post("/api/files/create", json={
-            "path": str(tmp_path), "name": "test", "type": "symlink"})
+        resp = client.post(
+            "/api/files/create",
+            json={"path": str(tmp_path), "name": "test", "type": "symlink"},
+        )
         assert resp.status_code == 422  # Pydantic rejects invalid Literal
 
     def test_create_null_byte_name(self, client, tmp_path):
-        resp = client.post("/api/files/create", json={
-            "path": str(tmp_path), "name": "evil\x00.txt", "type": "file"})
+        resp = client.post(
+            "/api/files/create",
+            json={"path": str(tmp_path), "name": "evil\x00.txt", "type": "file"},
+        )
         assert resp.status_code == 400
 
 
@@ -912,6 +963,7 @@ class TestRenameRoutes:
     def _disable_auth(self, monkeypatch):
         import main as app_mod
         import auth
+
         monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
         monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
         auth.configure("")
@@ -920,13 +972,15 @@ class TestRenameRoutes:
     def client(self):
         from fastapi.testclient import TestClient
         import main as app_mod
+
         return TestClient(app_mod.app)
 
     def test_rename_file_endpoint(self, client, tmp_path):
         f = tmp_path / "old.txt"
         f.write_text("data")
-        resp = client.post("/api/files/rename", json={
-            "path": str(f), "new_name": "new.txt"})
+        resp = client.post(
+            "/api/files/rename", json={"path": str(f), "new_name": "new.txt"}
+        )
         assert resp.status_code == 200
         assert resp.json()["new_name"] == "new.txt"
         assert (tmp_path / "new.txt").exists()
@@ -935,23 +989,29 @@ class TestRenameRoutes:
     def test_rename_conflict_returns_409(self, client, tmp_path):
         (tmp_path / "a.txt").write_text("a")
         (tmp_path / "b.txt").write_text("b")
-        resp = client.post("/api/files/rename", json={
-            "path": str(tmp_path / "a.txt"), "new_name": "b.txt"})
+        resp = client.post(
+            "/api/files/rename",
+            json={"path": str(tmp_path / "a.txt"), "new_name": "b.txt"},
+        )
         assert resp.status_code == 409
 
     def test_rename_blocked_path(self, client):
-        resp = client.post("/api/files/rename", json={
-            "path": "/proc/self", "new_name": "nope"})
+        resp = client.post(
+            "/api/files/rename", json={"path": "/proc/self", "new_name": "nope"}
+        )
         assert resp.status_code == 403
 
     def test_rename_nonexistent_returns_404(self, client, tmp_path):
-        resp = client.post("/api/files/rename", json={
-            "path": str(tmp_path / "nope.txt"), "new_name": "new.txt"})
+        resp = client.post(
+            "/api/files/rename",
+            json={"path": str(tmp_path / "nope.txt"), "new_name": "new.txt"},
+        )
         assert resp.status_code == 404
 
     def test_rename_shallow_path_blocked(self, client):
-        resp = client.post("/api/files/rename", json={
-            "path": "/tmp", "new_name": "newtmp"})
+        resp = client.post(
+            "/api/files/rename", json={"path": "/tmp", "new_name": "newtmp"}
+        )
         assert resp.status_code == 403
 
 
@@ -960,6 +1020,7 @@ class TestDeleteRoutes:
     def _disable_auth(self, monkeypatch):
         import main as app_mod
         import auth
+
         monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
         monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
         auth.configure("")
@@ -968,6 +1029,7 @@ class TestDeleteRoutes:
     def client(self):
         from fastapi.testclient import TestClient
         import main as app_mod
+
         return TestClient(app_mod.app)
 
     def test_delete_file_endpoint(self, client, tmp_path):
@@ -990,8 +1052,9 @@ class TestDeleteRoutes:
         assert resp.status_code == 403
 
     def test_delete_nonexistent_returns_404(self, client, tmp_path):
-        resp = client.post("/api/files/delete", json={
-            "path": str(tmp_path / "nope.txt")})
+        resp = client.post(
+            "/api/files/delete", json={"path": str(tmp_path / "nope.txt")}
+        )
         assert resp.status_code == 404
 
     def test_delete_root_blocked(self, client):

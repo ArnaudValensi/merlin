@@ -172,9 +172,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 # Suppress "PyNaCl is not installed" — we don't use Discord voice
-logging.getLogger("discord.client").addFilter(
-    lambda r: "PyNaCl" not in r.getMessage()
-)
+logging.getLogger("discord.client").addFilter(lambda r: "PyNaCl" not in r.getMessage())
 client = discord.Client(intents=intents)
 
 
@@ -208,14 +206,18 @@ async def _resolve_session(
         # Check registry for existing session (handles cron continuation)
         session = get_thread_session(thread_id)
         if session:
-            logger.debug("Found registered session for thread %s: %s", thread_id, session)
+            logger.debug(
+                "Found registered session for thread %s: %s", thread_id, session
+            )
             return thread_id, parent_id, session, False
 
         # Check if thread starter message has a session (cron continuation)
         # Thread ID equals the starter message ID for message-created threads
         starter_session = get_message_session(thread_id)
         if starter_session:
-            logger.info("Cron continuation: thread %s → session %s", thread_id, starter_session)
+            logger.info(
+                "Cron continuation: thread %s → session %s", thread_id, starter_session
+            )
             set_thread_session(thread_id, starter_session)
             return thread_id, parent_id, starter_session, False
 
@@ -269,20 +271,36 @@ async def on_message(message: discord.Message) -> None:
     request_id = str(uuid.uuid4())
 
     author = message.author.display_name
-    content_preview = message.content[:80] + ("..." if len(message.content) > 80 else "")
-    logger.info("[%s] Message from %s in %s: %s", request_id[:8], author, message.channel.id, content_preview)
-    log_event("bot_event", event="message_received",
-              details=f"Message from {author} in {message.channel.id}",
-              content=message.content,
-              request_id=request_id)
+    content_preview = message.content[:80] + (
+        "..." if len(message.content) > 80 else ""
+    )
+    logger.info(
+        "[%s] Message from %s in %s: %s",
+        request_id[:8],
+        author,
+        message.channel.id,
+        content_preview,
+    )
+    log_event(
+        "bot_event",
+        event="message_received",
+        details=f"Message from {author} in {message.channel.id}",
+        content=message.content,
+        request_id=request_id,
+    )
 
     # Resolve thread and session
     try:
-        thread_id, parent_id, session, is_new_thread = await _resolve_session(message, allowed_channel)
+        thread_id, parent_id, session, is_new_thread = await _resolve_session(
+            message, allowed_channel
+        )
     except Exception:
         logger.exception("Failed to resolve session for message %s", message.id)
-        log_event("bot_event", event="error",
-                  details=f"Failed to resolve session for message {message.id}")
+        log_event(
+            "bot_event",
+            event="error",
+            details=f"Failed to resolve session for message {message.id}",
+        )
         try:
             await message.add_reaction("\N{CROSS MARK}")
         except discord.HTTPException:
@@ -293,7 +311,9 @@ async def on_message(message: discord.Message) -> None:
     transcription: str | None = None
     if message.flags.voice and message.attachments:
         attachment = message.attachments[0]
-        logger.info("Voice message from %s, transcribing (%s)...", author, attachment.filename)
+        logger.info(
+            "Voice message from %s, transcribing (%s)...", author, attachment.filename
+        )
         try:
             await message.add_reaction("\N{MICROPHONE}")
         except discord.HTTPException:
@@ -306,16 +326,26 @@ async def on_message(message: discord.Message) -> None:
             t_start = time.monotonic()
             transcription = await asyncio.to_thread(transcribe, tmp_path)
             t_duration = time.monotonic() - t_start
-            logger.info("Transcription (%.1fs): %s", t_duration, transcription[:120] if transcription else "(empty)")
-            log_event("bot_event", event="transcription",
-                      details=f"Voice from {author} ({t_duration:.1f}s): {transcription}",
-                      duration=round(t_duration, 2),
-                      content=transcription,
-                      author=author)
+            logger.info(
+                "Transcription (%.1fs): %s",
+                t_duration,
+                transcription[:120] if transcription else "(empty)",
+            )
+            log_event(
+                "bot_event",
+                event="transcription",
+                details=f"Voice from {author} ({t_duration:.1f}s): {transcription}",
+                duration=round(t_duration, 2),
+                content=transcription,
+                author=author,
+            )
         except Exception:
             logger.exception("Failed to transcribe voice message %s", message.id)
-            log_event("bot_event", event="error",
-                      details=f"Voice transcription failed for {author}")
+            log_event(
+                "bot_event",
+                event="error",
+                details=f"Voice transcription failed for {author}",
+            )
             transcription = "[transcription failed]"
         finally:
             Path(tmp_path).unlink(missing_ok=True)
@@ -328,12 +358,23 @@ async def on_message(message: discord.Message) -> None:
             try:
                 token = load_token()
                 await asyncio.to_thread(
-                    send_message, thread_id, f"> 🎤 *{transcription}* ({t_duration:.1f}s)", token
+                    send_message,
+                    thread_id,
+                    f"> 🎤 *{transcription}* ({t_duration:.1f}s)",
+                    token,
                 )
             except Exception:
-                logger.warning("Could not send transcription message to thread %s", thread_id)
+                logger.warning(
+                    "Could not send transcription message to thread %s", thread_id
+                )
 
-    prompt = build_prompt(message, thread_id=thread_id, parent_id=parent_id, transcription=transcription, is_new_thread=is_new_thread)
+    prompt = build_prompt(
+        message,
+        thread_id=thread_id,
+        parent_id=parent_id,
+        transcription=transcription,
+        is_new_thread=is_new_thread,
+    )
 
     # Processing indicator: 🤔 while working, ✅ on success, ❌ on error
     try:
@@ -373,9 +414,7 @@ async def on_message(message: discord.Message) -> None:
                 # Discord has a 2000 char limit per message — chunk if needed
                 chunks = _chunk_message(content, max_len=1900)
                 for chunk in chunks:
-                    await asyncio.to_thread(
-                        send_message, thread_id, chunk, token
-                    )
+                    await asyncio.to_thread(send_message, thread_id, chunk, token)
             except Exception:
                 logger.warning("Could not send response to thread %s", thread_id)
 
@@ -385,14 +424,18 @@ async def on_message(message: discord.Message) -> None:
                 title = _generate_thread_title(result.content)
                 token = load_token()
                 from discord_send import rename_thread
+
                 await asyncio.to_thread(rename_thread, thread_id, title, token)
             except Exception:
                 logger.warning("Could not rename thread %s", thread_id)
 
     except Exception:
         logger.exception("Exception invoking engine for message %s", message.id)
-        log_event("bot_event", event="error",
-                  details=f"Exception invoking engine for message {message.id}")
+        log_event(
+            "bot_event",
+            event="error",
+            details=f"Exception invoking engine for message {message.id}",
+        )
         done_emoji = "\N{CROSS MARK}"
 
     try:
@@ -408,10 +451,11 @@ def _validate_config() -> None:
     errors: list[str] = []
 
     if not env_path.exists():
-        errors.insert(0,
+        errors.insert(
+            0,
             f"Config file not found at {env_path}\n"
             f"  Run the setup wizard to create it:\n"
-            f"    merlin setup"
+            f"    merlin setup",
         )
 
     if not DISCORD_BOT_TOKEN:
@@ -433,11 +477,14 @@ def _validate_config() -> None:
 
     # Validate the configured engine
     from lib.engine import get_engine
+
     try:
         engine = get_engine()
         engine_error = engine.validate()
         if engine_error:
-            errors.append(f"Engine '{engine.name}' validation failed:\n  {engine_error}")
+            errors.append(
+                f"Engine '{engine.name}' validation failed:\n  {engine_error}"
+            )
     except ValueError as e:
         errors.append(str(e))
 
@@ -455,7 +502,9 @@ def _validate_config() -> None:
         )
 
     if errors:
-        msg = "Configuration error(s):\n\n" + "\n\n".join(f"  {i+1}. {e}" for i, e in enumerate(errors))
+        msg = "Configuration error(s):\n\n" + "\n\n".join(
+            f"  {i + 1}. {e}" for i, e in enumerate(errors)
+        )
         logger.error(msg)
         print(msg, file=__import__("sys").stderr)
         raise SystemExit(1)
@@ -463,11 +512,13 @@ def _validate_config() -> None:
 
 async def start_bot() -> None:
     """Start Discord client. Called by main.py plugin."""
+
     @client.event
     async def on_ready() -> None:
         if not hasattr(client, "_ready_done"):
             client._ready_done = True
             import merlin_app
+
             merlin_app.BOT_START_TIME = datetime.now(timezone.utc)
             guilds = [g.name for g in client.guilds]
             logger.info("Bot ready as %s | guilds: %s", client.user, guilds)
@@ -486,6 +537,7 @@ def main() -> None:
         if not hasattr(client, "_ready_done"):
             client._ready_done = True
             import merlin_app
+
             merlin_app.BOT_START_TIME = datetime.now(timezone.utc)
             guilds = [g.name for g in client.guilds]
             logger.info("Bot ready as %s | guilds: %s", client.user, guilds)
@@ -500,7 +552,7 @@ def main() -> None:
 # (merlin-bot/ is on sys.path, so `import merlin_bot` finds this file)
 # ---------------------------------------------------------------------------
 
-from merlin_app import (
+from merlin_app import (  # noqa: F401
     merlin_app_router as router,
     MERLIN_APP_NAV_ITEMS as NAV_ITEMS,
     MERLIN_APP_STATIC_DIR as STATIC_DIR,
@@ -511,8 +563,18 @@ EXTENSION_META = {
     "description": "Discord AI assistant powered by Claude Code",
     "icon": '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>',
     "config_fields": [
-        {"key": "DISCORD_BOT_TOKEN", "label": "Discord Bot Token", "secret": True, "required": True},
-        {"key": "DISCORD_CHANNEL_IDS", "label": "Discord Channel IDs (comma-separated)", "secret": False, "required": True},
+        {
+            "key": "DISCORD_BOT_TOKEN",
+            "label": "Discord Bot Token",
+            "secret": True,
+            "required": True,
+        },
+        {
+            "key": "DISCORD_CHANNEL_IDS",
+            "label": "Discord Channel IDs (comma-separated)",
+            "secret": False,
+            "required": True,
+        },
     ],
 }
 
@@ -523,7 +585,11 @@ async def on_tunnel_url(url: str) -> None:
     if not channel:
         return
     dashboard_pass = os.getenv("DASHBOARD_PASS", "")
-    msg = f"Dashboard is live at {url}" if dashboard_pass else f"Dashboard is live at {url} (no password)"
+    msg = (
+        f"Dashboard is live at {url}"
+        if dashboard_pass
+        else f"Dashboard is live at {url} (no password)"
+    )
     token = load_token()
     await asyncio.to_thread(send_message, channel, msg, token)
 
@@ -549,7 +615,9 @@ def notify(channel_id: str, message: str, *, session_id: str | None = None) -> N
     if not token:
         logger.warning("Cannot notify: DISCORD_BOT_TOKEN not configured")
         return
-    send_message(channel_id, message, token, thread_on_chunk=True, session_id=session_id)
+    send_message(
+        channel_id, message, token, thread_on_chunk=True, session_id=session_id
+    )
 
 
 if __name__ == "__main__":

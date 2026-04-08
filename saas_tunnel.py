@@ -44,9 +44,7 @@ def _enable_dynamic_port_forwarding(conn: asyncssh.SSHClientConnection) -> None:
         listener = conn._remote_listeners.get((dest_host, dest_port))
         if listener:
             chan, session = listener.process_connection(orig_host, orig_port)
-            logger.info(
-                "Forwarded TCP connection on %s:%d", dest_host, dest_port
-            )
+            logger.info("Forwarded TCP connection on %s:%d", dest_host, dest_port)
             return chan, session
 
         # Dynamic forwarding: connect to the requested port locally

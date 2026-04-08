@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -141,9 +140,7 @@ def get_engine(name: str | None = None) -> AgentEngine:
 
     if name not in _registry:
         available = ", ".join(sorted(_registry.keys())) or "(none)"
-        raise ValueError(
-            f"Unknown engine {name!r}. Available engines: {available}"
-        )
+        raise ValueError(f"Unknown engine {name!r}. Available engines: {available}")
 
     return _registry[name]()
 
@@ -309,11 +306,14 @@ def invoke(
                 model=result.model,
             )
         # Record user turn
-        append_turn(effective_session_id, {
-            "role": "user",
-            "content": prompt,
-            "caller": caller,
-        })
+        append_turn(
+            effective_session_id,
+            {
+                "role": "user",
+                "content": prompt,
+                "caller": caller,
+            },
+        )
         # Record assistant turn
         assistant_turn: dict = {
             "role": "assistant",
@@ -334,17 +334,23 @@ def invoke(
 
         # Record tool calls if present
         for tc in result.tool_calls:
-            append_turn(effective_session_id, {
-                "role": "tool_call",
-                "name": tc.get("name", "unknown"),
-                "input": tc.get("input", {}),
-            })
-            if "output" in tc:
-                append_turn(effective_session_id, {
-                    "role": "tool_result",
+            append_turn(
+                effective_session_id,
+                {
+                    "role": "tool_call",
                     "name": tc.get("name", "unknown"),
-                    "output": tc.get("output", ""),
-                })
+                    "input": tc.get("input", {}),
+                },
+            )
+            if "output" in tc:
+                append_turn(
+                    effective_session_id,
+                    {
+                        "role": "tool_result",
+                        "name": tc.get("name", "unknown"),
+                        "output": tc.get("output", ""),
+                    },
+                )
 
     # Save raw session file (for session viewer — legacy format)
     session_file = _save_session_file(
@@ -381,10 +387,12 @@ def invoke(
 # Register built-in engines on import
 # ---------------------------------------------------------------------------
 
+
 def _register_builtin_engines() -> None:
     """Import and register all built-in engines."""
     from lib.engines.claude_code import ClaudeCodeEngine
     from lib.engines.opencode import OpenCodeEngine
+
     register_engine("claude-code", ClaudeCodeEngine)
     register_engine("opencode", OpenCodeEngine)
 

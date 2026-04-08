@@ -2,7 +2,6 @@
 
 import io
 import json
-import os
 import tarfile
 from pathlib import Path
 from unittest import mock
@@ -81,20 +80,28 @@ class TestFetchLatestTag:
         """Helper to mock urlopen returning a tags API response."""
         response = json.dumps(tags_json).encode()
         m = mock.Mock()
-        m.return_value.__enter__ = mock.Mock(return_value=mock.Mock(read=mock.Mock(return_value=response)))
+        m.return_value.__enter__ = mock.Mock(
+            return_value=mock.Mock(read=mock.Mock(return_value=response))
+        )
         m.return_value.__exit__ = mock.Mock(return_value=False)
         return m
 
     def test_parses_tag(self):
-        with mock.patch("urllib.request.urlopen", self._mock_tags_response([{"name": "v0.3.0"}])):
+        with mock.patch(
+            "urllib.request.urlopen", self._mock_tags_response([{"name": "v0.3.0"}])
+        ):
             assert fetch_latest_tag() == "0.3.0"
 
     def test_strips_v_prefix(self):
-        with mock.patch("urllib.request.urlopen", self._mock_tags_response([{"name": "v1.0.0"}])):
+        with mock.patch(
+            "urllib.request.urlopen", self._mock_tags_response([{"name": "v1.0.0"}])
+        ):
             assert fetch_latest_tag() == "1.0.0"
 
     def test_handles_no_v_prefix(self):
-        with mock.patch("urllib.request.urlopen", self._mock_tags_response([{"name": "2.0.0"}])):
+        with mock.patch(
+            "urllib.request.urlopen", self._mock_tags_response([{"name": "2.0.0"}])
+        ):
             assert fetch_latest_tag() == "2.0.0"
 
     def test_returns_first_tag(self):
@@ -103,7 +110,9 @@ class TestFetchLatestTag:
             assert fetch_latest_tag() == "0.3.0"
 
     def test_returns_none_on_network_error(self):
-        with mock.patch("urllib.request.urlopen", side_effect=Exception("Network error")):
+        with mock.patch(
+            "urllib.request.urlopen", side_effect=Exception("Network error")
+        ):
             assert fetch_latest_tag() is None
 
     def test_returns_none_on_empty_tags(self):
@@ -147,8 +156,10 @@ class TestRunUpdate:
         new_dir = tmp_path / "versions" / "0.3.0"
         new_dir.mkdir(parents=True)
 
-        with mock.patch("cli.fetch_latest_tag", return_value="0.3.0"), \
-             mock.patch("cli.download_and_extract"):
+        with (
+            mock.patch("cli.fetch_latest_tag", return_value="0.3.0"),
+            mock.patch("cli.download_and_extract"),
+        ):
             run_update()
 
         output = capsys.readouterr().out
@@ -188,8 +199,10 @@ class TestRunUpdate:
         current = tmp_path / "current"
         current.symlink_to(old_dir)
 
-        with mock.patch("cli.fetch_latest_tag", return_value="0.2.0"), \
-             mock.patch("cli.download_and_extract"):
+        with (
+            mock.patch("cli.fetch_latest_tag", return_value="0.2.0"),
+            mock.patch("cli.download_and_extract"),
+        ):
             run_update()
 
         # Old version still exists with its content
@@ -257,19 +270,23 @@ def _make_tarball(tmp_path, members: dict, prefix: str = "merlin-0.1.0") -> Path
 
 def _mock_urlopen(tarball_path: Path):
     """Return a mock urlopen context manager that serves a local file."""
+
     def fake_urlopen(req, **kwargs):
         data = tarball_path.read_bytes()
         return mock.Mock(
             __enter__=mock.Mock(return_value=io.BytesIO(data)),
             __exit__=mock.Mock(return_value=False),
         )
+
     return fake_urlopen
 
 
 class TestDownloadAndExtract:
     def test_extracts_tarball(self, tmp_path):
         """Normal extraction strips prefix and creates files."""
-        tarball = _make_tarball(tmp_path, {"main.py": "print('hello')", "cli.py": "# cli"})
+        tarball = _make_tarball(
+            tmp_path, {"main.py": "print('hello')", "cli.py": "# cli"}
+        )
         target = tmp_path / "extracted"
 
         with mock.patch("urllib.request.urlopen", side_effect=_mock_urlopen(tarball)):
@@ -295,7 +312,9 @@ class TestDownloadAndExtract:
             tar.addfile(info, io.BytesIO(b"evil"))
 
         target = tmp_path / "extracted"
-        with mock.patch("urllib.request.urlopen", side_effect=_mock_urlopen(tarball_path)):
+        with mock.patch(
+            "urllib.request.urlopen", side_effect=_mock_urlopen(tarball_path)
+        ):
             with pytest.raises(ValueError, match="Path traversal"):
                 download_and_extract("0.1.0", target)
 
@@ -320,7 +339,9 @@ class TestDownloadAndExtract:
             tar.addfile(sym)
 
         target = tmp_path / "extracted"
-        with mock.patch("urllib.request.urlopen", side_effect=_mock_urlopen(tarball_path)):
+        with mock.patch(
+            "urllib.request.urlopen", side_effect=_mock_urlopen(tarball_path)
+        ):
             download_and_extract("0.1.0", target)
 
         # Regular file extracted, symlink skipped
@@ -368,8 +389,10 @@ class TestUpdateVersionComparison:
         current = tmp_path / "current"
         current.symlink_to(v_dir)
 
-        with mock.patch("cli.fetch_latest_tag", return_value="0.3.0"), \
-             mock.patch("cli.get_version", return_value="0.3.0-3-gabcdef"):
+        with (
+            mock.patch("cli.fetch_latest_tag", return_value="0.3.0"),
+            mock.patch("cli.get_version", return_value="0.3.0-3-gabcdef"),
+        ):
             run_update()
 
         output = capsys.readouterr().out

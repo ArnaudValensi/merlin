@@ -119,14 +119,21 @@ def test_process_runner_output_calls_notify():
     import cron
 
     job_data = {"description": "Test job", "schedule": "0 * * * *"}
-    result_data = {"exit_code": 0, "duration_seconds": 10, "cost_usd": 0.01, "output": "done"}
+    result_data = {
+        "exit_code": 0,
+        "duration_seconds": 10,
+        "cost_usd": 0.01,
+        "output": "done",
+    }
 
-    stdout_line = json.dumps({
-        "type": "job_complete",
-        "job_id": "test-job",
-        "job": job_data,
-        "result": result_data,
-    })
+    stdout_line = json.dumps(
+        {
+            "type": "job_complete",
+            "job_id": "test-job",
+            "job": job_data,
+            "result": result_data,
+        }
+    )
 
     mock_registry = {"merlin-bot": MagicMock(loaded=True, module=MagicMock())}
 
@@ -174,12 +181,16 @@ def test_process_runner_output_handles_multiple_jobs():
 
     lines = []
     for i in range(3):
-        lines.append(json.dumps({
-            "type": "job_complete",
-            "job_id": f"job-{i}",
-            "job": {"description": f"Job {i}"},
-            "result": {"exit_code": 0},
-        }))
+        lines.append(
+            json.dumps(
+                {
+                    "type": "job_complete",
+                    "job_id": f"job-{i}",
+                    "job": {"description": f"Job {i}"},
+                    "result": {"exit_code": 0},
+                }
+            )
+        )
     stdout = "\n".join(lines).encode()
 
     mock_registry = {"merlin-bot": MagicMock(loaded=True, module=MagicMock())}
@@ -197,12 +208,16 @@ def test_process_runner_output_notify_failure_doesnt_crash():
 
     lines = []
     for i in range(2):
-        lines.append(json.dumps({
-            "type": "job_complete",
-            "job_id": f"job-{i}",
-            "job": {},
-            "result": {"exit_code": 0},
-        }))
+        lines.append(
+            json.dumps(
+                {
+                    "type": "job_complete",
+                    "job_id": f"job-{i}",
+                    "job": {},
+                    "result": {"exit_code": 0},
+                }
+            )
+        )
     stdout = "\n".join(lines).encode()
 
     call_count = 0

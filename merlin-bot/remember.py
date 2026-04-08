@@ -90,8 +90,11 @@ def add_fact(fact: str, section: str | None = None) -> str:
             break
 
     # Remove placeholder text if present
-    section_content = "\n".join(lines[start + 1:end])
-    if "(to be filled in)" in section_content or "(Add important facts" in section_content:
+    section_content = "\n".join(lines[start + 1 : end])
+    if (
+        "(to be filled in)" in section_content
+        or "(Add important facts" in section_content
+    ):
         # Collect non-placeholder, non-empty lines from section body
         new_lines = []
         for i in range(start + 1, end):
@@ -103,7 +106,7 @@ def add_fact(fact: str, section: str | None = None) -> str:
             new_lines.append(lines[i])
 
         # Rebuild: header + blank + kept lines + new fact + blank + rest
-        result_lines = lines[:start + 1]
+        result_lines = lines[: start + 1]
         result_lines.append("")
         if new_lines:
             result_lines.extend(new_lines)
@@ -136,11 +139,14 @@ def list_facts() -> str:
         if section_name not in sections:
             continue
         start, end = sections[section_name]
-        header = lines[start]
         facts = []
         for i in range(start + 1, end):
             line = lines[i].strip()
-            if line.startswith("- ") and "(to be filled in)" not in line and "(Add important" not in line:
+            if (
+                line.startswith("- ")
+                and "(to be filled in)" not in line
+                and "(Add important" not in line
+            ):
                 facts.append(line)
 
         output.append(f"**{section_name.capitalize()}**")
@@ -199,9 +205,12 @@ For longer knowledge entries, use kb_add.py instead.
         description="Add a fact to user.md. Appends to the specified section.",
     )
     add_parser.add_argument("fact", help="The fact to remember")
-    add_parser.add_argument("--section", "-s",
-                            choices=KNOWN_SECTIONS,
-                            help="Section to add to (default: notes)")
+    add_parser.add_argument(
+        "--section",
+        "-s",
+        choices=KNOWN_SECTIONS,
+        help="Section to add to (default: notes)",
+    )
     add_parser.set_defaults(func=cmd_add)
 
     list_parser = subparsers.add_parser(

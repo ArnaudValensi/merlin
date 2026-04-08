@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 
 from cron.notify import (
     _format_report,
@@ -204,7 +203,9 @@ class TestNotifyCronResult:
         info = FakeExtensionInfo(loaded=True, module=mod)
         registry = _make_registry(info)
 
-        notify_cron_result("daily-check", _sample_channel_job(), _sample_result(), registry)
+        notify_cron_result(
+            "daily-check", _sample_channel_job(), _sample_result(), registry
+        )
         mod.notify.assert_called_once()
         assert mod.notify.call_args[0][0] == "999"
 

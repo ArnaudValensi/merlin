@@ -103,7 +103,9 @@ async def stop_tunnel() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _run_tunnel_loop(launch_fn, *, max_restarts: int, restart_delay: float, on_url=None, **kwargs) -> str | None:
+async def _run_tunnel_loop(
+    launch_fn, *, max_restarts: int, restart_delay: float, on_url=None, **kwargs
+) -> str | None:
     """Generic tunnel lifecycle: launch, get URL, monitor, restart on crash.
 
     *launch_fn* should start the cloudflared process and return (url, process).
@@ -120,7 +122,9 @@ async def _run_tunnel_loop(launch_fn, *, max_restarts: int, restart_delay: float
             delay = restart_delay * (2 ** (restarts - 1))  # exponential backoff
             logger.warning(
                 "Tunnel crashed, restarting in %.0fs (attempt %d/%d)",
-                delay, restarts, max_restarts,
+                delay,
+                restarts,
+                max_restarts,
             )
             await asyncio.sleep(delay)
 
@@ -163,12 +167,17 @@ async def _run_tunnel_loop(launch_fn, *, max_restarts: int, restart_delay: float
     return first_url
 
 
-async def _launch_quick_tunnel(*, port: int) -> tuple[str | None, asyncio.subprocess.Process]:
+async def _launch_quick_tunnel(
+    *, port: int
+) -> tuple[str | None, asyncio.subprocess.Process]:
     """Launch a Quick Tunnel subprocess. Returns (url, process)."""
     logger.info("Starting Quick Tunnel on port %d", port)
 
     proc = await asyncio.create_subprocess_exec(
-        "cloudflared", "tunnel", "--url", f"http://localhost:{port}",
+        "cloudflared",
+        "tunnel",
+        "--url",
+        f"http://localhost:{port}",
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -180,13 +189,21 @@ async def _launch_quick_tunnel(*, port: int) -> tuple[str | None, asyncio.subpro
 
 
 async def _launch_named_tunnel(
-    *, tunnel_token: str, tunnel_hostname: str,
+    *,
+    tunnel_token: str,
+    tunnel_hostname: str,
 ) -> tuple[str | None, asyncio.subprocess.Process]:
     """Launch a Named Tunnel subprocess. Returns (url, process)."""
-    logger.info("Starting Named Tunnel%s", f" ({tunnel_hostname})" if tunnel_hostname else "")
+    logger.info(
+        "Starting Named Tunnel%s", f" ({tunnel_hostname})" if tunnel_hostname else ""
+    )
 
     proc = await asyncio.create_subprocess_exec(
-        "cloudflared", "tunnel", "run", "--token", tunnel_token,
+        "cloudflared",
+        "tunnel",
+        "run",
+        "--token",
+        tunnel_token,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )

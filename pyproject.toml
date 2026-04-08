@@ -23,3 +23,10 @@ dev = [
     "pytest",
     "pytest-asyncio",
 ]
+
+[tool.ruff.lint]
+ignore = [
+    "E402",  # module-level import not at top — needed after sys.path setup
+    "E731",  # lambda assignment — acceptable in tests and config
+    "E741",  # ambiguous variable name — `l` in comprehensions is fine
+]

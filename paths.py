@@ -129,5 +129,3 @@ def extensions_dir() -> Path:
 def extensions_state_path() -> Path:
     """Extension state file. Always ~/.merlin/extensions.json."""
     return data_dir() / "extensions.json"
-
-

@@ -2,7 +2,6 @@
 
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
@@ -185,7 +184,9 @@ class TestHistory:
         from cron.state import append_history, read_history
 
         ts = datetime(2026, 2, 5, 9, 0, 0, tzinfo=timezone.utc)
-        append_history("test-job", exit_code=0, duration=1.5, session_id="abc", timestamp=ts)
+        append_history(
+            "test-job", exit_code=0, duration=1.5, session_id="abc", timestamp=ts
+        )
 
         history = read_history()
         assert "test-job" in history

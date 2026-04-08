@@ -23,12 +23,15 @@ def _read_events(log_path: Path) -> list[dict]:
     """Read all events from the JSONL log file."""
     if not log_path.exists():
         return []
-    return [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+    return [
+        json.loads(line) for line in log_path.read_text().splitlines() if line.strip()
+    ]
 
 
 # ---------------------------------------------------------------------------
 # Core log_event
 # ---------------------------------------------------------------------------
+
 
 class TestLogEvent:
     def test_creates_file(self, _isolated_log):
@@ -72,7 +75,11 @@ class TestLogEvent:
         sl.log_event("cron_dispatch", job_id="weather")
         events = _read_events(_isolated_log)
         assert len(events) == 3
-        assert [e["type"] for e in events] == ["bot_event", "invocation", "cron_dispatch"]
+        assert [e["type"] for e in events] == [
+            "bot_event",
+            "invocation",
+            "cron_dispatch",
+        ]
 
     def test_thread_safety(self, _isolated_log):
         """Multiple threads writing simultaneously don't corrupt the file."""
@@ -112,27 +119,44 @@ class TestLogEvent:
 # Wiring: lib/claude.py emits invocation events
 # ---------------------------------------------------------------------------
 
+
 class TestClaudeWrapperWiring:
-    def test_successful_invocation_emits_event(self, _isolated_log, tmp_path, monkeypatch):
+    def test_successful_invocation_emits_event(
+        self, _isolated_log, tmp_path, monkeypatch
+    ):
         import lib.claude as cw
+
         monkeypatch.setattr(cw, "LOG_DIR", tmp_path / "claude")
         monkeypatch.setattr(cw, "RAW_SESSION_DIR", tmp_path / "sessions")
         monkeypatch.setattr(sl, "ENGINE_LOG_PATH", _isolated_log)
 
         # stream-json NDJSON format
-        init = json.dumps({"type": "system", "subtype": "init", "model": "test-model", "session_id": "s1"})
-        result = json.dumps({
-            "type": "result", "subtype": "success", "result": "ok",
-            "session_id": "s1", "num_turns": 3,
-            "usage": {"input_tokens": 100, "output_tokens": 50},
-            "total_cost_usd": 0.05,
-            "modelUsage": {"test-model": {}},
-        })
+        init = json.dumps(
+            {
+                "type": "system",
+                "subtype": "init",
+                "model": "test-model",
+                "session_id": "s1",
+            }
+        )
+        result = json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": "ok",
+                "session_id": "s1",
+                "num_turns": 3,
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+                "total_cost_usd": 0.05,
+                "modelUsage": {"test-model": {}},
+            }
+        )
         stdout = init + "\n" + result + "\n"
 
-        with mock.patch("subprocess.run", return_value=mock.Mock(
-            stdout=stdout, stderr="", returncode=0
-        )):
+        with mock.patch(
+            "subprocess.run",
+            return_value=mock.Mock(stdout=stdout, stderr="", returncode=0),
+        ):
             cw.invoke_claude("hello", caller="discord")
 
         events = _read_events(_isolated_log)
@@ -151,6 +175,7 @@ class TestClaudeWrapperWiring:
 
     def test_error_invocation_emits_event(self, _isolated_log, tmp_path, monkeypatch):
         import lib.claude as cw
+
         monkeypatch.setattr(cw, "LOG_DIR", tmp_path / "claude")
         monkeypatch.setattr(cw, "RAW_SESSION_DIR", tmp_path / "sessions")
         monkeypatch.setattr(sl, "ENGINE_LOG_PATH", _isolated_log)
@@ -166,11 +191,14 @@ class TestClaudeWrapperWiring:
     def test_timeout_invocation_emits_event(self, _isolated_log, tmp_path, monkeypatch):
         import subprocess
         import lib.claude as cw
+
         monkeypatch.setattr(cw, "LOG_DIR", tmp_path / "claude")
         monkeypatch.setattr(cw, "RAW_SESSION_DIR", tmp_path / "sessions")
         monkeypatch.setattr(sl, "ENGINE_LOG_PATH", _isolated_log)
 
-        with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired("claude", 10)):
+        with mock.patch(
+            "subprocess.run", side_effect=subprocess.TimeoutExpired("claude", 10)
+        ):
             cw.invoke_claude("hello", caller="test", timeout=10)
 
         events = _read_events(_isolated_log)

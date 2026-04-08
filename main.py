@@ -83,11 +83,17 @@ def _setup_logging() -> None:
     logger.propagate = False
 
     file_handler = RotatingFileHandler(
-        log_dir / "merlin.log", maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+        log_dir / "merlin.log",
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
     )
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)-8s [%(name)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+        logging.Formatter(
+            "%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
     )
     logger.addHandler(file_handler)
 
@@ -95,6 +101,7 @@ def _setup_logging() -> None:
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(console_handler)
+
 
 # ---------------------------------------------------------------------------
 # Auth
@@ -132,7 +139,11 @@ CORE_NAV_ITEMS = [
 ]
 
 # Extensions nav item — always visible, appended after all extension nav items
-EXTENSIONS_NAV_ITEM = {"url": "/extensions", "icon": ICON_EXTENSIONS, "label": "Extensions"}
+EXTENSIONS_NAV_ITEM = {
+    "url": "/extensions",
+    "icon": ICON_EXTENSIONS,
+    "label": "Extensions",
+}
 
 # Will be extended by extensions
 nav_items: list[dict] = list(CORE_NAV_ITEMS)
@@ -151,15 +162,15 @@ FD_BINARY: str = ""
 
 @dataclass
 class ExtensionInfo:
-    id: str                          # Folder name (e.g., "video-scenes")
-    tier: str                        # "core" | "built-in" | "installed"
-    enabled: bool                    # User's choice (or default)
-    loaded: bool                     # Successfully imported?
-    error: str | None                # Import/validate error message
+    id: str  # Folder name (e.g., "video-scenes")
+    tier: str  # "core" | "built-in" | "installed"
+    enabled: bool  # User's choice (or default)
+    loaded: bool  # Successfully imported?
+    error: str | None  # Import/validate error message
     meta: dict = field(default_factory=dict)
-    has_start: bool = False          # Has async start() hook
-    has_tunnel_hook: bool = False    # Has on_tunnel_url() hook
-    module: object | None = None     # The imported module (if loaded)
+    has_start: bool = False  # Has async start() hook
+    has_tunnel_hook: bool = False  # Has on_tunnel_url() hook
+    module: object | None = None  # The imported module (if loaded)
 
 
 extension_registry: dict[str, ExtensionInfo] = {}
@@ -203,6 +214,7 @@ def _resolve_enabled(ext_id: str, tier: str, state: dict) -> bool:
         return BUILT_IN_DEFAULTS.get(ext_id, True)
     # Installed extensions default to enabled
     return True
+
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -276,11 +288,14 @@ def _safe_next_url(url: str) -> str:
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, next: str = "/files", error: str = ""):
-    return templates.TemplateResponse("login.html", {
-        "request": request,
-        "next_url": _safe_next_url(next),
-        "error": error,
-    })
+    return templates.TemplateResponse(
+        "login.html",
+        {
+            "request": request,
+            "next_url": _safe_next_url(next),
+            "error": error,
+        },
+    )
 
 
 @app.post("/login")
@@ -295,13 +310,20 @@ def login_submit(
         return RedirectResponse(url=safe_next, status_code=303)
 
     if not secrets.compare_digest(password.encode(), DASHBOARD_PASS.encode()):
-        return templates.TemplateResponse("login.html", {
-            "request": request,
-            "next_url": safe_next,
-            "error": "Wrong password",
-        }, status_code=401)
+        return templates.TemplateResponse(
+            "login.html",
+            {
+                "request": request,
+                "next_url": safe_next,
+                "error": "Wrong password",
+            },
+            status_code=401,
+        )
 
-    secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    secure = (
+        request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto") == "https"
+    )
     response = RedirectResponse(url=safe_next, status_code=303)
     set_auth_cookie(response, DASHBOARD_USER, DASHBOARD_PASS, secure=secure)
     return response
@@ -335,6 +357,7 @@ async def api_environments(_auth=Depends(require_auth)):
     if not MERLIN_SAAS_TOKEN:
         return []
     import httpx
+
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(
@@ -356,7 +379,9 @@ async def api_environments(_auth=Depends(require_auth)):
 def extensions_page(request: Request, _auth=Depends(require_auth)):
     """Extensions management page."""
     exts = _build_extensions_list()
-    return templates.TemplateResponse("extensions.html", _template_context(request, extensions=exts))
+    return templates.TemplateResponse(
+        "extensions.html", _template_context(request, extensions=exts)
+    )
 
 
 @app.get("/api/extensions")
@@ -369,11 +394,14 @@ def api_extensions(_auth=Depends(require_auth)):
 def api_toggle_extension(ext_id: str, _auth=Depends(require_auth)):
     """Toggle an extension's enabled state."""
     from fastapi.responses import JSONResponse
+
     info = extension_registry.get(ext_id)
     if not info:
         return JSONResponse({"detail": "Extension not found"}, status_code=404)
     if info.tier == "core":
-        return JSONResponse({"detail": "Core extensions cannot be toggled"}, status_code=400)
+        return JSONResponse(
+            {"detail": "Core extensions cannot be toggled"}, status_code=400
+        )
 
     state = _load_extensions_state()
     new_enabled = not info.enabled
@@ -405,9 +433,12 @@ def _write_config_env(data: dict[str, str]) -> None:
 
 
 @app.post("/api/extensions/{ext_id}/config")
-async def api_save_extension_config(ext_id: str, request: Request, _auth=Depends(require_auth)):
+async def api_save_extension_config(
+    ext_id: str, request: Request, _auth=Depends(require_auth)
+):
     """Save extension config fields to config.env."""
     from fastapi.responses import JSONResponse
+
     info = extension_registry.get(ext_id)
     if not info:
         return JSONResponse({"detail": "Extension not found"}, status_code=404)
@@ -428,7 +459,11 @@ async def api_save_extension_config(ext_id: str, request: Request, _auth=Depends
             existing.pop(key, None)
     _write_config_env(existing)
 
-    masked = {key: ("***" if existing.get(key, "") else "") for key in body if key in allowed_keys}
+    masked = {
+        key: ("***" if existing.get(key, "") else "")
+        for key in body
+        if key in allowed_keys
+    }
     return {"ok": True, "values": masked}
 
 
@@ -436,6 +471,7 @@ async def api_save_extension_config(ext_id: str, request: Request, _auth=Depends
 def api_restart(_auth=Depends(require_auth)):
     """Restart Merlin via restart.sh."""
     import subprocess
+
     restart_script = paths.app_dir() / "restart.sh"
     if restart_script.exists():
         subprocess.Popen(["bash", str(restart_script)], start_new_session=True)
@@ -451,10 +487,13 @@ def api_restart(_auth=Depends(require_auth)):
 def settings_page(request: Request, _auth=Depends(require_auth)):
     """Settings page."""
     cfg = _read_config_env()
-    return templates.TemplateResponse("settings.html", _template_context(
-        request,
-        openai_key_set=bool(cfg.get("OPENAI_API_KEY")),
-    ))
+    return templates.TemplateResponse(
+        "settings.html",
+        _template_context(
+            request,
+            openai_key_set=bool(cfg.get("OPENAI_API_KEY")),
+        ),
+    )
 
 
 @app.get("/api/settings")
@@ -464,6 +503,7 @@ def api_get_settings(_auth=Depends(require_auth)):
 
     # Engine info
     from lib.engine import _registry, get_engine
+
     engine_name = cfg.get("AGENT_ENGINE", "claude-code")
     try:
         engine = get_engine(engine_name)
@@ -578,24 +618,43 @@ app.include_router(terminal_router)  # WebSocket auth handled internally
 
 # Cron API + page
 from cron.routes import cron_page_router, cron_router
+
 app.include_router(cron_router, dependencies=[Depends(require_auth)])
 app.include_router(cron_page_router, dependencies=[Depends(require_auth)])
 
 # Module statics BEFORE general static (more specific path first)
-app.mount("/static/files", StaticFiles(directory=str(FILES_STATIC_DIR)), name="files-static")
-app.mount("/static/commits", StaticFiles(directory=str(COMMITS_STATIC_DIR)), name="commits-static")
+app.mount(
+    "/static/files", StaticFiles(directory=str(FILES_STATIC_DIR)), name="files-static"
+)
+app.mount(
+    "/static/commits",
+    StaticFiles(directory=str(COMMITS_STATIC_DIR)),
+    name="commits-static",
+)
 
 # Register core modules in extension registry
 extension_registry["files"] = ExtensionInfo(
-    id="files", tier="core", enabled=True, loaded=True, error=None,
+    id="files",
+    tier="core",
+    enabled=True,
+    loaded=True,
+    error=None,
     meta={"name": "Files", "description": "File browser with code viewer"},
 )
 extension_registry["terminal"] = ExtensionInfo(
-    id="terminal", tier="core", enabled=True, loaded=True, error=None,
+    id="terminal",
+    tier="core",
+    enabled=True,
+    loaded=True,
+    error=None,
     meta={"name": "Terminal", "description": "Web terminal (tmux)"},
 )
 extension_registry["commits"] = ExtensionInfo(
-    id="commits", tier="core", enabled=True, loaded=True, error=None,
+    id="commits",
+    tier="core",
+    enabled=True,
+    loaded=True,
+    error=None,
     meta={"name": "Commits", "description": "Git commit browser with diffs"},
 )
 
@@ -607,7 +666,9 @@ _extensions_with_errors: int = 0
 _ext_state = _load_extensions_state()
 
 
-def _load_extension(ext_id: str, tier: str, module_loader, static_name: str | None = None) -> None:
+def _load_extension(
+    ext_id: str, tier: str, module_loader, static_name: str | None = None
+) -> None:
     """Load a single extension into the registry and wire it up if enabled."""
     global _extensions_with_errors, show_bot_status
 
@@ -615,7 +676,11 @@ def _load_extension(ext_id: str, tier: str, module_loader, static_name: str | No
 
     if not enabled:
         extension_registry[ext_id] = ExtensionInfo(
-            id=ext_id, tier=tier, enabled=False, loaded=False, error=None,
+            id=ext_id,
+            tier=tier,
+            enabled=False,
+            loaded=False,
+            error=None,
         )
         logger.info(f"Extension disabled: {ext_id}")
         return
@@ -625,7 +690,11 @@ def _load_extension(ext_id: str, tier: str, module_loader, static_name: str | No
     except Exception as e:
         _extensions_with_errors += 1
         extension_registry[ext_id] = ExtensionInfo(
-            id=ext_id, tier=tier, enabled=True, loaded=False, error=str(e),
+            id=ext_id,
+            tier=tier,
+            enabled=True,
+            loaded=False,
+            error=str(e),
         )
         logger.warning(f"Extension {ext_id} failed to load: {e}")
         return
@@ -633,6 +702,7 @@ def _load_extension(ext_id: str, tier: str, module_loader, static_name: str | No
     # Inject a properly namespaced logger so extensions get it for free
     if not hasattr(mod, "logger"):
         from merlin_ext import get_logger as _ext_logger
+
         mod.logger = _ext_logger(ext_id)
 
     # Wire up router + statics
@@ -640,7 +710,11 @@ def _load_extension(ext_id: str, tier: str, module_loader, static_name: str | No
     static_dir = getattr(mod, "STATIC_DIR", None)
     if static_dir:
         mount_name = static_name or ext_id
-        app.mount(f"/static/{mount_name}", StaticFiles(directory=str(static_dir)), name=f"{mount_name}-static")
+        app.mount(
+            f"/static/{mount_name}",
+            StaticFiles(directory=str(static_dir)),
+            name=f"{mount_name}-static",
+        )
 
     # Collect nav items
     ext_nav = getattr(mod, "NAV_ITEMS", [])
@@ -674,8 +748,10 @@ def _load_extension(ext_id: str, tier: str, module_loader, static_name: str | No
 # --- Built-in: Notes ---
 def _load_notes():
     import notes as _mod
+
     _mod.STATIC_DIR = _mod.NOTES_STATIC_DIR  # Normalize to STATIC_DIR for the loader
     return _mod
+
 
 _load_extension("notes", "built-in", _load_notes)
 
@@ -683,9 +759,12 @@ _load_extension("notes", "built-in", _load_notes)
 # merlin-bot/ must be on sys.path regardless of enabled state (transcribe.py lives there)
 sys.path.insert(0, str(MERLIN_BOT_DIR))
 
+
 def _load_bot():
     import merlin_bot as _bot
+
     return _bot
+
 
 _load_extension("merlin-bot", "built-in", _load_bot, static_name="merlin-app")
 
@@ -702,6 +781,7 @@ if EXTENSIONS_DIR.is_dir():
             def _loader():
                 sys.path.insert(0, str(d))
                 return __import__(n.replace("-", "_"))
+
             return _loader
 
         _load_extension(ext_name, "installed", _make_loader())
@@ -716,8 +796,6 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # ---------------------------------------------------------------------------
 # Inject nav_items into all template responses
 # ---------------------------------------------------------------------------
-
-from starlette.routing import Route, Mount
 
 
 def _patch_template_responses():
@@ -741,13 +819,19 @@ def _patch_template_responses():
         # New Starlette expects: TemplateResponse(request, name, context=...)
         if args and isinstance(args[0], str):
             name = args[0]
-            context = args[1] if len(args) >= 2 and isinstance(args[1], dict) else kwargs.pop("context", None) or {}
+            context = (
+                args[1]
+                if len(args) >= 2 and isinstance(args[1], dict)
+                else kwargs.pop("context", None) or {}
+            )
             request_obj = context.pop("request", None)
             for k, v in defaults.items():
                 context.setdefault(k, v)
             if request_obj is not None:
                 extra = {k: v for k, v in kwargs.items() if k != "context"}
-                return original_response(self, request_obj, name, context=context, **extra)
+                return original_response(
+                    self, request_obj, name, context=context, **extra
+                )
             context["request"] = request_obj
             return original_response(self, *args, **kwargs)
         # New-style: inject defaults into context kwarg
@@ -829,7 +913,9 @@ def _disable_bot_extension() -> None:
     bot_info = extension_registry.get("merlin-bot")
     if bot_info and bot_info.module:
         # Collect bot nav URLs before clearing
-        bot_nav_urls = {item.get("url") for item in getattr(bot_info.module, "NAV_ITEMS", [])}
+        bot_nav_urls = {
+            item.get("url") for item in getattr(bot_info.module, "NAV_ITEMS", [])
+        }
         nav_items[:] = [i for i in nav_items if i.get("url") not in bot_nav_urls]
         bot_info.enabled = False
         bot_info.loaded = False
@@ -851,19 +937,25 @@ def _validate_config(tunnel_enabled: bool) -> None:
 
     # Fail fast before doing anything else (like generating passwords)
     if errors:
-        msg = "Configuration error(s):\n\n" + "\n\n".join(f"  {i+1}. {e}" for i, e in enumerate(errors))
+        msg = "Configuration error(s):\n\n" + "\n\n".join(
+            f"  {i + 1}. {e}" for i, e in enumerate(errors)
+        )
         print(msg, file=sys.stderr)
         raise SystemExit(1)
 
     if not DASHBOARD_PASS and tunnel_enabled and not MERLIN_SAAS_TOKEN:
         generated = secrets.token_urlsafe(12)
-        logger.warning("DASHBOARD_PASS not set — auto-generating password for tunnel security")
+        logger.warning(
+            "DASHBOARD_PASS not set — auto-generating password for tunnel security"
+        )
         DASHBOARD_PASS = generated
         os.environ["DASHBOARD_PASS"] = generated
         configure_auth(DASHBOARD_PASS)
         print(f"  Auto-generated login: {DASHBOARD_USER} / {generated}")
     elif not DASHBOARD_PASS:
-        logger.warning("DASHBOARD_PASS not set — running without auth (local-only is fine)")
+        logger.warning(
+            "DASHBOARD_PASS not set — running without auth (local-only is fine)"
+        )
 
     # fd is a hard requirement
     _check_fd()
@@ -878,10 +970,14 @@ def _validate_config(tunnel_enabled: bool) -> None:
             bot_info.module.validate()
         except SystemExit:
             _disable_bot_extension()
-            logger.warning("Bot disabled — Discord not configured. Run 'merlin setup' to configure.")
+            logger.warning(
+                "Bot disabled — Discord not configured. Run 'merlin setup' to configure."
+            )
 
 
-def start_server(port: int = 3123, host: str = "0.0.0.0", no_tunnel: bool = False) -> None:
+def start_server(
+    port: int = 3123, host: str = "0.0.0.0", no_tunnel: bool = False
+) -> None:
     """Start the Merlin dashboard server. Called by cli.py or main()."""
     import uvicorn
 
@@ -890,6 +986,7 @@ def start_server(port: int = 3123, host: str = "0.0.0.0", no_tunnel: bool = Fals
     # Clean up old log files at startup
     try:
         from structured_log import cleanup_old_logs
+
         cleanup_old_logs()
     except Exception:
         logger.warning("Failed to clean up old logs", exc_info=True)
@@ -901,8 +998,11 @@ def start_server(port: int = 3123, host: str = "0.0.0.0", no_tunnel: bool = Fals
     _validate_config(TUNNEL_ENABLED)
 
     from structured_log import log_event
+
     extensions_loaded = [eid for eid, info in extension_registry.items() if info.loaded]
-    log_event("app_started", host=host, port=port, cwd=str(CWD), extensions=extensions_loaded)
+    log_event(
+        "app_started", host=host, port=port, cwd=str(CWD), extensions=extensions_loaded
+    )
 
     print(f"Merlin starting on http://{host}:{port}")
     print(f"CWD: {CWD}")
@@ -932,26 +1032,38 @@ def start_server(port: int = 3123, host: str = "0.0.0.0", no_tunnel: bool = Fals
 
         if MERLIN_SAAS_TOKEN:
             from saas_tunnel import start_saas_tunnel
-            tasks.append(asyncio.create_task(start_saas_tunnel(
-                token=MERLIN_SAAS_TOKEN,
-                local_port=port,
-            )))
+
+            tasks.append(
+                asyncio.create_task(
+                    start_saas_tunnel(
+                        token=MERLIN_SAAS_TOKEN,
+                        local_port=port,
+                    )
+                )
+            )
 
             # Start SSH server in SaaS mode (container-side, localhost only)
             from ssh_server import start_ssh_server, stop_ssh_server
-            ssh_acceptor = await start_ssh_server()
+
+            await start_ssh_server()
 
         elif TUNNEL_ENABLED:
             from tunnel import start_tunnel
-            tasks.append(asyncio.create_task(start_tunnel(
-                port=port,
-                tunnel_token=TUNNEL_TOKEN,
-                tunnel_hostname=TUNNEL_HOSTNAME,
-                on_url=_notify_tunnel_url,
-            )))
+
+            tasks.append(
+                asyncio.create_task(
+                    start_tunnel(
+                        port=port,
+                        tunnel_token=TUNNEL_TOKEN,
+                        tunnel_hostname=TUNNEL_HOSTNAME,
+                        on_url=_notify_tunnel_url,
+                    )
+                )
+            )
 
         # Start the cron scheduler (core feature, always runs)
         import cron
+
         await cron.start()
 
         # Start all extensions with start() hooks
@@ -989,9 +1101,15 @@ Environment variables (from .env or shell):
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--port", type=int, default=3123, help="Port to serve on (default: 3123)")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)")
-    parser.add_argument("--no-tunnel", action="store_true", help="Disable Cloudflare tunnel")
+    parser.add_argument(
+        "--port", type=int, default=3123, help="Port to serve on (default: 3123)"
+    )
+    parser.add_argument(
+        "--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
+    )
+    parser.add_argument(
+        "--no-tunnel", action="store_true", help="Disable Cloudflare tunnel"
+    )
     args = parser.parse_args()
 
     start_server(port=args.port, host=args.host, no_tunnel=args.no_tunnel)

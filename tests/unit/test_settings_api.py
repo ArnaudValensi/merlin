@@ -1,8 +1,6 @@
 """Tests for the Settings page API endpoints — Phase 3."""
 
 import json
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +11,7 @@ import main as app_mod
 @pytest.fixture(autouse=True)
 def _disable_auth(monkeypatch):
     import auth
+
     monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
     monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
     auth.configure("")

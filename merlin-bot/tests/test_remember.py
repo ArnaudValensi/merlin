@@ -1,7 +1,6 @@
 """Tests for remember.py — user context management."""
 
 import textwrap
-from pathlib import Path
 
 import pytest
 

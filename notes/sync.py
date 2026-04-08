@@ -21,9 +21,9 @@ conflicted_files: list[str] = []
 
 # Sync state — visible to the extensions page for status display
 sync_state: dict = {
-    "last_push_at": None,   # ISO timestamp string
-    "last_push_ok": None,   # True/False/None (never pushed)
-    "last_error": None,     # error string or None
+    "last_push_at": None,  # ISO timestamp string
+    "last_push_ok": None,  # True/False/None (never pushed)
+    "last_error": None,  # error string or None
 }
 
 # Internal state
@@ -40,12 +40,11 @@ def _parse_seconds(value: str, default: float = 5.0) -> float:
         return default
 
 
-async def _run_git(
-    *args: str, cwd: Path
-) -> tuple[int, str, str]:
+async def _run_git(*args: str, cwd: Path) -> tuple[int, str, str]:
     """Run a git command, return (returncode, stdout, stderr)."""
     proc = await asyncio.create_subprocess_exec(
-        "git", *args,
+        "git",
+        *args,
         cwd=str(cwd),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -117,9 +116,7 @@ async def _commit_all(notes_dir: Path) -> bool:
         logger.error("git add failed: %s", stderr)
         return False
 
-    rc, stdout, stderr = await _run_git(
-        "commit", "-m", "sync notes", cwd=notes_dir
-    )
+    rc, stdout, stderr = await _run_git("commit", "-m", "sync notes", cwd=notes_dir)
     if rc != 0:
         combined = stdout + stderr
         if "nothing to commit" in combined or "no changes added" in combined:
@@ -144,7 +141,9 @@ async def _pull(notes_dir: Path) -> None:
     if rc != 0:
         return  # No remote branch yet — nothing to pull
 
-    rc, stdout, stderr = await _run_git("pull", "--no-rebase", "origin", "main", cwd=notes_dir)
+    rc, stdout, stderr = await _run_git(
+        "pull", "--no-rebase", "origin", "main", cwd=notes_dir
+    )
 
     if rc != 0:
         # Check for merge conflicts
@@ -259,7 +258,9 @@ async def test_remote(remote_url: str, notes_dir: Path) -> tuple[bool, str]:
     await _ensure_git_repo(notes_dir)
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git", "ls-remote", remote_url,
+            "git",
+            "ls-remote",
+            remote_url,
             cwd=str(notes_dir),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -291,7 +292,9 @@ async def start_sync(notes_dir: Path) -> None:
 
     remote = os.environ.get("NOTES_GIT_REMOTE", "")
     debounce = _parse_seconds(os.environ.get("NOTES_SYNC_DEBOUNCE", "20"), default=20.0)
-    pull_interval = _parse_seconds(os.environ.get("NOTES_SYNC_PULL_INTERVAL", "60"), default=60.0)
+    pull_interval = _parse_seconds(
+        os.environ.get("NOTES_SYNC_PULL_INTERVAL", "60"), default=60.0
+    )
 
     # Initialize repo
     await _ensure_git_repo(notes_dir)
@@ -302,7 +305,9 @@ async def start_sync(notes_dir: Path) -> None:
 
     logger.info(
         "Git sync enabled: debounce=%.0fs, pull_interval=%.0fs, remote=%s",
-        debounce, pull_interval, remote or "(none)",
+        debounce,
+        pull_interval,
+        remote or "(none)",
     )
 
     # Pull immediately on startup to catch changes from other devices

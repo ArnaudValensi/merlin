@@ -1,8 +1,5 @@
 """Tests for cron.manage — cron job management script."""
 
-import json
-from pathlib import Path
-
 import pytest
 
 pytest.importorskip("croniter")
@@ -215,8 +212,24 @@ class TestCmdList:
         from cron.manage import cmd_list, save_job
         from types import SimpleNamespace
 
-        save_job("job1", {"schedule": "0 9 * * *", "prompt": "x", "channel": "1", "description": "Job 1"})
-        save_job("job2", {"schedule": "0 10 * * *", "prompt": "y", "channel": "2", "description": "Job 2"})
+        save_job(
+            "job1",
+            {
+                "schedule": "0 9 * * *",
+                "prompt": "x",
+                "channel": "1",
+                "description": "Job 1",
+            },
+        )
+        save_job(
+            "job2",
+            {
+                "schedule": "0 10 * * *",
+                "prompt": "y",
+                "channel": "2",
+                "description": "Job 2",
+            },
+        )
 
         args = SimpleNamespace(discord=False)
         result = cmd_list(args)
@@ -227,14 +240,17 @@ class TestCmdList:
         from cron.manage import cmd_list, save_job
         from types import SimpleNamespace
 
-        save_job("test-job", {
-            "schedule": "0 9 * * *",
-            "prompt": "x",
-            "channel": "1",
-            "description": "Test",
-            "enabled": True,
-            "report_mode": "silent",
-        })
+        save_job(
+            "test-job",
+            {
+                "schedule": "0 9 * * *",
+                "prompt": "x",
+                "channel": "1",
+                "description": "Test",
+                "enabled": True,
+                "report_mode": "silent",
+            },
+        )
 
         args = SimpleNamespace(discord=True)
         result = cmd_list(args)
@@ -252,7 +268,10 @@ class TestCmdEnableDisable:
         from cron.manage import cmd_disable, load_job, save_job
         from types import SimpleNamespace
 
-        save_job("test-job", {"schedule": "0 9 * * *", "prompt": "x", "channel": "1", "enabled": True})
+        save_job(
+            "test-job",
+            {"schedule": "0 9 * * *", "prompt": "x", "channel": "1", "enabled": True},
+        )
 
         args = SimpleNamespace(job_id="test-job")
         result = cmd_disable(args)
@@ -265,7 +284,10 @@ class TestCmdEnableDisable:
         from cron.manage import cmd_enable, load_job, save_job
         from types import SimpleNamespace
 
-        save_job("test-job", {"schedule": "0 9 * * *", "prompt": "x", "channel": "1", "enabled": False})
+        save_job(
+            "test-job",
+            {"schedule": "0 9 * * *", "prompt": "x", "channel": "1", "enabled": False},
+        )
 
         args = SimpleNamespace(job_id="test-job")
         result = cmd_enable(args)
@@ -358,8 +380,18 @@ class TestFormatting:
         from cron.manage import format_jobs_discord
 
         jobs = [
-            {"id": "job1", "schedule": "0 9 * * *", "enabled": True, "report_mode": "silent"},
-            {"id": "job2", "schedule": "0 10 * * *", "enabled": False, "report_mode": "always"},
+            {
+                "id": "job1",
+                "schedule": "0 9 * * *",
+                "enabled": True,
+                "report_mode": "silent",
+            },
+            {
+                "id": "job2",
+                "schedule": "0 10 * * *",
+                "enabled": False,
+                "report_mode": "always",
+            },
         ]
         result = format_jobs_discord(jobs)
         assert "1 active, 1 disabled" in result

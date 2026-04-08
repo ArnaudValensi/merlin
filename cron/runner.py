@@ -83,7 +83,10 @@ if __name__ == "__main__":
     _file_handler = logging.FileHandler(LOG_DIR / "merlin.log", encoding="utf-8")
     _file_handler.setLevel(logging.INFO)
     _file_handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)-8s [%(name)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+        logging.Formatter(
+            "%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
     )
     logger.addHandler(_file_handler)
 
@@ -156,8 +159,12 @@ def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-def is_job_due(job_id: str, schedule: str, now: datetime,
-               grace_minutes: int = DEFAULT_GRACE_MINUTES) -> bool:
+def is_job_due(
+    job_id: str,
+    schedule: str,
+    now: datetime,
+    grace_minutes: int = DEFAULT_GRACE_MINUTES,
+) -> bool:
     """Check if a job is due to run based on schedule and last run time.
 
     Includes staleness window and never-seen guard:
@@ -172,7 +179,9 @@ def is_job_due(job_id: str, schedule: str, now: datetime,
         set_last_run(job_id, now)
         cron = croniter(schedule, now)
         next_time = cron.get_next(datetime)
-        logger.info("New job %s registered, first run at %s", job_id, next_time.isoformat())
+        logger.info(
+            "New job %s registered, first run at %s", job_id, next_time.isoformat()
+        )
         return False
 
     # Normalize to configured timezone so croniter interprets the schedule
@@ -195,7 +204,9 @@ def is_job_due(job_id: str, schedule: str, now: datetime,
     if staleness_seconds > grace_seconds:
         logger.warning(
             "Job %s missed its window by %.0f min (grace=%d min), skipping — advancing state",
-            job_id, staleness_seconds / 60, grace_minutes,
+            job_id,
+            staleness_seconds / 60,
+            grace_minutes,
         )
         set_last_run(job_id, now)
         return False
@@ -253,8 +264,22 @@ def _execute_job(job_id: str, job: dict) -> None:
 
     request_id = str(uuid.uuid4())
 
-    logger.info("[%s] Running job %s (channel=%s, max_turns=%s, ephemeral=%s)", request_id[:8], job_id, channel or "none", max_turns or "unlimited", ephemeral)
-    log_event("cron_dispatch", job_id=job_id, event="started", duration=0, exit_code=0, request_id=request_id)
+    logger.info(
+        "[%s] Running job %s (channel=%s, max_turns=%s, ephemeral=%s)",
+        request_id[:8],
+        job_id,
+        channel or "none",
+        max_turns or "unlimited",
+        ephemeral,
+    )
+    log_event(
+        "cron_dispatch",
+        job_id=job_id,
+        event="started",
+        duration=0,
+        exit_code=0,
+        request_id=request_id,
+    )
 
     # Mark as running BEFORE execution to prevent re-dispatch by concurrent schedulers
     set_last_run(job_id, _now())
@@ -286,23 +311,39 @@ def _execute_job(job_id: str, job: dict) -> None:
     try:
         from cron.logs import cleanup_logs, write_log
 
-        write_log(job_id, {
-            "job_id": job_id,
-            "timestamp": now.isoformat(),
-            "exit_code": result.exit_code,
-            "duration_seconds": round(result.duration, 2),
-            "cost_usd": result.cost_usd,
-            "session_id": result.session_id,
-            "output": result.result,
-        })
+        write_log(
+            job_id,
+            {
+                "job_id": job_id,
+                "timestamp": now.isoformat(),
+                "exit_code": result.exit_code,
+                "duration_seconds": round(result.duration, 2),
+                "cost_usd": result.cost_usd,
+                "session_id": result.session_id,
+                "output": result.result,
+            },
+        )
         cleanup_logs(job_id)
     except Exception:
-        logger.warning("Failed to write execution log for job %s", job_id, exc_info=True)
+        logger.warning(
+            "Failed to write execution log for job %s", job_id, exc_info=True
+        )
 
     if result.exit_code == 0:
-        logger.info("[%s] Job %s completed successfully (%.1fs)", request_id[:8], job_id, result.duration)
-        log_event("cron_dispatch", job_id=job_id, event="completed",
-                  duration=round(result.duration, 3), exit_code=0, request_id=request_id)
+        logger.info(
+            "[%s] Job %s completed successfully (%.1fs)",
+            request_id[:8],
+            job_id,
+            result.duration,
+        )
+        log_event(
+            "cron_dispatch",
+            job_id=job_id,
+            event="completed",
+            duration=round(result.duration, 3),
+            exit_code=0,
+            request_id=request_id,
+        )
     else:
         logger.error(
             "[%s] Job %s failed (exit=%d, %.1fs): %s",
@@ -312,25 +353,37 @@ def _execute_job(job_id: str, job: dict) -> None:
             result.duration,
             result.stderr[:200] if result.stderr else "no error message",
         )
-        log_event("cron_dispatch", job_id=job_id, event="failed",
-                  duration=round(result.duration, 3), exit_code=result.exit_code, request_id=request_id)
+        log_event(
+            "cron_dispatch",
+            job_id=job_id,
+            event="failed",
+            duration=round(result.duration, 3),
+            exit_code=result.exit_code,
+            request_id=request_id,
+        )
 
     # Emit structured JSON to stdout so the scheduler (main process) can
     # pick it up and send Discord notifications via notify_cron_result().
     try:
         import json as _json
-        print(_json.dumps({
-            "type": "job_complete",
-            "job_id": job_id,
-            "job": job,
-            "result": {
-                "exit_code": result.exit_code,
-                "duration_seconds": round(result.duration, 2),
-                "cost_usd": result.cost_usd,
-                "session_id": result.session_id,
-                "output": result.result or "",
-            },
-        }), flush=True)
+
+        print(
+            _json.dumps(
+                {
+                    "type": "job_complete",
+                    "job_id": job_id,
+                    "job": job,
+                    "result": {
+                        "exit_code": result.exit_code,
+                        "duration_seconds": round(result.duration, 2),
+                        "cost_usd": result.cost_usd,
+                        "session_id": result.session_id,
+                        "output": result.result or "",
+                    },
+                }
+            ),
+            flush=True,
+        )
     except Exception:
         pass  # Never fail the job for a notification issue
 
@@ -350,7 +403,9 @@ def run_single_job(job_id: str) -> None:
 
     # Check if job is disabled (warn but allow manual execution)
     if not job.get("enabled", True):
-        logger.warning("Job %s is disabled, but running anyway (manual execution)", job_id)
+        logger.warning(
+            "Job %s is disabled, but running anyway (manual execution)", job_id
+        )
 
     try:
         run_job(job_id, job)
@@ -391,14 +446,16 @@ def run_dispatcher() -> None:
         logger.info("No jobs due, dispatcher finished")
         return
 
-    logger.info("Running %d due job(s) in parallel: %s",
-                len(due_jobs), ", ".join(j[0] for j in due_jobs))
+    logger.info(
+        "Running %d due job(s) in parallel: %s",
+        len(due_jobs),
+        ", ".join(j[0] for j in due_jobs),
+    )
 
     # Execute due jobs in parallel
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {
-            executor.submit(run_job, job_id, job): job_id
-            for job_id, job in due_jobs
+            executor.submit(run_job, job_id, job): job_id for job_id, job in due_jobs
         }
 
         for future in as_completed(futures):
@@ -440,7 +497,10 @@ def _validate_config() -> None:
 
     if errors:
         import sys
-        msg = "Configuration error(s):\n\n" + "\n\n".join(f"  {i+1}. {e}" for i, e in enumerate(errors))
+
+        msg = "Configuration error(s):\n\n" + "\n\n".join(
+            f"  {i + 1}. {e}" for i, e in enumerate(errors)
+        )
         logger.error(msg)
         print(msg, file=sys.stderr)
         raise SystemExit(1)

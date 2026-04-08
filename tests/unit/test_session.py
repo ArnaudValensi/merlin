@@ -1,11 +1,9 @@
 """Tests for lib/session.py — JSONL session management."""
 
 import json
-from datetime import datetime, timezone
 
 import pytest
 
-import lib.session as sess
 from lib.session import (
     append_turn,
     compact_history,
@@ -21,6 +19,7 @@ from lib.session import (
 def _use_tmp_sessions(tmp_path, monkeypatch):
     """Redirect sessions_dir to tmp_path for all tests."""
     import paths
+
     monkeypatch.setattr(paths, "sessions_dir", lambda: tmp_path)
 
 
@@ -84,7 +83,10 @@ class TestAppendTurn:
 
     def test_preserves_existing_timestamp(self, tmp_path):
         create_session("s4")
-        append_turn("s4", {"role": "user", "content": "hello", "ts": "2026-01-01T00:00:00+00:00"})
+        append_turn(
+            "s4",
+            {"role": "user", "content": "hello", "ts": "2026-01-01T00:00:00+00:00"},
+        )
         turns = load_session("s4")
         assert turns[0]["ts"] == "2026-01-01T00:00:00+00:00"
 
@@ -224,10 +226,7 @@ class TestCompactHistory:
 
     def test_no_system_turn(self):
         """History without system turn still compacts."""
-        history = [
-            {"role": "user", "content": f"msg {i}" * 100}
-            for i in range(30)
-        ]
+        history = [{"role": "user", "content": f"msg {i}" * 100} for i in range(30)]
         result = compact_history(history, max_tokens=500, keep_recent=5)
         assert result[0]["role"] == "compaction"
         assert result[0]["dropped"] == 25

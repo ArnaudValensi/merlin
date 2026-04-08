@@ -12,6 +12,7 @@ import auth
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _mock_dashboard(monkeypatch):
     """Mock dashboard credentials for all tests."""
@@ -21,6 +22,7 @@ def _mock_dashboard(monkeypatch):
 # ---------------------------------------------------------------------------
 # Cookie signing / verification
 # ---------------------------------------------------------------------------
+
 
 class TestSignCookie:
     """sign_cookie produces a valid cookie string."""
@@ -104,6 +106,7 @@ class TestVerifyCookie:
 # Cookie set/clear
 # ---------------------------------------------------------------------------
 
+
 class TestSetAuthCookie:
     """set_auth_cookie sets the correct cookie on a response."""
 
@@ -137,6 +140,7 @@ class TestClearAuthCookie:
 # ---------------------------------------------------------------------------
 # Request auth checking
 # ---------------------------------------------------------------------------
+
 
 class TestIsAuthenticated:
     """is_authenticated checks request cookies."""
@@ -173,6 +177,7 @@ class TestIsAuthenticated:
 # WebSocket cookie verification
 # ---------------------------------------------------------------------------
 
+
 class TestVerifyWsCookie:
     """verify_ws_cookie checks cookies on WebSocket requests."""
 
@@ -208,6 +213,7 @@ class TestVerifyWsCookie:
 # ---------------------------------------------------------------------------
 # require_auth dependency
 # ---------------------------------------------------------------------------
+
 
 class TestRequireAuth:
     """require_auth raises _AuthRedirect or passes through."""
@@ -270,6 +276,7 @@ class TestRequireAuth:
 # ---------------------------------------------------------------------------
 # Open redirect protection
 # ---------------------------------------------------------------------------
+
 
 class TestPortalAuthBypass:
     """_check_portal_auth and its integration into is_authenticated/require_auth/verify_ws_cookie."""
@@ -406,28 +413,35 @@ class TestSafeNextUrl:
 
     def test_relative_path_allowed(self):
         from main import _safe_next_url
+
         assert _safe_next_url("/overview") == "/overview"
 
     def test_relative_path_with_query(self):
         from main import _safe_next_url
+
         assert _safe_next_url("/logs?type=error") == "/logs?type=error"
 
     def test_absolute_url_blocked(self):
         from main import _safe_next_url
+
         assert _safe_next_url("https://evil.com") == "/files"
 
     def test_protocol_relative_blocked(self):
         from main import _safe_next_url
+
         assert _safe_next_url("//evil.com") == "/files"
 
     def test_empty_string_blocked(self):
         from main import _safe_next_url
+
         assert _safe_next_url("") == "/files"
 
     def test_javascript_uri_blocked(self):
         from main import _safe_next_url
+
         assert _safe_next_url("javascript:alert(1)") == "/files"
 
     def test_data_uri_blocked(self):
         from main import _safe_next_url
+
         assert _safe_next_url("data:text/html,<h1>hi</h1>") == "/files"

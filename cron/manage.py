@@ -64,7 +64,13 @@ def cron_to_human(expression: str) -> str:
         return "every minute"
     if minute == "0" and hour == "*" and dom == "*" and month == "*" and dow == "*":
         return "every hour"
-    if minute == "0" and hour.startswith("*/") and dom == "*" and month == "*" and dow == "*":
+    if (
+        minute == "0"
+        and hour.startswith("*/")
+        and dom == "*"
+        and month == "*"
+        and dow == "*"
+    ):
         interval = hour[2:]
         return f"every {interval} hours"
     if minute == "0" and dom == "*" and month == "*" and dow == "*":
@@ -85,8 +91,14 @@ def cron_to_human(expression: str) -> str:
 
     # Day of week names
     dow_names = {
-        "0": "Sun", "1": "Mon", "2": "Tue", "3": "Wed",
-        "4": "Thu", "5": "Fri", "6": "Sat", "7": "Sun",
+        "0": "Sun",
+        "1": "Mon",
+        "2": "Tue",
+        "3": "Wed",
+        "4": "Thu",
+        "5": "Fri",
+        "6": "Sat",
+        "7": "Sun",
     }
     if dow in dow_names and minute == "0" and dom == "*" and month == "*":
         return f"{dow_names[dow]} at {hour}:00"
@@ -448,26 +460,47 @@ Output:
 
     # add
     p_add = subparsers.add_parser("add", help="Add a new cron job")
-    p_add.add_argument("--id", help="Job ID (slug). Auto-generated from description if not provided")
-    p_add.add_argument("--schedule", required=True, help="Cron expression (e.g., '0 9 * * *')")
+    p_add.add_argument(
+        "--id", help="Job ID (slug). Auto-generated from description if not provided"
+    )
+    p_add.add_argument(
+        "--schedule", required=True, help="Cron expression (e.g., '0 9 * * *')"
+    )
     p_add.add_argument("--prompt", required=True, help="The prompt to send to Claude")
     p_add.add_argument("--channel", required=True, help="Discord channel ID")
     p_add.add_argument("--description", help="Human-readable description")
-    p_add.add_argument("--report-mode", choices=["always", "silent"], default="always",
-                       help="Report mode: always or silent (default: always)")
-    p_add.add_argument("--max-turns", type=int, default=0, help="Max agentic turns (0 = unlimited, default: 0)")
-    p_add.add_argument("--dry-run", action="store_true", help="Show what would be created without saving")
+    p_add.add_argument(
+        "--report-mode",
+        choices=["always", "silent"],
+        default="always",
+        help="Report mode: always or silent (default: always)",
+    )
+    p_add.add_argument(
+        "--max-turns",
+        type=int,
+        default=0,
+        help="Max agentic turns (0 = unlimited, default: 0)",
+    )
+    p_add.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be created without saving",
+    )
     p_add.set_defaults(func=cmd_add)
 
     # list
     p_list = subparsers.add_parser("list", help="List all cron jobs")
-    p_list.add_argument("--discord", action="store_true", help="Output formatted for Discord")
+    p_list.add_argument(
+        "--discord", action="store_true", help="Output formatted for Discord"
+    )
     p_list.set_defaults(func=cmd_list)
 
     # get
     p_get = subparsers.add_parser("get", help="Get a job's details")
     p_get.add_argument("job_id", help="Job ID")
-    p_get.add_argument("--discord", action="store_true", help="Output formatted for Discord")
+    p_get.add_argument(
+        "--discord", action="store_true", help="Output formatted for Discord"
+    )
     p_get.set_defaults(func=cmd_get)
 
     # enable
@@ -487,9 +520,13 @@ Output:
 
     # history
     p_history = subparsers.add_parser("history", help="Show run history")
-    p_history.add_argument("job_id", nargs="?", help="Job ID (optional, shows all if omitted)")
+    p_history.add_argument(
+        "job_id", nargs="?", help="Job ID (optional, shows all if omitted)"
+    )
     p_history.add_argument("--limit", type=int, help="Max runs to show (default: 10)")
-    p_history.add_argument("--discord", action="store_true", help="Output formatted for Discord")
+    p_history.add_argument(
+        "--discord", action="store_true", help="Output formatted for Discord"
+    )
     p_history.set_defaults(func=cmd_history)
 
     args = parser.parse_args()

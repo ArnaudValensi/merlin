@@ -18,7 +18,7 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
         return {}, content
 
     raw = match.group(1)
-    body = content[match.end():]
+    body = content[match.end() :]
     meta = {}
 
     for field_match in FIELD_RE.finditer(raw):
@@ -28,7 +28,9 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
         # Parse YAML arrays: [a, b, c]
         arr_match = ARRAY_RE.match(value)
         if arr_match:
-            items = [item.strip().strip("'\"") for item in arr_match.group(1).split(",")]
+            items = [
+                item.strip().strip("'\"") for item in arr_match.group(1).split(",")
+            ]
             meta[key] = [i for i in items if i]
         else:
             meta[key] = value.strip("'\"")

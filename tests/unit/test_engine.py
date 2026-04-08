@@ -1,8 +1,5 @@
 """Tests for lib/engine.py — AgentEngine abstraction, registry, and invoke()."""
 
-import json
-import shutil
-from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -30,9 +27,15 @@ class TestAgentResult:
 
     def test_fields(self):
         r = AgentResult(
-            content="ok", exit_code=0, duration=1.5,
-            stderr="", usage={"input_tokens": 10}, model="opus",
-            cost_usd=0.01, raw_output="raw", session_id="s1",
+            content="ok",
+            exit_code=0,
+            duration=1.5,
+            stderr="",
+            usage={"input_tokens": 10},
+            model="opus",
+            cost_usd=0.01,
+            raw_output="raw",
+            session_id="s1",
         )
         assert r.content == "ok"
         assert r.exit_code == 0
@@ -113,6 +116,7 @@ class TestEngineRegistry:
 
     def test_env_var_override(self, monkeypatch):
         """AGENT_ENGINE env var selects engine."""
+
         class FakeEngine(AgentEngine):
             name = "fake"
             context_window = 50_000
@@ -154,12 +158,14 @@ class TestPersonalityLoading:
 
     def test_personality_from_new_path(self, tmp_path, monkeypatch):
         import lib.engine as eng
+
         monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
         (tmp_path / "personality.md").write_text("Be awesome")
         assert _load_personality() == "Be awesome"
 
     def test_personality_fallback_to_legacy(self, tmp_path, monkeypatch):
         import lib.engine as eng
+
         monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
         (tmp_path / "merlin-bot").mkdir()
         (tmp_path / "merlin-bot" / "personality.md").write_text("Legacy")
@@ -167,11 +173,13 @@ class TestPersonalityLoading:
 
     def test_personality_missing_returns_none(self, tmp_path, monkeypatch):
         import lib.engine as eng
+
         monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
         assert _load_personality() is None
 
     def test_user_context_from_new_path(self, tmp_path, monkeypatch):
         import lib.engine as eng
+
         monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
         monkeypatch.setattr(eng.paths, "notes_dir", lambda: tmp_path / "notes")
         (tmp_path / "user.md").write_text("User is a dev")
@@ -181,6 +189,7 @@ class TestPersonalityLoading:
 
     def test_user_context_missing_returns_none(self, tmp_path, monkeypatch):
         import lib.engine as eng
+
         monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
         monkeypatch.setattr(eng.paths, "notes_dir", lambda: tmp_path / "notes")
         assert _load_user_context() is None
@@ -191,6 +200,7 @@ class TestBuildSystemPrompt:
 
     def test_with_personality_and_context(self, tmp_path, monkeypatch):
         import lib.engine as eng
+
         monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
         monkeypatch.setattr(eng.paths, "notes_dir", lambda: tmp_path / "notes")
         (tmp_path / "personality.md").write_text("Be cool")
@@ -202,6 +212,7 @@ class TestBuildSystemPrompt:
 
     def test_with_extra_file(self, tmp_path, monkeypatch):
         import lib.engine as eng
+
         monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
         monkeypatch.setattr(eng.paths, "notes_dir", lambda: tmp_path / "notes")
         extra = tmp_path / "extra.md"
@@ -212,6 +223,7 @@ class TestBuildSystemPrompt:
 
     def test_with_append_system_prompt(self, tmp_path, monkeypatch):
         import lib.engine as eng
+
         monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
         monkeypatch.setattr(eng.paths, "notes_dir", lambda: tmp_path / "notes")
 
@@ -220,6 +232,7 @@ class TestBuildSystemPrompt:
 
     def test_missing_extra_file_skipped(self, tmp_path, monkeypatch):
         import lib.engine as eng
+
         monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
         monkeypatch.setattr(eng.paths, "notes_dir", lambda: tmp_path / "notes")
 
@@ -228,6 +241,7 @@ class TestBuildSystemPrompt:
 
     def test_empty_returns_none(self, tmp_path, monkeypatch):
         import lib.engine as eng
+
         monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
         monkeypatch.setattr(eng.paths, "notes_dir", lambda: tmp_path / "notes")
 
@@ -246,22 +260,28 @@ class TestInvoke:
     @pytest.fixture(autouse=True)
     def _clean_dirs(self, tmp_path, monkeypatch):
         import lib.engine as eng
+
         monkeypatch.setattr(eng, "RAW_SESSION_DIR", tmp_path / "logs" / "sessions")
         monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
         monkeypatch.setattr(eng.paths, "notes_dir", lambda: tmp_path / "notes")
 
     def test_invoke_returns_agent_result(self):
-        with mock.patch("subprocess.run", return_value=mock.Mock(
-            stdout="{}", stderr="", returncode=0
-        )):
+        with mock.patch(
+            "subprocess.run",
+            return_value=mock.Mock(stdout="{}", stderr="", returncode=0),
+        ):
             result = invoke("hello", caller="test")
         assert isinstance(result, AgentResult)
         assert result.exit_code == 0
 
     def test_invoke_logs_structured_event(self):
-        with mock.patch("subprocess.run", return_value=mock.Mock(
-            stdout="{}", stderr="", returncode=0
-        )), mock.patch("lib.engine.log_event") as mock_log:
+        with (
+            mock.patch(
+                "subprocess.run",
+                return_value=mock.Mock(stdout="{}", stderr="", returncode=0),
+            ),
+            mock.patch("lib.engine.log_event") as mock_log,
+        ):
             invoke("hello", caller="test")
         mock_log.assert_called_once()
         call_kwargs = mock_log.call_args
@@ -269,18 +289,26 @@ class TestInvoke:
 
     def test_invoke_skips_resume_failure_log(self):
         """Don't log 'No conversation found' failures."""
-        with mock.patch("subprocess.run", return_value=mock.Mock(
-            stdout="{}", stderr="No conversation found for session abc",
-            returncode=1,
-        )), mock.patch("lib.engine.log_event") as mock_log:
+        with (
+            mock.patch(
+                "subprocess.run",
+                return_value=mock.Mock(
+                    stdout="{}",
+                    stderr="No conversation found for session abc",
+                    returncode=1,
+                ),
+            ),
+            mock.patch("lib.engine.log_event") as mock_log,
+        ):
             invoke("hello", caller="test")
         mock_log.assert_not_called()
 
     def test_invoke_passes_system_prompt(self, tmp_path):
         (tmp_path / "personality.md").write_text("Be nice")
-        with mock.patch("subprocess.run", return_value=mock.Mock(
-            stdout="{}", stderr="", returncode=0
-        )) as mock_run:
+        with mock.patch(
+            "subprocess.run",
+            return_value=mock.Mock(stdout="{}", stderr="", returncode=0),
+        ) as mock_run:
             invoke("hello", caller="test")
         cmd = mock_run.call_args[0][0]
         idx = cmd.index("--append-system-prompt")

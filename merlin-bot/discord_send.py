@@ -109,6 +109,7 @@ def _register_message(message_id: str, session_id: str | None = None) -> None:
     if session_id:
         try:
             from session_registry import set_message_session
+
             set_message_session(message_id, session_id)
         except Exception:
             pass  # Best-effort; don't break sends if registry fails
@@ -140,7 +141,10 @@ def _send_multipart(
 
 
 def send_message(
-    channel_id: str, content: str, token: str, *,
+    channel_id: str,
+    content: str,
+    token: str,
+    *,
     files: list[Path] | None = None,
     thread_on_chunk: bool = False,
     session_id: str | None = None,
@@ -171,7 +175,9 @@ def send_message(
             if i == 0 and files:
                 data = _send_multipart(client, target_url, token, payload, files)
             else:
-                resp = client.post(target_url, headers=_auth_headers(token), json=payload)
+                resp = client.post(
+                    target_url, headers=_auth_headers(token), json=payload
+                )
                 data = _check_response(resp)
 
             results.append({"message_id": data["id"], "channel_id": data["channel_id"]})
@@ -181,10 +187,14 @@ def send_message(
             if i == 0 and thread_on_chunk and len(chunks) > 1:
                 thread_url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{data['id']}/threads"
                 thread_payload = {
-                    "name": (chunk[:97] + "...") if len(chunk) > 100 else chunk[:100] or "Continued",
+                    "name": (chunk[:97] + "...")
+                    if len(chunk) > 100
+                    else chunk[:100] or "Continued",
                     "auto_archive_duration": 4320,
                 }
-                resp = client.post(thread_url, headers=_auth_headers(token), json=thread_payload)
+                resp = client.post(
+                    thread_url, headers=_auth_headers(token), json=thread_payload
+                )
                 thread_data = _check_response(resp)
                 target_url = f"{DISCORD_API_BASE}/channels/{thread_data['id']}/messages"
 
@@ -192,8 +202,12 @@ def send_message(
 
 
 def reply_message(
-    channel_id: str, message_id: str, content: str, token: str,
-    *, files: list[Path] | None = None,
+    channel_id: str,
+    message_id: str,
+    content: str,
+    token: str,
+    *,
+    files: list[Path] | None = None,
 ) -> list[dict]:
     """Reply to a specific message, chunking if necessary.
 
@@ -226,9 +240,7 @@ def reply_message(
     return results
 
 
-def react_message(
-    channel_id: str, message_id: str, emoji: str, token: str
-) -> None:
+def react_message(channel_id: str, message_id: str, emoji: str, token: str) -> None:
     """Add a reaction to a message."""
     encoded_emoji = urllib.parse.quote(emoji, safe="")
     url = (
@@ -247,9 +259,7 @@ def create_thread_from_message(
 
     Returns the thread data dict (includes 'id' for the new thread).
     """
-    url = (
-        f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}/threads"
-    )
+    url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}/threads"
     payload = {
         "name": name[:100],
         "auto_archive_duration": 4320,  # 3 days
@@ -284,17 +294,26 @@ def cmd_send(args: argparse.Namespace) -> None:
     """Handle the ``send`` subcommand."""
     token = load_token()
     files = [Path(f) for f in args.file] if args.file else None
-    _print_results(send_message(
-        args.channel, args.content or "", token,
-        files=files, thread_on_chunk=args.thread_on_chunk,
-    ))
+    _print_results(
+        send_message(
+            args.channel,
+            args.content or "",
+            token,
+            files=files,
+            thread_on_chunk=args.thread_on_chunk,
+        )
+    )
 
 
 def cmd_reply(args: argparse.Namespace) -> None:
     """Handle the ``reply`` subcommand."""
     token = load_token()
     files = [Path(f) for f in args.file] if args.file else None
-    _print_results(reply_message(args.channel, args.message, args.content or "", token, files=files))
+    _print_results(
+        reply_message(
+            args.channel, args.message, args.content or "", token, files=files
+        )
+    )
 
 
 def cmd_react(args: argparse.Namespace) -> None:
@@ -360,10 +379,18 @@ Notes:
     )
     send_parser.add_argument("--channel", required=True, help="Discord channel ID")
     send_parser.add_argument("--content", help="Message content to send")
-    send_parser.add_argument("--file", action="append", metavar="PATH", help="File to attach (can be repeated)")
-    send_parser.add_argument("--thread-on-chunk", action="store_true",
-                             help="If message is chunked, create a thread from the first message "
-                                  "and send remaining chunks there (preserves session continuity)")
+    send_parser.add_argument(
+        "--file",
+        action="append",
+        metavar="PATH",
+        help="File to attach (can be repeated)",
+    )
+    send_parser.add_argument(
+        "--thread-on-chunk",
+        action="store_true",
+        help="If message is chunked, create a thread from the first message "
+        "and send remaining chunks there (preserves session continuity)",
+    )
     send_parser.set_defaults(func=cmd_send)
 
     reply_parser = subparsers.add_parser(
@@ -374,7 +401,12 @@ Notes:
     reply_parser.add_argument("--channel", required=True, help="Discord channel ID")
     reply_parser.add_argument("--message", required=True, help="Message ID to reply to")
     reply_parser.add_argument("--content", help="Reply content")
-    reply_parser.add_argument("--file", action="append", metavar="PATH", help="File to attach (can be repeated)")
+    reply_parser.add_argument(
+        "--file",
+        action="append",
+        metavar="PATH",
+        help="File to attach (can be repeated)",
+    )
     reply_parser.set_defaults(func=cmd_reply)
 
     react_parser = subparsers.add_parser(
@@ -384,7 +416,9 @@ Notes:
     )
     react_parser.add_argument("--channel", required=True, help="Discord channel ID")
     react_parser.add_argument("--message", required=True, help="Message ID to react to")
-    react_parser.add_argument("--emoji", required=True, help="Emoji to react with (e.g. ✅ or 👍)")
+    react_parser.add_argument(
+        "--emoji", required=True, help="Emoji to react with (e.g. ✅ or 👍)"
+    )
     react_parser.set_defaults(func=cmd_react)
 
     rename_parser = subparsers.add_parser(
@@ -393,7 +427,9 @@ Notes:
         description="Rename a Discord thread. Name is truncated to 100 characters.",
     )
     rename_parser.add_argument("--thread", required=True, help="Thread ID to rename")
-    rename_parser.add_argument("--name", required=True, help="New thread name (max 100 chars)")
+    rename_parser.add_argument(
+        "--name", required=True, help="New thread name (max 100 chars)"
+    )
     rename_parser.set_defaults(func=cmd_rename_thread)
 
     args = parser.parse_args()

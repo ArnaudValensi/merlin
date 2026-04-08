@@ -4,16 +4,20 @@ import re
 import subprocess
 from pathlib import Path
 
+
 def _find_repo_root(search_dir: str) -> Path | None:
     """Find the git repository root directory. Returns None if not a git repo."""
     result = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
         cwd=search_dir,
-        capture_output=True, text=True, timeout=5,
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
     if result.returncode == 0:
         return Path(result.stdout.strip())
     return None
+
 
 # Validate commit hashes — only allow hex strings (short or long)
 HASH_RE = re.compile(r"^[0-9a-f]{4,40}$")
@@ -57,7 +61,7 @@ def get_commits(
     """
     args = [
         "log",
-        f"--format=%H|%h|%an|%aI|%s",
+        "--format=%H|%h|%an|%aI|%s",
         "--shortstat",
         f"--skip={skip}",
         f"--max-count={limit}",
@@ -161,7 +165,10 @@ def get_commit_detail(commit_hash: str, repo_dir: Path) -> dict:
 
     # Get commit metadata
     meta_output = _run_git(
-        "show", "--format=%H|%h|%an|%aI|%s|%b", "--no-patch", h,
+        "show",
+        "--format=%H|%h|%an|%aI|%s|%b",
+        "--no-patch",
+        h,
         repo_dir=repo_dir,
     )
     meta_line = meta_output.strip().split("\n")[0] if meta_output.strip() else ""
@@ -181,8 +188,12 @@ def get_commit_detail(commit_hash: str, repo_dir: Path) -> dict:
     }
 
     # Get file stats with --numstat and --name-status
-    numstat = _run_git("show", "--format=", "--numstat", h, repo_dir=repo_dir, check=False)
-    name_status = _run_git("show", "--format=", "--name-status", h, repo_dir=repo_dir, check=False)
+    numstat = _run_git(
+        "show", "--format=", "--numstat", h, repo_dir=repo_dir, check=False
+    )
+    name_status = _run_git(
+        "show", "--format=", "--name-status", h, repo_dir=repo_dir, check=False
+    )
 
     # Parse name-status for file status (M/A/D/R)
     status_map = {}
@@ -234,7 +245,9 @@ def get_commit_diff(commit_hash: str, repo_dir: Path) -> dict:
     diff_output = _run_git("show", "-p", "--format=", h, repo_dir=repo_dir, check=False)
 
     # Also get name-status for file statuses
-    name_status = _run_git("show", "--format=", "--name-status", h, repo_dir=repo_dir, check=False)
+    name_status = _run_git(
+        "show", "--format=", "--name-status", h, repo_dir=repo_dir, check=False
+    )
     status_map = {}
     for line in name_status.strip().split("\n"):
         line = line.strip()
@@ -286,18 +299,28 @@ def _parse_unified_diff(diff_text: str, status_map: dict | None = None) -> list[
         # Skip diff metadata lines
         if line.startswith("---") or line.startswith("+++"):
             continue
-        if line.startswith("index ") or line.startswith("new file") or line.startswith("deleted file"):
+        if (
+            line.startswith("index ")
+            or line.startswith("new file")
+            or line.startswith("deleted file")
+        ):
             continue
         if line.startswith("old mode") or line.startswith("new mode"):
             continue
-        if line.startswith("similarity index") or line.startswith("rename from") or line.startswith("rename to"):
+        if (
+            line.startswith("similarity index")
+            or line.startswith("rename from")
+            or line.startswith("rename to")
+        ):
             continue
         if line.startswith("Binary files"):
             current_file["binary"] = True
             continue
 
         # Hunk header
-        hunk_match = re.match(r"^@@\s+\-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@(.*)", line)
+        hunk_match = re.match(
+            r"^@@\s+\-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@(.*)", line
+        )
         if hunk_match:
             if current_hunk:
                 current_file["hunks"].append(current_hunk)
@@ -316,32 +339,38 @@ def _parse_unified_diff(diff_text: str, status_map: dict | None = None) -> list[
 
         # Diff content lines
         if line.startswith("+"):
-            current_hunk["lines"].append({
-                "type": "add",
-                "content": line[1:],
-                "old_no": None,
-                "new_no": new_no,
-            })
+            current_hunk["lines"].append(
+                {
+                    "type": "add",
+                    "content": line[1:],
+                    "old_no": None,
+                    "new_no": new_no,
+                }
+            )
             new_no += 1
         elif line.startswith("-"):
-            current_hunk["lines"].append({
-                "type": "del",
-                "content": line[1:],
-                "old_no": old_no,
-                "new_no": None,
-            })
+            current_hunk["lines"].append(
+                {
+                    "type": "del",
+                    "content": line[1:],
+                    "old_no": old_no,
+                    "new_no": None,
+                }
+            )
             old_no += 1
         elif line.startswith("\\"):
             # "\ No newline at end of file"
             continue
         elif line.startswith(" "):
             # Context line
-            current_hunk["lines"].append({
-                "type": "context",
-                "content": line[1:],
-                "old_no": old_no,
-                "new_no": new_no,
-            })
+            current_hunk["lines"].append(
+                {
+                    "type": "context",
+                    "content": line[1:],
+                    "old_no": old_no,
+                    "new_no": new_no,
+                }
+            )
             old_no += 1
             new_no += 1
         # Skip empty lines (artifact of split)
@@ -373,7 +402,9 @@ def get_file_with_gutters(commit_hash: str, file_path: str, repo_dir: Path) -> d
 
     # Get the diff for this specific file to compute gutters
     try:
-        diff_output = _run_git("diff", f"{h}^..{h}", "--", file_path, repo_dir=repo_dir, check=False)
+        diff_output = _run_git(
+            "diff", f"{h}^..{h}", "--", file_path, repo_dir=repo_dir, check=False
+        )
     except subprocess.CalledProcessError:
         diff_output = ""
 
@@ -409,12 +440,14 @@ def _compute_gutters(diff_output: str, file_content: str) -> list[dict]:
     # Initialize all lines with no gutter
     result = []
     for i, line_text in enumerate(file_lines):
-        result.append({
-            "no": i + 1,
-            "content": line_text,
-            "gutter": None,
-            "deleted_lines": [],
-        })
+        result.append(
+            {
+                "no": i + 1,
+                "content": line_text,
+                "gutter": None,
+                "deleted_lines": [],
+            }
+        )
 
     if not diff_output.strip():
         return result

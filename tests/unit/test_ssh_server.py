@@ -2,10 +2,7 @@
 
 import asyncio
 import os
-import shutil
-import tempfile
 from pathlib import Path
-from unittest import mock
 
 import asyncssh
 import pytest
@@ -46,6 +43,7 @@ def tmp_merlin_home(tmp_path):
 def _free_port() -> int:
     """Find a free port for testing."""
     import socket
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
@@ -173,6 +171,7 @@ class TestServerStartStop:
 
     def test_ssh_server_stop_when_not_running(self):
         """Stopping when no server is running is a no-op."""
+
         async def _test():
             ssh_server._server = None
             await ssh_server.stop_ssh_server()

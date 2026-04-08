@@ -1,8 +1,6 @@
 """Tests for the Extensions page API endpoints — Phase 2."""
 
 import json
-import os
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -15,6 +13,7 @@ import main as app_mod
 def _disable_auth(monkeypatch):
     """Disable auth for all route tests."""
     import auth
+
     monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
     monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
     auth.configure("")
@@ -121,10 +120,14 @@ class TestConfig:
         info = app_mod.extension_registry.get("notes")
         if info:
             info.meta.setdefault("config_fields", [])
-            info.meta["config_fields"].append({"key": "TEST_CONFIG_KEY", "label": "Test"})
+            info.meta["config_fields"].append(
+                {"key": "TEST_CONFIG_KEY", "label": "Test"}
+            )
         yield
         if info and "config_fields" in info.meta:
-            info.meta["config_fields"] = [f for f in info.meta["config_fields"] if f["key"] != "TEST_CONFIG_KEY"]
+            info.meta["config_fields"] = [
+                f for f in info.meta["config_fields"] if f["key"] != "TEST_CONFIG_KEY"
+            ]
 
     def test_config_save(self, client, tmp_path):
         """POST /api/extensions/notes/config writes to config.env."""
@@ -194,7 +197,7 @@ class TestConfig:
 class TestRestart:
     def test_restart_endpoint(self, client):
         """POST /api/restart returns 200."""
-        with patch("subprocess.Popen") as mock_popen:
+        with patch("subprocess.Popen"):
             resp = client.post("/api/restart")
             assert resp.status_code == 200
             assert resp.json()["ok"] is True

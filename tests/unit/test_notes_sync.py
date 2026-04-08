@@ -1,8 +1,6 @@
 """Tests for notes/sync.py — git sync watcher for notes directory."""
 
-import asyncio
 import inspect
-from pathlib import Path
 
 import pytest
 
@@ -27,24 +25,33 @@ def _reset_sync_state(monkeypatch):
 def git_repo(tmp_path):
     """Create a temporary git repo for testing."""
     import subprocess
+
     repo = tmp_path / "notes"
     repo.mkdir()
     subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
-    subprocess.run(["git", "checkout", "-b", "main"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "checkout", "-b", "main"], cwd=repo, capture_output=True, check=True
+    )
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=repo, capture_output=True, check=True,
+        cwd=repo,
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
-        cwd=repo, capture_output=True, check=True,
+        cwd=repo,
+        capture_output=True,
+        check=True,
     )
     # Initial commit so the repo isn't empty
     (repo / ".gitkeep").touch()
     subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, check=True)
     subprocess.run(
         ["git", "commit", "-m", "init"],
-        cwd=repo, capture_output=True, check=True,
+        cwd=repo,
+        capture_output=True,
+        check=True,
     )
     return repo
 
@@ -92,7 +99,6 @@ class TestEnsureGitRepo:
 
     async def test_skips_when_exists(self, git_repo):
         """Does nothing if .git/ already exists (idempotent)."""
-        mtime_before = (git_repo / ".git").stat().st_mtime
         await sync._ensure_git_repo(git_repo)
         # .git dir should not be recreated
         assert (git_repo / ".git").exists()
@@ -285,7 +291,8 @@ class TestMergeConflicts:
         local = tmp_path / "local"
         subprocess.run(
             ["git", "clone", str(remote), str(local)],
-            capture_output=True, check=True,
+            capture_output=True,
+            check=True,
         )
         _git("config", "user.email", "test@test.com", cwd=local)
         _git("config", "user.name", "Test", cwd=local)
@@ -301,7 +308,8 @@ class TestMergeConflicts:
         other = tmp_path / "other"
         subprocess.run(
             ["git", "clone", str(remote), str(other)],
-            capture_output=True, check=True,
+            capture_output=True,
+            check=True,
         )
         _git("config", "user.email", "other@test.com", cwd=other)
         _git("config", "user.name", "Other", cwd=other)
@@ -319,7 +327,9 @@ class TestMergeConflicts:
         subprocess.run(["git", "add", "-A"], cwd=other, capture_output=True, check=True)
         subprocess.run(
             ["git", "commit", "-m", "other edit"],
-            cwd=other, capture_output=True, check=True,
+            cwd=other,
+            capture_output=True,
+            check=True,
         )
         subprocess.run(["git", "push"], cwd=other, capture_output=True, check=True)
 
@@ -343,7 +353,9 @@ class TestMergeConflicts:
         # Create divergent edits
         (other / "note.md").write_text("other version\n")
         subprocess.run(["git", "add", "-A"], cwd=other, capture_output=True, check=True)
-        subprocess.run(["git", "commit", "-m", "other"], cwd=other, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "other"], cwd=other, capture_output=True, check=True
+        )
         subprocess.run(["git", "push"], cwd=other, capture_output=True, check=True)
 
         (local / "note.md").write_text("local version\n")
@@ -362,7 +374,9 @@ class TestMergeConflicts:
 
         (other / "note.md").write_text("other\n")
         subprocess.run(["git", "add", "-A"], cwd=other, capture_output=True, check=True)
-        subprocess.run(["git", "commit", "-m", "other"], cwd=other, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "other"], cwd=other, capture_output=True, check=True
+        )
         subprocess.run(["git", "push"], cwd=other, capture_output=True, check=True)
 
         (local / "note.md").write_text("local\n")
@@ -380,7 +394,9 @@ class TestMergeConflicts:
 
         (other / "note.md").write_text("other\n")
         subprocess.run(["git", "add", "-A"], cwd=other, capture_output=True, check=True)
-        subprocess.run(["git", "commit", "-m", "other"], cwd=other, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "other"], cwd=other, capture_output=True, check=True
+        )
         subprocess.run(["git", "push"], cwd=other, capture_output=True, check=True)
 
         (local / "note.md").write_text("local\n")
@@ -405,6 +421,7 @@ class TestSyncStatusAPI:
     def test_no_conflicts(self):
         """Returns empty conflicts when none exist."""
         from notes.routes import api_sync_status
+
         sync.conflicted_files = []
         result = api_sync_status()
         assert result["has_conflicts"] is False
@@ -413,6 +430,7 @@ class TestSyncStatusAPI:
     def test_with_conflicts(self):
         """Returns conflicted files when they exist."""
         from notes.routes import api_sync_status
+
         sync.conflicted_files = ["note.md", "kb/topic.md"]
         result = api_sync_status()
         assert result["has_conflicts"] is True
@@ -429,12 +447,14 @@ class TestExtensionMeta:
     def test_extension_meta_exists(self):
         """Notes extension defines EXTENSION_META."""
         from notes import EXTENSION_META
+
         assert EXTENSION_META is not None
         assert EXTENSION_META["name"] == "Notes"
 
     def test_config_fields_defined(self):
         """EXTENSION_META has the expected config fields."""
         from notes import EXTENSION_META
+
         keys = {f["key"] for f in EXTENSION_META["config_fields"]}
         assert keys == {
             "NOTES_DIR",
@@ -447,5 +467,6 @@ class TestExtensionMeta:
     def test_has_start_hook(self):
         """Notes extension exports start() function."""
         import notes
+
         assert hasattr(notes, "start")
         assert inspect.iscoroutinefunction(notes.start)

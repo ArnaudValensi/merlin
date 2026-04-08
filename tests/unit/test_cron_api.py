@@ -1,7 +1,5 @@
 """Tests for the cron REST API endpoints — Phase 3."""
 
-import json
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -137,14 +135,17 @@ class TestCreateJob:
 
     def test_create_with_all_fields(self, client):
         """POST with all optional fields set correctly."""
-        resp = client.post("/api/cron/jobs", json=_sample_job(
-            enabled=False,
-            report_mode="silent",
-            max_turns=5,
-            ephemeral=False,
-            grace_minutes=30,
-            discord_channel="123456",
-        ))
+        resp = client.post(
+            "/api/cron/jobs",
+            json=_sample_job(
+                enabled=False,
+                report_mode="silent",
+                max_turns=5,
+                ephemeral=False,
+                grace_minutes=30,
+                discord_channel="123456",
+            ),
+        )
         assert resp.status_code == 201
         data = resp.json()
         assert data["enabled"] is False
@@ -221,10 +222,13 @@ class TestUpdateJob:
     def test_update_fields(self, client):
         """PUT /api/cron/jobs/{id} merges only provided fields."""
         client.post("/api/cron/jobs", json=_sample_job())
-        resp = client.put("/api/cron/jobs/test-job", json={
-            "description": "Updated description",
-            "schedule": "0 10 * * *",
-        })
+        resp = client.put(
+            "/api/cron/jobs/test-job",
+            json={
+                "description": "Updated description",
+                "schedule": "0 10 * * *",
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["description"] == "Updated description"
@@ -273,7 +277,7 @@ class TestDeleteJob:
 
     def test_delete_cleans_state(self, client, _isolated_cron_dirs):
         """DELETE removes state file and lock file."""
-        cron_jobs = _isolated_cron_dirs
+        _isolated_cron_dirs
         from cron import state as cron_state
 
         # Create job and add state/lock
@@ -322,7 +326,9 @@ class TestRunJob:
     def test_run_returns_202(self, client):
         """POST /api/cron/jobs/{id}/run triggers subprocess and returns 202."""
         client.post("/api/cron/jobs", json=_sample_job())
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+        with patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock
+        ) as mock_exec:
             resp = client.post("/api/cron/jobs/test-job/run")
             assert resp.status_code == 202
             data = resp.json()

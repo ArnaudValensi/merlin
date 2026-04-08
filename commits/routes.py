@@ -1,7 +1,6 @@
 """Commit browser — FastAPI routes (pages + API)."""
 
 import asyncio
-import os
 import re
 from pathlib import Path
 
@@ -24,7 +23,9 @@ COMMITS_TEMPLATES_DIR = COMMITS_DIR / "templates"
 COMMITS_STATIC_DIR = COMMITS_DIR / "static"
 
 # Shared templates dir (for base.html) + commits templates
-templates = Jinja2Templates(directory=[str(COMMITS_TEMPLATES_DIR), str(PROJECT_ROOT / "templates")])
+templates = Jinja2Templates(
+    directory=[str(COMMITS_TEMPLATES_DIR), str(PROJECT_ROOT / "templates")]
+)
 
 router = APIRouter()
 
@@ -74,7 +75,9 @@ def _resolve_repo(repo: str) -> Path:
         raise HTTPException(status_code=400, detail=f"Not a directory: {search_dir}")
     root = _find_repo_root(str(p))
     if root is None:
-        raise HTTPException(status_code=400, detail=f"Not a git repository: {search_dir}")
+        raise HTTPException(
+            status_code=400, detail=f"Not a git repository: {search_dir}"
+        )
     return root
 
 
@@ -85,35 +88,46 @@ def _resolve_repo(repo: str) -> Path:
 
 @router.get("/commits", response_class=HTMLResponse)
 def commits_page(request: Request, repo: str = ""):
-    return templates.TemplateResponse("commits.html", {
-        "request": request,
-        "startup_cwd": _startup_cwd,
-        "home_dir": _home_dir,
-    })
+    return templates.TemplateResponse(
+        "commits.html",
+        {
+            "request": request,
+            "startup_cwd": _startup_cwd,
+            "home_dir": _home_dir,
+        },
+    )
 
 
 @router.get("/commits/{commit_hash}", response_class=HTMLResponse)
 def commit_detail_page(request: Request, commit_hash: str, repo: str = ""):
     _validate_hash(commit_hash)
-    return templates.TemplateResponse("commits.html", {
-        "request": request,
-        "commit_hash": commit_hash,
-        "startup_cwd": _startup_cwd,
-        "home_dir": _home_dir,
-    })
+    return templates.TemplateResponse(
+        "commits.html",
+        {
+            "request": request,
+            "commit_hash": commit_hash,
+            "startup_cwd": _startup_cwd,
+            "home_dir": _home_dir,
+        },
+    )
 
 
 @router.get("/commits/{commit_hash}/file/{file_path:path}", response_class=HTMLResponse)
-def commit_file_page(request: Request, commit_hash: str, file_path: str, repo: str = ""):
+def commit_file_page(
+    request: Request, commit_hash: str, file_path: str, repo: str = ""
+):
     _validate_hash(commit_hash)
     _validate_path(file_path)
-    return templates.TemplateResponse("commits.html", {
-        "request": request,
-        "commit_hash": commit_hash,
-        "file_path": file_path,
-        "startup_cwd": _startup_cwd,
-        "home_dir": _home_dir,
-    })
+    return templates.TemplateResponse(
+        "commits.html",
+        {
+            "request": request,
+            "commit_hash": commit_hash,
+            "file_path": file_path,
+            "startup_cwd": _startup_cwd,
+            "home_dir": _home_dir,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +153,14 @@ def api_list_commits(
     repo_dir = _resolve_repo(repo)
 
     try:
-        commits = get_commits(repo_dir=repo_dir, skip=skip, limit=limit, search=search, since=since, until=until)
+        commits = get_commits(
+            repo_dir=repo_dir,
+            skip=skip,
+            limit=limit,
+            search=search,
+            since=since,
+            until=until,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -195,6 +216,7 @@ def api_commit_file(commit_hash: str, file_path: str, repo: str = ""):
 async def api_git_repos(q: str = ""):
     """Find git repositories matching a fuzzy query. Runs fd on every request."""
     import main as _main
+
     fd_binary = _main.FD_BINARY
     if not fd_binary:
         raise HTTPException(status_code=500, detail="fd is not available")
@@ -202,7 +224,11 @@ async def api_git_repos(q: str = ""):
     home = str(Path.home())
     try:
         proc = await asyncio.create_subprocess_exec(
-            fd_binary, "-H", "--no-ignore", r"^\.git$", home,
+            fd_binary,
+            "-H",
+            "--no-ignore",
+            r"^\.git$",
+            home,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -211,7 +237,9 @@ async def api_git_repos(q: str = ""):
         raise HTTPException(status_code=500, detail=f"fd failed: {e}")
 
     if proc.returncode != 0 and not stdout:
-        raise HTTPException(status_code=500, detail=f"fd error: {stderr.decode().strip()}")
+        raise HTTPException(
+            status_code=500, detail=f"fd error: {stderr.decode().strip()}"
+        )
 
     # Parse: each line is /path/to/repo/.git — strip /.git suffix
     repos = []

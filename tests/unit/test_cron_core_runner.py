@@ -1,7 +1,6 @@
 """Tests for cron.runner — cron job dispatcher."""
 
 import json
-import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -103,7 +102,9 @@ class TestLoadJob:
         from cron.runner import load_job
 
         path = temp_cron_dir / "missing.json"
-        path.write_text(json.dumps({"description": "test"}))  # missing schedule, prompt, channel
+        path.write_text(
+            json.dumps({"description": "test"})
+        )  # missing schedule, prompt, channel
         assert load_job(path) is None
 
     def test_load_job_invalid_cron_expression(self, temp_cron_dir):
@@ -355,7 +356,7 @@ class TestRunJob:
 
     def test_run_job_calls_invoke(self, temp_cron_dir):
         """run_job calls invoke with correct arguments."""
-        from cron.runner import run_job, session_id_for_job
+        from cron.runner import run_job
 
         job = {
             "description": "Test job",
@@ -367,7 +368,9 @@ class TestRunJob:
             "max_turns": 10,
         }
 
-        with patch("cron.runner.invoke", return_value=make_mock_result()) as mock_invoke:
+        with patch(
+            "cron.runner.invoke", return_value=make_mock_result()
+        ) as mock_invoke:
             run_job("test-job", job)
 
             mock_invoke.assert_called_once()
@@ -390,7 +393,10 @@ class TestRunJob:
             "report_mode": "always",
         }
 
-        with patch("cron.runner.invoke", return_value=make_mock_result(duration=2.5, cost_usd=0.10)):
+        with patch(
+            "cron.runner.invoke",
+            return_value=make_mock_result(duration=2.5, cost_usd=0.10),
+        ):
             run_job("test-job", job)
 
         # State should be updated
@@ -460,7 +466,9 @@ class TestRunDispatcher:
         # Create a job that runs every minute
         create_job_file(temp_cron_dir, "every-minute", schedule="* * * * *")
         # Set last run to 2 min ago so it's due but not stale
-        set_last_run("every-minute", datetime.now(tz=timezone.utc) - timedelta(minutes=2))
+        set_last_run(
+            "every-minute", datetime.now(tz=timezone.utc) - timedelta(minutes=2)
+        )
 
         with patch("cron.runner.invoke", return_value=make_mock_result()) as mock:
             run_dispatcher()
@@ -470,7 +478,9 @@ class TestRunDispatcher:
         """Dispatcher skips disabled jobs."""
         from cron.runner import run_dispatcher
 
-        create_job_file(temp_cron_dir, "disabled-job", schedule="* * * * *", enabled=False)
+        create_job_file(
+            temp_cron_dir, "disabled-job", schedule="* * * * *", enabled=False
+        )
 
         with patch("cron.runner.invoke") as mock:
             run_dispatcher()
@@ -526,7 +536,9 @@ class TestRunDispatcher:
         # Create 3 jobs all due
         for i in range(3):
             create_job_file(temp_cron_dir, f"job{i}", schedule="* * * * *")
-            set_last_run(f"job{i}", datetime.now(tz=timezone.utc) - timedelta(minutes=2))
+            set_last_run(
+                f"job{i}", datetime.now(tz=timezone.utc) - timedelta(minutes=2)
+            )
 
         execution_times = {}
 
@@ -560,7 +572,10 @@ class TestRunDispatcher:
             create_job_file(temp_cron_dir, job_id, schedule="0 2 * * *")
             set_last_run(job_id, yesterday)
 
-        with patch("cron.runner._now", return_value=datetime(2026, 2, 5, 4, 0, 0, tzinfo=timezone.utc)):
+        with patch(
+            "cron.runner._now",
+            return_value=datetime(2026, 2, 5, 4, 0, 0, tzinfo=timezone.utc),
+        ):
             with patch("cron.runner.invoke") as mock:
                 run_dispatcher()
                 mock.assert_not_called()  # Both jobs are stale

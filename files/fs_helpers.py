@@ -1,7 +1,6 @@
 """Filesystem helpers — path validation, directory listing, file reading, type detection."""
 
 import mimetypes
-import os
 import shutil
 import stat
 from pathlib import Path
@@ -24,24 +23,94 @@ TEXT_MAX_BYTES = 2 * 1024 * 1024
 
 # Common text extensions (beyond what mimetypes detects)
 TEXT_EXTENSIONS = {
-    ".md", ".txt", ".csv", ".tsv", ".json", ".jsonl", ".yaml", ".yml",
-    ".toml", ".ini", ".cfg", ".conf", ".log", ".env", ".env.example",
-    ".py", ".js", ".ts", ".tsx", ".jsx", ".css", ".html", ".htm",
-    ".xml", ".sql", ".sh", ".bash", ".zsh", ".fish",
-    ".c", ".h", ".cpp", ".hpp", ".rs", ".go", ".java", ".kt",
-    ".rb", ".php", ".pl", ".lua", ".r", ".R", ".swift", ".m",
-    ".zig", ".jai", ".odin", ".nim", ".ex", ".exs", ".erl",
-    ".hs", ".ml", ".mli", ".clj", ".cljs", ".lisp", ".el",
-    ".vim", ".dockerfile", ".makefile", ".cmake", ".mmd",
-    ".gitignore", ".gitattributes", ".editorconfig",
-    ".prettierrc", ".eslintrc", ".babelrc",
+    ".md",
+    ".txt",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".jsonl",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".log",
+    ".env",
+    ".env.example",
+    ".py",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".css",
+    ".html",
+    ".htm",
+    ".xml",
+    ".sql",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".fish",
+    ".c",
+    ".h",
+    ".cpp",
+    ".hpp",
+    ".rs",
+    ".go",
+    ".java",
+    ".kt",
+    ".rb",
+    ".php",
+    ".pl",
+    ".lua",
+    ".r",
+    ".R",
+    ".swift",
+    ".m",
+    ".zig",
+    ".jai",
+    ".odin",
+    ".nim",
+    ".ex",
+    ".exs",
+    ".erl",
+    ".hs",
+    ".ml",
+    ".mli",
+    ".clj",
+    ".cljs",
+    ".lisp",
+    ".el",
+    ".vim",
+    ".dockerfile",
+    ".makefile",
+    ".cmake",
+    ".mmd",
+    ".gitignore",
+    ".gitattributes",
+    ".editorconfig",
+    ".prettierrc",
+    ".eslintrc",
+    ".babelrc",
 }
 
 # Files with no extension that are typically text
 TEXT_FILENAMES = {
-    "Makefile", "Dockerfile", "Vagrantfile", "Gemfile", "Rakefile",
-    "LICENSE", "README", "CHANGELOG", "AUTHORS", "CONTRIBUTING",
-    "CLAUDE.md", ".gitignore", ".gitattributes", ".editorconfig",
+    "Makefile",
+    "Dockerfile",
+    "Vagrantfile",
+    "Gemfile",
+    "Rakefile",
+    "LICENSE",
+    "README",
+    "CHANGELOG",
+    "AUTHORS",
+    "CONTRIBUTING",
+    "CLAUDE.md",
+    ".gitignore",
+    ".gitattributes",
+    ".editorconfig",
 }
 
 
@@ -124,21 +193,25 @@ def list_directory(path: Path) -> dict[str, Any]:
                 entries.append(entry)
             except (PermissionError, OSError):
                 # Include entry but mark as inaccessible
-                entries.append({
-                    "name": item.name,
-                    "type": "unknown",
-                    "size": None,
-                    "mtime": None,
-                    "is_hidden": item.name.startswith("."),
-                })
+                entries.append(
+                    {
+                        "name": item.name,
+                        "type": "unknown",
+                        "size": None,
+                        "mtime": None,
+                        "is_hidden": item.name.startswith("."),
+                    }
+                )
     except PermissionError:
         raise PermissionError(f"Permission denied: {path}")
 
     # Sort: directories first, then alphabetically (case-insensitive)
-    entries.sort(key=lambda e: (
-        0 if e["type"] == "dir" else 1,
-        e["name"].lower(),
-    ))
+    entries.sort(
+        key=lambda e: (
+            0 if e["type"] == "dir" else 1,
+            e["name"].lower(),
+        )
+    )
 
     return {
         "type": "directory",
@@ -198,7 +271,9 @@ def read_text_file(path: Path) -> dict[str, Any]:
     except (PermissionError, OSError) as e:
         raise PermissionError(f"Cannot read file: {e}")
 
-    line_count = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+    line_count = content.count("\n") + (
+        1 if content and not content.endswith("\n") else 0
+    )
 
     return {
         "content": content,
@@ -223,8 +298,13 @@ def _is_text_file(path: Path, mime_type: str) -> bool:
     # MIME-type based detection
     if mime_type.startswith("text/"):
         return True
-    if mime_type in ("application/json", "application/xml", "application/javascript",
-                     "application/x-sh", "application/x-yaml"):
+    if mime_type in (
+        "application/json",
+        "application/xml",
+        "application/javascript",
+        "application/x-sh",
+        "application/x-yaml",
+    ):
         return True
 
     # No extension — try reading first bytes to detect binary

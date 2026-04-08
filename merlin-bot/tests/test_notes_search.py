@@ -1,8 +1,6 @@
 """Tests for notes_search.py — notes search tools."""
 
-import subprocess
 import textwrap
-from pathlib import Path
 
 import pytest
 
@@ -29,7 +27,8 @@ def kb_with_entries(notes_dir):
     """Populate KB with test entries."""
     kb_dir = notes_dir / "kb"
 
-    (kb_dir / "_index.md").write_text(textwrap.dedent("""\
+    (kb_dir / "_index.md").write_text(
+        textwrap.dedent("""\
         ---
         title: Knowledge Base Index
         created: 2026-01-01
@@ -38,9 +37,11 @@ def kb_with_entries(notes_dir):
         ---
 
         # Knowledge Base
-    """))
+    """)
+    )
 
-    (kb_dir / "docker-setup.md").write_text(textwrap.dedent("""\
+    (kb_dir / "docker-setup.md").write_text(
+        textwrap.dedent("""\
         ---
         title: Docker Setup
         created: 2026-01-15
@@ -52,9 +53,11 @@ def kb_with_entries(notes_dir):
 
         Use docker-compose for local development.
         Mount volumes for persistent data.
-    """))
+    """)
+    )
 
-    (kb_dir / "tech-gear.md").write_text(textwrap.dedent("""\
+    (kb_dir / "tech-gear.md").write_text(
+        textwrap.dedent("""\
         ---
         title: Tech Gear
         created: 2026-01-20
@@ -66,7 +69,8 @@ def kb_with_entries(notes_dir):
 
         Looking for a good mechanical keyboard.
         Budget is under 200 USD.
-    """))
+    """)
+    )
 
     return kb_dir
 
@@ -76,16 +80,19 @@ def logs_with_entries(notes_dir):
     """Populate logs with test entries."""
     logs_dir = notes_dir / "logs"
 
-    (logs_dir / "2026-01-28.md").write_text(textwrap.dedent("""\
+    (logs_dir / "2026-01-28.md").write_text(
+        textwrap.dedent("""\
         # Daily Log — 2026-01-28
 
         ## 10:00 — Pre-compaction memories
 
         - User prefers flat directory structures
         - Working on Discord bot project
-    """))
+    """)
+    )
 
-    (logs_dir / "2026-02-01.md").write_text(textwrap.dedent("""\
+    (logs_dir / "2026-02-01.md").write_text(
+        textwrap.dedent("""\
         # Daily Log — 2026-02-01
 
         ## 14:00 — Pre-compaction memories
@@ -96,16 +103,19 @@ def logs_with_entries(notes_dir):
         ## 16:00 — Pre-compaction memories
 
         - Debugging webhook integration
-    """))
+    """)
+    )
 
-    (logs_dir / "2026-02-05.md").write_text(textwrap.dedent("""\
+    (logs_dir / "2026-02-05.md").write_text(
+        textwrap.dedent("""\
         # Daily Log — 2026-02-05
 
         ## 18:10 — Pre-compaction memories
 
         - User prefers flat directory structures
         - User likes standard markdown links
-    """))
+    """)
+    )
 
     return logs_dir
 
@@ -210,8 +220,9 @@ class TestLogSearch:
         from notes_search import cmd_log
         import argparse
 
-        args = argparse.Namespace(keyword=None, date_from=None, date_to=None,
-                                  last=None, discord=False)
+        args = argparse.Namespace(
+            keyword=None, date_from=None, date_to=None, last=None, discord=False
+        )
         cmd_log(args)
         output = capsys.readouterr().out
         assert "3 files" in output
@@ -222,8 +233,13 @@ class TestLogSearch:
         from notes_search import cmd_log
         import argparse
 
-        args = argparse.Namespace(keyword=None, date_from="2026-02-01",
-                                  date_to="2026-02-28", last=None, discord=False)
+        args = argparse.Namespace(
+            keyword=None,
+            date_from="2026-02-01",
+            date_to="2026-02-28",
+            last=None,
+            discord=False,
+        )
         cmd_log(args)
         output = capsys.readouterr().out
         assert "2 files" in output
@@ -234,8 +250,9 @@ class TestLogSearch:
         from notes_search import cmd_log
         import argparse
 
-        args = argparse.Namespace(keyword="cron", date_from=None, date_to=None,
-                                  last=None, discord=False)
+        args = argparse.Namespace(
+            keyword="cron", date_from=None, date_to=None, last=None, discord=False
+        )
         cmd_log(args)
         output = capsys.readouterr().out
         assert "2026-02-01.md" in output
@@ -245,8 +262,13 @@ class TestLogSearch:
         from notes_search import cmd_log
         import argparse
 
-        args = argparse.Namespace(keyword="nonexistent_xyz", date_from=None,
-                                  date_to=None, last=None, discord=False)
+        args = argparse.Namespace(
+            keyword="nonexistent_xyz",
+            date_from=None,
+            date_to=None,
+            last=None,
+            discord=False,
+        )
         cmd_log(args)
         output = capsys.readouterr().out
         assert "no log matches" in output
@@ -264,8 +286,9 @@ class TestLogSearch:
         from notes_search import cmd_log
         import argparse
 
-        args = argparse.Namespace(keyword=None, date_from=None, date_to=None,
-                                  last=None, discord=False)
+        args = argparse.Namespace(
+            keyword=None, date_from=None, date_to=None, last=None, discord=False
+        )
         cmd_log(args)
         output = capsys.readouterr().out
         assert "no log files" in output

@@ -1,6 +1,5 @@
 """Tests for commits/routes.py — API endpoint tests."""
 
-import json
 from unittest import mock
 
 import pytest
@@ -13,6 +12,7 @@ import main as app_mod
 def _disable_auth(monkeypatch):
     """Disable auth for all route tests."""
     import auth
+
     monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
     monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
     auth.configure("")
@@ -22,6 +22,7 @@ def _disable_auth(monkeypatch):
 def _mock_repo_root(monkeypatch):
     """Mock _find_repo_root to return a fake path so _resolve_repo works."""
     from pathlib import Path
+
     fake = lambda search_dir: Path("/fake/repo")
     monkeypatch.setattr("commits.git_parser._find_repo_root", fake)
     monkeypatch.setattr("commits.routes._find_repo_root", fake)
@@ -31,15 +32,18 @@ def _mock_repo_root(monkeypatch):
 def client():
     """Create a test client for the dashboard app."""
     from fastapi.testclient import TestClient
+
     return TestClient(app_mod.app)
 
 
 # Sample git log output for mocking
 SAMPLE_LOG = (
-    "a" * 40 + "|aaaa1234|Alice|2026-02-20T10:00:00+00:00|Fix bug\n"
+    "a" * 40
+    + "|aaaa1234|Alice|2026-02-20T10:00:00+00:00|Fix bug\n"
     + "\n"
     + " 2 files changed, 10 insertions(+), 3 deletions(-)\n"
-    + "b" * 40 + "|bbbb5678|Bob|2026-02-19T09:00:00+00:00|Add feature\n"
+    + "b" * 40
+    + "|bbbb5678|Bob|2026-02-19T09:00:00+00:00|Add feature\n"
     + "\n"
     + " 1 file changed, 5 insertions(+)\n"
 )
@@ -104,7 +108,9 @@ class TestApiListCommits:
         assert data[0]["message"] == "Fix bug"
 
     def test_pagination_params(self, client):
-        with mock.patch("commits.git_parser._run_git", side_effect=_mock_run_git) as mock_git:
+        with mock.patch(
+            "commits.git_parser._run_git", side_effect=_mock_run_git
+        ) as mock_git:
             resp = client.get("/api/commits?skip=10&limit=5")
         assert resp.status_code == 200
         # Verify git was called with correct skip/limit
@@ -114,7 +120,9 @@ class TestApiListCommits:
         assert "--max-count=5" in args_str
 
     def test_search_param(self, client):
-        with mock.patch("commits.git_parser._run_git", side_effect=_mock_run_git) as mock_git:
+        with mock.patch(
+            "commits.git_parser._run_git", side_effect=_mock_run_git
+        ) as mock_git:
             resp = client.get("/api/commits?search=fix")
         assert resp.status_code == 200
         call_args = mock_git.call_args_list[0]
@@ -199,7 +207,10 @@ class TestApiCommitFile:
         h = "a" * 40
         # Use a path with .. that won't be normalized by URL routing
         resp = client.get(f"/api/commits/{h}/file/src/../../../etc/passwd")
-        assert resp.status_code in (400, 404)  # 404 if Starlette normalizes, 400 if our validator catches it
+        assert resp.status_code in (
+            400,
+            404,
+        )  # 404 if Starlette normalizes, 400 if our validator catches it
 
     def test_invalid_hash(self, client):
         resp = client.get("/api/commits/BAD/file/test.py")
@@ -207,10 +218,12 @@ class TestApiCommitFile:
 
     def test_file_not_found(self, client):
         h = "a" * 40
+
         def mock_git_404(*args, repo_dir=None, check=True):
             for a in args:
                 if ":" in a and not a.startswith("-"):
                     from subprocess import CalledProcessError
+
                     raise CalledProcessError(128, ["git"], "", "fatal: not found")
             return _mock_run_git(*args, repo_dir=repo_dir, check=check)
 
@@ -238,6 +251,7 @@ class TestApiGitRepos:
             proc.returncode = 0
             mock_exec.return_value = proc
             import main as _main
+
             old_fd = _main.FD_BINARY
             _main.FD_BINARY = "fd"
             try:
@@ -257,6 +271,7 @@ class TestApiGitRepos:
             proc.returncode = 0
             mock_exec.return_value = proc
             import main as _main
+
             old_fd = _main.FD_BINARY
             _main.FD_BINARY = "fd"
             try:
@@ -276,6 +291,7 @@ class TestApiGitRepos:
             proc.returncode = 0
             mock_exec.return_value = proc
             import main as _main
+
             old_fd = _main.FD_BINARY
             _main.FD_BINARY = "fd"
             try:

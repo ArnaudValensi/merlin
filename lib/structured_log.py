@@ -21,7 +21,6 @@ import json
 import logging
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
 
 import paths
 
@@ -80,12 +79,19 @@ def cleanup_old_logs() -> None:
             except OSError:
                 pass
         if removed:
-            _logger.info("Cleaned up %d raw session files older than %d days", removed, RAW_SESSION_RETENTION_DAYS)
+            _logger.info(
+                "Cleaned up %d raw session files older than %d days",
+                removed,
+                RAW_SESSION_RETENTION_DAYS,
+            )
 
     # Clean engine log by filtering out old entries
     if ENGINE_LOG_PATH.exists():
         from datetime import timedelta
-        cutoff_str = (datetime.now(tz=timezone.utc) - timedelta(days=ENGINE_LOG_RETENTION_DAYS)).isoformat()
+
+        cutoff_str = (
+            datetime.now(tz=timezone.utc) - timedelta(days=ENGINE_LOG_RETENTION_DAYS)
+        ).isoformat()
 
         try:
             with _write_lock:
@@ -106,9 +112,15 @@ def cleanup_old_logs() -> None:
                         kept.append(line)  # keep unparseable lines
 
                 if removed:
-                    ENGINE_LOG_PATH.write_text("\n".join(kept) + "\n" if kept else "", encoding="utf-8")
+                    ENGINE_LOG_PATH.write_text(
+                        "\n".join(kept) + "\n" if kept else "", encoding="utf-8"
+                    )
 
             if removed:
-                _logger.info("Cleaned up %d engine log entries older than %d days", removed, ENGINE_LOG_RETENTION_DAYS)
+                _logger.info(
+                    "Cleaned up %d engine log entries older than %d days",
+                    removed,
+                    ENGINE_LOG_RETENTION_DAYS,
+                )
         except OSError as e:
             _logger.warning("Failed to clean engine log: %s", e)

@@ -24,6 +24,7 @@ HOOK_LOG = MERLIN_BOT_DIR / "logs" / "pre-compact-notes.log"
 sys.path.insert(0, str(MERLIN_BOT_DIR.parent))
 from dotenv import load_dotenv
 import paths
+
 load_dotenv(paths.config_path())
 LOGS_DIR = paths.notes_dir() / "logs"
 
@@ -125,12 +126,18 @@ def extract_memories(transcript: str) -> str:
         # Pipe prompt to Claude CLI via stdin (no wrapper needed)
         result = subprocess.run(
             [
-                "claude", "-p",
-                "--model", "sonnet",
-                "--max-turns", "1",
-                "--output-format", "text",
-                "--tools", "",  # Disable tools, we just want text
-                "--system-prompt", "You are a memory extractor. Output ONLY a markdown bullet list or NOTHING_TO_SAVE. Never output code, XML, or function calls.",
+                "claude",
+                "-p",
+                "--model",
+                "sonnet",
+                "--max-turns",
+                "1",
+                "--output-format",
+                "text",
+                "--tools",
+                "",  # Disable tools, we just want text
+                "--system-prompt",
+                "You are a memory extractor. Output ONLY a markdown bullet list or NOTHING_TO_SAVE. Never output code, XML, or function calls.",
             ],
             input=prompt,
             capture_output=True,
@@ -225,9 +232,7 @@ def main() -> None:
     # Output success
     saved = "memories saved" if memories else "no memories to save"
     logging.info(f"PreCompact hook finished: {saved} to {log_file.name}")
-    print(json.dumps({
-        "systemMessage": f"Pre-compaction: {saved} to {log_file.name}"
-    }))
+    print(json.dumps({"systemMessage": f"Pre-compaction: {saved} to {log_file.name}"}))
 
 
 if __name__ == "__main__":

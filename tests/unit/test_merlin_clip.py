@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pytest
 
-MERLIN_CLIP = Path(__file__).resolve().parents[3] / "infra" / "images" / "managed" / "merlin-clip"
+MERLIN_CLIP = (
+    Path(__file__).resolve().parents[3] / "infra" / "images" / "managed" / "merlin-clip"
+)
 
 
 @pytest.fixture
@@ -41,6 +43,7 @@ class TestMerlinClipCopy:
         assert stdout.endswith(b"\x1b\\")
         # Extract base64 and verify
         import base64
+
         b64_part = stdout.split(b"\x1b]52;c;")[1].split(b"\x1b\\")[0]
         decoded = base64.b64decode(b64_part)
         assert decoded == b"hello"
@@ -57,10 +60,14 @@ class TestMerlinClipCopy:
     def test_copy_inside_tmux_writes_osc52(self):
         """Inside tmux, still produces valid OSC 52 (via TTY or fallback)."""
         # When TMUX is set but socket doesn't exist, falls back to stdout
-        result = run_clip("copy", stdin_data=b"hi", env_extra={
-            "TMUX": "/tmp/nonexistent-tmux-sock,1,0",
-            "TMUX_TMPDIR": "/tmp/nonexistent-dir",
-        })
+        result = run_clip(
+            "copy",
+            stdin_data=b"hi",
+            env_extra={
+                "TMUX": "/tmp/nonexistent-tmux-sock,1,0",
+                "TMUX_TMPDIR": "/tmp/nonexistent-dir",
+            },
+        )
         assert b"\x1b]52;c;" in result.stdout
 
     def test_no_arg_pipe_is_copy(self):
@@ -75,7 +82,6 @@ class TestMerlinClipPaste:
     def test_paste_reads_file(self, clip_file):
         clip_file.parent.mkdir(parents=True, exist_ok=True)
         clip_file.write_text("clipboard content")
-        env = {"CLIP_FILE": str(clip_file)}  # won't work — script hardcodes path
         # Since the script hardcodes /tmp/merlin-clipboard/current.txt,
         # we test by creating that file (cleaned up after)
         real_file = Path("/tmp/merlin-clipboard/current.txt")

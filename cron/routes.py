@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 import paths
@@ -184,10 +184,15 @@ async def _run_job_with_notify(job_id: str) -> None:
     if stdout:
         try:
             from cron import _process_runner_output
+
             _process_runner_output(stdout)
         except Exception:
+            import logging
+
             logging.getLogger("merlin.cron").warning(
-                "Failed to process notifications for manual job %s", job_id, exc_info=True
+                "Failed to process notifications for manual job %s",
+                job_id,
+                exc_info=True,
             )
 
 
@@ -371,5 +376,10 @@ def cron_page(request: Request):
 
     return templates.TemplateResponse(
         "cron.html",
-        {"request": request, "jobs": jobs, "bot_loaded": bot_loaded, "crashes": crashes},
+        {
+            "request": request,
+            "jobs": jobs,
+            "bot_loaded": bot_loaded,
+            "crashes": crashes,
+        },
     )

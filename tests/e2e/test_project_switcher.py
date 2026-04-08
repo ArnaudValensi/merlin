@@ -81,7 +81,9 @@ def _start_server(saas_token=""):
     # the real ~/.merlin/ to find config.env, extensions, etc.
     env.pop("MERLIN_HOME", None)
 
-    merlin_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    merlin_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
     proc = subprocess.Popen(
         ["uv", "run", "main.py", "--no-tunnel", "--port", str(port)],
         cwd=merlin_root,
@@ -94,6 +96,7 @@ def _start_server(saas_token=""):
     for _ in range(30):
         try:
             import urllib.request
+
             urllib.request.urlopen(f"{url}/api/files/browse?path=/tmp", timeout=1)
             break
         except Exception:
@@ -163,7 +166,9 @@ class TestStandaloneMode:
         page.wait_for_load_state("networkidle")
 
         switcher = page.query_selector("#env-switcher")
-        assert switcher is None, "Environment switcher should not exist in standalone mode"
+        assert switcher is None, (
+            "Environment switcher should not exist in standalone mode"
+        )
 
         ctx.close()
 
@@ -174,7 +179,10 @@ class TestStandaloneMode:
         _login(page, standalone_server)
 
         api_calls = []
-        page.on("request", lambda req: api_calls.append(req.url) if "merlincloud" in req.url else None)
+        page.on(
+            "request",
+            lambda req: api_calls.append(req.url) if "merlincloud" in req.url else None,
+        )
 
         page.goto(f"{standalone_server}/files")
         page.wait_for_load_state("networkidle")
@@ -299,7 +307,9 @@ class TestSaaSMode:
                 "is_current": True,
             }
         ]
-        ctx, page = self._setup_page_with_mock(browser, saas_server, long_name_environments)
+        ctx, page = self._setup_page_with_mock(
+            browser, saas_server, long_name_environments
+        )
 
         name_el = page.query_selector(".env-name")
         assert name_el is not None
@@ -383,7 +393,9 @@ class TestSaaSMode:
         assert switcher_box["y"] < footer_box["y"], "Switcher should be above footer"
 
         # Switcher should be inside the scrollable body
-        parent = switcher.evaluate("el => el.parentElement.classList.contains('sidebar-body')")
+        parent = switcher.evaluate(
+            "el => el.parentElement.classList.contains('sidebar-body')"
+        )
         assert parent, "Switcher should be inside .sidebar-body"
 
         ctx.close()

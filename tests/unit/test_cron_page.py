@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -28,7 +27,6 @@ def _isolated_cron_dirs(tmp_path):
     """Patch cron.manage and cron.state to use temp directories."""
     from cron import manage as cron_manage
     from cron import state as cron_state
-    from cron import logs as cron_logs
 
     orig = {
         "manage_dir": cron_manage.CRON_JOBS_DIR,

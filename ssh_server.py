@@ -35,6 +35,7 @@ def _host_key_path() -> Path:
     """Path for the persistent host key."""
     try:
         import paths
+
         return paths.data_dir() / "ssh" / "host_key"
     except ImportError:
         return Path.home() / ".merlin" / "ssh" / "host_key"
@@ -93,7 +94,9 @@ async def _handle_session(process: asyncssh.SSHServerProcess) -> None:
     # Fall back if the client's TERM isn't in the container's terminfo.
     # Common case: Kitty sends xterm-kitty which most containers lack.
     if not _has_terminfo(term_type):
-        logger.info("TERM=%s not in terminfo, falling back to xterm-256color", term_type)
+        logger.info(
+            "TERM=%s not in terminfo, falling back to xterm-256color", term_type
+        )
         term_type = "xterm-256color"
     term_size = process.get_terminal_size()
 
@@ -111,7 +114,9 @@ async def _handle_session(process: asyncssh.SSHServerProcess) -> None:
         env["TERM"] = term_type
 
         proc = await asyncio.create_subprocess_exec(
-            "/bin/sh", "-c", cmd,
+            "/bin/sh",
+            "-c",
+            cmd,
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,

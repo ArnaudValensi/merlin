@@ -9,6 +9,7 @@ import main as app_mod
 @pytest.fixture(autouse=True)
 def _disable_auth(monkeypatch):
     import auth
+
     monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
     monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
     auth.configure("")
@@ -55,6 +56,7 @@ class TestBotNavItems:
     def test_single_nav_item(self):
         """MERLIN_APP_NAV_ITEMS has exactly 1 entry with url /bot."""
         from merlin_app import MERLIN_APP_NAV_ITEMS
+
         assert len(MERLIN_APP_NAV_ITEMS) == 1
         assert MERLIN_APP_NAV_ITEMS[0]["url"] == "/bot"
 

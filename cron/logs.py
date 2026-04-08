@@ -62,7 +62,7 @@ def _filename_to_timestamp(filename: str) -> str:
         return stem  # no T found, return as-is
 
     date_part = stem[:t_idx]
-    time_part = stem[t_idx + 1:]
+    time_part = stem[t_idx + 1 :]
 
     # The time portion has hyphens where colons should be.
     # Time format is like: 02-30-00+00-00 or 02-30-00Z
@@ -106,7 +106,10 @@ def write_log(job_id: str, log_entry: dict) -> Path:
 
     # Handle output truncation
     output = log_entry.get("output", "")
-    if isinstance(output, str) and len(output.encode("utf-8", errors="replace")) > MAX_OUTPUT_BYTES:
+    if (
+        isinstance(output, str)
+        and len(output.encode("utf-8", errors="replace")) > MAX_OUTPUT_BYTES
+    ):
         # Truncate to MAX_OUTPUT_BYTES at character boundary
         encoded = output.encode("utf-8", errors="replace")
         truncated = encoded[:MAX_OUTPUT_BYTES].decode("utf-8", errors="ignore")

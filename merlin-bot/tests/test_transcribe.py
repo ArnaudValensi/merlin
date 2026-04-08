@@ -71,6 +71,7 @@ class TestOpenAIBackend:
     @patch("httpx.post")
     def test_raises_on_api_error(self, mock_post):
         import httpx
+
         mock_response = MagicMock()
         mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
             "401 Unauthorized", request=MagicMock(), response=MagicMock()
@@ -111,6 +112,7 @@ class TestBackendSelection:
     def test_no_env_uses_local(self, mock_local):
         # Ensure neither key is set
         import os
+
         os.environ.pop("MERLIN_SAAS_API", None)
         os.environ.pop("OPENAI_API_KEY", None)
         result = transcribe.transcribe("/tmp/test.ogg")
@@ -125,7 +127,11 @@ class TestBackendSelection:
         mock_openai.assert_called_once_with("/tmp/test.ogg", "fr", "sk-test")
 
     @patch("transcribe._transcribe_saas", return_value="saas result")
-    @patch.dict("os.environ", {"MERLIN_SAAS_TOKEN": "test-token", "OPENAI_API_KEY": "sk-test"}, clear=True)
+    @patch.dict(
+        "os.environ",
+        {"MERLIN_SAAS_TOKEN": "test-token", "OPENAI_API_KEY": "sk-test"},
+        clear=True,
+    )
     def test_saas_takes_priority_over_openai(self, mock_saas):
         result = transcribe.transcribe("/tmp/test.ogg")
         assert result == "saas result"
@@ -135,6 +141,7 @@ class TestBackendSelection:
     @patch.dict("os.environ", {}, clear=True)
     def test_custom_language_passed_through(self, mock_local):
         import os
+
         os.environ.pop("MERLIN_SAAS_API", None)
         os.environ.pop("OPENAI_API_KEY", None)
         transcribe.transcribe("/tmp/test.ogg", language="de")

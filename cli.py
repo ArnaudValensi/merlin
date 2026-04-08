@@ -55,7 +55,9 @@ def get_version() -> str:
         try:
             result = subprocess.run(
                 ["git", "describe", "--tags", "--always"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
                 cwd=paths.app_dir(),
             )
             if result.returncode == 0 and result.stdout.strip():
@@ -124,7 +126,7 @@ def download_and_extract(tag: str, target_dir: Path) -> None:
                 prefix = members[0].name.split("/")[0]
                 for member in members:
                     if member.name.startswith(prefix + "/"):
-                        member.name = member.name[len(prefix) + 1:]
+                        member.name = member.name[len(prefix) + 1 :]
                         if not member.name:
                             continue
 
@@ -134,7 +136,10 @@ def download_and_extract(tag: str, target_dir: Path) -> None:
 
                         # Reject path traversal (../ in member name)
                         dest = (resolved_staging / member.name).resolve()
-                        if not str(dest).startswith(str(resolved_staging) + os.sep) and dest != resolved_staging:
+                        if (
+                            not str(dest).startswith(str(resolved_staging) + os.sep)
+                            and dest != resolved_staging
+                        ):
                             raise ValueError(f"Path traversal detected: {member.name}")
 
                         tar.extract(member, staging_dir)
@@ -170,7 +175,7 @@ def run_update() -> None:
     """Update Merlin to the latest version."""
     current_version = get_version()
     print(f"Current version: {current_version}")
-    print(f"Checking for updates...")
+    print("Checking for updates...")
 
     latest = fetch_latest_tag()
     if latest is None:
@@ -178,7 +183,9 @@ def run_update() -> None:
         sys.exit(1)
 
     # Strip dev suffixes for comparison (e.g., "0.3.0-3-gabcdef" -> "0.3.0")
-    current_base = current_version.split("-")[0] if "-" in current_version else current_version
+    current_base = (
+        current_version.split("-")[0] if "-" in current_version else current_version
+    )
     if current_base == latest:
         print(f"Already up to date ({latest})")
         return
@@ -197,7 +204,9 @@ def run_update() -> None:
     atomic_symlink(version_dir, current_link)
 
     print(f"Updated: {current_version} -> {latest}")
-    print(f"  To revert: ln -sfn {paths.merlin_home()}/versions/{current_base} {current_link}")
+    print(
+        f"  To revert: ln -sfn {paths.merlin_home()}/versions/{current_base} {current_link}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +239,9 @@ def _check_for_update() -> None:
     if latest is None:
         return
 
-    current_base = current_version.split("-")[0] if "-" in current_version else current_version
+    current_base = (
+        current_version.split("-")[0] if "-" in current_version else current_version
+    )
     if current_base == latest:
         return
 
@@ -329,7 +340,11 @@ def run_setup(config_path: Path | None = None) -> None:
     # Discord bot token
     current_token = existing.get("DISCORD_BOT_TOKEN", "")
     if current_token:
-        masked = current_token[:8] + "..." + current_token[-4:] if len(current_token) > 12 else "***"
+        masked = (
+            current_token[:8] + "..." + current_token[-4:]
+            if len(current_token) > 12
+            else "***"
+        )
         prompt = f"Discord bot token [{masked}] (Enter to keep): "
     else:
         prompt = "Discord bot token (Enter to skip): "
@@ -348,8 +363,14 @@ def run_setup(config_path: Path | None = None) -> None:
 
     current_openai = existing.get("OPENAI_API_KEY", "")
     if current_openai:
-        masked_openai = current_openai[:3] + "..." + current_openai[-4:] if len(current_openai) > 7 else "***"
-        prompt = f"OpenAI API key [{masked_openai}] (Enter to keep, 'clear' to remove): "
+        masked_openai = (
+            current_openai[:3] + "..." + current_openai[-4:]
+            if len(current_openai) > 7
+            else "***"
+        )
+        prompt = (
+            f"OpenAI API key [{masked_openai}] (Enter to keep, 'clear' to remove): "
+        )
     else:
         prompt = "OpenAI API key (Enter to skip): "
     openai_key = input(prompt).strip()
@@ -372,7 +393,12 @@ def run_setup(config_path: Path | None = None) -> None:
         lines.append(f"OPENAI_API_KEY={openai_key}")
 
     # Preserve any extra keys from existing config
-    known_keys = {"DASHBOARD_PASS", "TUNNEL_ENABLED", "DISCORD_BOT_TOKEN", "OPENAI_API_KEY"}
+    known_keys = {
+        "DASHBOARD_PASS",
+        "TUNNEL_ENABLED",
+        "DISCORD_BOT_TOKEN",
+        "OPENAI_API_KEY",
+    }
     for key, val in existing.items():
         if key not in known_keys:
             lines.append(f"{key}={val}")
@@ -406,14 +432,27 @@ Run 'merlin <command> --help' for command-specific help.
 
     # start (default)
     start_parser = subparsers.add_parser(
-        "start", help="Start the dashboard server (default)",
+        "start",
+        help="Start the dashboard server (default)",
         description="Start the Merlin dashboard server.",
     )
-    start_parser.add_argument("--port", type=int, default=3123, help="Port to serve on (default: 3123)")
-    start_parser.add_argument("--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)")
-    start_parser.add_argument("--no-tunnel", action="store_true", help="Disable Cloudflare tunnel")
-    start_parser.add_argument("--dev", action="store_true", help="Run from git checkout (dev mode)")
-    start_parser.add_argument("--saas-token", metavar="TOKEN", help="Connect to Merlin Cloud with this environment token (saves to config for future runs)")
+    start_parser.add_argument(
+        "--port", type=int, default=3123, help="Port to serve on (default: 3123)"
+    )
+    start_parser.add_argument(
+        "--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
+    )
+    start_parser.add_argument(
+        "--no-tunnel", action="store_true", help="Disable Cloudflare tunnel"
+    )
+    start_parser.add_argument(
+        "--dev", action="store_true", help="Run from git checkout (dev mode)"
+    )
+    start_parser.add_argument(
+        "--saas-token",
+        metavar="TOKEN",
+        help="Connect to Merlin Cloud with this environment token (saves to config for future runs)",
+    )
 
     # version
     subparsers.add_parser("version", help="Print the current version")
@@ -426,7 +465,8 @@ Run 'merlin <command> --help' for command-specific help.
 
     # config
     config_parser = subparsers.add_parser(
-        "config", help="Print resolved config values",
+        "config",
+        help="Print resolved config values",
         description="Print resolved configuration values. Reads from config.env, environment, and defaults.",
         epilog="""
 Available keys:
@@ -448,7 +488,9 @@ Examples:
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    config_parser.add_argument("key", nargs="?", help="Config key to print (omit to list all)")
+    config_parser.add_argument(
+        "key", nargs="?", help="Config key to print (omit to list all)"
+    )
 
     return parser
 
@@ -457,6 +499,7 @@ def _get_config_values() -> dict[str, str]:
     """Resolve all config values."""
     # Load config.env so NOTES_DIR etc. are available
     from dotenv import load_dotenv
+
     load_dotenv(paths.config_path())
 
     return {
@@ -525,8 +568,11 @@ def cli_main(argv: list[str] | None = None) -> None:
             os.environ["MERLIN_SAAS_TOKEN"] = saas_token
 
         # Check for first-run setup (installed mode only, skip in SaaS mode)
-        if not paths.is_dev_mode() and not paths.config_path().exists() \
-                and not os.getenv("MERLIN_SAAS_TOKEN"):
+        if (
+            not paths.is_dev_mode()
+            and not paths.config_path().exists()
+            and not os.getenv("MERLIN_SAAS_TOKEN")
+        ):
             print("No config found — running first-time setup.\n")
             run_setup()
             print()
@@ -534,6 +580,7 @@ def cli_main(argv: list[str] | None = None) -> None:
         _check_for_update()
 
         import main
+
         main.start_server(port=port, host=host, no_tunnel=no_tunnel)
 
 

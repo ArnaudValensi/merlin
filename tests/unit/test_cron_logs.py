@@ -1,8 +1,6 @@
 """Tests for cron execution log storage — Phase 4."""
 
 import json
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -167,15 +165,27 @@ class TestWriteLog:
 class TestListLogs:
     def test_returns_sorted_newest_first(self, log_dir):
         """list_logs returns logs sorted by timestamp, newest first."""
-        logs.write_log("test-job", _sample_entry(
-            job_id="test-job", timestamp="2026-03-20T10:00:00+00:00",
-        ))
-        logs.write_log("test-job", _sample_entry(
-            job_id="test-job", timestamp="2026-03-22T10:00:00+00:00",
-        ))
-        logs.write_log("test-job", _sample_entry(
-            job_id="test-job", timestamp="2026-03-21T10:00:00+00:00",
-        ))
+        logs.write_log(
+            "test-job",
+            _sample_entry(
+                job_id="test-job",
+                timestamp="2026-03-20T10:00:00+00:00",
+            ),
+        )
+        logs.write_log(
+            "test-job",
+            _sample_entry(
+                job_id="test-job",
+                timestamp="2026-03-22T10:00:00+00:00",
+            ),
+        )
+        logs.write_log(
+            "test-job",
+            _sample_entry(
+                job_id="test-job",
+                timestamp="2026-03-21T10:00:00+00:00",
+            ),
+        )
 
         result = logs.list_logs("test-job")
         assert len(result) == 3
@@ -187,9 +197,13 @@ class TestListLogs:
     def test_with_limit(self, log_dir):
         """list_logs respects the limit parameter."""
         for i in range(5):
-            logs.write_log("test-job", _sample_entry(
-                job_id="test-job", timestamp=f"2026-03-{20 + i:02d}T10:00:00+00:00",
-            ))
+            logs.write_log(
+                "test-job",
+                _sample_entry(
+                    job_id="test-job",
+                    timestamp=f"2026-03-{20 + i:02d}T10:00:00+00:00",
+                ),
+            )
 
         result = logs.list_logs("test-job", limit=2)
         assert len(result) == 2
@@ -247,10 +261,13 @@ class TestCleanupLogs:
     def test_deletes_oldest_when_over_limit(self, log_dir):
         """cleanup_logs with 8 logs and max_logs=5 keeps only 5."""
         for i in range(8):
-            logs.write_log("test-job", _sample_entry(
-                job_id="test-job",
-                timestamp=f"2026-03-{10 + i:02d}T10:00:00+00:00",
-            ))
+            logs.write_log(
+                "test-job",
+                _sample_entry(
+                    job_id="test-job",
+                    timestamp=f"2026-03-{10 + i:02d}T10:00:00+00:00",
+                ),
+            )
 
         deleted = logs.cleanup_logs("test-job", max_logs=5)
         assert deleted == 3
@@ -271,10 +288,13 @@ class TestCleanupLogs:
     def test_no_deletion_when_under_limit(self, log_dir):
         """cleanup_logs does nothing when count <= max."""
         for i in range(3):
-            logs.write_log("test-job", _sample_entry(
-                job_id="test-job",
-                timestamp=f"2026-03-{10 + i:02d}T10:00:00+00:00",
-            ))
+            logs.write_log(
+                "test-job",
+                _sample_entry(
+                    job_id="test-job",
+                    timestamp=f"2026-03-{10 + i:02d}T10:00:00+00:00",
+                ),
+            )
 
         deleted = logs.cleanup_logs("test-job", max_logs=5)
         assert deleted == 0
@@ -342,12 +362,20 @@ class TestLogEndpoints:
         client.post("/api/cron/jobs", json=_sample_job())
 
         # Write some logs
-        logs.write_log("test-job", _sample_entry(
-            job_id="test-job", timestamp="2026-03-20T10:00:00+00:00",
-        ))
-        logs.write_log("test-job", _sample_entry(
-            job_id="test-job", timestamp="2026-03-21T10:00:00+00:00",
-        ))
+        logs.write_log(
+            "test-job",
+            _sample_entry(
+                job_id="test-job",
+                timestamp="2026-03-20T10:00:00+00:00",
+            ),
+        )
+        logs.write_log(
+            "test-job",
+            _sample_entry(
+                job_id="test-job",
+                timestamp="2026-03-21T10:00:00+00:00",
+            ),
+        )
 
         resp = client.get("/api/cron/jobs/test-job/logs")
         assert resp.status_code == 200
@@ -367,11 +395,14 @@ class TestLogEndpoints:
         """GET /api/cron/jobs/{id}/logs/{ts} returns full log with output."""
         client.post("/api/cron/jobs", json=_sample_job())
 
-        logs.write_log("test-job", _sample_entry(
-            job_id="test-job",
-            timestamp="2026-03-22T02:30:00+00:00",
-            output="Hello from Claude",
-        ))
+        logs.write_log(
+            "test-job",
+            _sample_entry(
+                job_id="test-job",
+                timestamp="2026-03-22T02:30:00+00:00",
+                output="Hello from Claude",
+            ),
+        )
 
         resp = client.get("/api/cron/jobs/test-job/logs/2026-03-22T02:30:00+00:00")
         assert resp.status_code == 200
@@ -390,9 +421,13 @@ class TestLogEndpoints:
         client.post("/api/cron/jobs", json=_sample_job())
 
         # Write a log
-        logs.write_log("test-job", _sample_entry(
-            job_id="test-job", timestamp="2026-03-22T02:30:00+00:00",
-        ))
+        logs.write_log(
+            "test-job",
+            _sample_entry(
+                job_id="test-job",
+                timestamp="2026-03-22T02:30:00+00:00",
+            ),
+        )
         assert (log_dir / "test-job").exists()
 
         resp = client.delete("/api/cron/jobs/test-job")

@@ -118,7 +118,9 @@ class TestDiscordDirectives:
         """discord_directives.md still exists (kept for reference)."""
         from pathlib import Path
 
-        directives = Path(__file__).parent.parent.parent / "merlin-bot" / "discord_directives.md"
+        directives = (
+            Path(__file__).parent.parent.parent / "merlin-bot" / "discord_directives.md"
+        )
         assert directives.exists()
 
     def test_directives_not_injected(self):

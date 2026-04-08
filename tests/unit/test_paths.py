@@ -1,6 +1,5 @@
 """Tests for paths.py — centralized path resolution."""
 
-import os
 from pathlib import Path
 
 import pytest
@@ -267,7 +266,9 @@ class TestSetDevMode:
 
     def test_overrides_git_detection(self):
         """Even in a git repo, set_dev_mode(False) forces installed mode."""
-        assert (paths._THIS_DIR / ".git").exists()  # We are in a git repo (or submodule)
+        assert (
+            paths._THIS_DIR / ".git"
+        ).exists()  # We are in a git repo (or submodule)
         paths.set_dev_mode(False)
         assert paths.is_dev_mode() is False
 
@@ -289,6 +290,7 @@ class TestModuleIntegration:
 
     def test_claude_wrapper_uses_paths(self):
         import lib.claude as cw
+
         assert not str(cw.LOG_DIR).startswith(self._default_home)
         assert cw.LOG_DIR.name == "claude"
         assert cw.LOG_DIR.parent.name == "logs"
@@ -297,17 +299,20 @@ class TestModuleIntegration:
 
     def test_structured_log_uses_paths(self):
         import structured_log as sl
+
         assert not str(sl.ENGINE_LOG_PATH).startswith(self._default_home)
         assert sl.ENGINE_LOG_PATH.name == "engine-log.jsonl"
         assert sl.ENGINE_LOG_PATH.parent.name == "logs"
 
     def test_session_registry_uses_paths(self):
         import session_registry as sr
+
         assert not str(sr.DATA_DIR).startswith(self._default_home)
         assert sr.DATA_DIR.name == "data"
 
     def test_cron_state_uses_paths(self):
         from cron.state import CRON_JOBS_DIR, STATE_DIR, LOCKS_DIR, HISTORY_FILE
+
         assert not str(CRON_JOBS_DIR).startswith(self._default_home)
         assert CRON_JOBS_DIR.name == "cron-jobs"
         assert STATE_DIR == CRON_JOBS_DIR / ".state"
@@ -316,16 +321,26 @@ class TestModuleIntegration:
 
     def test_notes_routes_uses_paths(self):
         from notes.routes import _notes_dir, _media_dir
+
         assert _notes_dir() == paths.notes_dir()
         assert _media_dir() == paths.notes_dir() / "media"
 
     def test_all_paths_are_absolute(self):
         """All path functions return absolute paths."""
-        for fn in [paths.merlin_home, paths.app_dir, paths.data_dir,
-                    paths.config_path, paths.bot_config_path,
-                    paths.notes_dir, paths.cron_jobs_dir, paths.logs_dir]:
+        for fn in [
+            paths.merlin_home,
+            paths.app_dir,
+            paths.data_dir,
+            paths.config_path,
+            paths.bot_config_path,
+            paths.notes_dir,
+            paths.cron_jobs_dir,
+            paths.logs_dir,
+        ]:
             result = fn()
-            assert result.is_absolute(), f"{fn.__name__}() returned non-absolute: {result}"
+            assert result.is_absolute(), (
+                f"{fn.__name__}() returned non-absolute: {result}"
+            )
 
     def test_dev_mode_app_dir_exists_on_disk(self):
         """In dev mode, app_dir should point to the repo root (which exists)."""

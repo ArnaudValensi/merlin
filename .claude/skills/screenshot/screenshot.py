@@ -41,7 +41,15 @@ VIEWPORTS = {
     "4k": {"width": 1920, "height": 1080},
 }
 
-PAGES = ["/files", "/commits", "/terminal", "/notes", "/overview", "/performance", "/logs"]
+PAGES = [
+    "/files",
+    "/commits",
+    "/terminal",
+    "/notes",
+    "/overview",
+    "/performance",
+    "/logs",
+]
 
 
 def _login(page, base_url: str, password: str) -> None:
@@ -121,16 +129,29 @@ Examples:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("url", help="URL to screenshot")
-    parser.add_argument("--viewport", choices=list(VIEWPORTS.keys()), help="Single viewport (default: all)")
+    parser.add_argument(
+        "--viewport",
+        choices=list(VIEWPORTS.keys()),
+        help="Single viewport (default: all)",
+    )
     parser.add_argument("--all", action="store_true", help="Screenshot all pages")
-    parser.add_argument("--pass", dest="password", help="Dashboard password (cookie auth via /login)")
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_DIR, help="Output directory (default: ./screenshots)")
+    parser.add_argument(
+        "--pass", dest="password", help="Dashboard password (cookie auth via /login)"
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help="Output directory (default: ./screenshots)",
+    )
 
     args = parser.parse_args()
     output_dir = args.output
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    viewports = {args.viewport: VIEWPORTS[args.viewport]} if args.viewport else VIEWPORTS
+    viewports = (
+        {args.viewport: VIEWPORTS[args.viewport]} if args.viewport else VIEWPORTS
+    )
 
     base_url = args.url.rstrip("/")
 

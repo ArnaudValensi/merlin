@@ -9,6 +9,7 @@ import pytest
 
 import paths
 
+
 # Reset paths state for each test
 @pytest.fixture(autouse=True)
 def _reset_paths():
@@ -162,7 +163,10 @@ class TestGetVersion:
 
     def test_dev_mode_git_timeout(self):
         paths.set_dev_mode(True)
-        with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="git", timeout=5)):
+        with mock.patch(
+            "subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="git", timeout=5),
+        ):
             version = get_version()
         assert version == "dev"
 
@@ -213,7 +217,9 @@ class TestRunSetup:
 
     def test_discord_token_saved(self, tmp_path):
         config = tmp_path / "config.env"
-        with mock.patch("builtins.input", side_effect=["pass", "n", "my-bot-token-123", ""]):
+        with mock.patch(
+            "builtins.input", side_effect=["pass", "n", "my-bot-token-123", ""]
+        ):
             run_setup(config_path=config)
 
         content = config.read_text()
@@ -301,8 +307,7 @@ class TestCliRouting:
         m.assert_called_once()
 
     def test_start_sets_dev_mode(self):
-        with mock.patch("cli.paths") as mock_paths, \
-             mock.patch("main.start_server"):
+        with mock.patch("cli.paths") as mock_paths, mock.patch("main.start_server"):
             mock_paths.is_dev_mode.return_value = True
             mock_paths.config_path.return_value = Path("/tmp/exists")
             cli_main(["start", "--dev", "--no-tunnel"])

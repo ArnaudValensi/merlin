@@ -21,8 +21,8 @@ LOGS_DIR = NOTES_DIR / "logs"
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _rg(pattern: str, path: Path, *, ignore_case: bool = True,
-         context: int = 1) -> str:
+
+def _rg(pattern: str, path: Path, *, ignore_case: bool = True, context: int = 1) -> str:
     """Run ripgrep and return stdout. Returns empty string on no matches."""
     cmd = ["rg", "--no-heading", "-n", f"-C{context}"]
     if ignore_case:
@@ -72,6 +72,7 @@ def _format_kb_result(path: Path, snippet: str | None = None) -> str:
 # ---------------------------------------------------------------------------
 # KB Search
 # ---------------------------------------------------------------------------
+
 
 def cmd_kb(args: argparse.Namespace) -> None:
     """Search the knowledge base."""
@@ -174,6 +175,7 @@ def _kb_search_keyword(keyword: str, *, discord: bool = False) -> None:
 # Log Search
 # ---------------------------------------------------------------------------
 
+
 def cmd_log(args: argparse.Namespace) -> None:
     """Search daily logs."""
     if not LOGS_DIR.is_dir():
@@ -218,8 +220,9 @@ def _get_log_files(date_from: str | None, date_to: str | None) -> list[Path]:
     return filtered
 
 
-def _log_list(date_from: str | None, date_to: str | None,
-              *, discord: bool = False) -> None:
+def _log_list(
+    date_from: str | None, date_to: str | None, *, discord: bool = False
+) -> None:
     """List available log files in date range."""
     files = _get_log_files(date_from, date_to)
     if not files:
@@ -245,8 +248,9 @@ def _log_list(date_from: str | None, date_to: str | None,
     print("\n".join(lines))
 
 
-def _log_search_keyword(keyword: str, date_from: str | None, date_to: str | None,
-                        *, discord: bool = False) -> None:
+def _log_search_keyword(
+    keyword: str, date_from: str | None, date_to: str | None, *, discord: bool = False
+) -> None:
     """Search log content by keyword."""
     files = _get_log_files(date_from, date_to)
     if not files:
@@ -258,7 +262,8 @@ def _log_search_keyword(keyword: str, date_from: str | None, date_to: str | None
         raw = _rg(keyword, f, context=1)
         if raw.strip():
             matches = [
-                line for line in raw.splitlines()
+                line
+                for line in raw.splitlines()
                 if line.strip() and line.strip() != "--"
             ]
             if matches:
@@ -291,6 +296,7 @@ def _log_search_keyword(keyword: str, date_from: str | None, date_to: str | None
 # ---------------------------------------------------------------------------
 # Tag Index
 # ---------------------------------------------------------------------------
+
 
 def cmd_tags(args: argparse.Namespace) -> None:
     """List all tags used across the KB, with entry counts."""
@@ -330,6 +336,7 @@ def cmd_tags(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -376,8 +383,9 @@ Output:
     )
     kb_parser.add_argument("--keyword", "-k", help="Search KB content by keyword")
     kb_parser.add_argument("--tag", "-t", help="Filter by tag")
-    kb_parser.add_argument("--discord", action="store_true",
-                           help="Format output for Discord")
+    kb_parser.add_argument(
+        "--discord", action="store_true", help="Format output for Discord"
+    )
     kb_parser.set_defaults(func=cmd_kb)
 
     # --- log subcommand ---
@@ -387,14 +395,16 @@ Output:
         description="Search or list daily logs. Without flags, lists all log files.",
     )
     log_parser.add_argument("--keyword", "-k", help="Search log content by keyword")
-    log_parser.add_argument("--from", dest="date_from", metavar="YYYY-MM-DD",
-                            help="Start date (inclusive)")
-    log_parser.add_argument("--to", dest="date_to", metavar="YYYY-MM-DD",
-                            help="End date (inclusive)")
-    log_parser.add_argument("--last", type=int, metavar="N",
-                            help="Search last N days")
-    log_parser.add_argument("--discord", action="store_true",
-                            help="Format output for Discord")
+    log_parser.add_argument(
+        "--from", dest="date_from", metavar="YYYY-MM-DD", help="Start date (inclusive)"
+    )
+    log_parser.add_argument(
+        "--to", dest="date_to", metavar="YYYY-MM-DD", help="End date (inclusive)"
+    )
+    log_parser.add_argument("--last", type=int, metavar="N", help="Search last N days")
+    log_parser.add_argument(
+        "--discord", action="store_true", help="Format output for Discord"
+    )
     log_parser.set_defaults(func=cmd_log)
 
     # --- tags subcommand ---

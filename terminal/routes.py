@@ -14,7 +14,15 @@ import termios
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    Form,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
@@ -50,9 +58,11 @@ def _voice_available() -> bool:
         return True
     try:
         import faster_whisper  # noqa: F401
+
         return True
     except ImportError:
         return False
+
 
 # ---------------------------------------------------------------------------
 # PTY registry — allows transcribe endpoint to write directly to the terminal
@@ -125,6 +135,7 @@ def _sync_clipboard(text: str) -> None:
 def terminal_page(request: Request, _auth=Depends(require_auth)):
     # Check if tmux is available (set by main.py)
     import main as _main
+
     if not getattr(_main, "TMUX_AVAILABLE", True):
         return HTMLResponse(
             "<h2>Terminal unavailable</h2>"
@@ -132,10 +143,13 @@ def terminal_page(request: Request, _auth=Depends(require_auth)):
             f"<p>Install: <code>{_main._install_cmd('tmux')}</code></p>",
             status_code=503,
         )
-    return templates.TemplateResponse("terminal.html", {
-        "request": request,
-        "voice_available": _voice_available(),
-    })
+    return templates.TemplateResponse(
+        "terminal.html",
+        {
+            "request": request,
+            "voice_available": _voice_available(),
+        },
+    )
 
 
 @router.get("/clipboard-test", response_class=HTMLResponse)
@@ -143,7 +157,9 @@ def clipboard_test_page(request: Request, _auth=Depends(require_auth)):
     return templates.TemplateResponse("clipboard-test.html", {"request": request})
 
 
-_VALID_LANGUAGES = frozenset(("en", "fr", "de", "es", "it", "pt", "nl", "ja", "zh", "ko"))
+_VALID_LANGUAGES = frozenset(
+    ("en", "fr", "de", "es", "it", "pt", "nl", "ja", "zh", "ko")
+)
 
 
 def _unlink_safe(path: str) -> None:
@@ -197,9 +213,7 @@ async def transcribe_audio(
     # Read and validate size
     content = await file.read()
     if len(content) > MAX_AUDIO_SIZE:
-        return JSONResponse(
-            {"error": "Audio too large (max 25 MB)"}, status_code=413
-        )
+        return JSONResponse({"error": "Audio too large (max 25 MB)"}, status_code=413)
 
     # Save uploaded audio to a temp file (whisper needs a file path)
     suffix = Path(file.filename or "audio.webm").suffix or ".webm"
@@ -246,8 +260,11 @@ def _cleanup_clipboard() -> None:
 
 
 _IMAGE_EXT = {
-    "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif",
-    "image/webp": ".webp", "image/svg+xml": ".svg",
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/svg+xml": ".svg",
 }
 
 
@@ -278,7 +295,11 @@ async def api_terminal_cwd(_auth=Depends(require_auth)):
     """Get the current working directory of the active tmux pane."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "tmux", "display-message", "-p", "-t", TMUX_SESSION,
+            "tmux",
+            "display-message",
+            "-p",
+            "-t",
+            TMUX_SESSION,
             "#{pane_current_path}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -295,7 +316,9 @@ async def api_terminal_cwd(_auth=Depends(require_auth)):
     # Check if it's a git repo
     try:
         git_proc = await asyncio.create_subprocess_exec(
-            "git", "rev-parse", "--show-toplevel",
+            "git",
+            "rev-parse",
+            "--show-toplevel",
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -353,7 +376,9 @@ async def terminal_ws(websocket: WebSocket):
     try:
         result = os.waitpid(pid, os.WNOHANG)
         if result[0] != 0:
-            logger.error("tmux child exited immediately: pid=%d status=%d", result[0], result[1])
+            logger.error(
+                "tmux child exited immediately: pid=%d status=%d", result[0], result[1]
+            )
         else:
             logger.info("tmux child running: pid=%d", pid)
     except ChildProcessError:
@@ -407,8 +432,11 @@ async def terminal_ws(websocket: WebSocket):
         done, pending = await asyncio.wait(
             [pty_reader, ws_reader], return_when=asyncio.FIRST_COMPLETED
         )
-        logger.info("WebSocket loop ended: done=%s, pending=%s",
-                     [t.get_name() for t in done], [t.get_name() for t in pending])
+        logger.info(
+            "WebSocket loop ended: done=%s, pending=%s",
+            [t.get_name() for t in done],
+            [t.get_name() for t in pending],
+        )
         for task in pending:
             task.cancel()
     finally:

@@ -12,6 +12,7 @@ import tunnel
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _reset_tunnel_state():
     """Reset module-level state between tests."""
@@ -27,6 +28,7 @@ def _reset_tunnel_state():
 # ---------------------------------------------------------------------------
 # State accessors
 # ---------------------------------------------------------------------------
+
 
 class TestState:
     """Module-level state accessors."""
@@ -49,6 +51,7 @@ class TestState:
 # ---------------------------------------------------------------------------
 # URL parsing
 # ---------------------------------------------------------------------------
+
 
 class TestParseUrl:
     """_parse_url_from_stderr extracts the tunnel URL from cloudflared output."""
@@ -107,6 +110,7 @@ class TestParseUrl:
 # Launch functions
 # ---------------------------------------------------------------------------
 
+
 class TestLaunchQuickTunnel:
     """_launch_quick_tunnel spawns cloudflared and parses the URL."""
 
@@ -127,10 +131,12 @@ class TestLaunchQuickTunnel:
 
     def test_returns_none_url_on_failure(self):
         mock_proc = mock.AsyncMock()
-        mock_proc.stderr.readline = mock.AsyncMock(side_effect=[
-            b"ERR connection failed\n",
-            b"",
-        ])
+        mock_proc.stderr.readline = mock.AsyncMock(
+            side_effect=[
+                b"ERR connection failed\n",
+                b"",
+            ]
+        )
 
         with mock.patch("asyncio.create_subprocess_exec", return_value=mock_proc):
             url, proc = asyncio.run(tunnel._launch_quick_tunnel(port=3123))
@@ -171,6 +177,7 @@ class TestLaunchNamedTunnel:
 # start_tunnel dispatching
 # ---------------------------------------------------------------------------
 
+
 class TestStartTunnel:
     """start_tunnel dispatches to the correct mode."""
 
@@ -189,7 +196,9 @@ class TestStartTunnel:
 
         with mock.patch("asyncio.create_subprocess_exec", return_value=mock_proc):
             result = asyncio.run(
-                tunnel.start_tunnel(port=3123, tunnel_token="", max_restarts=0, restart_delay=0)
+                tunnel.start_tunnel(
+                    port=3123, tunnel_token="", max_restarts=0, restart_delay=0
+                )
             )
 
         # Returns the URL that was successfully parsed
@@ -215,8 +224,6 @@ class TestStartTunnel:
 
     def test_status_transitions(self):
         """Status goes starting → running → error."""
-        statuses = []
-
         mock_proc = mock.AsyncMock()
         mock_proc.returncode = 1
         mock_proc.wait = mock.AsyncMock(return_value=1)
@@ -236,7 +243,9 @@ class TestStartTunnel:
 
         with mock.patch("asyncio.create_subprocess_exec", return_value=mock_proc):
             asyncio.run(
-                tunnel.start_tunnel(port=3123, tunnel_token="", max_restarts=0, restart_delay=0)
+                tunnel.start_tunnel(
+                    port=3123, tunnel_token="", max_restarts=0, restart_delay=0
+                )
             )
 
         # After exhausting restarts, status should be error
@@ -256,7 +265,9 @@ class TestStartTunnel:
 
         with mock.patch("asyncio.create_subprocess_exec", return_value=mock_proc):
             asyncio.run(
-                tunnel.start_tunnel(port=3123, tunnel_token="", max_restarts=0, restart_delay=0)
+                tunnel.start_tunnel(
+                    port=3123, tunnel_token="", max_restarts=0, restart_delay=0
+                )
             )
 
         assert tunnel.get_public_url() is None
@@ -265,6 +276,7 @@ class TestStartTunnel:
 # ---------------------------------------------------------------------------
 # Stop tunnel
 # ---------------------------------------------------------------------------
+
 
 class TestStopTunnel:
     """stop_tunnel cleans up process state."""
@@ -299,6 +311,7 @@ class TestStopTunnel:
         proc.kill = mock.Mock()
 
         call_count = [0]
+
         async def mock_wait():
             call_count[0] += 1
             if call_count[0] == 1:

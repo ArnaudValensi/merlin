@@ -1,8 +1,6 @@
 """Tests for discord_send.py — all HTTP calls are mocked."""
 
 import json
-import os
-import sys
 import urllib.parse
 from unittest import mock
 
@@ -15,6 +13,7 @@ import discord_send as ds
 # ---------------------------------------------------------------------------
 # chunk_message() — pure logic, no mocking needed
 # ---------------------------------------------------------------------------
+
 
 class TestChunkMessage:
     """chunk_message() splits text correctly."""
@@ -68,9 +67,9 @@ class TestChunkMessage:
     def test_newlines_preferred_over_spaces(self):
         # Build a message with both spaces and newlines before the limit
         # The split should happen at the newline, not the space
-        part_a = "a" * 990 + "\n"   # 991 chars, ends with newline
-        part_b = "b" * 500 + " "    # 501 chars, ends with space
-        part_c = "c" * 600          # 600 chars
+        part_a = "a" * 990 + "\n"  # 991 chars, ends with newline
+        part_b = "b" * 500 + " "  # 501 chars, ends with space
+        part_c = "c" * 600  # 600 chars
         msg = part_a + part_b + part_c  # 2092 total
         result = ds.chunk_message(msg, max_len=2000)
         assert len(result) == 2
@@ -85,6 +84,7 @@ class TestChunkMessage:
 # ---------------------------------------------------------------------------
 # Helper: mock httpx.Client
 # ---------------------------------------------------------------------------
+
 
 def _make_mock_response(status_code=200, json_body=None, content=b""):
     """Create a mock httpx.Response."""
@@ -118,6 +118,7 @@ def _mock_client_with_responses(*responses):
 # send_message() tests
 # ---------------------------------------------------------------------------
 
+
 class TestSendMessage:
     """send_message() sends correct HTTP requests."""
 
@@ -129,7 +130,9 @@ class TestSendMessage:
             MockClient.return_value.__exit__ = mock.Mock(return_value=False)
             ds.send_message("chan1", "hello", "tok123")
 
-        url = client.post.call_args[1].get("url", client.post.call_args[0][0] if client.post.call_args[0] else None)
+        url = client.post.call_args[1].get(
+            "url", client.post.call_args[0][0] if client.post.call_args[0] else None
+        )
         if url is None:
             url = client.post.call_args[0][0]
         assert url == "https://discord.com/api/v10/channels/chan1/messages"
@@ -181,7 +184,9 @@ class TestSendMessage:
         assert len(result) == 2
 
     def test_http_error_exits(self):
-        error_resp = _make_mock_response(status_code=403, json_body={"message": "Forbidden"})
+        error_resp = _make_mock_response(
+            status_code=403, json_body={"message": "Forbidden"}
+        )
         client = _mock_client_with_responses(error_resp)
         with mock.patch("httpx.Client") as MockClient:
             MockClient.return_value.__enter__ = mock.Mock(return_value=client)
@@ -193,6 +198,7 @@ class TestSendMessage:
 # ---------------------------------------------------------------------------
 # reply_message() tests
 # ---------------------------------------------------------------------------
+
 
 class TestReplyMessage:
     """reply_message() sends correct HTTP requests for replies."""
@@ -237,6 +243,7 @@ class TestReplyMessage:
 # react_message() tests
 # ---------------------------------------------------------------------------
 
+
 class TestReactMessage:
     """react_message() sends correct HTTP requests for reactions."""
 
@@ -280,6 +287,7 @@ class TestReactMessage:
 # load_token() tests
 # ---------------------------------------------------------------------------
 
+
 class TestLoadToken:
     """load_token() reads DISCORD_BOT_TOKEN from environment."""
 
@@ -300,6 +308,7 @@ class TestLoadToken:
 # ---------------------------------------------------------------------------
 # rename_thread() tests
 # ---------------------------------------------------------------------------
+
 
 class TestRenameThread:
     """rename_thread() sends correct HTTP requests."""
@@ -353,7 +362,9 @@ class TestRenameThread:
         assert result == {"id": "thread1", "name": "New Name"}
 
     def test_http_error_raises(self):
-        error_resp = _make_mock_response(status_code=403, json_body={"message": "Forbidden"})
+        error_resp = _make_mock_response(
+            status_code=403, json_body={"message": "Forbidden"}
+        )
         client = _mock_client_with_responses(error_resp)
         client.patch = mock.Mock(return_value=error_resp)
         with mock.patch("httpx.Client") as MockClient:
@@ -380,6 +391,7 @@ class TestRenameThread:
 # Wrapper cwd test — invoke_claude passes cwd=merlin-bot/
 # ---------------------------------------------------------------------------
 
+
 class TestWrapperCwd:
     """invoke_claude() passes cwd to subprocess.run pointing to merlin-bot/."""
 
@@ -390,9 +402,10 @@ class TestWrapperCwd:
         log_dir = tmp_path / "logs" / "claude"
         monkeypatch.setattr(cw, "LOG_DIR", log_dir)
 
-        with mock.patch("subprocess.run", return_value=mock.Mock(
-            stdout="{}", stderr="", returncode=0
-        )) as m:
+        with mock.patch(
+            "subprocess.run",
+            return_value=mock.Mock(stdout="{}", stderr="", returncode=0),
+        ) as m:
             cw.invoke_claude("hello")
 
         assert m.call_args[1]["cwd"] == cw._SCRIPT_DIR

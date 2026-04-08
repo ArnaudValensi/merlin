@@ -321,7 +321,7 @@ class TestComputeGutters:
             "+more\n"
         )
         result = _compute_gutters(diff, content)
-        assert result[0]["gutter"] is None   # existing
+        assert result[0]["gutter"] is None  # existing
         assert result[1]["gutter"] == "added"  # new1
         assert result[2]["gutter"] == "added"  # new2
         assert result[3]["gutter"] == "added"  # more

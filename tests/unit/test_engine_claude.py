@@ -4,32 +4,54 @@ import json
 import subprocess
 from unittest import mock
 
-import pytest
 
 from lib.engine import AgentResult
-from lib.engines.claude_code import ClaudeCodeEngine, _format_history, _parse_stream_json
+from lib.engines.claude_code import (
+    ClaudeCodeEngine,
+    _format_history,
+    _parse_stream_json,
+)
 
 # ---------------------------------------------------------------------------
 # Sample stream-json output
 # ---------------------------------------------------------------------------
 
-_INIT_EVENT = json.dumps({
-    "type": "system", "subtype": "init",
-    "session_id": "sess-abc", "model": "claude-sonnet-4-5-20250929",
-    "cwd": "/tmp", "tools": ["Bash", "Read"],
-})
+_INIT_EVENT = json.dumps(
+    {
+        "type": "system",
+        "subtype": "init",
+        "session_id": "sess-abc",
+        "model": "claude-sonnet-4-5-20250929",
+        "cwd": "/tmp",
+        "tools": ["Bash", "Read"],
+    }
+)
 
-_RESULT_EVENT = json.dumps({
-    "type": "result", "subtype": "success", "is_error": False,
-    "duration_ms": 2000, "num_turns": 1,
-    "result": "Hello world", "session_id": "sess-abc",
-    "total_cost_usd": 0.05,
-    "usage": {"input_tokens": 100, "cache_read_input_tokens": 50,
-              "cache_creation_input_tokens": 200, "output_tokens": 50},
-    "modelUsage": {"claude-sonnet-4-5-20250929": {
-        "inputTokens": 100, "outputTokens": 50, "costUSD": 0.05,
-    }},
-})
+_RESULT_EVENT = json.dumps(
+    {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "duration_ms": 2000,
+        "num_turns": 1,
+        "result": "Hello world",
+        "session_id": "sess-abc",
+        "total_cost_usd": 0.05,
+        "usage": {
+            "input_tokens": 100,
+            "cache_read_input_tokens": 50,
+            "cache_creation_input_tokens": 200,
+            "output_tokens": 50,
+        },
+        "modelUsage": {
+            "claude-sonnet-4-5-20250929": {
+                "inputTokens": 100,
+                "outputTokens": 50,
+                "costUSD": 0.05,
+            }
+        },
+    }
+)
 
 SAMPLE_STREAM = "\n".join([_INIT_EVENT, _RESULT_EVENT]) + "\n"
 
@@ -269,7 +291,9 @@ class TestInvokeResult:
 
     def test_success(self):
         engine = ClaudeCodeEngine()
-        with mock.patch("subprocess.run", return_value=_mock_proc(stdout=SAMPLE_STREAM)):
+        with mock.patch(
+            "subprocess.run", return_value=_mock_proc(stdout=SAMPLE_STREAM)
+        ):
             r = engine.invoke("hello", session_id="my-session")
         assert isinstance(r, AgentResult)
         assert r.content == "Hello world"
@@ -281,7 +305,9 @@ class TestInvokeResult:
     def test_result_property(self):
         """Backward compat: .result returns .content."""
         engine = ClaudeCodeEngine()
-        with mock.patch("subprocess.run", return_value=_mock_proc(stdout=SAMPLE_STREAM)):
+        with mock.patch(
+            "subprocess.run", return_value=_mock_proc(stdout=SAMPLE_STREAM)
+        ):
             r = engine.invoke("hello")
         assert r.result == r.content
 
@@ -301,16 +327,19 @@ class TestErrorHandling:
 
     def test_timeout(self):
         engine = ClaudeCodeEngine()
-        with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired("claude", 10)):
+        with mock.patch(
+            "subprocess.run", side_effect=subprocess.TimeoutExpired("claude", 10)
+        ):
             r = engine.invoke("hello", timeout=10)
         assert r.exit_code == 124
         assert "timed out" in r.stderr
 
     def test_nonzero_exit(self):
         engine = ClaudeCodeEngine()
-        with mock.patch("subprocess.run", return_value=_mock_proc(
-            stdout="{}", stderr="error", returncode=1
-        )):
+        with mock.patch(
+            "subprocess.run",
+            return_value=_mock_proc(stdout="{}", stderr="error", returncode=1),
+        ):
             r = engine.invoke("hello")
         assert r.exit_code == 1
         assert r.stderr == "error"

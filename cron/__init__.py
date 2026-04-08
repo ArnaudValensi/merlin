@@ -50,7 +50,9 @@ def _process_runner_output(stdout_bytes: bytes) -> None:
                     extension_registry=extension_registry,
                 )
             except Exception:
-                logger.warning("Failed to notify for job %s", data.get("job_id"), exc_info=True)
+                logger.warning(
+                    "Failed to notify for job %s", data.get("job_id"), exc_info=True
+                )
 
 
 async def _run_cron_runner() -> None:
@@ -89,9 +91,11 @@ async def _run_cron_runner() -> None:
         # Alert via Discord if bot is loaded (restores old behavior)
         try:
             from main import extension_registry
+
             bot_info = extension_registry.get("merlin-bot")
             if bot_info and bot_info.loaded and bot_info.module:
                 from cron.notify import _get_bot_default_channel
+
                 channel = _get_bot_default_channel(bot_info.module)
                 if channel:
                     bot_info.module.notify(
@@ -107,7 +111,9 @@ async def _run_cron_runner() -> None:
         try:
             _process_runner_output(stdout)
         except Exception:
-            logger.warning("Failed to process runner output for notifications", exc_info=True)
+            logger.warning(
+                "Failed to process runner output for notifications", exc_info=True
+            )
 
 
 async def _cron_scheduler() -> None:

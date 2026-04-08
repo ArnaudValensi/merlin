@@ -30,6 +30,7 @@ KB_DIR = NOTES_DIR / "kb"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def slugify(text: str) -> str:
     """Convert text to a filename-safe slug."""
     slug = text.lower().strip()
@@ -77,8 +78,10 @@ def rg_search(pattern: str, path: Path) -> list[str]:
 # Related-note discovery
 # ---------------------------------------------------------------------------
 
-def find_related_notes(title: str, tags: list[str], content: str,
-                       exclude_file: str | None = None) -> dict[str, dict]:
+
+def find_related_notes(
+    title: str, tags: list[str], content: str, exclude_file: str | None = None
+) -> dict[str, dict]:
     """Find KB notes related to the new entry.
 
     Searches by:
@@ -88,8 +91,11 @@ def find_related_notes(title: str, tags: list[str], content: str,
 
     Returns {filename: {title, tags, summary, score, reasons}} sorted by score.
     """
-    kb_files = [f for f in KB_DIR.glob("*.md")
-                if f.name != "_index.md" and f.name != exclude_file]
+    kb_files = [
+        f
+        for f in KB_DIR.glob("*.md")
+        if f.name != "_index.md" and f.name != exclude_file
+    ]
 
     if not kb_files:
         return {}
@@ -118,8 +124,7 @@ def find_related_notes(title: str, tags: list[str], content: str,
             file_tags = parse_tags(fm.get("tags", ""))
             overlap = set(t.lower() for t in tags) & set(t.lower() for t in file_tags)
             if overlap:
-                _add_score(f, 3 * len(overlap),
-                           f"shared tags: {', '.join(overlap)}")
+                _add_score(f, 3 * len(overlap), f"shared tags: {', '.join(overlap)}")
 
     # 2. Title word matches — check if significant title words appear in other notes
     title_words = [w.lower() for w in re.findall(r"\w{4,}", title)]
@@ -146,8 +151,9 @@ def find_related_notes(title: str, tags: list[str], content: str,
                 _add_score(path, 1, f"content word '{word}' found")
 
     # Sort by score descending, return top results
-    sorted_scores = dict(sorted(scores.items(),
-                                key=lambda x: x[1]["score"], reverse=True))
+    sorted_scores = dict(
+        sorted(scores.items(), key=lambda x: x[1]["score"], reverse=True)
+    )
     return sorted_scores
 
 
@@ -181,8 +187,10 @@ def find_duplicates(title: str, tags: list[str]) -> list[tuple[str, str]]:
 # Note creation
 # ---------------------------------------------------------------------------
 
-def build_frontmatter(title: str, tags: list[str], summary: str,
-                      related: list[str]) -> str:
+
+def build_frontmatter(
+    title: str, tags: list[str], summary: str, related: list[str]
+) -> str:
     """Build YAML frontmatter string."""
     created = datetime.now().strftime("%Y-%m-%d")
     tags_str = f"[{', '.join(tags)}]" if tags else "[]"
@@ -215,7 +223,7 @@ def update_related_note(note_path: Path, new_file: str) -> bool:
     if not related_match:
         # No related field — add one
         new_fm = fm_content + f"\nrelated: [{new_file}]"
-        new_text = match.group(1) + new_fm + match.group(3) + text[match.end():]
+        new_text = match.group(1) + new_fm + match.group(3) + text[match.end() :]
         note_path.write_text(new_text)
         return True
 
@@ -229,15 +237,25 @@ def update_related_note(note_path: Path, new_file: str) -> bool:
         new_related = new_file
 
     new_line = f"{related_match.group(1)}[{new_related}]"
-    new_fm = fm_content[:related_match.start()] + new_line + fm_content[related_match.end():]
-    new_text = match.group(1) + new_fm + match.group(3) + text[match.end():]
+    new_fm = (
+        fm_content[: related_match.start()]
+        + new_line
+        + fm_content[related_match.end() :]
+    )
+    new_text = match.group(1) + new_fm + match.group(3) + text[match.end() :]
     note_path.write_text(new_text)
     return True
 
 
-def create_note(title: str, tags: list[str], summary: str,
-                content: str, related: list[str], *,
-                filename: str | None = None) -> Path:
+def create_note(
+    title: str,
+    tags: list[str],
+    summary: str,
+    content: str,
+    related: list[str],
+    *,
+    filename: str | None = None,
+) -> Path:
     """Create a new KB note file."""
     if filename is None:
         filename = slugify(title) + ".md"
@@ -272,6 +290,7 @@ def create_note(title: str, tags: list[str], summary: str,
 # Commands
 # ---------------------------------------------------------------------------
 
+
 def cmd_add(args: argparse.Namespace) -> None:
     """Add a new KB entry with automatic link discovery."""
     if not KB_DIR.is_dir():
@@ -289,8 +308,9 @@ def cmd_add(args: argparse.Namespace) -> None:
         content = sys.stdin.read()
 
     if not content:
-        print("Error: --content is required (or pipe content via stdin).",
-              file=sys.stderr)
+        print(
+            "Error: --content is required (or pipe content via stdin).", file=sys.stderr
+        )
         sys.exit(1)
 
     # --- Check for duplicates ---
@@ -303,7 +323,9 @@ def cmd_add(args: argparse.Namespace) -> None:
             print(f"  - `{dup_file}` — {dup_title} ({reason})")
 
         if not args.force:
-            print("\nUse --force to create anyway, or update the existing note instead.")
+            print(
+                "\nUse --force to create anyway, or update the existing note instead."
+            )
             sys.exit(1)
         print()
 
@@ -328,7 +350,9 @@ def cmd_add(args: argparse.Namespace) -> None:
             for name in related_files:
                 info = related[name]
                 reasons = "; ".join(info["reasons"][:3])
-                print(f"  - `{name}` — {info['title']} (score: {info['score']}, {reasons})")
+                print(
+                    f"  - `{name}` — {info['title']} (score: {info['score']}, {reasons})"
+                )
         else:
             print("\n**Related notes:** (none found)")
 
@@ -341,8 +365,9 @@ def cmd_add(args: argparse.Namespace) -> None:
         return
 
     # --- Create the note ---
-    filepath = create_note(title, tags, summary, content, related_files,
-                           filename=filename)
+    filepath = create_note(
+        title, tags, summary, content, related_files, filename=filename
+    )
 
     # --- Update backlinks on related notes ---
     backlinked = []
@@ -365,6 +390,7 @@ def cmd_add(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -401,20 +427,29 @@ context clean (Zettelkasten link discovery can be token-heavy).
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--title", "-t", required=True,
-                        help="Note title (also used to generate filename)")
-    parser.add_argument("--tags", "-T",
-                        help="Comma-separated tags (e.g. 'music, gear, shopping')")
-    parser.add_argument("--summary", "-s",
-                        help="One-line summary for quick scanning")
-    parser.add_argument("--content", "-c",
-                        help="Note content (or pipe via stdin)")
-    parser.add_argument("--filename", "-f",
-                        help="Override auto-generated filename (without .md)")
-    parser.add_argument("--dry-run", "-n", action="store_true",
-                        help="Preview what would be created (no file changes)")
-    parser.add_argument("--force", action="store_true",
-                        help="Create even if duplicate detected")
+    parser.add_argument(
+        "--title",
+        "-t",
+        required=True,
+        help="Note title (also used to generate filename)",
+    )
+    parser.add_argument(
+        "--tags", "-T", help="Comma-separated tags (e.g. 'music, gear, shopping')"
+    )
+    parser.add_argument("--summary", "-s", help="One-line summary for quick scanning")
+    parser.add_argument("--content", "-c", help="Note content (or pipe via stdin)")
+    parser.add_argument(
+        "--filename", "-f", help="Override auto-generated filename (without .md)"
+    )
+    parser.add_argument(
+        "--dry-run",
+        "-n",
+        action="store_true",
+        help="Preview what would be created (no file changes)",
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Create even if duplicate detected"
+    )
 
     args = parser.parse_args()
     cmd_add(args)

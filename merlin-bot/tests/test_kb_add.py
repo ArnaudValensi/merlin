@@ -1,7 +1,6 @@
 """Tests for kb_add.py — knowledge base entry creation with link discovery."""
 
 import textwrap
-from pathlib import Path
 
 import pytest
 
@@ -15,7 +14,8 @@ def kb_dir(tmp_path, monkeypatch):
     kb.mkdir()
 
     # Create _index.md
-    (kb / "_index.md").write_text(textwrap.dedent("""\
+    (kb / "_index.md").write_text(
+        textwrap.dedent("""\
         ---
         title: Knowledge Base Index
         created: 2026-01-01
@@ -24,7 +24,8 @@ def kb_dir(tmp_path, monkeypatch):
         ---
 
         # Knowledge Base
-    """))
+    """)
+    )
 
     monkeypatch.setattr(kb_add, "KB_DIR", kb)
     return kb
@@ -33,7 +34,8 @@ def kb_dir(tmp_path, monkeypatch):
 @pytest.fixture
 def kb_with_notes(kb_dir):
     """KB populated with several test notes."""
-    (kb_dir / "docker-setup.md").write_text(textwrap.dedent("""\
+    (kb_dir / "docker-setup.md").write_text(
+        textwrap.dedent("""\
         ---
         title: Docker Setup
         created: 2026-01-15
@@ -46,9 +48,11 @@ def kb_with_notes(kb_dir):
 
         Install Docker on Arch Linux using pacman.
         Configure docker-compose for local development.
-    """))
+    """)
+    )
 
-    (kb_dir / "tech-gear.md").write_text(textwrap.dedent("""\
+    (kb_dir / "tech-gear.md").write_text(
+        textwrap.dedent("""\
         ---
         title: Tech Gear
         created: 2026-01-20
@@ -61,9 +65,11 @@ def kb_with_notes(kb_dir):
 
         Looking for a good mechanical keyboard.
         Budget is under 200 USD.
-    """))
+    """)
+    )
 
-    (kb_dir / "arch-linux.md").write_text(textwrap.dedent("""\
+    (kb_dir / "arch-linux.md").write_text(
+        textwrap.dedent("""\
         ---
         title: Arch Linux Notes
         created: 2026-01-25
@@ -76,7 +82,8 @@ def kb_with_notes(kb_dir):
 
         Use pacman for package management.
         AUR for community packages.
-    """))
+    """)
+    )
 
     return kb_dir
 
@@ -84,32 +91,39 @@ def kb_with_notes(kb_dir):
 class TestSlugify:
     def test_basic(self):
         from kb_add import slugify
+
         assert slugify("Docker Setup") == "docker-setup"
 
     def test_special_chars(self):
         from kb_add import slugify
+
         assert slugify("What's New? (2026)") == "whats-new-2026"
 
     def test_extra_spaces(self):
         from kb_add import slugify
+
         assert slugify("  Multiple   Spaces  ") == "multiple-spaces"
 
     def test_already_slugified(self):
         from kb_add import slugify
+
         assert slugify("already-a-slug") == "already-a-slug"
 
 
 class TestParseTags:
     def test_comma_separated(self):
         from kb_add import parse_tags
+
         assert parse_tags("music, gear, shopping") == ["music", "gear", "shopping"]
 
     def test_yaml_format(self):
         from kb_add import parse_tags
+
         assert parse_tags("[music, gear]") == ["music", "gear"]
 
     def test_empty(self):
         from kb_add import parse_tags
+
         assert parse_tags("") == []
         assert parse_tags("[]") == []
 
@@ -117,16 +131,19 @@ class TestParseTags:
 class TestFindDuplicates:
     def test_exact_filename_match(self, kb_with_notes):
         from kb_add import find_duplicates
+
         dupes = find_duplicates("Docker Setup", [])
         assert any("docker-setup.md" in d[0] for d in dupes)
 
     def test_exact_title_match(self, kb_with_notes):
         from kb_add import find_duplicates
+
         dupes = find_duplicates("Tech Gear", [])
         assert any("tech-gear.md" in d[0] for d in dupes)
 
     def test_no_duplicates(self, kb_with_notes):
         from kb_add import find_duplicates
+
         dupes = find_duplicates("Completely New Topic", [])
         assert dupes == []
 
@@ -134,6 +151,7 @@ class TestFindDuplicates:
 class TestFindRelatedNotes:
     def test_finds_by_tag_overlap(self, kb_with_notes):
         from kb_add import find_related_notes
+
         related = find_related_notes(
             "Container Orchestration",
             ["devops", "docker"],
@@ -144,6 +162,7 @@ class TestFindRelatedNotes:
 
     def test_finds_by_title_words(self, kb_with_notes):
         from kb_add import find_related_notes
+
         related = find_related_notes(
             "Docker Networking",
             [],
@@ -154,6 +173,7 @@ class TestFindRelatedNotes:
 
     def test_no_matches(self, kb_with_notes):
         from kb_add import find_related_notes
+
         related = find_related_notes(
             "Quantum Physics",
             ["science"],
@@ -164,6 +184,7 @@ class TestFindRelatedNotes:
 
     def test_excludes_target_file(self, kb_with_notes):
         from kb_add import find_related_notes
+
         related = find_related_notes(
             "Docker Setup",
             ["devops", "docker"],
@@ -174,6 +195,7 @@ class TestFindRelatedNotes:
 
     def test_excludes_index(self, kb_with_notes):
         from kb_add import find_related_notes
+
         related = find_related_notes(
             "Index Test",
             ["index"],
@@ -202,16 +224,16 @@ class TestCreateNote:
     def test_related_links_in_frontmatter(self, kb_dir):
         from kb_add import create_note
 
-        path = create_note("Linked Note", [], "", "Content.",
-                           ["other.md", "another.md"])
+        path = create_note(
+            "Linked Note", [], "", "Content.", ["other.md", "another.md"]
+        )
         text = path.read_text()
         assert "related: [other.md, another.md]" in text
 
     def test_see_also_section(self, kb_with_notes):
         from kb_add import create_note
 
-        path = create_note("New Note", [], "", "Content.",
-                           ["docker-setup.md"])
+        path = create_note("New Note", [], "", "Content.", ["docker-setup.md"])
         text = path.read_text()
         assert "## See Also" in text
         assert "[Docker Setup](docker-setup.md)" in text
@@ -219,8 +241,7 @@ class TestCreateNote:
     def test_custom_filename(self, kb_dir):
         from kb_add import create_note
 
-        path = create_note("Title", [], "", "Content.", [],
-                           filename="custom-name.md")
+        path = create_note("Title", [], "", "Content.", [], filename="custom-name.md")
         assert path.name == "custom-name.md"
 
 

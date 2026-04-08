@@ -16,16 +16,19 @@ from terminal import routes as tr
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _mock_auth(monkeypatch):
     """Mock auth module for consistent test credentials."""
     import auth
+
     monkeypatch.setattr(auth, "_get_password", lambda: "secret123")
 
 
 # ---------------------------------------------------------------------------
 # PTY helpers
 # ---------------------------------------------------------------------------
+
 
 class TestSetWinsize:
     """_set_winsize calls ioctl with correct struct."""
@@ -78,6 +81,7 @@ class TestReadPty:
 # WebSocket lifecycle (mocked PTY)
 # ---------------------------------------------------------------------------
 
+
 class TestTerminalWebSocket:
     """WebSocket endpoint behavior with mocked PTY."""
 
@@ -85,6 +89,7 @@ class TestTerminalWebSocket:
     def mock_websocket_with_cookie(self):
         """Create a mock WebSocket with a valid session cookie."""
         import auth
+
         cookie_val = auth.sign_cookie("admin", 9999999999, "secret123")
         ws = mock.AsyncMock()
         ws.headers = {}
@@ -112,12 +117,15 @@ class TestTerminalWebSocket:
         """WebSocket auth via session cookie."""
         ws = mock_websocket_with_cookie
 
-        with mock.patch("pty.fork", return_value=(999, 5)), \
-             mock.patch("os.read", return_value=b""), \
-             mock.patch("os.close"), \
-             mock.patch("os.kill"), \
-             mock.patch("os.waitpid"):
+        with (
+            mock.patch("pty.fork", return_value=(999, 5)),
+            mock.patch("os.read", return_value=b""),
+            mock.patch("os.close"),
+            mock.patch("os.kill"),
+            mock.patch("os.waitpid"),
+        ):
             from starlette.websockets import WebSocketDisconnect
+
             ws.receive_text.side_effect = WebSocketDisconnect()
             asyncio.run(tr.terminal_ws(ws))
 
@@ -130,12 +138,15 @@ class TestTerminalWebSocket:
         child_pid = 12345
         master_fd = 7
 
-        with mock.patch("pty.fork", return_value=(child_pid, master_fd)), \
-             mock.patch("os.read", return_value=b""), \
-             mock.patch("os.close") as mock_close, \
-             mock.patch("os.kill") as mock_kill, \
-             mock.patch("os.waitpid") as mock_waitpid:
+        with (
+            mock.patch("pty.fork", return_value=(child_pid, master_fd)),
+            mock.patch("os.read", return_value=b""),
+            mock.patch("os.close") as mock_close,
+            mock.patch("os.kill") as mock_kill,
+            mock.patch("os.waitpid") as mock_waitpid,
+        ):
             from starlette.websockets import WebSocketDisconnect
+
             ws.receive_text.side_effect = WebSocketDisconnect()
             asyncio.run(tr.terminal_ws(ws))
 
@@ -148,6 +159,7 @@ class TestTerminalWebSocket:
 # ---------------------------------------------------------------------------
 # PTY Registry
 # ---------------------------------------------------------------------------
+
 
 class TestPtyRegistry:
     """PTY registry for server-side text injection."""
@@ -181,6 +193,7 @@ class TestPtyRegistry:
 # Transcription API
 # ---------------------------------------------------------------------------
 
+
 class TestTranscribeEndpoint:
     """POST /api/transcribe endpoint."""
 
@@ -196,11 +209,18 @@ class TestTranscribeEndpoint:
 
     def test_transcribe_returns_text(self):
         """Successful transcription returns JSON with text (fallback path)."""
-        with mock.patch("transcribe.transcribe", return_value="hello world"), \
-             mock.patch("os.unlink"):
-            result = asyncio.run(tr.transcribe_audio(
-                file=self._make_file(), language="en", auto_enter="false", _auth=None,
-            ))
+        with (
+            mock.patch("transcribe.transcribe", return_value="hello world"),
+            mock.patch("os.unlink"),
+        ):
+            result = asyncio.run(
+                tr.transcribe_audio(
+                    file=self._make_file(),
+                    language="en",
+                    auto_enter="false",
+                    _auth=None,
+                )
+            )
 
         assert result.status_code == 200
         body = json.loads(result.body)
@@ -208,21 +228,37 @@ class TestTranscribeEndpoint:
 
     def test_transcribe_cleans_up_temp_file(self):
         """Temp file is deleted after transcription (fallback path)."""
-        with mock.patch("transcribe.transcribe", return_value="text"), \
-             mock.patch("os.unlink") as mock_unlink:
-            asyncio.run(tr.transcribe_audio(
-                file=self._make_file(), language="en", auto_enter="false", _auth=None,
-            ))
+        with (
+            mock.patch("transcribe.transcribe", return_value="text"),
+            mock.patch("os.unlink") as mock_unlink,
+        ):
+            asyncio.run(
+                tr.transcribe_audio(
+                    file=self._make_file(),
+                    language="en",
+                    auto_enter="false",
+                    _auth=None,
+                )
+            )
 
         mock_unlink.assert_called_once()
 
     def test_transcribe_error_returns_500(self):
         """Transcription failure returns 500 with error message."""
-        with mock.patch("transcribe.transcribe", side_effect=RuntimeError("model failed")), \
-             mock.patch("os.unlink"):
-            result = asyncio.run(tr.transcribe_audio(
-                file=self._make_file(), language="en", auto_enter="false", _auth=None,
-            ))
+        with (
+            mock.patch(
+                "transcribe.transcribe", side_effect=RuntimeError("model failed")
+            ),
+            mock.patch("os.unlink"),
+        ):
+            result = asyncio.run(
+                tr.transcribe_audio(
+                    file=self._make_file(),
+                    language="en",
+                    auto_enter="false",
+                    _auth=None,
+                )
+            )
 
         assert result.status_code == 500
         body = json.loads(result.body)
@@ -230,31 +266,58 @@ class TestTranscribeEndpoint:
 
     def test_transcribe_passes_language(self):
         """Language parameter is forwarded to transcribe()."""
-        with mock.patch("transcribe.transcribe", return_value="bonjour") as mock_transcribe, \
-             mock.patch("os.unlink"):
-            asyncio.run(tr.transcribe_audio(
-                file=self._make_file(), language="fr", auto_enter="false", _auth=None,
-            ))
+        with (
+            mock.patch(
+                "transcribe.transcribe", return_value="bonjour"
+            ) as mock_transcribe,
+            mock.patch("os.unlink"),
+        ):
+            asyncio.run(
+                tr.transcribe_audio(
+                    file=self._make_file(),
+                    language="fr",
+                    auto_enter="false",
+                    _auth=None,
+                )
+            )
 
         assert mock_transcribe.call_args[0][1] == "fr"
 
     def test_transcribe_defaults_to_english(self):
         """Default language is English when explicitly passed."""
-        with mock.patch("transcribe.transcribe", return_value="hello") as mock_transcribe, \
-             mock.patch("os.unlink"):
-            asyncio.run(tr.transcribe_audio(
-                file=self._make_file(), language="en", auto_enter="false", _auth=None,
-            ))
+        with (
+            mock.patch(
+                "transcribe.transcribe", return_value="hello"
+            ) as mock_transcribe,
+            mock.patch("os.unlink"),
+        ):
+            asyncio.run(
+                tr.transcribe_audio(
+                    file=self._make_file(),
+                    language="en",
+                    auto_enter="false",
+                    _auth=None,
+                )
+            )
 
         assert mock_transcribe.call_args[0][1] == "en"
 
     def test_transcribe_rejects_invalid_language(self):
         """Invalid language falls back to English."""
-        with mock.patch("transcribe.transcribe", return_value="hello") as mock_transcribe, \
-             mock.patch("os.unlink"):
-            asyncio.run(tr.transcribe_audio(
-                file=self._make_file(), language="xx", auto_enter="false", _auth=None,
-            ))
+        with (
+            mock.patch(
+                "transcribe.transcribe", return_value="hello"
+            ) as mock_transcribe,
+            mock.patch("os.unlink"),
+        ):
+            asyncio.run(
+                tr.transcribe_audio(
+                    file=self._make_file(),
+                    language="xx",
+                    auto_enter="false",
+                    _auth=None,
+                )
+            )
 
         assert mock_transcribe.call_args[0][1] == "en"
 
@@ -274,10 +337,14 @@ class TestTranscribeSizeLimit:
     def test_rejects_oversized_audio(self):
         """Audio >25 MB returns 413."""
         big_data = b"x" * (25 * 1024 * 1024 + 1)
-        result = asyncio.run(tr.transcribe_audio(
-            file=self._make_file(data=big_data),
-            language="en", auto_enter="false", _auth=None,
-        ))
+        result = asyncio.run(
+            tr.transcribe_audio(
+                file=self._make_file(data=big_data),
+                language="en",
+                auto_enter="false",
+                _auth=None,
+            )
+        )
         assert result.status_code == 413
         body = json.loads(result.body)
         assert "too large" in body["error"].lower()
@@ -285,12 +352,18 @@ class TestTranscribeSizeLimit:
     def test_accepts_exact_limit(self):
         """Audio exactly 25 MB is accepted."""
         data = b"x" * (25 * 1024 * 1024)
-        with mock.patch("transcribe.transcribe", return_value="ok"), \
-             mock.patch("os.unlink"):
-            result = asyncio.run(tr.transcribe_audio(
-                file=self._make_file(data=data),
-                language="en", auto_enter="false", _auth=None,
-            ))
+        with (
+            mock.patch("transcribe.transcribe", return_value="ok"),
+            mock.patch("os.unlink"),
+        ):
+            result = asyncio.run(
+                tr.transcribe_audio(
+                    file=self._make_file(data=data),
+                    language="en",
+                    auto_enter="false",
+                    _auth=None,
+                )
+            )
         assert result.status_code == 200
 
 
@@ -312,9 +385,13 @@ class TestTranscribeServerSideInjection:
         tr.register_pty("terminal", w_fd)
         try:
             with mock.patch("transcribe.transcribe", return_value="hello from server"):
-                result = asyncio.run(self._run_with_tasks(
-                    self._make_file(), "en", "false",
-                ))
+                result = asyncio.run(
+                    self._run_with_tasks(
+                        self._make_file(),
+                        "en",
+                        "false",
+                    )
+                )
 
             assert result.status_code == 202
             body = json.loads(result.body)
@@ -337,9 +414,13 @@ class TestTranscribeServerSideInjection:
         tr.register_pty("terminal", w_fd)
         try:
             with mock.patch("transcribe.transcribe", return_value="git status"):
-                result = asyncio.run(self._run_with_tasks(
-                    self._make_file(), "en", "true",
-                ))
+                result = asyncio.run(
+                    self._run_with_tasks(
+                        self._make_file(),
+                        "en",
+                        "true",
+                    )
+                )
 
             assert result.status_code == 202
             os.close(w_fd)
@@ -358,9 +439,13 @@ class TestTranscribeServerSideInjection:
         tr.register_pty("terminal", w_fd)
         try:
             with mock.patch("transcribe.transcribe", return_value="hello"):
-                result = asyncio.run(self._run_with_tasks(
-                    self._make_file(), "en", "false",
-                ))
+                result = asyncio.run(
+                    self._run_with_tasks(
+                        self._make_file(),
+                        "en",
+                        "false",
+                    )
+                )
 
             assert result.status_code == 202
             os.close(w_fd)
@@ -382,9 +467,13 @@ class TestTranscribeServerSideInjection:
         try:
             with mock.patch("transcribe.transcribe", return_value="hello"):
                 # Should not raise
-                result = asyncio.run(self._run_with_tasks(
-                    self._make_file(), "en", "false",
-                ))
+                result = asyncio.run(
+                    self._run_with_tasks(
+                        self._make_file(),
+                        "en",
+                        "false",
+                    )
+                )
             assert result.status_code == 202
         finally:
             tr._pty_registry.clear()
@@ -402,11 +491,17 @@ class TestTranscribeServerSideInjection:
             return tmp
 
         try:
-            with mock.patch("transcribe.transcribe", return_value="text"), \
-                 mock.patch("tempfile.NamedTemporaryFile", side_effect=tracking_temp):
-                asyncio.run(self._run_with_tasks(
-                    self._make_file(), "en", "false",
-                ))
+            with (
+                mock.patch("transcribe.transcribe", return_value="text"),
+                mock.patch("tempfile.NamedTemporaryFile", side_effect=tracking_temp),
+            ):
+                asyncio.run(
+                    self._run_with_tasks(
+                        self._make_file(),
+                        "en",
+                        "false",
+                    )
+                )
 
             os.close(w_fd)
             w_fd = -1
@@ -436,11 +531,17 @@ class TestTranscribeServerSideInjection:
             return tmp
 
         try:
-            with mock.patch("transcribe.transcribe", side_effect=RuntimeError("fail")), \
-                 mock.patch("tempfile.NamedTemporaryFile", side_effect=tracking_temp):
-                asyncio.run(self._run_with_tasks(
-                    self._make_file(), "en", "false",
-                ))
+            with (
+                mock.patch("transcribe.transcribe", side_effect=RuntimeError("fail")),
+                mock.patch("tempfile.NamedTemporaryFile", side_effect=tracking_temp),
+            ):
+                asyncio.run(
+                    self._run_with_tasks(
+                        self._make_file(),
+                        "en",
+                        "false",
+                    )
+                )
 
             os.close(w_fd)
             w_fd = -1
@@ -458,11 +559,18 @@ class TestTranscribeServerSideInjection:
 
     def test_200_fallback_when_no_pty(self):
         """Without PTY registered, returns 200 with text (fallback)."""
-        with mock.patch("transcribe.transcribe", return_value="fallback text"), \
-             mock.patch("os.unlink"):
-            result = asyncio.run(tr.transcribe_audio(
-                file=self._make_file(), language="en", auto_enter="false", _auth=None,
-            ))
+        with (
+            mock.patch("transcribe.transcribe", return_value="fallback text"),
+            mock.patch("os.unlink"),
+        ):
+            result = asyncio.run(
+                tr.transcribe_audio(
+                    file=self._make_file(),
+                    language="en",
+                    auto_enter="false",
+                    _auth=None,
+                )
+            )
 
         assert result.status_code == 200
         body = json.loads(result.body)
@@ -474,6 +582,7 @@ class TestTranscribeServerSideInjection:
         tr.register_pty("terminal", w_fd)
 
         call_count = 0
+
         def mock_transcribe(path, lang):
             nonlocal call_count
             call_count += 1
@@ -481,17 +590,26 @@ class TestTranscribeServerSideInjection:
 
         try:
             with mock.patch("transcribe.transcribe", side_effect=mock_transcribe):
+
                 async def run():
                     r1 = await tr.transcribe_audio(
-                        file=self._make_file(b"audio1"), language="en",
-                        auto_enter="false", _auth=None,
+                        file=self._make_file(b"audio1"),
+                        language="en",
+                        auto_enter="false",
+                        _auth=None,
                     )
                     r2 = await tr.transcribe_audio(
-                        file=self._make_file(b"audio2"), language="fr",
-                        auto_enter="false", _auth=None,
+                        file=self._make_file(b"audio2"),
+                        language="fr",
+                        auto_enter="false",
+                        _auth=None,
                     )
                     # Drain background tasks
-                    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+                    tasks = [
+                        t
+                        for t in asyncio.all_tasks()
+                        if t is not asyncio.current_task()
+                    ]
                     if tasks:
                         await asyncio.gather(*tasks, return_exceptions=True)
                     return r1, r2
@@ -519,9 +637,13 @@ class TestTranscribeServerSideInjection:
         tr.register_pty("terminal", w_fd)
         try:
             with mock.patch("transcribe.transcribe", return_value=""):
-                result = asyncio.run(self._run_with_tasks(
-                    self._make_file(), "en", "true",
-                ))
+                result = asyncio.run(
+                    self._run_with_tasks(
+                        self._make_file(),
+                        "en",
+                        "true",
+                    )
+                )
 
             assert result.status_code == 202
             os.close(w_fd)
@@ -537,7 +659,10 @@ class TestTranscribeServerSideInjection:
     async def _run_with_tasks(self, file, language, auto_enter):
         """Run transcribe_audio and then drain pending tasks."""
         result = await tr.transcribe_audio(
-            file=file, language=language, auto_enter=auto_enter, _auth=None,
+            file=file,
+            language=language,
+            auto_enter=auto_enter,
+            _auth=None,
         )
         # Let the background task complete
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
@@ -556,6 +681,7 @@ class TestTerminalCwd:
 
     def test_returns_cwd_in_git_repo(self):
         """Returns CWD with is_git_repo=True when in a git repo."""
+
         async def run():
             with mock.patch("asyncio.create_subprocess_exec") as mock_exec:
                 # First call: tmux display-message
@@ -579,6 +705,7 @@ class TestTerminalCwd:
 
     def test_returns_null_when_tmux_fails(self):
         """Returns null CWD when tmux is not running."""
+
         async def run():
             with mock.patch("asyncio.create_subprocess_exec") as mock_exec:
                 proc = mock.AsyncMock()
@@ -596,6 +723,7 @@ class TestTerminalCwd:
 
     def test_returns_not_git_repo(self):
         """Returns is_git_repo=False when CWD is not in a git repo."""
+
         async def run():
             with mock.patch("asyncio.create_subprocess_exec") as mock_exec:
                 tmux_proc = mock.AsyncMock()

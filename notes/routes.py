@@ -4,9 +4,8 @@ import re
 import subprocess
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .frontmatter import parse_frontmatter
@@ -27,7 +26,9 @@ NOTES_TEMPLATES_DIR = NOTES_DIR / "templates"
 NOTES_STATIC_DIR = NOTES_DIR / "static"
 
 # Shared templates dir (for base.html) + notes templates
-templates = Jinja2Templates(directory=[str(NOTES_TEMPLATES_DIR), str(paths.app_dir() / "templates")])
+templates = Jinja2Templates(
+    directory=[str(NOTES_TEMPLATES_DIR), str(paths.app_dir() / "templates")]
+)
 
 router = APIRouter()
 
@@ -79,7 +80,9 @@ def notes_index(request: Request):
 
 @router.get("/notes/tags/{tag}", response_class=HTMLResponse)
 def notes_tag(request: Request, tag: str):
-    return templates.TemplateResponse("notes_tag.html", {"request": request, "tag": tag})
+    return templates.TemplateResponse(
+        "notes_tag.html", {"request": request, "tag": tag}
+    )
 
 
 @router.get("/notes/{path:path}", response_class=HTMLResponse)
@@ -100,11 +103,14 @@ def notes_view(request: Request, path: str):
     if not is_new and not file_path.exists():
         raise HTTPException(status_code=404, detail="Note not found")
 
-    return templates.TemplateResponse("notes_view.html", {
-        "request": request,
-        "note_path": path,
-        "new_note": is_new,
-    })
+    return templates.TemplateResponse(
+        "notes_view.html",
+        {
+            "request": request,
+            "note_path": path,
+            "new_note": is_new,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -132,16 +138,18 @@ def api_list_notes():
         # Path without .md extension for clean URLs
         path_str = str(rel.with_suffix(""))
 
-        notes.append({
-            "path": path_str,
-            "filename": md_file.name,
-            "title": meta.get("title", md_file.stem.replace("-", " ").title()),
-            "summary": meta.get("summary", ""),
-            "tags": meta.get("tags", []),
-            "related": meta.get("related", []),
-            "created": meta.get("created", ""),
-            "mtime": stat.st_mtime,
-        })
+        notes.append(
+            {
+                "path": path_str,
+                "filename": md_file.name,
+                "title": meta.get("title", md_file.stem.replace("-", " ").title()),
+                "summary": meta.get("summary", ""),
+                "tags": meta.get("tags", []),
+                "related": meta.get("related", []),
+                "created": meta.get("created", ""),
+                "mtime": stat.st_mtime,
+            }
+        )
 
     # Sort by most recently modified first
     notes.sort(key=lambda n: n["mtime"], reverse=True)
@@ -227,17 +235,29 @@ def api_search_notes(q: str = ""):
         ctx_after = ""
         if lines:
             idx = line_number - 1
-            ctx_before = next((lines[j].strip() for j in range(idx - 1, -1, -1) if lines[j].strip()), "")
-            ctx_after = next((lines[j].strip() for j in range(idx + 1, len(lines)) if lines[j].strip()), "")
+            ctx_before = next(
+                (lines[j].strip() for j in range(idx - 1, -1, -1) if lines[j].strip()),
+                "",
+            )
+            ctx_after = next(
+                (
+                    lines[j].strip()
+                    for j in range(idx + 1, len(lines))
+                    if lines[j].strip()
+                ),
+                "",
+            )
 
-        results.append({
-            "path": path_str,
-            "title": title,
-            "line_number": line_number,
-            "line": matched_line,
-            "context_before": ctx_before,
-            "context_after": ctx_after,
-        })
+        results.append(
+            {
+                "path": path_str,
+                "title": title,
+                "line_number": line_number,
+                "line": matched_line,
+                "context_before": ctx_before,
+                "context_after": ctx_after,
+            }
+        )
         if len(results) >= max_results:
             break
 
@@ -253,6 +273,7 @@ def api_search_notes(q: str = ""):
 def api_sync_status():
     """Return git sync status including push state and any conflicted files."""
     from .sync import conflicted_files, sync_state
+
     return {
         "conflicted_files": list(conflicted_files),
         "has_conflicts": len(conflicted_files) > 0,
@@ -268,6 +289,7 @@ async def api_sync_test(request: Request):
     if not remote_url:
         raise HTTPException(status_code=400, detail="No remote URL provided")
     from .sync import test_remote
+
     ok, message = await test_remote(remote_url, _notes_dir())
     return {"ok": ok, "message": message}
 

@@ -328,10 +328,18 @@ def invoke_claude(
             duration=duration,
         )
         _write_invocation_log(caller, prompt, cr, start_wall)
-        log_event("invocation", caller=caller, duration=round(duration, 3),
-                  exit_code=127, num_turns=0, tokens_in=0, tokens_out=0,
-                  session_id=None, model=None,
-                  stderr="claude: command not found")
+        log_event(
+            "invocation",
+            caller=caller,
+            duration=round(duration, 3),
+            exit_code=127,
+            num_turns=0,
+            tokens_in=0,
+            tokens_out=0,
+            session_id=None,
+            model=None,
+            stderr="claude: command not found",
+        )
         return cr
     except subprocess.TimeoutExpired:
         duration = time.monotonic() - start
@@ -343,10 +351,18 @@ def invoke_claude(
             duration=duration,
         )
         _write_invocation_log(caller, prompt, cr, start_wall)
-        log_event("invocation", caller=caller, duration=round(duration, 3),
-                  exit_code=124, num_turns=0, tokens_in=0, tokens_out=0,
-                  session_id=None, model=None,
-                  stderr=f"claude: timed out after {timeout}s")
+        log_event(
+            "invocation",
+            caller=caller,
+            duration=round(duration, 3),
+            exit_code=124,
+            num_turns=0,
+            tokens_in=0,
+            tokens_out=0,
+            session_id=None,
+            model=None,
+            stderr=f"claude: timed out after {timeout}s",
+        )
         return cr
 
     duration = time.monotonic() - start
@@ -356,7 +372,9 @@ def invoke_claude(
     parsed_session_id = parsed["session_id"] or session_id
 
     # Save session NDJSON file
-    session_file = _save_session_file(proc.stdout, caller, parsed_session_id, start_wall)
+    session_file = _save_session_file(
+        proc.stdout, caller, parsed_session_id, start_wall
+    )
 
     # Combine stderr with errors from result event (stream-json puts errors
     # in the result event's "errors" array, not in stderr)
@@ -435,15 +453,35 @@ Notes:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("prompt", help="The prompt to send to Claude")
-    parser.add_argument("--caller", default="cli", help="Caller identifier for logs (default: cli)")
-    parser.add_argument("--session", dest="session_id", metavar="ID", help="Session ID to resume")
+    parser.add_argument(
+        "--caller", default="cli", help="Caller identifier for logs (default: cli)"
+    )
+    parser.add_argument(
+        "--session", dest="session_id", metavar="ID", help="Session ID to resume"
+    )
     parser.add_argument("--model", help="Model to use (default: Claude Code default)")
-    parser.add_argument("--allowed-tools", metavar="TOOLS", help="Comma-separated list of tools to allow")
-    parser.add_argument("--append-system-prompt", metavar="TEXT", help="Additional system prompt (appended)")
-    parser.add_argument("--no-skip-permissions", action="store_true", help="Require permission prompts")
-    parser.add_argument("--max-turns", type=int, metavar="N", help="Max agentic iterations")
-    parser.add_argument("--max-budget-usd", type=float, metavar="USD", help="Cost limit in USD")
-    parser.add_argument("--timeout", type=float, metavar="SECS", help="Subprocess timeout in seconds")
+    parser.add_argument(
+        "--allowed-tools",
+        metavar="TOOLS",
+        help="Comma-separated list of tools to allow",
+    )
+    parser.add_argument(
+        "--append-system-prompt",
+        metavar="TEXT",
+        help="Additional system prompt (appended)",
+    )
+    parser.add_argument(
+        "--no-skip-permissions", action="store_true", help="Require permission prompts"
+    )
+    parser.add_argument(
+        "--max-turns", type=int, metavar="N", help="Max agentic iterations"
+    )
+    parser.add_argument(
+        "--max-budget-usd", type=float, metavar="USD", help="Cost limit in USD"
+    )
+    parser.add_argument(
+        "--timeout", type=float, metavar="SECS", help="Subprocess timeout in seconds"
+    )
 
     args = parser.parse_args()
 
@@ -461,15 +499,19 @@ Notes:
     )
 
     # Print JSON result to stdout so callers can capture it
-    print(json.dumps({
-        "result": result.result,
-        "session_id": result.session_id,
-        "exit_code": result.exit_code,
-        "duration": result.duration,
-        "usage": result.usage,
-        "model": result.model,
-        "stderr": result.stderr,
-    }))
+    print(
+        json.dumps(
+            {
+                "result": result.result,
+                "session_id": result.session_id,
+                "exit_code": result.exit_code,
+                "duration": result.duration,
+                "usage": result.usage,
+                "model": result.model,
+                "stderr": result.stderr,
+            }
+        )
+    )
 
     raise SystemExit(result.exit_code)
 

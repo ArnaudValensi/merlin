@@ -16,11 +16,15 @@ def _get_current_remote() -> str:
     try:
         result = subprocess.run(
             ["git", "remote", "get-url", "origin"],
-            cwd=str(mem), capture_output=True, text=True, timeout=5,
+            cwd=str(mem),
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return result.stdout.strip() if result.returncode == 0 else ""
     except Exception:
         return ""
+
 
 ICON_NOTES = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><rect x="6" y="2" width="16" height="20" rx="2"/><path d="M10 8h8"/><path d="M10 12h8"/><path d="M10 16h8"/></svg>'
 
@@ -57,7 +61,7 @@ EXTENSION_META = {
             "required": False,
             "type": "text",
             "depends_on": "NOTES_GIT_SYNC",
-            "placeholder_fn": lambda: (r if (r := _get_current_remote()) else ""),
+            "placeholder_fn": lambda: r if (r := _get_current_remote()) else "",
             "help": "Remote repository URL (e.g. git@github.com:user/notes.git). Leave empty for local-only versioning.",
         },
         {
@@ -89,4 +93,11 @@ async def start():
     await start_sync(paths.notes_dir())
 
 
-__all__ = ["router", "NOTES_STATIC_DIR", "NAV_ITEMS", "EXTENSION_META", "start"]
+__all__ = [
+    "router",
+    "NOTES_STATIC_DIR",
+    "NAV_ITEMS",
+    "EXTENSION_META",
+    "start",
+    "stop_sync",
+]

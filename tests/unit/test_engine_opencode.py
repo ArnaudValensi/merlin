@@ -3,7 +3,6 @@
 import subprocess
 from unittest import mock
 
-import pytest
 
 from lib.engine import AgentResult, get_engine
 from lib.engines.opencode import OpenCodeEngine, _format_history
@@ -156,7 +155,9 @@ class TestHistoryFormatting:
 class TestInvokeResult:
     def test_success(self):
         engine = OpenCodeEngine()
-        with mock.patch("subprocess.run", return_value=_mock_proc(stdout="The answer is 42")):
+        with mock.patch(
+            "subprocess.run", return_value=_mock_proc(stdout="The answer is 42")
+        ):
             r = engine.invoke("question")
         assert isinstance(r, AgentResult)
         assert r.content == "The answer is 42"
@@ -178,7 +179,9 @@ class TestErrorHandling:
 
     def test_timeout(self):
         engine = OpenCodeEngine()
-        with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired("opencode", 10)):
+        with mock.patch(
+            "subprocess.run", side_effect=subprocess.TimeoutExpired("opencode", 10)
+        ):
             r = engine.invoke("hello", timeout=10)
         assert r.exit_code == 124
         assert "timed out" in r.stderr

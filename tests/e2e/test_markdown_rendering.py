@@ -37,7 +37,8 @@ def test_files(tmp_path_factory):
     root = tmp_path_factory.mktemp("mdtest")
 
     # Main test markdown
-    (root / "test.md").write_text(textwrap.dedent("""\
+    (root / "test.md").write_text(
+        textwrap.dedent("""\
         # Test Heading
 
         Paragraph with **bold**, *italic*, and `inline code`.
@@ -82,7 +83,8 @@ def test_files(tmp_path_factory):
         ### Anchor Target
 
         Content below anchor.
-    """))
+    """)
+    )
 
     # Linked markdown file
     (root / "other.md").write_text("# Other\n\n[Back](test.md)\n")
@@ -96,7 +98,7 @@ def test_files(tmp_path_factory):
         '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50">'
         '<rect width="100" height="50" fill="#222"/>'
         '<text x="50" y="30" fill="#eee" text-anchor="middle">SVG</text>'
-        '</svg>'
+        "</svg>"
     )
 
     # Empty markdown
@@ -106,15 +108,18 @@ def test_files(tmp_path_factory):
     (root / "app.py").write_text("print('hello')\n")
 
     # Mermaid file (direct viewing)
-    (root / "diagram.mmd").write_text(textwrap.dedent("""\
+    (root / "diagram.mmd").write_text(
+        textwrap.dedent("""\
         graph TD
             A[Start] --> B{Decision}
             B -->|Yes| C[OK]
             B -->|No| D[End]
-    """))
+    """)
+    )
 
     # Markdown with mermaid code block
-    (root / "with-mermaid.md").write_text(textwrap.dedent("""\
+    (root / "with-mermaid.md").write_text(
+        textwrap.dedent("""\
         # Mermaid Test
 
         Here is a diagram:
@@ -126,23 +131,28 @@ def test_files(tmp_path_factory):
         ```
 
         And some text after.
-    """))
+    """)
+    )
 
     # Markdown with embedded .mmd file (image syntax)
-    (root / "with-mmd-embed.md").write_text(textwrap.dedent("""\
+    (root / "with-mmd-embed.md").write_text(
+        textwrap.dedent("""\
         # Embedded Mermaid
 
         ![flow diagram](diagram.mmd)
 
         Done.
-    """))
+    """)
+    )
 
     # Markdown with linked .mmd file (link syntax — should NOT render inline)
-    (root / "with-mmd-link.md").write_text(textwrap.dedent("""\
+    (root / "with-mmd-link.md").write_text(
+        textwrap.dedent("""\
         # Linked Mermaid
 
         See the [diagram](diagram.mmd) for details.
-    """))
+    """)
+    )
 
     return root
 
@@ -158,7 +168,9 @@ def server(test_files):
     env["DISCORD_CHANNEL_IDS"] = ""
 
     # Start from the merlin project root
-    merlin_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    merlin_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
     # Don't inherit MERLIN_HOME from test isolation — the subprocess needs
     # the real ~/.merlin/ (or no MERLIN_HOME) to find config.env, extensions, etc.
     env.pop("MERLIN_HOME", None)
@@ -176,6 +188,7 @@ def server(test_files):
     for _ in range(30):
         try:
             import urllib.request
+
             urllib.request.urlopen(f"{url}/api/files/browse?path=/tmp", timeout=1)
             break
         except Exception:
@@ -287,8 +300,9 @@ class TestMarkdownRendering:
         assert code is not None
         # highlight.js adds a class when highlighting
         code_class = code.get_attribute("class") or ""
-        assert "hljs" in code_class or "language-" in code_class, \
+        assert "hljs" in code_class or "language-" in code_class, (
             f"Expected highlight.js classes, got: {code_class}"
+        )
 
         page.close()
 
@@ -491,7 +505,10 @@ class TestMarkdownImages:
 
         # Create a temp file with absolute URL image
         import tempfile
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", dir=str(test_files), delete=False) as f:
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", dir=str(test_files), delete=False
+        ) as f:
             f.write("![ext](https://example.com/img.png)\n")
             tmp_path = f.name
 
@@ -582,7 +599,9 @@ class TestMarkdownToggle:
         time.sleep(0.5)
 
         # Wrap should be hidden again
-        assert not wrap.is_visible(), "Wrap should be hidden after returning to rendered mode"
+        assert not wrap.is_visible(), (
+            "Wrap should be hidden after returning to rendered mode"
+        )
 
         page.close()
 
@@ -596,8 +615,8 @@ class TestMarkdownToggle:
         time.sleep(0.5)
         py_table = page.query_selector(".file-table")
         assert py_table is not None
-        py_line_nos = page.query_selector_all(".file-line-no")
-        py_line_contents = page.query_selector_all(".file-line-content code")
+        page.query_selector_all(".file-line-no")
+        page.query_selector_all(".file-line-content code")
 
         # Get the raw view structure for .md file
         page.goto(f"{url}/files{test_files}/test.md", wait_until="networkidle")
@@ -682,7 +701,9 @@ class TestMermaidEmbedded:
         """![](file.mmd) should fetch and render inline as SVG."""
         ctx, url = browser_context
         page = ctx.new_page()
-        page.goto(f"{url}/files{test_files}/with-mmd-embed.md", wait_until="networkidle")
+        page.goto(
+            f"{url}/files{test_files}/with-mmd-embed.md", wait_until="networkidle"
+        )
         time.sleep(3)
 
         diagram = page.query_selector(".mermaid-diagram")

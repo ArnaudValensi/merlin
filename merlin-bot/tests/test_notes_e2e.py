@@ -5,7 +5,6 @@ remember.py, kb_add.py, notes_search.py working together.
 """
 
 import textwrap
-from pathlib import Path
 
 import pytest
 
@@ -23,7 +22,8 @@ def notes_env(tmp_path, monkeypatch):
     logs_dir.mkdir()
 
     # Create _index.md
-    (kb_dir / "_index.md").write_text(textwrap.dedent("""\
+    (kb_dir / "_index.md").write_text(
+        textwrap.dedent("""\
         ---
         title: Knowledge Base Index
         created: 2026-01-01
@@ -32,11 +32,13 @@ def notes_env(tmp_path, monkeypatch):
         ---
 
         # Knowledge Base
-    """))
+    """)
+    )
 
     # Create user.md
     user_md = tmp_path / "user.md"
-    user_md.write_text(textwrap.dedent("""\
+    user_md.write_text(
+        textwrap.dedent("""\
         # User Memory
 
         Facts about the user that Merlin should always remember.
@@ -56,17 +58,20 @@ def notes_env(tmp_path, monkeypatch):
         ## Notes
 
         (Add important facts here as they come up in conversation)
-    """))
+    """)
+    )
 
     # Create a log file
-    (logs_dir / "2026-02-05.md").write_text(textwrap.dedent("""\
+    (logs_dir / "2026-02-05.md").write_text(
+        textwrap.dedent("""\
         # Daily Log — 2026-02-05
 
         ## 10:00 — Session notes
 
         - Discussed Docker container networking
         - User interested in Zettelkasten method
-    """))
+    """)
+    )
 
     # Patch all modules
     monkeypatch.setattr(notes_search, "NOTES_DIR", tmp_path)
@@ -88,13 +93,17 @@ class TestFullFlow:
         from notes_search import cmd_kb
 
         # Add a KB entry
-        cmd_add(argparse.Namespace(
-            title="Docker Networking",
-            tags="devops, docker, networking",
-            summary="How container networking works",
-            content="Docker uses bridge networks by default. Custom networks isolate services.",
-            filename=None, dry_run=False, force=False,
-        ))
+        cmd_add(
+            argparse.Namespace(
+                title="Docker Networking",
+                tags="devops, docker, networking",
+                summary="How container networking works",
+                content="Docker uses bridge networks by default. Custom networks isolate services.",
+                filename=None,
+                dry_run=False,
+                force=False,
+            )
+        )
         capsys.readouterr()  # clear
 
         # Search should find it by keyword
@@ -115,22 +124,30 @@ class TestFullFlow:
         kb_dir = notes_env / "kb"
 
         # Create first entry
-        cmd_add(argparse.Namespace(
-            title="Python Testing",
-            tags="python, testing",
-            summary="Python test frameworks",
-            content="Use pytest for testing. Fixtures for setup. Monkeypatch for mocking.",
-            filename=None, dry_run=False, force=False,
-        ))
+        cmd_add(
+            argparse.Namespace(
+                title="Python Testing",
+                tags="python, testing",
+                summary="Python test frameworks",
+                content="Use pytest for testing. Fixtures for setup. Monkeypatch for mocking.",
+                filename=None,
+                dry_run=False,
+                force=False,
+            )
+        )
 
         # Create second entry with overlapping tags
-        cmd_add(argparse.Namespace(
-            title="Pytest Fixtures",
-            tags="python, testing, pytest",
-            summary="How to use pytest fixtures",
-            content="Fixtures provide setup and teardown. Use tmp_path for temp files. Monkeypatch for patching.",
-            filename=None, dry_run=False, force=False,
-        ))
+        cmd_add(
+            argparse.Namespace(
+                title="Pytest Fixtures",
+                tags="python, testing, pytest",
+                summary="How to use pytest fixtures",
+                content="Fixtures provide setup and teardown. Use tmp_path for temp files. Monkeypatch for patching.",
+                filename=None,
+                dry_run=False,
+                force=False,
+            )
+        )
 
         # Verify bidirectional links
         fm1 = parse_frontmatter(kb_dir / "python-testing.md")
@@ -159,10 +176,15 @@ class TestFullFlow:
         import argparse
         from notes_search import cmd_log
 
-        cmd_log(argparse.Namespace(
-            keyword="Docker", date_from=None, date_to=None,
-            last=None, discord=False,
-        ))
+        cmd_log(
+            argparse.Namespace(
+                keyword="Docker",
+                date_from=None,
+                date_to=None,
+                last=None,
+                discord=False,
+            )
+        )
         output = capsys.readouterr().out
         assert "2026-02-05.md" in output
 
@@ -172,16 +194,28 @@ class TestFullFlow:
         from kb_add import cmd_add
         from notes_search import cmd_tags
 
-        cmd_add(argparse.Namespace(
-            title="Music Gear", tags="music, shopping",
-            summary="Audio equipment notes", content="Looking for a receiver.",
-            filename=None, dry_run=False, force=False,
-        ))
-        cmd_add(argparse.Namespace(
-            title="Travel Plans", tags="travel, personal",
-            summary="Upcoming trips", content="Planning a trip.",
-            filename=None, dry_run=False, force=False,
-        ))
+        cmd_add(
+            argparse.Namespace(
+                title="Music Gear",
+                tags="music, shopping",
+                summary="Audio equipment notes",
+                content="Looking for a receiver.",
+                filename=None,
+                dry_run=False,
+                force=False,
+            )
+        )
+        cmd_add(
+            argparse.Namespace(
+                title="Travel Plans",
+                tags="travel, personal",
+                summary="Upcoming trips",
+                content="Planning a trip.",
+                filename=None,
+                dry_run=False,
+                force=False,
+            )
+        )
         capsys.readouterr()  # clear
 
         cmd_tags(argparse.Namespace())
@@ -196,16 +230,28 @@ class TestFullFlow:
         import argparse
         from kb_add import cmd_add
 
-        cmd_add(argparse.Namespace(
-            title="Unique Topic", tags="test",
-            summary="A topic", content="Some content.",
-            filename=None, dry_run=False, force=False,
-        ))
+        cmd_add(
+            argparse.Namespace(
+                title="Unique Topic",
+                tags="test",
+                summary="A topic",
+                content="Some content.",
+                filename=None,
+                dry_run=False,
+                force=False,
+            )
+        )
 
         # Attempting to create same title should fail
         with pytest.raises(SystemExit):
-            cmd_add(argparse.Namespace(
-                title="Unique Topic", tags="test",
-                summary="Duplicate", content="Different content.",
-                filename=None, dry_run=False, force=False,
-            ))
+            cmd_add(
+                argparse.Namespace(
+                    title="Unique Topic",
+                    tags="test",
+                    summary="Duplicate",
+                    content="Different content.",
+                    filename=None,
+                    dry_run=False,
+                    force=False,
+                )
+            )

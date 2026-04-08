@@ -40,7 +40,11 @@ MERLIN_APP_STATIC_DIR = None
 # Nav items for the sidebar
 _SVG = 'width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'
 MERLIN_APP_NAV_ITEMS = [
-    {"url": "/bot", "icon": f'<svg {_SVG}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>', "label": "Bot"},
+    {
+        "url": "/bot",
+        "icon": f'<svg {_SVG}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
+        "label": "Bot",
+    },
 ]
 
 
@@ -90,7 +94,7 @@ def _validate_session_filename(filename: str) -> None:
     """Validate session filename to prevent path traversal."""
     if "/" in filename or "\\" in filename or ".." in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
-    if not re.match(r'^[\w\-]+\.jsonl$', filename):
+    if not re.match(r"^[\w\-]+\.jsonl$", filename):
         raise HTTPException(status_code=400, detail="Invalid filename format")
 
 
@@ -109,17 +113,23 @@ def _parse_ts(event: dict) -> datetime | None:
 
 @merlin_app_router.get("/bot", response_class=HTMLResponse)
 def bot_page(request: Request):
-    return templates.TemplateResponse("bot.html", {"request": request, "active_tab": "overview"})
+    return templates.TemplateResponse(
+        "bot.html", {"request": request, "active_tab": "overview"}
+    )
 
 
 @merlin_app_router.get("/bot/performance", response_class=HTMLResponse)
 def bot_performance_page(request: Request):
-    return templates.TemplateResponse("bot.html", {"request": request, "active_tab": "performance"})
+    return templates.TemplateResponse(
+        "bot.html", {"request": request, "active_tab": "performance"}
+    )
 
 
 @merlin_app_router.get("/bot/logs", response_class=HTMLResponse)
 def bot_logs_page(request: Request):
-    return templates.TemplateResponse("bot.html", {"request": request, "active_tab": "logs"})
+    return templates.TemplateResponse(
+        "bot.html", {"request": request, "active_tab": "logs"}
+    )
 
 
 @merlin_app_router.get("/session/{filename}", response_class=HTMLResponse)
@@ -137,12 +147,15 @@ def session_page(request: Request, filename: str):
     }
     back_url, back_label = back_links.get(back_param, back_links["bot"])
 
-    return templates.TemplateResponse("session.html", {
-        "request": request,
-        "filename": filename,
-        "back_url": back_url,
-        "back_label": back_label,
-    })
+    return templates.TemplateResponse(
+        "session.html",
+        {
+            "request": request,
+            "filename": filename,
+            "back_url": back_url,
+            "back_label": back_label,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +170,8 @@ def api_health():
     events = read_events()
     invocations = [e for e in events if e["type"] == "invocation"]
     errors_24h = [
-        e for e in events
+        e
+        for e in events
         if e.get("exit_code", 0) != 0 or e.get("event") == "error"
         if _parse_ts(e) and (now - _parse_ts(e)).total_seconds() < 86400
         if not e.get("caller", "").startswith("cron-")
@@ -166,11 +180,11 @@ def api_health():
 
     # Filter to Discord-only invocations (exclude cron callers)
     discord_invocations = [
-        e for e in invocations
-        if not e.get("caller", "").startswith("cron-")
+        e for e in invocations if not e.get("caller", "").startswith("cron-")
     ]
     today_invocations = [
-        e for e in discord_invocations
+        e
+        for e in discord_invocations
         if _parse_ts(e) and _parse_ts(e).date() == now.date()
     ]
 
@@ -197,6 +211,7 @@ def api_health():
     # Tunnel status
     try:
         from tunnel import get_public_url, get_status
+
         tunnel_url = get_public_url()
         tunnel_status = get_status()
     except ImportError:
@@ -236,7 +251,9 @@ def api_invocations(
 
 @merlin_app_router.get("/api/events")
 def api_events(
-    event_type: str | None = Query(None, alias="type", description="Filter by event type"),
+    event_type: str | None = Query(
+        None, alias="type", description="Filter by event type"
+    ),
     since: str | None = Query(None, description="ISO 8601 start time"),
     until: str | None = Query(None, description="ISO 8601 end time"),
     status: str | None = Query(None, description="Filter: success, error, all"),
@@ -248,9 +265,15 @@ def api_events(
     events = read_events(event_type=event_type, since=since_dt, until=until_dt)
 
     if status == "error":
-        events = [e for e in events if e.get("exit_code", 0) != 0 or e.get("event") == "error"]
+        events = [
+            e for e in events if e.get("exit_code", 0) != 0 or e.get("event") == "error"
+        ]
     elif status == "success":
-        events = [e for e in events if e.get("exit_code", 0) == 0 and e.get("event") != "error"]
+        events = [
+            e
+            for e in events
+            if e.get("exit_code", 0) == 0 and e.get("event") != "error"
+        ]
 
     return events
 

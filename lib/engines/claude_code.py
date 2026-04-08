@@ -160,8 +160,7 @@ class ClaudeCodeEngine(AgentEngine):
             history_text = _format_history(history)
             if history_text:
                 full_prompt = (
-                    f"[Conversation history]\n{history_text}\n\n"
-                    f"[New message]\n{prompt}"
+                    f"[Conversation history]\n{history_text}\n\n[New message]\n{prompt}"
                 )
 
         cmd.append(full_prompt)
