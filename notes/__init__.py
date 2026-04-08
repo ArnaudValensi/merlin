@@ -30,7 +30,7 @@ NAV_ITEMS = [
 
 EXTENSION_META = {
     "name": "Notes",
-    "description": "Markdown notes, knowledge base, and user context",
+    "description": "A knowledge base that grows with you — write notes, and let your AI agents curate, connect, and enrich them over time.",
     "icon": ICON_NOTES,
     "config_fields": [
         {
