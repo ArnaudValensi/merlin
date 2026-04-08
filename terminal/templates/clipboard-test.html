@@ -1,54 +1,74 @@
 <!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Clipboard Diagnostic</title>
 <style>
-  body { background: #1e1e2e; color: #cdd6f4; font-family: monospace; padding: 20px; }
-  h2 { color: #89b4fa; margin-top: 24px; }
-  .log { background: #181825; border: 1px solid #313244; padding: 12px; margin: 8px 0;
-         border-radius: 6px; white-space: pre-wrap; font-size: 13px; max-height: 300px; overflow-y: auto; }
+  * { box-sizing: border-box; }
+  body { background: #1e1e2e; color: #cdd6f4; font-family: monospace; padding: 16px; margin: 0; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { color: #89b4fa; margin-top: 24px; font-size: 15px; }
+  p { margin: 4px 0 8px; font-size: 13px; color: #a6adc8; }
+  .log { background: #181825; border: 1px solid #313244; padding: 10px; margin: 8px 0;
+         border-radius: 6px; white-space: pre-wrap; font-size: 12px; max-height: 350px; overflow-y: auto; }
   button { background: #313244; color: #cdd6f4; border: 1px solid #45475a; padding: 8px 16px;
-           border-radius: 4px; cursor: pointer; margin: 4px; font-family: monospace; }
+           border-radius: 4px; cursor: pointer; margin: 4px; font-family: monospace; font-size: 13px; }
   button:hover { background: #45475a; }
-  textarea { background: #181825; color: #cdd6f4; border: 1px solid #313244; padding: 8px;
-             width: 100%; height: 60px; font-family: monospace; border-radius: 4px; }
+  button:active { background: #585b70; }
+  button.primary { background: #89b4fa; color: #1e1e2e; border-color: #89b4fa; font-weight: bold; }
+  button.primary:hover { background: #74c7ec; }
   .ok { color: #a6e3a1; }
   .err { color: #f38ba8; }
   .warn { color: #fab387; }
-  #log { max-height: 600px; }
+  .skip { color: #6c7086; }
+  .path { color: #cba6f7; font-weight: bold; }
+
+  /* Capabilities grid */
+  .caps { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; font-size: 13px;
+          background: #181825; border: 1px solid #313244; padding: 10px; border-radius: 6px; margin: 8px 0; }
+  .caps .label { color: #a6adc8; }
+
+  /* Paste target */
+  .paste-area { background: #181825; border: 2px dashed #45475a; border-radius: 6px;
+                padding: 16px; text-align: center; color: #6c7086; cursor: pointer;
+                font-size: 13px; margin: 8px 0; transition: border-color 0.15s; }
+  .paste-area:focus { outline: none; border-color: #89b4fa; color: #cdd6f4; }
+
+  @media (max-width: 600px) {
+    body { padding: 12px; }
+    .caps { grid-template-columns: 1fr; }
+  }
 </style>
 </head><body>
 
-<h1>Clipboard Diagnostic — Brave / Wayland</h1>
-<p>Open browser console (F12) for extra details. All results are logged below.</p>
+<h1>Clipboard Diagnostic</h1>
 
-<h2>1. Paste Event Test (Ctrl+V here)</h2>
-<p>Click in the box below, then press Ctrl+V. This shows exactly what the browser gives us.</p>
-<textarea id="paste-target" placeholder="Click here and press Ctrl+V..."></textarea>
-<div id="paste-log" class="log">Waiting for paste event...</div>
+<h2>1. Browser Capabilities</h2>
+<div class="caps" id="caps"></div>
 
-<h2>2. Ctrl+V Async API Test (proposed fix)</h2>
-<p>Click in the box below, then press Ctrl+V. This tests whether <code>navigator.clipboard.readText()</code>
-and <code>navigator.clipboard.read()</code> work from a Ctrl+V keydown — which is what the fix would do.</p>
-<textarea id="ctrlv-async-target" placeholder="Click here and press Ctrl+V to test async API from keydown..."></textarea>
-<div id="ctrlv-log" class="log">Waiting for Ctrl+V...</div>
+<h2>2. handlePaste() Trace</h2>
+<p>Runs the exact same logic as the terminal's paste handler. Shows which code path is taken.</p>
+<button class="primary" id="btn-trace">Tap to run handlePaste() trace</button>
+<div class="paste-area" id="ctrlv-area" tabindex="0">Or click here and press Ctrl+V</div>
+<div id="trace-log" class="log">Waiting...</div>
 
-<h2>3. Async Clipboard API Tests</h2>
-<p>These buttons test the APIs we use. Each click is a user gesture.</p>
-<button id="btn-readtext">navigator.clipboard.readText()</button>
-<button id="btn-read">navigator.clipboard.read()</button>
-<button id="btn-writetext">navigator.clipboard.writeText("test123")</button>
-<button id="btn-perm">permissions.query('clipboard-read')</button>
+<h2>3. Raw API Tests</h2>
+<p>Test individual clipboard APIs directly.</p>
+<button id="btn-readtext">readText()</button>
+<button id="btn-read">read()</button>
+<button id="btn-writetext">writeText("test")</button>
+<button id="btn-perm">permissions</button>
 <div id="api-log" class="log">Click a button...</div>
 
-<h2>4. Combined Log</h2>
-<div id="log" class="log"></div>
+<h2>4. Native Paste Event</h2>
+<p>Click in the box, then Ctrl+V. Shows raw clipboardData from the browser paste event.</p>
+<div class="paste-area" id="paste-target" tabindex="0">Click here and press Ctrl+V</div>
+<div id="paste-log" class="log">Waiting for paste event...</div>
 
 <script>
-const pasteLog = document.getElementById('paste-log');
-const apiLog = document.getElementById('api-log');
-const log = document.getElementById('log');
-
+// ---------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------
 function ts() { return new Date().toISOString().slice(11, 23); }
 
 function addLog(target, cls, msg) {
@@ -56,129 +76,165 @@ function addLog(target, cls, msg) {
   line.className = cls;
   line.textContent = `[${ts()}] ${msg}`;
   target.prepend(line);
-  // Also to combined log
-  const line2 = line.cloneNode(true);
-  log.prepend(line2);
   console.log(msg);
 }
 
-// ---------------------------------------------------------------
-// 1. Paste event — log EVERYTHING about clipboardData
-// ---------------------------------------------------------------
-document.getElementById('paste-target').addEventListener('paste', (e) => {
-  addLog(pasteLog, '', '--- PASTE EVENT ---');
-
-  // clipboardData existence
-  if (!e.clipboardData) {
-    addLog(pasteLog, 'err', 'e.clipboardData is NULL');
-    return;
-  }
-
-  // getData for common types
-  const textPlain = e.clipboardData.getData('text/plain');
-  const textHtml = e.clipboardData.getData('text/html');
-  const textUri = e.clipboardData.getData('text/uri-list');
-
-  addLog(pasteLog, textPlain ? 'ok' : 'err',
-    `getData('text/plain'): ${textPlain ? JSON.stringify(textPlain.slice(0, 200)) : 'EMPTY'} (length: ${textPlain.length})`);
-  addLog(pasteLog, textHtml ? 'ok' : 'warn',
-    `getData('text/html'): ${textHtml ? JSON.stringify(textHtml.slice(0, 200)) : 'empty'} (length: ${textHtml.length})`);
-
-  // types array
-  addLog(pasteLog, '', `clipboardData.types: ${JSON.stringify(Array.from(e.clipboardData.types))}`);
-
-  // items
-  const items = e.clipboardData.items;
-  if (!items) {
-    addLog(pasteLog, 'err', 'clipboardData.items is NULL');
-  } else {
-    addLog(pasteLog, '', `clipboardData.items.length: ${items.length}`);
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      addLog(pasteLog, item.type.startsWith('image/') ? 'warn' : '',
-        `  item[${i}]: kind=${item.kind}, type=${item.type}`);
-      if (item.kind === 'file') {
-        const file = item.getAsFile();
-        addLog(pasteLog, 'warn',
-          `    getAsFile(): ${file ? `name=${file.name}, size=${file.size}, type=${file.type}` : 'NULL'}`);
-      }
-      if (item.kind === 'string') {
-        item.getAsString((s) => {
-          addLog(pasteLog, '',
-            `    getAsString(): ${JSON.stringify(s.slice(0, 200))} (length: ${s.length})`);
-        });
-      }
-    }
-  }
-
-  // files
-  if (e.clipboardData.files && e.clipboardData.files.length) {
-    addLog(pasteLog, 'warn', `clipboardData.files.length: ${e.clipboardData.files.length}`);
-    for (let i = 0; i < e.clipboardData.files.length; i++) {
-      const f = e.clipboardData.files[i];
-      addLog(pasteLog, 'warn', `  file[${i}]: name=${f.name}, size=${f.size}, type=${f.type}`);
-    }
-  }
-});
-
-// Also listen on document to see if xterm.js would get the same data
-document.addEventListener('paste', (e) => {
-  if (e.target.id === 'paste-target') return; // already handled above
-  addLog(pasteLog, 'warn', '--- PASTE on document (not textarea) ---');
-  const text = e.clipboardData?.getData('text/plain');
-  addLog(pasteLog, text ? 'ok' : 'err', `document paste getData('text/plain'): ${text ? JSON.stringify(text.slice(0, 100)) : 'EMPTY'}`);
-});
+function cap(label, value, ok) {
+  const el = document.getElementById('caps');
+  const row = document.createElement('div');
+  row.innerHTML = `<span class="label">${label}:</span> <span class="${ok ? 'ok' : 'err'}">${value}</span>`;
+  el.appendChild(row);
+}
 
 // ---------------------------------------------------------------
-// 2. Ctrl+V → async clipboard API (simulates proposed fix)
+// 1. Browser capabilities (auto-detect)
 // ---------------------------------------------------------------
-const ctrlvLog = document.getElementById('ctrlv-log');
+const cb = navigator.clipboard;
+const touch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
-document.getElementById('ctrlv-async-target').addEventListener('keydown', async (e) => {
-  if (!(e.ctrlKey && !e.shiftKey && e.code === 'KeyV')) return;
-  e.preventDefault(); // prevent native paste — this is what the fix would do
-  addLog(ctrlvLog, '', '--- Ctrl+V keydown: testing async clipboard API ---');
+// Parse browser name from UA
+function getBrowser() {
+  const ua = navigator.userAgent;
+  if (ua.includes('CriOS')) return 'Chrome (iOS)';
+  if (ua.includes('FxiOS')) return 'Firefox (iOS)';
+  if (ua.includes('Brave')) return 'Brave';
+  if (ua.includes('Edg/')) return 'Edge';
+  if (ua.includes('OPR/')) return 'Opera';
+  if (ua.includes('Chrome/')) return 'Chrome';
+  if (ua.includes('Firefox/')) return 'Firefox';
+  if (ua.includes('Safari/') && !ua.includes('Chrome')) return 'Safari';
+  return 'Unknown';
+}
 
-  // Test 1: readText()
+function getPlatform() {
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/.test(ua)) return 'iOS';
+  if (/Android/.test(ua)) return 'Android';
+  if (/Mac/.test(ua)) return 'macOS';
+  if (/Windows/.test(ua)) return 'Windows';
+  if (/Linux/.test(ua)) return 'Linux';
+  return navigator.platform || 'Unknown';
+}
+
+cap('Browser', getBrowser(), true);
+cap('Platform', getPlatform(), true);
+cap('Touch device', touch ? 'Yes' : 'No', true);
+cap('clipboard API', cb ? 'Yes' : 'No', !!cb);
+cap('read()', cb?.read ? 'Yes' : 'No', !!cb?.read);
+cap('readText()', cb?.readText ? 'Yes' : 'No', !!cb?.readText);
+cap('writeText()', cb?.writeText ? 'Yes' : 'No', !!cb?.writeText);
+
+// Permissions (async)
+(async () => {
   try {
-    const text = await navigator.clipboard.readText();
-    addLog(ctrlvLog, text ? 'ok' : 'warn',
-      `readText(): ${text ? JSON.stringify(text.slice(0, 200)) + ' (length: ' + text.length + ')' : 'EMPTY string'}`);
-  } catch (err) {
-    addLog(ctrlvLog, 'err', `readText() FAILED: ${err.name}: ${err.message}`);
+    const s = await navigator.permissions.query({ name: 'clipboard-read' });
+    cap('Permission', s.state, s.state === 'granted');
+  } catch (_) {
+    cap('Permission', 'query unsupported', false);
   }
+})();
 
-  // Test 2: read() — this is how we get images
+// ---------------------------------------------------------------
+// 2. handlePaste() trace — mirrors terminal.html exactly
+// ---------------------------------------------------------------
+const traceLog = document.getElementById('trace-log');
+
+async function runTrace() {
+  traceLog.innerHTML = '';
+  addLog(traceLog, '', '=== handlePaste() trace ===');
+
+  // Step 1: try clipboard.read()
+  addLog(traceLog, '', '[1] clipboard.read()...');
   try {
-    const items = await navigator.clipboard.read();
-    addLog(ctrlvLog, 'ok', `read() OK: ${items.length} item(s)`);
-    for (let i = 0; i < items.length; i++) {
-      addLog(ctrlvLog, '', `  item[${i}].types: ${JSON.stringify(items[i].types)}`);
-      for (const t of items[i].types) {
+    const clipItems = await navigator.clipboard.read();
+    addLog(traceLog, 'ok', `    OK: ${clipItems.length} item(s)`);
+
+    // Step 2a: check for images
+    for (let i = 0; i < clipItems.length; i++) {
+      const item = clipItems[i];
+      addLog(traceLog, '', `    item[${i}].types: ${JSON.stringify(item.types)}`);
+      const imgType = item.types.find(t => t.startsWith('image/'));
+      if (imgType) {
         try {
-          const blob = await items[i].getType(t);
-          addLog(ctrlvLog, t.startsWith('image/') ? 'warn' : '',
-            `    ${t}: size=${blob.size}${t.startsWith('image/') ? ' ← IMAGE FOUND' : ''}`);
+          const blob = await item.getType(imgType);
+          addLog(traceLog, 'path', `    >>> IMAGE FOUND: ${imgType}, ${blob.size} bytes`);
+          addLog(traceLog, 'path', `    >>> Path taken: read() -> image`);
+          addLog(traceLog, 'ok', '=== Result: IMAGE would be uploaded ===');
         } catch (e) {
-          addLog(ctrlvLog, 'err', `    ${t}: getType failed: ${e.message}`);
+          addLog(traceLog, 'err', `    getType(${imgType}) failed: ${e.message}`);
+        }
+        return;
+      }
+    }
+
+    addLog(traceLog, 'skip', '    No image items found');
+
+    // Step 2b: check for text
+    for (let i = 0; i < clipItems.length; i++) {
+      const item = clipItems[i];
+      if (item.types.includes('text/plain')) {
+        try {
+          const blob = await item.getType('text/plain');
+          const text = await blob.text();
+          if (text) {
+            addLog(traceLog, 'path', `    >>> TEXT FOUND: ${JSON.stringify(text.slice(0, 100))} (${text.length} chars)`);
+            addLog(traceLog, 'path', `    >>> Path taken: read() -> text`);
+            addLog(traceLog, 'ok', '=== Result: TEXT would be pasted ===');
+            return;
+          }
+        } catch (e) {
+          addLog(traceLog, 'err', `    getType('text/plain') failed: ${e.message}`);
         }
       }
     }
+
+    addLog(traceLog, 'warn', '    read() returned items but no image or text found');
+
   } catch (err) {
-    addLog(ctrlvLog, 'err', `read() FAILED: ${err.name}: ${err.message}`);
+    addLog(traceLog, 'err', `    FAILED: ${err.name}: ${err.message}`);
+  }
+
+  // Step 3: fallback to readText()
+  addLog(traceLog, '', '[2] readText() fallback...');
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) {
+      addLog(traceLog, 'path', `    >>> TEXT FOUND: ${JSON.stringify(text.slice(0, 100))} (${text.length} chars)`);
+      addLog(traceLog, 'path', `    >>> Path taken: readText() fallback`);
+      addLog(traceLog, 'ok', '=== Result: TEXT would be pasted ===');
+      return;
+    }
+    addLog(traceLog, 'warn', '    readText() returned empty string');
+  } catch (err) {
+    addLog(traceLog, 'err', `    FAILED: ${err.name}: ${err.message}`);
+  }
+
+  // Step 4: all failed
+  addLog(traceLog, 'err', '[3] All clipboard APIs failed');
+  addLog(traceLog, 'err', '=== Result: BLOCKED (would show "Clipboard blocked") ===');
+}
+
+document.getElementById('btn-trace').addEventListener('click', runTrace);
+
+document.getElementById('ctrlv-area').addEventListener('keydown', (e) => {
+  if (e.ctrlKey && !e.shiftKey && e.code === 'KeyV') {
+    e.preventDefault();
+    runTrace();
   }
 });
 
 // ---------------------------------------------------------------
-// 3. Async API tests (button clicks)
+// 3. Raw API tests
 // ---------------------------------------------------------------
+const apiLog = document.getElementById('api-log');
+
 document.getElementById('btn-readtext').addEventListener('click', async () => {
   addLog(apiLog, '', '--- readText() ---');
   try {
     const text = await navigator.clipboard.readText();
-    addLog(apiLog, 'ok', `readText() OK: ${JSON.stringify(text.slice(0, 200))} (length: ${text.length})`);
+    addLog(apiLog, 'ok', `OK: ${JSON.stringify(text.slice(0, 200))} (length: ${text.length})`);
   } catch (err) {
-    addLog(apiLog, 'err', `readText() FAILED: ${err.name}: ${err.message}`);
+    addLog(apiLog, 'err', `FAILED: ${err.name}: ${err.message}`);
   }
 });
 
@@ -186,56 +242,84 @@ document.getElementById('btn-read').addEventListener('click', async () => {
   addLog(apiLog, '', '--- read() ---');
   try {
     const items = await navigator.clipboard.read();
-    addLog(apiLog, 'ok', `read() OK: ${items.length} items`);
+    addLog(apiLog, 'ok', `OK: ${items.length} items`);
     for (let i = 0; i < items.length; i++) {
       addLog(apiLog, '', `  item[${i}].types: ${JSON.stringify(items[i].types)}`);
       for (const t of items[i].types) {
         try {
           const blob = await items[i].getType(t);
-          addLog(apiLog, '', `    ${t}: size=${blob.size}`);
+          addLog(apiLog, t.startsWith('image/') ? 'warn' : '', `    ${t}: ${blob.size} bytes`);
         } catch (e) {
           addLog(apiLog, 'err', `    ${t}: getType failed: ${e.message}`);
         }
       }
     }
   } catch (err) {
-    addLog(apiLog, 'err', `read() FAILED: ${err.name}: ${err.message}`);
+    addLog(apiLog, 'err', `FAILED: ${err.name}: ${err.message}`);
   }
 });
 
 document.getElementById('btn-writetext').addEventListener('click', async () => {
-  addLog(apiLog, '', '--- writeText("test123") ---');
+  addLog(apiLog, '', '--- writeText("test") ---');
   try {
-    await navigator.clipboard.writeText('test123');
-    addLog(apiLog, 'ok', 'writeText() OK');
+    await navigator.clipboard.writeText('test');
+    addLog(apiLog, 'ok', 'OK');
   } catch (err) {
-    addLog(apiLog, 'err', `writeText() FAILED: ${err.name}: ${err.message}`);
+    addLog(apiLog, 'err', `FAILED: ${err.name}: ${err.message}`);
   }
 });
 
 document.getElementById('btn-perm').addEventListener('click', async () => {
   addLog(apiLog, '', '--- permissions.query ---');
-  try {
-    const status = await navigator.permissions.query({ name: 'clipboard-read' });
-    addLog(apiLog, status.state === 'granted' ? 'ok' : 'warn',
-      `clipboard-read: ${status.state}`);
-  } catch (err) {
-    addLog(apiLog, 'err', `clipboard-read query FAILED: ${err.message}`);
-  }
-  try {
-    const status = await navigator.permissions.query({ name: 'clipboard-write' });
-    addLog(apiLog, status.state === 'granted' ? 'ok' : 'warn',
-      `clipboard-write: ${status.state}`);
-  } catch (err) {
-    addLog(apiLog, 'err', `clipboard-write query FAILED: ${err.message}`);
+  for (const name of ['clipboard-read', 'clipboard-write']) {
+    try {
+      const s = await navigator.permissions.query({ name });
+      addLog(apiLog, s.state === 'granted' ? 'ok' : 'warn', `${name}: ${s.state}`);
+    } catch (err) {
+      addLog(apiLog, 'err', `${name}: query unsupported (${err.message})`);
+    }
   }
 });
 
-addLog(log, '', `User-Agent: ${navigator.userAgent}`);
-addLog(log, '', `Platform: ${navigator.platform}`);
-addLog(log, '', `Clipboard API available: ${!!navigator.clipboard}`);
-addLog(log, '', `readText available: ${!!navigator.clipboard?.readText}`);
-addLog(log, '', `writeText available: ${!!navigator.clipboard?.writeText}`);
-addLog(log, '', `read available: ${!!navigator.clipboard?.read}`);
+// ---------------------------------------------------------------
+// 4. Native paste event
+// ---------------------------------------------------------------
+const pasteLog = document.getElementById('paste-log');
+
+document.getElementById('paste-target').addEventListener('paste', (e) => {
+  addLog(pasteLog, '', '--- PASTE EVENT ---');
+  if (!e.clipboardData) {
+    addLog(pasteLog, 'err', 'clipboardData is NULL');
+    return;
+  }
+
+  const textPlain = e.clipboardData.getData('text/plain');
+  const textHtml = e.clipboardData.getData('text/html');
+
+  addLog(pasteLog, '', `types: ${JSON.stringify(Array.from(e.clipboardData.types))}`);
+  addLog(pasteLog, textPlain ? 'ok' : 'warn',
+    `text/plain: ${textPlain ? JSON.stringify(textPlain.slice(0, 200)) + ' (' + textPlain.length + ' chars)' : 'EMPTY'}`);
+  if (textHtml) addLog(pasteLog, '', `text/html: ${textHtml.length} chars`);
+
+  const items = e.clipboardData.items;
+  if (items) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      let detail = `item[${i}]: kind=${item.kind}, type=${item.type}`;
+      if (item.kind === 'file') {
+        const file = item.getAsFile();
+        if (file) detail += ` (${file.name}, ${file.size} bytes)`;
+      }
+      addLog(pasteLog, item.type.startsWith('image/') ? 'warn' : '', detail);
+    }
+  }
+});
+
+// Make paste-target focusable for keyboard paste
+document.getElementById('paste-target').addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.code === 'KeyV') {
+    // Let the native paste event fire
+  }
+});
 </script>
 </body></html>
