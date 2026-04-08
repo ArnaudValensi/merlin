@@ -743,20 +743,22 @@ document.addEventListener('DOMContentLoaded', () => {
             lastOsc52Text = text;
 
             // Try direct clipboard write (works on desktop with mouse gesture).
-            // On mobile (touch), skip writeText() entirely — calling it without
-            // a user gesture can leave the clipboard API in a broken state on
-            // iOS Brave (subsequent read/readText calls hang forever). Instead,
-            // sync to server and show the copy pill which provides the gesture.
-            if (isTouchDevice) {
-                syncClipboard(text);
-                const rect = container.getBoundingClientRect();
-                showCopyToast(rect.left + rect.width / 2, rect.top + 40);
-            } else if (navigator.clipboard && navigator.clipboard.writeText) {
+            // Only show "Copied!" if it actually succeeds — on mobile the
+            // write fails silently and the copy toast handles feedback instead.
+            if (navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(text).then(() => {
                     showCopiedFeedback();
                 }).catch(() => {
+                    // writeText failed — sync to server so merlin-clip paste works
                     syncClipboard(text);
-                    showStatusFlash('Copied — Ctrl+Shift+C for system', 'copied');
+                    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                        // Touch: show copy pill for user gesture
+                        const rect = container.getBoundingClientRect();
+                        showCopyToast(rect.left + rect.width / 2, rect.top + 40);
+                    } else {
+                        // Desktop: Ctrl+Shift+C provides the gesture browsers need
+                        showStatusFlash('Copied — Ctrl+Shift+C for system', 'copied');
+                    }
                 });
             }
         } catch (_) {}
