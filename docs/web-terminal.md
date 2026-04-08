@@ -113,15 +113,17 @@ Note: Ctrl+C is always SIGINT in a terminal. Ctrl+Shift+C/V is the standard Linu
 - **`merlin-clip copy`** / **`pbcopy`**: pipe text to copy — `echo "text" | pbcopy`
 
 **Paste (browser → container):**
-- **Ctrl+V** (desktop): native browser paste — text goes directly to terminal
-- **Ctrl+Shift+V** (desktop): paste via Clipboard API
-- **Long-press** (mobile): hold 500ms → blue "Paste" pill → tap to paste
+- **Ctrl+V** (desktop): paste text or image from OS clipboard
+- **Ctrl+Shift+V** (desktop): paste (alternative shortcut, same behavior)
+- **Long-press** (mobile): hold 500ms → blue "Paste" pill → tap to paste text or image
 - **Paste button**: clipboard icon in toolbar → reads clipboard and pastes
 - **Right-click** (desktop): right-click on terminal → pastes clipboard
 - **`merlin-clip paste`** / **`pbpaste`**: outputs last pasted text — for scripts and editors
 
+All paste paths use the same unified handler (`handlePaste()` via `navigator.clipboard.read()`), which supports both text and images.
+
 **Image clipboard:**
-- **Ctrl+V with image** (no text in clipboard): image uploads to `/tmp/merlin-clipboard/`, path injected in terminal
+- **Ctrl+V / paste button / long-press** with image in clipboard: image uploads to `/tmp/merlin-clipboard/`, path injected in terminal
 - **Image button**: tries clipboard image first, falls back to file picker
 - **Drag and drop** (desktop): drop image onto terminal
 
