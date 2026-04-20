@@ -30,7 +30,6 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # ---------------------------------------------------------------------------
@@ -47,6 +46,8 @@ MERLIN_BOT_DIR = PROJECT_ROOT / "merlin-bot"
 # Add project root and lib/ to sys.path for module imports
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "lib"))
+
+from merlin_ext import make_templates, register_template_globals
 
 # ---------------------------------------------------------------------------
 # Config
@@ -250,18 +251,7 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(ErrorLoggingMiddleware)
 
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-
-
-def _template_context(request: Request, **extra) -> dict:
-    """Build template context with nav items included."""
-    return {
-        "request": request,
-        "nav_items": nav_items,
-        "show_bot_status": show_bot_status,
-        "extensions_error_count": _extensions_with_errors,
-        **extra,
-    }
+templates = make_templates(TEMPLATES_DIR)
 
 
 # ---------------------------------------------------------------------------
@@ -289,9 +279,9 @@ def _safe_next_url(url: str) -> str:
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, next: str = "/files", error: str = ""):
     return templates.TemplateResponse(
+        request,
         "login.html",
         {
-            "request": request,
             "next_url": _safe_next_url(next),
             "error": error,
         },
@@ -311,9 +301,9 @@ def login_submit(
 
     if not secrets.compare_digest(password.encode(), DASHBOARD_PASS.encode()):
         return templates.TemplateResponse(
+            request,
             "login.html",
             {
-                "request": request,
                 "next_url": safe_next,
                 "error": "Wrong password",
             },
@@ -379,9 +369,7 @@ async def api_environments(_auth=Depends(require_auth)):
 def extensions_page(request: Request, _auth=Depends(require_auth)):
     """Extensions management page."""
     exts = _build_extensions_list()
-    return templates.TemplateResponse(
-        "extensions.html", _template_context(request, extensions=exts)
-    )
+    return templates.TemplateResponse(request, "extensions.html", {"extensions": exts})
 
 
 @app.get("/api/extensions")
@@ -579,11 +567,9 @@ def settings_page(request: Request, _auth=Depends(require_auth)):
     """Settings page."""
     cfg = _read_config_env()
     return templates.TemplateResponse(
+        request,
         "settings.html",
-        _template_context(
-            request,
-            openai_key_set=bool(cfg.get("OPENAI_API_KEY")),
-        ),
+        {"openai_key_set": bool(cfg.get("OPENAI_API_KEY"))},
     )
 
 
@@ -885,56 +871,17 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 # ---------------------------------------------------------------------------
-# Inject nav_items into all template responses
+# Register app-wide template globals
 # ---------------------------------------------------------------------------
 
-
-def _patch_template_responses():
-    """Patch all Jinja2Templates instances to include nav_items in context."""
-    # Override the Jinja2Templates render to inject nav_items
-    import functools
-
-    original_response = Jinja2Templates.TemplateResponse
-
-    @functools.wraps(original_response)
-    def patched_response(self, *args, **kwargs):
-        # Handle both old-style (name, context) and new-style (request, name) calls
-        defaults = {
-            "nav_items": nav_items,
-            "show_bot_status": show_bot_status,
-            "saas_mode": bool(MERLIN_SAAS_TOKEN),
-            "saas_api_url": MERLIN_SAAS_API,
-            "extensions_error_count": _extensions_with_errors,
-        }
-        # Old-style: TemplateResponse(name_str, {context_with_request})
-        # New Starlette expects: TemplateResponse(request, name, context=...)
-        if args and isinstance(args[0], str):
-            name = args[0]
-            context = (
-                args[1]
-                if len(args) >= 2 and isinstance(args[1], dict)
-                else kwargs.pop("context", None) or {}
-            )
-            request_obj = context.pop("request", None)
-            for k, v in defaults.items():
-                context.setdefault(k, v)
-            if request_obj is not None:
-                extra = {k: v for k, v in kwargs.items() if k != "context"}
-                return original_response(
-                    self, request_obj, name, context=context, **extra
-                )
-            context["request"] = request_obj
-            return original_response(self, *args, **kwargs)
-        # New-style: inject defaults into context kwarg
-        if "context" in kwargs and isinstance(kwargs["context"], dict):
-            for k, v in defaults.items():
-                kwargs["context"].setdefault(k, v)
-        return original_response(self, *args, **kwargs)
-
-    Jinja2Templates.TemplateResponse = patched_response
-
-
-_patch_template_responses()
+# nav_items is a mutable list — further appends are visible through the reference.
+# Scalar values are captured at this point (they don't change after startup).
+register_template_globals(
+    nav_items=nav_items,
+    saas_mode=bool(MERLIN_SAAS_TOKEN),
+    saas_api_url=MERLIN_SAAS_API,
+    extensions_error_count=_extensions_with_errors,
+)
 
 
 # ---------------------------------------------------------------------------

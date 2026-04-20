@@ -8,9 +8,10 @@ from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
+
+from merlin_ext import make_templates
 
 from .fs_helpers import (
     create_item,
@@ -23,16 +24,11 @@ from .fs_helpers import (
     validate_path,
 )
 
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-
 FILES_DIR = Path(__file__).parent.resolve()
 FILES_TEMPLATES_DIR = FILES_DIR / "templates"
 FILES_STATIC_DIR = FILES_DIR / "static"
 
-# Shared templates dir (for base.html) + files templates
-templates = Jinja2Templates(
-    directory=[str(FILES_TEMPLATES_DIR), str(PROJECT_ROOT / "templates")]
-)
+templates = make_templates(FILES_TEMPLATES_DIR)
 
 router = APIRouter()
 
@@ -53,24 +49,12 @@ def set_cwd(cwd: str) -> None:
 
 @router.get("/files", response_class=HTMLResponse)
 def files_page(request: Request):
-    return templates.TemplateResponse(
-        "files.html",
-        {
-            "request": request,
-            "startup_cwd": _cwd,
-        },
-    )
+    return templates.TemplateResponse(request, "files.html", {"startup_cwd": _cwd})
 
 
 @router.get("/files/{path:path}", response_class=HTMLResponse)
 def files_path_page(request: Request, path: str):
-    return templates.TemplateResponse(
-        "files.html",
-        {
-            "request": request,
-            "startup_cwd": _cwd,
-        },
-    )
+    return templates.TemplateResponse(request, "files.html", {"startup_cwd": _cwd})
 
 
 # ---------------------------------------------------------------------------

@@ -127,6 +127,29 @@ Dashes are converted to underscores automatically. All loggers inherit the file 
 
 **Do not** create loggers outside the `merlin.*` namespace — they won't be written to `merlin.log`.
 
+## Templates
+
+Extensions that render HTML should create their `Jinja2Templates` via `make_templates()` from `merlin_ext`. This registers app-wide globals (`nav_items`, `saas_mode`, `saas_api_url`, `extensions_error_count`) so `base.html` renders the sidebar correctly, and appends the project root `templates/` directory as a fallback so `base.html` is reachable without manual path plumbing.
+
+```python
+from pathlib import Path
+from fastapi import APIRouter, Request
+from merlin_ext import make_templates
+
+EXT_DIR = Path(__file__).parent.resolve()
+templates = make_templates(EXT_DIR / "templates")
+
+router = APIRouter()
+
+@router.get("/my-page")
+def my_page(request: Request):
+    return templates.TemplateResponse(request, "page.html", {"foo": "bar"})
+```
+
+Use Starlette's new `TemplateResponse(request, name, context)` signature — `request` first, and **do not** include `"request": request` in the context dict (Starlette injects it). The old `TemplateResponse(name, {"request": request, ...})` form still works but emits a deprecation warning and loses type safety.
+
+**Do not** construct `Jinja2Templates` directly in extensions — you'd lose the shared globals and break the sidebar.
+
 ## Folder Naming
 
 Extension folders can use hyphens or underscores (`video-scenes` or `video_scenes`). The loader does `name.replace("-", "_")` to produce a valid Python import.
@@ -174,7 +197,7 @@ The registry is used by:
 - `start_server()` — iterates for `start()` and `on_tunnel_url()` hooks
 - `_validate_config()` — validates bot config if loaded
 - Extensions page — lists all extensions with status
-- `_template_context()` — passes error count for sidebar badge
+- `register_template_globals()` — publishes `extensions_error_count` to all template instances for the sidebar badge
 
 ## Creating an Installed Extension
 

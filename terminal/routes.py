@@ -24,9 +24,9 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
 
 from auth import require_auth, verify_ws_cookie
+from merlin_ext import make_templates
 
 logger = logging.getLogger("merlin.terminal")
 
@@ -34,9 +34,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 TERMINAL_DIR = Path(__file__).parent.resolve()
 TERMINAL_TEMPLATES_DIR = TERMINAL_DIR / "templates"
 
-templates = Jinja2Templates(
-    directory=[str(TERMINAL_TEMPLATES_DIR), str(PROJECT_ROOT / "templates")]
-)
+templates = make_templates(TERMINAL_TEMPLATES_DIR)
 
 router = APIRouter()
 
@@ -144,17 +142,13 @@ def terminal_page(request: Request, _auth=Depends(require_auth)):
             status_code=503,
         )
     return templates.TemplateResponse(
-        "terminal.html",
-        {
-            "request": request,
-            "voice_available": _voice_available(),
-        },
+        request, "terminal.html", {"voice_available": _voice_available()}
     )
 
 
 @router.get("/clipboard-test", response_class=HTMLResponse)
 def clipboard_test_page(request: Request, _auth=Depends(require_auth)):
-    return templates.TemplateResponse("clipboard-test.html", {"request": request})
+    return templates.TemplateResponse(request, "clipboard-test.html")
 
 
 _VALID_LANGUAGES = frozenset(

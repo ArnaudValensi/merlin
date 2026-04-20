@@ -6,7 +6,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
+
+from merlin_ext import make_templates
 
 from .git_parser import (
     _find_repo_root,
@@ -16,16 +17,11 @@ from .git_parser import (
     get_file_with_gutters,
 )
 
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-
 COMMITS_DIR = Path(__file__).parent.resolve()
 COMMITS_TEMPLATES_DIR = COMMITS_DIR / "templates"
 COMMITS_STATIC_DIR = COMMITS_DIR / "static"
 
-# Shared templates dir (for base.html) + commits templates
-templates = Jinja2Templates(
-    directory=[str(COMMITS_TEMPLATES_DIR), str(PROJECT_ROOT / "templates")]
-)
+templates = make_templates(COMMITS_TEMPLATES_DIR)
 
 router = APIRouter()
 
@@ -89,9 +85,9 @@ def _resolve_repo(repo: str) -> Path:
 @router.get("/commits", response_class=HTMLResponse)
 def commits_page(request: Request, repo: str = ""):
     return templates.TemplateResponse(
+        request,
         "commits.html",
         {
-            "request": request,
             "startup_cwd": _startup_cwd,
             "home_dir": _home_dir,
         },
@@ -102,9 +98,9 @@ def commits_page(request: Request, repo: str = ""):
 def commit_detail_page(request: Request, commit_hash: str, repo: str = ""):
     _validate_hash(commit_hash)
     return templates.TemplateResponse(
+        request,
         "commits.html",
         {
-            "request": request,
             "commit_hash": commit_hash,
             "startup_cwd": _startup_cwd,
             "home_dir": _home_dir,
@@ -119,9 +115,9 @@ def commit_file_page(
     _validate_hash(commit_hash)
     _validate_path(file_path)
     return templates.TemplateResponse(
+        request,
         "commits.html",
         {
-            "request": request,
             "commit_hash": commit_hash,
             "file_path": file_path,
             "startup_cwd": _startup_cwd,

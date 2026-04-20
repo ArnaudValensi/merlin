@@ -1,18 +1,25 @@
 """
-Extension logging helper — provides correctly namespaced loggers for extensions.
+Extension helpers — loggers and template factories.
 
 All extension loggers live under the ``merlin.ext.*`` tree and automatically
 inherit the RotatingFileHandler configured on the root ``merlin`` logger.
 
-Usage in an extension's main module or any submodule::
+The ``make_templates`` factory creates a :class:`Jinja2Templates` pre-wired
+with app-wide globals (``nav_items``, ``saas_mode``, etc.) so templates like
+``base.html`` render correctly from any module or extension.
 
-    from merlin_ext import get_logger
+Usage::
 
-    logger = get_logger("my-extension")              # → merlin.ext.my_extension
-    logger = get_logger("my-extension.submodule")     # → merlin.ext.my_extension.submodule
+    from merlin_ext import get_logger, make_templates
+
+    logger = get_logger("my-extension")
+    templates = make_templates(EXT_DIR / "templates")
 """
 
 import logging
+from pathlib import Path
+
+from fastapi.templating import Jinja2Templates
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -30,3 +37,42 @@ def get_logger(name: str) -> logging.Logger:
     """
     safe = name.replace("-", "_")
     return logging.getLogger(f"merlin.ext.{safe}")
+
+
+_TEMPLATE_GLOBALS: dict = {}
+_INSTANCES: list[Jinja2Templates] = []
+
+
+def register_template_globals(**kwargs) -> None:
+    """Register app-wide values as Jinja2 ``env.globals`` for all templates.
+
+    Updates both future instances (created via :func:`make_templates`) and
+    instances already created before this call — so registration order
+    doesn't matter.
+    """
+    _TEMPLATE_GLOBALS.update(kwargs)
+    for t in _INSTANCES:
+        t.env.globals.update(kwargs)
+
+
+def make_templates(directory: str | Path | list[str | Path]) -> Jinja2Templates:
+    """Create a :class:`Jinja2Templates` with app-wide globals registered.
+
+    The project root ``templates/`` directory is appended as a fallback so
+    shared templates (``base.html``, etc.) are always reachable.
+    """
+    import paths
+
+    if isinstance(directory, (str, Path)):
+        dirs = [str(directory)]
+    else:
+        dirs = [str(d) for d in directory]
+
+    root = str(paths.app_dir() / "templates")
+    if root not in dirs:
+        dirs.append(root)
+
+    t = Jinja2Templates(directory=dirs)
+    t.env.globals.update(_TEMPLATE_GLOBALS)
+    _INSTANCES.append(t)
+    return t

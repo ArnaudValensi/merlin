@@ -6,11 +6,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-from fastapi.templating import Jinja2Templates
-
-from .frontmatter import parse_frontmatter
 
 import paths
+from merlin_ext import make_templates
+
+from .frontmatter import parse_frontmatter
 
 
 def _notes_dir() -> Path:
@@ -25,10 +25,7 @@ NOTES_DIR = Path(__file__).parent.resolve()
 NOTES_TEMPLATES_DIR = NOTES_DIR / "templates"
 NOTES_STATIC_DIR = NOTES_DIR / "static"
 
-# Shared templates dir (for base.html) + notes templates
-templates = Jinja2Templates(
-    directory=[str(NOTES_TEMPLATES_DIR), str(paths.app_dir() / "templates")]
-)
+templates = make_templates(NOTES_TEMPLATES_DIR)
 
 router = APIRouter()
 
@@ -75,14 +72,12 @@ def _slugify(name: str) -> str:
 
 @router.get("/notes", response_class=HTMLResponse)
 def notes_index(request: Request):
-    return templates.TemplateResponse("notes_index.html", {"request": request})
+    return templates.TemplateResponse(request, "notes_index.html")
 
 
 @router.get("/notes/tags/{tag}", response_class=HTMLResponse)
 def notes_tag(request: Request, tag: str):
-    return templates.TemplateResponse(
-        "notes_tag.html", {"request": request, "tag": tag}
-    )
+    return templates.TemplateResponse(request, "notes_tag.html", {"tag": tag})
 
 
 @router.get("/notes/{path:path}", response_class=HTMLResponse)
@@ -104,9 +99,9 @@ def notes_view(request: Request, path: str):
         raise HTTPException(status_code=404, detail="Note not found")
 
     return templates.TemplateResponse(
+        request,
         "notes_view.html",
         {
-            "request": request,
             "note_path": path,
             "new_note": is_new,
         },

@@ -14,9 +14,9 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 
 import paths
+from merlin_ext import make_templates
 
 _SCRIPT_DIR = Path(__file__).parent.resolve()
 
@@ -26,11 +26,7 @@ RAW_SESSION_DIR = paths.logs_dir() / "raw-sessions"
 # Bot start time — set by merlin_bot.py when it starts
 BOT_START_TIME: datetime | None = None
 
-# Search bot templates first (overview, performance, logs, session),
-# then root templates for base.html
-templates = Jinja2Templates(
-    directory=[str(_SCRIPT_DIR / "templates"), str(paths.app_dir() / "templates")]
-)
+templates = make_templates(_SCRIPT_DIR / "templates")
 
 merlin_app_router = APIRouter()
 
@@ -113,23 +109,19 @@ def _parse_ts(event: dict) -> datetime | None:
 
 @merlin_app_router.get("/bot", response_class=HTMLResponse)
 def bot_page(request: Request):
-    return templates.TemplateResponse(
-        "bot.html", {"request": request, "active_tab": "overview"}
-    )
+    return templates.TemplateResponse(request, "bot.html", {"active_tab": "overview"})
 
 
 @merlin_app_router.get("/bot/performance", response_class=HTMLResponse)
 def bot_performance_page(request: Request):
     return templates.TemplateResponse(
-        "bot.html", {"request": request, "active_tab": "performance"}
+        request, "bot.html", {"active_tab": "performance"}
     )
 
 
 @merlin_app_router.get("/bot/logs", response_class=HTMLResponse)
 def bot_logs_page(request: Request):
-    return templates.TemplateResponse(
-        "bot.html", {"request": request, "active_tab": "logs"}
-    )
+    return templates.TemplateResponse(request, "bot.html", {"active_tab": "logs"})
 
 
 @merlin_app_router.get("/session/{filename}", response_class=HTMLResponse)
@@ -148,9 +140,9 @@ def session_page(request: Request, filename: str):
     back_url, back_label = back_links.get(back_param, back_links["bot"])
 
     return templates.TemplateResponse(
+        request,
         "session.html",
         {
-            "request": request,
             "filename": filename,
             "back_url": back_url,
             "back_label": back_label,

@@ -9,20 +9,17 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 
-import paths
 from cron import logs, manage, state
 from cron.schemas import JobCreate, JobUpdate
+from merlin_ext import make_templates
 
 cron_router = APIRouter(prefix="/api/cron", tags=["cron"])
 cron_page_router = APIRouter(tags=["cron"])
 
 _CRON_DIR = Path(__file__).parent.resolve()
 
-templates = Jinja2Templates(
-    directory=[str(_CRON_DIR / "templates"), str(paths.app_dir() / "templates")]
-)
+templates = make_templates(_CRON_DIR / "templates")
 
 
 def _enrich_job(job: dict) -> dict:
@@ -375,9 +372,9 @@ def cron_page(request: Request):
     crashes = _get_recent_crashes()
 
     return templates.TemplateResponse(
+        request,
         "cron.html",
         {
-            "request": request,
             "jobs": jobs,
             "bot_loaded": bot_loaded,
             "crashes": crashes,
