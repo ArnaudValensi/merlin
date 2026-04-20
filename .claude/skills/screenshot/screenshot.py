@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright  # ty: ignore[unresolved-import]  # PEP 723 inline dep
 
 DEFAULT_OUTPUT_DIR = Path.cwd() / "screenshots"
 

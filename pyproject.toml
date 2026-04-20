@@ -30,3 +30,14 @@ ignore = [
     "E731",  # lambda assignment — acceptable in tests and config
     "E741",  # ambiguous variable name — `l` in comprehensions is fine
 ]
+
+[tool.ty.src]
+exclude = [
+    "tests",
+    "merlin-bot/tests",
+]
+
+[tool.ty.environment]
+# Mirrors sys.path.insert calls in main.py (lines 49, 851) so ty can resolve
+# imports like `from structured_log import ...` and `import merlin_bot`.
+extra-paths = ["lib", "merlin-bot"]

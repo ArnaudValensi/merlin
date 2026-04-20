@@ -35,10 +35,10 @@ def cmd_test_e2e(args):
 
 
 def cmd_lint(args):
-    """Run ruff lint + format check + pyright."""
+    """Run ruff lint + format check + ty."""
     lint = run(["uvx", "ruff", "check", "."])
     fmt = run(["uvx", "ruff", "format", "--check", "."])
-    types = run(["uv", "run", "--with", "pyright", "pyright", "."])
+    types = run(["uvx", "ty", "check"])
     sys.exit(max(lint.returncode, fmt.returncode, types.returncode))
 
 
@@ -47,7 +47,7 @@ def cmd_validate(args):
     for cmd in [
         ["uvx", "ruff", "check", "."],
         ["uvx", "ruff", "format", "--check", "."],
-        ["uv", "run", "--with", "pyright", "pyright", "."],
+        ["uvx", "ty", "check"],
         ["uv", "run", "pytest", "tests/unit/", "merlin-bot/tests/", "-v"],
     ]:
         result = run(cmd)
