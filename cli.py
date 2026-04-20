@@ -534,6 +534,14 @@ def run_config(key: str | None) -> None:
 
 def cli_main(argv: list[str] | None = None) -> None:
     """Main CLI entry point."""
+    if argv is None:
+        argv = sys.argv[1:]
+
+    # Allow `merlin --saas-token X` (and other start flags) without typing `start`.
+    # If the first token is a flag (not -h/--help), route to the `start` subparser.
+    if argv and argv[0].startswith("-") and argv[0] not in ("-h", "--help"):
+        argv = ["start", *argv]
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
