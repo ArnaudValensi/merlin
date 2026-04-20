@@ -239,6 +239,12 @@ merlin start --no-tunnel          # If installed
 # Restart everything (single process, background)
 restart.sh   # or just `merlin` (shell alias)
 
+# Full validation: lint + format + typecheck + tests
+uv run scripts.py validate
+
+# Lint only (no tests)
+uv run scripts.py lint
+
 # Unit + integration tests (~4s)
 uv run scripts.py test
 

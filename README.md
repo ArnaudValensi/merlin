@@ -96,8 +96,10 @@ Voice input features: upload progress indicator, server-side text injection (res
 ### Tests
 
 ```bash
-uv run scripts.py test        # Unit + integration (~4s)
-uv run scripts.py test-e2e    # E2E with Playwright (~2min)
+uv run scripts.py validate    # Full validation: lint + format + typecheck + tests
+uv run scripts.py lint         # Lint only (ruff + pyright)
+uv run scripts.py test         # Unit + integration tests (~4s)
+uv run scripts.py test-e2e     # E2E with Playwright (~2min)
 ```
 
 E2E tests require Playwright. First-time setup: `uv run --with playwright playwright install firefox`

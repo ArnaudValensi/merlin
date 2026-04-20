@@ -59,9 +59,9 @@ ln -sfn /tmp/test-merlin/versions/0.1.0 /tmp/test-merlin/current
 MERLIN_HOME=/tmp/test-merlin uv run cli.py update
 ```
 
-### Run the test suites
+### Run the full validation pipeline
 ```bash
-uv run scripts.py test
+uv run scripts.py validate
 ```
 
 ## Rollback
