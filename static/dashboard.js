@@ -154,6 +154,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Environment switcher (SaaS mode)
     loadEnvironments();
+
+    // Version check
+    checkVersion();
 });
 
 function initSidebarCollapse() {
@@ -181,6 +184,24 @@ function initSettingsDropdown() {
             dropdown.classList.remove('open');
         }
     });
+}
+
+// Version indicator in sidebar footer
+async function checkVersion() {
+    const el = document.getElementById('sidebar-version');
+    if (!el) return;
+    const data = await API.get('/api/version');
+    if (!data) return;
+
+    if (data.update_available && data.latest) {
+        el.textContent = '\u2191 v' + data.latest;
+        el.classList.add('has-update');
+        el.title = 'Update available (current: v' + data.current + ')';
+        el.addEventListener('click', () => { window.location.href = '/settings'; });
+    } else if (data.current) {
+        el.textContent = 'v' + data.current;
+        el.title = 'Merlin v' + data.current;
+    }
 }
 
 // Chart.js defaults for dark theme

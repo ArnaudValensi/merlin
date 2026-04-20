@@ -479,6 +479,97 @@ def api_restart(_auth=Depends(require_auth)):
 
 
 # ---------------------------------------------------------------------------
+# Version API
+# ---------------------------------------------------------------------------
+
+# Cached latest tag: (version_string, timestamp)
+_latest_tag_cache: tuple[str | None, float] = (None, 0.0)
+_CACHE_TTL = 3600  # 1 hour
+
+
+def _get_latest_tag_cached() -> str | None:
+    """Fetch latest GitHub tag with 1h in-memory cache."""
+    import time
+
+    global _latest_tag_cache
+    now = time.monotonic()
+    cached_tag, cached_at = _latest_tag_cache
+    if cached_tag is not None and (now - cached_at) < _CACHE_TTL:
+        return cached_tag
+
+    from cli import fetch_latest_tag
+
+    tag = fetch_latest_tag()
+    if tag is not None:
+        _latest_tag_cache = (tag, now)
+    return tag
+
+
+@app.get("/api/version")
+def api_version(_auth=Depends(require_auth)):
+    """Current and latest version info."""
+    from cli import get_version
+
+    current = get_version()
+    latest = _get_latest_tag_cached()
+    update_available = False
+    if latest and current not in ("dev", "unknown"):
+        # Compare just the base version (strip git describe suffix like -3-gabcdef)
+        base = current.split("-")[0] if "-" in current else current
+        update_available = latest != base
+
+    return {
+        "current": current,
+        "latest": latest,
+        "update_available": update_available,
+        "dev_mode": paths.is_dev_mode(),
+    }
+
+
+@app.post("/api/update")
+def api_update(_auth=Depends(require_auth)):
+    """Update Merlin to latest version and restart."""
+    import subprocess
+
+    from cli import (
+        atomic_symlink,
+        download_and_extract,
+        fetch_latest_tag,
+        get_version,
+    )
+
+    if paths.is_dev_mode():
+        return {"ok": False, "error": "Update not available in dev mode"}
+
+    latest = fetch_latest_tag()
+    if latest is None:
+        return {"ok": False, "error": "Could not fetch latest version"}
+
+    current = get_version()
+    base = current.split("-")[0] if "-" in current else current
+    if latest == base:
+        return {"ok": False, "error": f"Already up to date ({latest})"}
+
+    # Download and switch
+    versions_dir = paths.merlin_home() / "versions"
+    version_dir = versions_dir / latest
+    if not version_dir.exists():
+        download_and_extract(latest, version_dir)
+    atomic_symlink(version_dir, paths.merlin_home() / "current")
+
+    # Invalidate version cache
+    global _latest_tag_cache
+    _latest_tag_cache = (None, 0.0)
+
+    # Trigger restart
+    restart_script = paths.app_dir() / "restart.sh"
+    if restart_script.exists():
+        subprocess.Popen(["bash", str(restart_script)], start_new_session=True)
+
+    return {"ok": True, "version": latest}
+
+
+# ---------------------------------------------------------------------------
 # Settings API
 # ---------------------------------------------------------------------------
 

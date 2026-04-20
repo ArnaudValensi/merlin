@@ -221,7 +221,25 @@ body {
     border-top: 1px solid var(--border);
     display: flex;
     align-items: center;
+    justify-content: space-between;
 }
+
+/* Sidebar version */
+.sidebar-version {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sidebar-version.has-update {
+    color: var(--accent-blue);
+    cursor: pointer;
+}
+.sidebar-version.has-update:hover {
+    text-decoration: underline;
+}
+html.sc .sidebar-version { display: none; }
 
 /* Sidebar collapse button */
 .sidebar-collapse-btn {

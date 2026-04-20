@@ -56,6 +56,33 @@ const Settings = {
         window.location.reload();
     },
 
+    async updateAndRestart() {
+        const btn = document.getElementById('update-btn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Updating...'; }
+        try {
+            const resp = await fetch('/api/update', { method: 'POST' });
+            const data = await resp.json();
+            if (!data.ok) {
+                alert(data.error || 'Update failed');
+                if (btn) { btn.disabled = false; btn.textContent = 'Update & Restart'; }
+                return;
+            }
+            if (btn) btn.textContent = 'Restarting...';
+        } catch {
+            if (btn) { btn.disabled = false; btn.textContent = 'Update & Restart'; }
+            return;
+        }
+        // Poll until server comes back
+        for (let i = 0; i < 30; i++) {
+            await new Promise(r => setTimeout(r, 500));
+            try {
+                const resp = await fetch('/api/settings', { signal: AbortSignal.timeout(2000) });
+                if (resp.ok) { window.location.reload(); return; }
+            } catch {}
+        }
+        window.location.reload();
+    },
+
     _toast(id, msg) {
         const el = document.getElementById(id);
         if (!el) return;
@@ -64,3 +91,44 @@ const Settings = {
         setTimeout(() => { el.classList.remove('visible'); }, 2000);
     }
 };
+
+// Populate update section on settings page
+(async function initUpdateSection() {
+    const section = document.getElementById('update-section');
+    if (!section) return;
+
+    const data = await API.get('/api/version');
+    if (!data) return;
+
+    const currentEl = document.getElementById('update-current');
+    const latestEl = document.getElementById('update-latest');
+    const actionsEl = document.getElementById('update-actions');
+
+    if (currentEl) currentEl.textContent = 'v' + data.current;
+
+    if (data.update_available && data.latest) {
+        if (latestEl) latestEl.textContent = '\u2192 v' + data.latest + ' available';
+
+        const changelog = document.createElement('a');
+        changelog.href = 'https://github.com/ArnaudValensi/merlin/releases/tag/v' + data.latest;
+        changelog.target = '_blank';
+        changelog.rel = 'noopener';
+        changelog.textContent = 'Changelog';
+
+        if (data.dev_mode) {
+            const hint = document.createElement('span');
+            hint.className = 'update-hint';
+            hint.textContent = 'git pull to update';
+            actionsEl.append(changelog, hint);
+        } else {
+            const btn = document.createElement('button');
+            btn.id = 'update-btn';
+            btn.className = 'update-btn';
+            btn.textContent = 'Update & Restart';
+            btn.addEventListener('click', () => Settings.updateAndRestart());
+            actionsEl.append(changelog, btn);
+        }
+    } else {
+        if (latestEl) latestEl.textContent = '(up to date)';
+    }
+})();
