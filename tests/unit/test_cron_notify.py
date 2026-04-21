@@ -29,9 +29,17 @@ class FakeExtensionInfo:
     loaded: bool = True
     error: str | None = None
     meta: dict = field(default_factory=dict)
-    has_start: bool = False
-    has_tunnel_hook: bool = False
     module: object | None = None
+    start: object | None = None
+    validate: object | None = None
+    on_tunnel_url: object | None = None
+    notify: object | None = None
+
+    def __post_init__(self) -> None:
+        # Mirror main._load_extension: resolve callable hooks from the module
+        # so the notify branch exercises the real production guard.
+        if self.loaded and self.module is not None and self.notify is None:
+            self.notify = getattr(self.module, "notify", None)
 
 
 def _make_bot_module(*, channels: set[str] | None = None, notify_side_effect=None):

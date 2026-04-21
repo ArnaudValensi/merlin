@@ -22,8 +22,11 @@ import os
 import secrets
 import shutil
 import sys
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 from urllib.parse import quote
 
 from dotenv import load_dotenv
@@ -169,9 +172,16 @@ class ExtensionInfo:
     loaded: bool  # Successfully imported?
     error: str | None  # Import/validate error message
     meta: dict = field(default_factory=dict)
-    has_start: bool = False  # Has async start() hook
-    has_tunnel_hook: bool = False  # Has on_tunnel_url() hook
-    module: object | None = None  # The imported module (if loaded)
+    module: ModuleType | None = None  # The imported module (if loaded)
+
+    # Hooks resolved at load time — None if the extension doesn't export them.
+    # Normalizing the per-module optionality into `Callable | None` fields lets
+    # call sites narrow with `is not None` and gives sound type checking.
+    # Async hooks return `Coroutine` (not `Awaitable`) so asyncio.create_task accepts them.
+    start: Callable[[], Coroutine[Any, Any, None]] | None = None
+    validate: Callable[[], None] | None = None
+    on_tunnel_url: Callable[[str], Coroutine[Any, Any, None]] | None = None
+    notify: Callable[..., Any] | None = None
 
 
 extension_registry: dict[str, ExtensionInfo] = {}
@@ -636,10 +646,9 @@ def _build_extensions_list() -> list[dict]:
     for info in extension_registry.values():
         # Get first nav icon if available
         nav_icon = None
-        if info.module and hasattr(info.module, "NAV_ITEMS"):
-            items = info.module.NAV_ITEMS
-            if items:
-                nav_icon = items[0].get("icon")
+        items = getattr(info.module, "NAV_ITEMS", None)
+        if items:
+            nav_icon = items[0].get("icon")
 
         meta = dict(info.meta)
         # Enrich config_fields with current values from config.env
@@ -814,9 +823,11 @@ def _load_extension(
         loaded=True,
         error=None,
         meta=meta,
-        has_start=hasattr(mod, "start"),
-        has_tunnel_hook=hasattr(mod, "on_tunnel_url"),
         module=mod,
+        start=getattr(mod, "start", None),
+        validate=getattr(mod, "validate", None),
+        on_tunnel_url=getattr(mod, "on_tunnel_url", None),
+        notify=getattr(mod, "notify", None),
     )
     extension_registry[ext_id] = info
     logger.info(f"Extension loaded: {ext_id}")
@@ -958,6 +969,10 @@ def _disable_bot_extension() -> None:
         bot_info.enabled = False
         bot_info.loaded = False
         bot_info.module = None
+        bot_info.start = None
+        bot_info.validate = None
+        bot_info.on_tunnel_url = None
+        bot_info.notify = None
 
 
 def _validate_config(tunnel_enabled: bool) -> None:
@@ -1003,9 +1018,9 @@ def _validate_config(tunnel_enabled: bool) -> None:
 
     # Validate bot config if extension is loaded — degrade gracefully if missing
     bot_info = extension_registry.get("merlin-bot")
-    if bot_info and bot_info.loaded and bot_info.module:
+    if bot_info and bot_info.validate is not None:
         try:
-            bot_info.module.validate()
+            bot_info.validate()
         except SystemExit:
             _disable_bot_extension()
             logger.warning(
@@ -1052,9 +1067,9 @@ def start_server(
         """Send the tunnel URL to extensions with on_tunnel_url() hooks."""
         notified = False
         for info in extension_registry.values():
-            if info.loaded and info.has_tunnel_hook and info.module:
+            if info.on_tunnel_url is not None:
                 try:
-                    await info.module.on_tunnel_url(url)
+                    await info.on_tunnel_url(url)
                     logger.info("Tunnel URL sent to %s: %s", info.id, url)
                     notified = True
                 except Exception:
@@ -1106,8 +1121,8 @@ def start_server(
 
         # Start all extensions with start() hooks
         for info in extension_registry.values():
-            if info.loaded and info.has_start and info.module:
-                tasks.append(asyncio.create_task(info.module.start()))
+            if info.start is not None:
+                tasks.append(asyncio.create_task(info.start()))
 
         try:
             await asyncio.gather(*tasks)

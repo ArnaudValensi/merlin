@@ -45,7 +45,7 @@ def _do_notify(
         return
 
     bot_info = extension_registry.get("merlin-bot")
-    if not (bot_info and bot_info.loaded and bot_info.module):
+    if not (bot_info and bot_info.notify is not None and bot_info.module is not None):
         return
 
     # Channel: per-job discord_channel > job's legacy "channel" field > bot's global default
@@ -61,7 +61,7 @@ def _do_notify(
     try:
         message = _format_report(job_id, job, result)
         session_id = result.get("session_id")
-        bot_info.module.notify(channel, message, session_id=session_id)
+        bot_info.notify(channel, message, session_id=session_id)
     except Exception:
         logger.exception("Discord notification failed for job %s", job_id)
 

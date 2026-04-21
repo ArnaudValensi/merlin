@@ -110,6 +110,9 @@ class TestResolveEnabled:
 class TestExtensionInfo:
     def test_extension_info_dataclass(self):
         """ExtensionInfo can be constructed with all fields."""
+
+        async def _start() -> None: ...
+
         info = ExtensionInfo(
             id="test-ext",
             tier="installed",
@@ -117,9 +120,8 @@ class TestExtensionInfo:
             loaded=True,
             error=None,
             meta={"name": "Test"},
-            has_start=True,
-            has_tunnel_hook=False,
             module=None,
+            start=_start,
         )
         assert info.id == "test-ext"
         assert info.tier == "installed"
@@ -127,8 +129,10 @@ class TestExtensionInfo:
         assert info.loaded is True
         assert info.error is None
         assert info.meta == {"name": "Test"}
-        assert info.has_start is True
-        assert info.has_tunnel_hook is False
+        assert info.start is _start
+        assert info.on_tunnel_url is None
+        assert info.validate is None
+        assert info.notify is None
         assert info.module is None
 
 

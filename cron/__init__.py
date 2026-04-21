@@ -93,12 +93,12 @@ async def _run_cron_runner() -> None:
             from main import extension_registry
 
             bot_info = extension_registry.get("merlin-bot")
-            if bot_info and bot_info.loaded and bot_info.module:
+            if bot_info and bot_info.notify is not None and bot_info.module is not None:
                 from cron.notify import _get_bot_default_channel
 
                 channel = _get_bot_default_channel(bot_info.module)
                 if channel:
-                    bot_info.module.notify(
+                    bot_info.notify(
                         channel,
                         f"**Cron runner crashed** (exit {proc.returncode})\n```\n{error_msg}\n```",
                     )
