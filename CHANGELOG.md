@@ -2,6 +2,14 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.18.0 (2026-04-21)
+
+### Added
+- **Update indicator** — Current version shown in the sidebar footer; update to the latest release directly from the Settings page.
+
+### Fixed
+- **`merlin --saas-token TOKEN`** — The `--saas-token` flag now works without explicitly typing `start` (e.g. `merlin --saas-token mrl_...` is equivalent to `merlin start --saas-token mrl_...`).
+
 ## v0.17.0 (2026-04-08)
 
 ### Added
