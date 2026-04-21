@@ -835,10 +835,9 @@ def _load_extension(
 
 # --- Built-in: Notes ---
 def _load_notes():
-    import notes as _mod
+    import notes
 
-    _mod.STATIC_DIR = _mod.NOTES_STATIC_DIR  # Normalize to STATIC_DIR for the loader
-    return _mod
+    return notes
 
 
 _load_extension("notes", "built-in", _load_notes)

@@ -16,6 +16,7 @@ import os
 from urllib.parse import urlparse
 
 import asyncssh
+from asyncssh.packet import SSHPacket
 
 logger = logging.getLogger("merlin.saas_tunnel")
 
@@ -33,7 +34,7 @@ def _enable_dynamic_port_forwarding(conn: asyncssh.SSHClientConnection) -> None:
     2. For unregistered ports, create a dynamic forwarder to the requested port
     """
 
-    def _handler(packet: asyncssh.SSHPacket) -> tuple:  # type: ignore[type-arg]
+    def _handler(packet: SSHPacket) -> tuple:  # type: ignore[type-arg]
         dest_host = packet.get_string().decode("utf-8")
         dest_port = packet.get_uint32()
         orig_host = packet.get_string().decode("utf-8")

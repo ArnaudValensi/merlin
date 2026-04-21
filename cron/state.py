@@ -11,6 +11,7 @@ import fcntl
 import json
 import logging
 from datetime import datetime, timezone
+from typing import IO
 
 logger = logging.getLogger("merlin.cron")
 
@@ -54,7 +55,7 @@ def set_last_run(job_id: str, timestamp: datetime | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def acquire_job_lock(job_id: str) -> object | None:
+def acquire_job_lock(job_id: str) -> IO[str] | None:
     """Try to acquire an exclusive lock for a job (non-blocking).
 
     Returns the open file object if lock acquired (caller must keep it alive),
@@ -72,7 +73,7 @@ def acquire_job_lock(job_id: str) -> object | None:
         return None
 
 
-def release_job_lock(lock_file: object) -> None:
+def release_job_lock(lock_file: IO[str]) -> None:
     """Release a job lock acquired with acquire_job_lock()."""
     try:
         lock_file.close()
