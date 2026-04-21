@@ -72,15 +72,10 @@ def load_token() -> str:
     return token
 
 
-def _check_response(resp: httpx.Response) -> dict | None:
-    """Raise SystemExit with a clear message if the response is not 2xx.
-
-    Returns parsed JSON body, or None for 204 No Content.
-    """
+def _check_status(resp: httpx.Response) -> None:
+    """Raise RuntimeError if the response is not 2xx. For bodiless endpoints."""
     if 200 <= resp.status_code < 300:
-        if resp.status_code == 204 or not resp.content:
-            return None
-        return resp.json()
+        return
     try:
         error_body = resp.json()
     except Exception:
@@ -90,6 +85,19 @@ def _check_response(resp: httpx.Response) -> dict | None:
         f"{json.dumps(error_body) if isinstance(error_body, dict) else error_body}"
     )
     raise RuntimeError(msg)
+
+
+def _check_response(resp: httpx.Response) -> dict:
+    """Raise if non-2xx or empty body. Return the parsed JSON body.
+
+    Use :func:`_check_status` for endpoints that return 204 No Content.
+    """
+    _check_status(resp)
+    if resp.status_code == 204 or not resp.content:
+        raise RuntimeError(
+            f"Expected JSON body from Discord API, got {resp.status_code}"
+        )
+    return resp.json()
 
 
 def _auth_headers(token: str, *, json_content: bool = True) -> dict[str, str]:
@@ -249,7 +257,7 @@ def react_message(channel_id: str, message_id: str, emoji: str, token: str) -> N
     )
     with httpx.Client() as client:
         resp = client.put(url, headers=_auth_headers(token))
-        _check_response(resp)
+        _check_status(resp)
 
 
 def create_thread_from_message(
