@@ -3,6 +3,34 @@
 import re
 import subprocess
 from pathlib import Path
+from typing import Literal, NotRequired, TypedDict
+
+
+class DiffLine(TypedDict):
+    type: Literal["add", "del", "context"]
+    content: str
+    old_no: int | None
+    new_no: int | None
+
+
+class Hunk(TypedDict):
+    header: str
+    lines: list[DiffLine]
+    old_start: int
+    new_start: int
+
+
+class FileDiff(TypedDict):
+    path: str
+    status: str
+    hunks: list[Hunk]
+    binary: NotRequired[bool]
+
+
+class SimpleHunk(TypedDict):
+    old_start: int
+    new_start: int
+    changes: list[tuple[str, str]]
 
 
 def _find_repo_root(search_dir: str) -> Path | None:
@@ -261,7 +289,9 @@ def get_commit_diff(commit_hash: str, repo_dir: Path) -> dict:
     return {"files": files}
 
 
-def _parse_unified_diff(diff_text: str, status_map: dict | None = None) -> list[dict]:
+def _parse_unified_diff(
+    diff_text: str, status_map: dict | None = None
+) -> list[FileDiff]:
     """Parse unified diff output into structured data.
 
     Returns list of file diffs, each with path, status, and hunks.
@@ -270,9 +300,9 @@ def _parse_unified_diff(diff_text: str, status_map: dict | None = None) -> list[
     if status_map is None:
         status_map = {}
 
-    files = []
-    current_file = None
-    current_hunk = None
+    files: list[FileDiff] = []
+    current_file: FileDiff | None = None
+    current_hunk: Hunk | None = None
 
     for line in diff_text.split("\n"):
         # New file diff header
@@ -285,11 +315,11 @@ def _parse_unified_diff(diff_text: str, status_map: dict | None = None) -> list[
             # Extract path from "diff --git a/path b/path"
             m = re.match(r"diff --git a/(.*?) b/(.*)", line)
             path = m.group(2) if m else ""
-            current_file = {
-                "path": path,
-                "status": status_map.get(path, "M"),
-                "hunks": [],
-            }
+            current_file = FileDiff(
+                path=path,
+                status=status_map.get(path, "M"),
+                hunks=[],
+            )
             current_hunk = None
             continue
 
@@ -324,12 +354,12 @@ def _parse_unified_diff(diff_text: str, status_map: dict | None = None) -> list[
         if hunk_match:
             if current_hunk:
                 current_file["hunks"].append(current_hunk)
-            current_hunk = {
-                "header": line,
-                "lines": [],
-                "old_start": int(hunk_match.group(1)),
-                "new_start": int(hunk_match.group(2)),
-            }
+            current_hunk = Hunk(
+                header=line,
+                lines=[],
+                old_start=int(hunk_match.group(1)),
+                new_start=int(hunk_match.group(2)),
+            )
             old_no = int(hunk_match.group(1))
             new_no = int(hunk_match.group(2))
             continue
@@ -340,22 +370,22 @@ def _parse_unified_diff(diff_text: str, status_map: dict | None = None) -> list[
         # Diff content lines
         if line.startswith("+"):
             current_hunk["lines"].append(
-                {
-                    "type": "add",
-                    "content": line[1:],
-                    "old_no": None,
-                    "new_no": new_no,
-                }
+                DiffLine(
+                    type="add",
+                    content=line[1:],
+                    old_no=None,
+                    new_no=new_no,
+                )
             )
             new_no += 1
         elif line.startswith("-"):
             current_hunk["lines"].append(
-                {
-                    "type": "del",
-                    "content": line[1:],
-                    "old_no": old_no,
-                    "new_no": None,
-                }
+                DiffLine(
+                    type="del",
+                    content=line[1:],
+                    old_no=old_no,
+                    new_no=None,
+                )
             )
             old_no += 1
         elif line.startswith("\\"):
@@ -364,12 +394,12 @@ def _parse_unified_diff(diff_text: str, status_map: dict | None = None) -> list[
         elif line.startswith(" "):
             # Context line
             current_hunk["lines"].append(
-                {
-                    "type": "context",
-                    "content": line[1:],
-                    "old_no": old_no,
-                    "new_no": new_no,
-                }
+                DiffLine(
+                    type="context",
+                    content=line[1:],
+                    old_no=old_no,
+                    new_no=new_no,
+                )
             )
             old_no += 1
             new_no += 1
@@ -461,21 +491,21 @@ def _compute_gutters(diff_output: str, file_content: str) -> list[dict]:
     return result
 
 
-def _parse_diff_hunks(diff_output: str) -> list[dict]:
+def _parse_diff_hunks(diff_output: str) -> list[SimpleHunk]:
     """Parse diff output into hunks with old/new line info."""
-    hunks = []
-    current_hunk = None
+    hunks: list[SimpleHunk] = []
+    current_hunk: SimpleHunk | None = None
 
     for line in diff_output.split("\n"):
         hunk_match = re.match(r"^@@\s+\-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@", line)
         if hunk_match:
             if current_hunk:
                 hunks.append(current_hunk)
-            current_hunk = {
-                "old_start": int(hunk_match.group(1)),
-                "new_start": int(hunk_match.group(2)),
-                "changes": [],
-            }
+            current_hunk = SimpleHunk(
+                old_start=int(hunk_match.group(1)),
+                new_start=int(hunk_match.group(2)),
+                changes=[],
+            )
             continue
 
         if current_hunk is None:
@@ -496,7 +526,7 @@ def _parse_diff_hunks(diff_output: str) -> list[dict]:
     return hunks
 
 
-def _apply_hunk_gutters(hunk: dict, lines: list[dict]) -> None:
+def _apply_hunk_gutters(hunk: SimpleHunk, lines: list[dict]) -> None:
     """Apply gutter markers from a single hunk to the line list.
 
     Logic:
