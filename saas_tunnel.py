@@ -56,7 +56,9 @@ def _enable_dynamic_port_forwarding(conn: asyncssh.SSHClientConnection) -> None:
         logger.info("Dynamic port forward to %s:%d", dest_host, dest_port)
         return chan, session
 
-    conn._process_forwarded_tcpip_open = _handler  # type: ignore[attr-defined]
+    # asyncssh has no public hook for per-connection dynamic port forwarding;
+    # overriding the private method is the documented workaround.
+    conn._process_forwarded_tcpip_open = _handler  # type: ignore[attr-defined]  # ty: ignore[invalid-assignment]
 
 
 async def start_saas_tunnel(

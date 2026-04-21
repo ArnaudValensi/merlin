@@ -175,6 +175,10 @@ intents.message_content = True
 logging.getLogger("discord.client").addFilter(lambda r: "PyNaCl" not in r.getMessage())
 client = discord.Client(intents=intents)
 
+# Guard: Discord may fire on_ready multiple times (reconnects); only run the
+# one-time init on the first firing.
+_ready_init_done = False
+
 
 def _resolve_allowed_channel(message: discord.Message) -> str | None:
     """Return the allowed channel ID, or None if this message should be ignored.
@@ -515,8 +519,9 @@ async def start_bot() -> None:
 
     @client.event
     async def on_ready() -> None:
-        if not hasattr(client, "_ready_done"):
-            client._ready_done = True
+        global _ready_init_done
+        if not _ready_init_done:
+            _ready_init_done = True
             import merlin_app
 
             merlin_app.BOT_START_TIME = datetime.now(timezone.utc)
@@ -534,8 +539,9 @@ def main() -> None:
 
     @client.event
     async def on_ready() -> None:
-        if not hasattr(client, "_ready_done"):
-            client._ready_done = True
+        global _ready_init_done
+        if not _ready_init_done:
+            _ready_init_done = True
             import merlin_app
 
             merlin_app.BOT_START_TIME = datetime.now(timezone.utc)

@@ -140,7 +140,9 @@ async def _handle_session(process: asyncssh.SSHServerProcess) -> None:
                 else:
                     logger.warning("Unexpected error on PTY resize: %s", e)
 
-        process.terminal_size_changed = _on_resize  # type: ignore[assignment]
+        # Hook terminal-resize events to update the PTY window size. asyncssh
+        # exposes this as an overridable attribute, not a documented method.
+        process.terminal_size_changed = _on_resize  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
         # PTY master → SSH client
         done = asyncio.Event()
