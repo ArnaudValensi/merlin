@@ -80,6 +80,12 @@ def _clean_state(tmp_path, monkeypatch):
     merlin._channel_locks.clear()
     merlin.DISCORD_CHANNEL_IDS = {str(DEFAULT_CHANNEL_ID)}
 
+    # Simulate a connected bot so on_message handlers can call client.user
+    # (the real Discord client has .user == None until it connects).
+    bot_user = MagicMock(spec=discord.ClientUser)
+    bot_user.id = 111
+    monkeypatch.setattr(merlin.client, "_connection", MagicMock(user=bot_user))
+
     # Redirect session registry to tmp
     monkeypatch.setattr(session_registry, "DATA_DIR", tmp_path)
     monkeypatch.setattr(

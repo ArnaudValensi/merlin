@@ -28,7 +28,7 @@ import os
 import secrets as _secrets
 import time
 
-from fastapi import Request, Response
+from fastapi import Request, Response, WebSocket
 
 # Cookie settings
 COOKIE_NAME = "session"
@@ -49,7 +49,7 @@ def _get_password() -> str:
     return _dashboard_password
 
 
-def _check_portal_auth(request: Request) -> bool:
+def _check_portal_auth(request: Request | WebSocket) -> bool:
     """Check X-Portal-Auth header against MERLIN_SAAS_TOKEN.
 
     Used by the portal proxy to bypass dashboard password auth when the user
@@ -190,10 +190,12 @@ class _SaaSAuthRedirect(Exception):
     pass
 
 
-def verify_ws_cookie(request: Request) -> bool:
+def verify_ws_cookie(request: Request | WebSocket) -> bool:
     """Verify WebSocket auth via session cookie or portal auth header.
 
-    Browsers send cookies on WebSocket upgrade requests to the same origin.
+    Accepts both ``Request`` and ``WebSocket`` — both expose ``.cookies``
+    and ``.headers`` in the same way. Browsers send cookies on WebSocket
+    upgrade requests to the same origin.
     """
     if _check_portal_auth(request):
         return True

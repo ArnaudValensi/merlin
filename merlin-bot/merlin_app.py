@@ -165,7 +165,7 @@ def api_health():
         e
         for e in events
         if e.get("exit_code", 0) != 0 or e.get("event") == "error"
-        if _parse_ts(e) and (now - _parse_ts(e)).total_seconds() < 86400
+        if (ts := _parse_ts(e)) is not None and (now - ts).total_seconds() < 86400
         if not e.get("caller", "").startswith("cron-")
         if e.get("type") != "cron_dispatch" and e.get("type") != "cron_runner_crash"
     ]

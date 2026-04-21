@@ -353,10 +353,11 @@ async def on_message(message: discord.Message) -> None:
             transcription = "[transcription failed]"
         finally:
             Path(tmp_path).unlink(missing_ok=True)
-        try:
-            await message.remove_reaction("\N{MICROPHONE}", client.user)
-        except discord.HTTPException:
-            pass
+        if client.user is not None:
+            try:
+                await message.remove_reaction("\N{MICROPHONE}", client.user)
+            except discord.HTTPException:
+                pass
         # Post transcription to thread so the user can see what was heard
         if transcription and transcription != "[transcription failed]":
             try:
@@ -443,7 +444,8 @@ async def on_message(message: discord.Message) -> None:
         done_emoji = "\N{CROSS MARK}"
 
     try:
-        await message.remove_reaction("\N{THINKING FACE}", client.user)
+        if client.user is not None:
+            await message.remove_reaction("\N{THINKING FACE}", client.user)
         await message.add_reaction(done_emoji)
     except discord.HTTPException:
         logger.warning("Could not update reaction on message %s", message.id)

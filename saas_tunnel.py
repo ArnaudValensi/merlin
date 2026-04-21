@@ -16,6 +16,7 @@ import os
 from urllib.parse import urlparse
 
 import asyncssh
+from asyncssh.listener import SSHTCPClientListener
 from asyncssh.packet import SSHPacket
 
 logger = logging.getLogger("merlin.saas_tunnel")
@@ -41,9 +42,11 @@ def _enable_dynamic_port_forwarding(conn: asyncssh.SSHClientConnection) -> None:
         orig_port = packet.get_uint32()
         packet.check_end()
 
-        # Exact match in registered listeners (e.g., main port tunnel)
+        # Exact match in registered listeners (e.g., main port tunnel).
+        # We only ever register TCP listeners; narrow the union so ty accepts
+        # the (orig_host, orig_port) call signature.
         listener = conn._remote_listeners.get((dest_host, dest_port))
-        if listener:
+        if isinstance(listener, SSHTCPClientListener):
             chan, session = listener.process_connection(orig_host, orig_port)
             logger.info("Forwarded TCP connection on %s:%d", dest_host, dest_port)
             return chan, session
