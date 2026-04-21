@@ -177,7 +177,7 @@ def api_health():
     today_invocations = [
         e
         for e in discord_invocations
-        if _parse_ts(e) and _parse_ts(e).date() == now.date()
+        if (ts := _parse_ts(e)) is not None and ts.date() == now.date()
     ]
 
     avg_duration = 0.0

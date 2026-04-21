@@ -227,6 +227,9 @@ async def _parse_url_from_stderr(proc: asyncio.subprocess.Process) -> str | None
     """
     url_pattern = re.compile(r"https://[a-zA-Z0-9._-]+\.trycloudflare\.com")
 
+    if proc.stderr is None:
+        raise RuntimeError("cloudflared must be spawned with stderr=PIPE")
+
     try:
         async with asyncio.timeout(30):
             while True:
@@ -248,6 +251,8 @@ async def _parse_url_from_stderr(proc: asyncio.subprocess.Process) -> str | None
 
 async def _drain_stderr(proc: asyncio.subprocess.Process) -> None:
     """Drain stderr to prevent pipe buffer from blocking cloudflared."""
+    if proc.stderr is None:
+        return
     try:
         while True:
             line = await proc.stderr.readline()
