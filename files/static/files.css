@@ -528,6 +528,14 @@
     border-color: var(--accent-blue);
 }
 
+/* Sibling navigation cluster — prev / counter / next stay grouped so they
+   wrap as a unit on narrow screens. */
+.nav-cluster {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 /* Sibling navigation counter */
 .file-counter {
     font-size: 12px;
@@ -1088,6 +1096,14 @@
     #file-view #file-actions {
         flex-basis: 100%;
         justify-content: flex-start;
+    }
+
+    /* Sibling nav docks to the right-thumb zone; management stays left.
+       Order=1 + margin-left:auto produces the single gap; wrapping the 3 items
+       in .nav-cluster keeps them together if the row has to wrap. */
+    #file-view .nav-cluster {
+        order: 1;
+        margin-left: auto;
     }
 
     /* Raise toolbar buttons to the 44px touch-target minimum on mobile */

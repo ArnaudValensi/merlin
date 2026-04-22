@@ -44,7 +44,7 @@
     let fileRenameBtn, fileDeleteBtn;
     let fileDeleteConfirm, fileDeleteCancel, fileDeleteGo;
     let fileHeader, fileActions;
-    let filePrevBtn, fileNextBtn, fileCounter;
+    let filePrevBtn, fileNextBtn, fileCounter, fileNavCluster;
 
     // ---------------------------------------------------------------------------
     // Toast notifications
@@ -188,6 +188,7 @@
         filePrevBtn = document.getElementById('file-prev-btn');
         fileNextBtn = document.getElementById('file-next-btn');
         fileCounter = document.getElementById('file-counter');
+        fileNavCluster = document.getElementById('file-nav-cluster');
 
         // Event listeners — existing
         document.getElementById('file-back-btn').addEventListener('click', goToParent);
@@ -422,14 +423,10 @@
     function updateSiblingUI() {
         const hasSiblings = siblingIndex >= 0 && siblingFiles.length > 1;
         if (!hasSiblings) {
-            filePrevBtn.style.display = 'none';
-            fileNextBtn.style.display = 'none';
-            fileCounter.style.display = 'none';
+            fileNavCluster.style.display = 'none';
             return;
         }
-        filePrevBtn.style.display = '';
-        fileNextBtn.style.display = '';
-        fileCounter.style.display = '';
+        fileNavCluster.style.display = '';
         const total = siblingFiles.length;
         const pos = siblingIndex + 1;
         fileCounter.textContent = pos + ' / ' + total;
@@ -1008,9 +1005,7 @@
         currentFileInfo = info;
 
         // Clear stale sibling UI; updateSiblingUI() will repopulate after ensureSiblings resolves
-        filePrevBtn.style.display = 'none';
-        fileNextBtn.style.display = 'none';
-        fileCounter.style.display = 'none';
+        fileNavCluster.style.display = 'none';
 
         // Meta — title on the inner div so hover/long-press reveals the full path
         fileMeta.innerHTML = '<div class="file-meta-path" title="' + esc(info.path) + '">' + esc(info.name) + '</div>';
