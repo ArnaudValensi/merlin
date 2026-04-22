@@ -528,6 +528,16 @@
     border-color: var(--accent-blue);
 }
 
+/* Sibling navigation counter */
+.file-counter {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: 'Geist Mono', monospace;
+    min-width: 38px;
+    text-align: center;
+    user-select: none;
+}
+
 .download-btn {
     width: 34px;
     height: 34px;

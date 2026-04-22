@@ -17,6 +17,11 @@
     let selectedPaths = new Set();
     let currentDirData = null;  // cache for re-rendering rows
 
+    // Sibling navigation state (prev/next file in the current directory)
+    let siblingFiles = [];      // [{name, path}] — files only, in listing order
+    let siblingIndex = -1;      // position of current file in siblingFiles
+    let siblingDir = null;      // parent dir path the siblings were loaded from
+
     // SVG icon fragments (Lucide)
     const ICON_FOLDER = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
     const ICON_FILE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>';
@@ -39,6 +44,7 @@
     let fileRenameBtn, fileDeleteBtn;
     let fileDeleteConfirm, fileDeleteCancel, fileDeleteGo;
     let fileHeader, fileActions;
+    let filePrevBtn, fileNextBtn, fileCounter;
 
     // ---------------------------------------------------------------------------
     // Toast notifications
@@ -179,6 +185,9 @@
         fileDeleteGo = document.getElementById('file-delete-go');
         fileHeader = document.getElementById('file-header');
         fileActions = document.getElementById('file-actions');
+        filePrevBtn = document.getElementById('file-prev-btn');
+        fileNextBtn = document.getElementById('file-next-btn');
+        fileCounter = document.getElementById('file-counter');
 
         // Event listeners — existing
         document.getElementById('file-back-btn').addEventListener('click', goToParent);
@@ -223,14 +232,29 @@
         });
         fileDeleteGo.addEventListener('click', handleFileViewerDelete);
 
+        // Event listeners — sibling navigation
+        filePrevBtn.addEventListener('click', () => navigateSibling(-1));
+        fileNextBtn.addEventListener('click', () => navigateSibling(1));
+
         // Event listeners — empty state buttons
         document.getElementById('empty-create-btn').addEventListener('click', () => showCreateRow('file'));
         document.getElementById('empty-upload-btn').addEventListener('click', () => { if (!uploading) uploadInput.click(); });
 
-        // Escape key — global handler
+        // Global keyboard shortcuts
         document.addEventListener('keydown', (e) => {
+            // Ignore keys when typing in an input
+            const tag = (e.target && e.target.tagName) || '';
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return;
+
             if (e.key === 'Escape') {
-                if (selectionMode) exitSelectionMode();
+                if (selectionMode) { exitSelectionMode(); return; }
+                if (currentView === 'file') { goToParent(); return; }
+            }
+            if (currentView === 'file' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                // Let audio/video controls handle arrow keys (seeking)
+                if (tag === 'VIDEO' || tag === 'AUDIO') return;
+                if (e.key === 'ArrowLeft') { navigateSibling(-1); e.preventDefault(); }
+                else if (e.key === 'ArrowRight') { navigateSibling(1); e.preventDefault(); }
             }
         });
 
@@ -324,6 +348,7 @@
             showDirView();
             renderBreadcrumbs(fsPath);
             currentDirData = data;
+            setSiblingsFromDir(data, fsPath);
             renderDirectory(data);
             localStorage.setItem('merlin-files-path', fsPath);
             // Show download button except at filesystem root
@@ -337,7 +362,68 @@
         } else if (data.type === 'file') {
             showFileView();
             renderFileViewer(data);
+            ensureSiblings(parentOf(data.path), data.path).then(updateSiblingUI);
         }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Sibling navigation (prev/next file in the current directory)
+    // ---------------------------------------------------------------------------
+
+    function parentOf(fsPath) {
+        const idx = fsPath.lastIndexOf('/');
+        if (idx <= 0) return '/';
+        return fsPath.slice(0, idx);
+    }
+
+    function setSiblingsFromDir(data, dirPath) {
+        siblingDir = dirPath;
+        siblingFiles = (data.entries || [])
+            .filter(e => e.type === 'file')
+            .map(e => ({
+                name: e.name,
+                path: dirPath === '/' ? '/' + e.name : dirPath + '/' + e.name,
+            }));
+        siblingIndex = -1;
+    }
+
+    async function ensureSiblings(parentDir, filePath) {
+        if (siblingDir !== parentDir || siblingFiles.length === 0) {
+            try {
+                const resp = await fetch('/api/files/browse?path=' + encodeURIComponent(parentDir));
+                if (!resp.ok) { siblingFiles = []; siblingIndex = -1; siblingDir = null; return; }
+                const data = await resp.json();
+                if (data.type !== 'directory') { siblingFiles = []; siblingIndex = -1; siblingDir = null; return; }
+                setSiblingsFromDir(data, parentDir);
+            } catch {
+                siblingFiles = []; siblingIndex = -1; siblingDir = null;
+                return;
+            }
+        }
+        siblingIndex = siblingFiles.findIndex(f => f.path === filePath);
+    }
+
+    function navigateSibling(delta) {
+        if (siblingIndex < 0 || siblingFiles.length === 0) return;
+        const next = siblingIndex + delta;
+        if (next < 0 || next >= siblingFiles.length) return;
+        navigateTo(siblingFiles[next].path, true);
+    }
+
+    function updateSiblingUI() {
+        const hasSiblings = siblingIndex >= 0 && siblingFiles.length > 1;
+        if (!hasSiblings) {
+            filePrevBtn.style.display = 'none';
+            fileNextBtn.style.display = 'none';
+            fileCounter.style.display = 'none';
+            return;
+        }
+        filePrevBtn.style.display = '';
+        fileNextBtn.style.display = '';
+        fileCounter.style.display = '';
+        fileCounter.textContent = (siblingIndex + 1) + ' / ' + siblingFiles.length;
+        filePrevBtn.classList.toggle('disabled', siblingIndex === 0);
+        fileNextBtn.classList.toggle('disabled', siblingIndex === siblingFiles.length - 1);
     }
 
     function showError(msg) {
@@ -909,6 +995,11 @@
         mdRawMode = false;
         currentFileInfo = info;
 
+        // Clear stale sibling UI; updateSiblingUI() will repopulate after ensureSiblings resolves
+        filePrevBtn.style.display = 'none';
+        fileNextBtn.style.display = 'none';
+        fileCounter.style.display = 'none';
+
         // Meta
         fileMeta.innerHTML = '<div class="file-meta-path">' + esc(info.name) + '</div>';
 
@@ -1292,6 +1383,7 @@
         meta.textContent = formatSize(info.size) + ' · ' + info.mime_type;
         wrapper.appendChild(meta);
         fileContent.appendChild(wrapper);
+        attachSwipeNavigation(wrapper);
     }
 
     function renderAudioPreview(info) {
@@ -1306,6 +1398,7 @@
         meta.textContent = formatSize(info.size) + ' · ' + info.mime_type;
         wrapper.appendChild(meta);
         fileContent.appendChild(wrapper);
+        attachSwipeNavigation(wrapper);
     }
 
     function renderVideoPreview(info) {
@@ -1320,6 +1413,7 @@
         meta.textContent = formatSize(info.size) + ' · ' + info.mime_type;
         wrapper.appendChild(meta);
         fileContent.appendChild(wrapper);
+        attachSwipeNavigation(wrapper);
     }
 
     function renderBinaryInfo(info) {
@@ -1345,6 +1439,39 @@
         dlBtn.textContent = 'Download';
         wrapper.appendChild(dlBtn);
         fileContent.appendChild(wrapper);
+        attachSwipeNavigation(wrapper);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Swipe navigation (media previews only — avoids conflicts with text scrolling)
+    // ---------------------------------------------------------------------------
+
+    function attachSwipeNavigation(element) {
+        let startX = 0, startY = 0, startTime = 0, tracking = false;
+
+        element.addEventListener('touchstart', (e) => {
+            if (e.touches.length !== 1) { tracking = false; return; }
+            // Ignore swipes that start on media controls (audio/video timeline)
+            const target = e.target;
+            if (target.closest && (target.closest('audio') || target.closest('video'))) {
+                tracking = false;
+                return;
+            }
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+            startTime = Date.now();
+            tracking = true;
+        }, { passive: true });
+
+        element.addEventListener('touchend', (e) => {
+            if (!tracking || e.changedTouches.length !== 1) return;
+            tracking = false;
+            const dx = e.changedTouches[0].clientX - startX;
+            const dy = e.changedTouches[0].clientY - startY;
+            if (Date.now() - startTime > 500) return;
+            if (Math.abs(dx) < 60 || Math.abs(dy) > 50) return;
+            navigateSibling(dx < 0 ? 1 : -1);
+        }, { passive: true });
     }
 
     // ---------------------------------------------------------------------------
