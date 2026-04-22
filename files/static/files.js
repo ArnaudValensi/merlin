@@ -406,8 +406,17 @@
     function navigateSibling(delta) {
         if (siblingIndex < 0 || siblingFiles.length === 0) return;
         const next = siblingIndex + delta;
-        if (next < 0 || next >= siblingFiles.length) return;
+        if (next < 0 || next >= siblingFiles.length) {
+            shakeBoundary(delta < 0 ? filePrevBtn : fileNextBtn);
+            return;
+        }
         navigateTo(siblingFiles[next].path, true);
+    }
+
+    function shakeBoundary(btn) {
+        btn.classList.remove('at-boundary');
+        void btn.offsetWidth;  // restart the animation if re-triggered
+        btn.classList.add('at-boundary');
     }
 
     function updateSiblingUI() {
@@ -421,9 +430,12 @@
         filePrevBtn.style.display = '';
         fileNextBtn.style.display = '';
         fileCounter.style.display = '';
-        fileCounter.textContent = (siblingIndex + 1) + ' / ' + siblingFiles.length;
-        filePrevBtn.classList.toggle('disabled', siblingIndex === 0);
-        fileNextBtn.classList.toggle('disabled', siblingIndex === siblingFiles.length - 1);
+        const total = siblingFiles.length;
+        const pos = siblingIndex + 1;
+        fileCounter.textContent = pos + ' / ' + total;
+        fileCounter.setAttribute('aria-label', 'File ' + pos + ' of ' + total);
+        filePrevBtn.disabled = siblingIndex === 0;
+        fileNextBtn.disabled = siblingIndex === total - 1;
     }
 
     function showError(msg) {
@@ -1000,8 +1012,8 @@
         fileNextBtn.style.display = 'none';
         fileCounter.style.display = 'none';
 
-        // Meta
-        fileMeta.innerHTML = '<div class="file-meta-path">' + esc(info.name) + '</div>';
+        // Meta — title on the inner div so hover/long-press reveals the full path
+        fileMeta.innerHTML = '<div class="file-meta-path" title="' + esc(info.path) + '">' + esc(info.name) + '</div>';
 
         // Download link
         downloadLink.href = '/api/files/raw?path=' + encodeURIComponent(info.path);

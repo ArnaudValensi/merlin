@@ -533,9 +533,29 @@
     font-size: 12px;
     color: var(--text-muted);
     font-family: 'Geist Mono', monospace;
-    min-width: 38px;
+    min-width: 40px;
     text-align: center;
     user-select: none;
+}
+
+/* Native disabled state for header buttons (matches .disabled) */
+.header-action-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+.header-action-btn:disabled:hover {
+    background: var(--bg-card);
+    color: var(--text-secondary);
+}
+
+/* Boundary feedback: brief shake when pressing ←/→ / swiping past an end */
+@keyframes header-btn-shake {
+    0%, 100% { transform: translateX(0); }
+    30% { transform: translateX(-4px); }
+    70% { transform: translateX(4px); }
+}
+.header-action-btn.at-boundary {
+    animation: header-btn-shake 220ms ease-in-out;
 }
 
 .download-btn {
@@ -1068,6 +1088,19 @@
     #file-view #file-actions {
         flex-basis: 100%;
         justify-content: flex-start;
+    }
+
+    /* Raise toolbar buttons to the 44px touch-target minimum on mobile */
+    .header-action-btn,
+    .back-btn,
+    .download-btn,
+    .inline-confirm-btn,
+    .inline-cancel-btn {
+        width: 44px;
+        height: 44px;
+    }
+    .wrap-toggle-btn {
+        height: 44px;
     }
 
     /* Single-line filename with ellipsis — no awkward mid-word breaks */
