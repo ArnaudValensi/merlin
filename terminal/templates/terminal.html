@@ -713,55 +713,50 @@ document.addEventListener('DOMContentLoaded', () => {
         hidePasteToast();
     });
 
-    // OSC 52: tmux sends clipboard content after mouse select or copy-mode.
-    // Also handles clipboard queries (payload '?') from container programs
-    // requesting to read the browser clipboard (reverse direction).
+    // OSC 52: terminal programs (tmux mouse-select, nvim yank, merlin-clip)
+    // signal a clipboard write via \x1b]52;c;<base64>\x1b\\.
+    //
+    // Touch devices: writeText() from this handler runs without a user
+    // gesture (the call originates from a WebSocket message, not a click).
+    // Brave on iOS/Android accumulates non-gesture clipboard calls and
+    // eventually locks the API. We route touch through the pill instead;
+    // the pill click carries a real gesture.
+    //
+    // Queries (payload '?') are not supported: the only way to honor them
+    // is readText(), which has the same gesture problem. Container reads
+    // go through merlin-clip paste (server sync file) instead.
     term.parser.registerOscHandler(52, (data) => {
         const parts = data.split(';');
         const b64 = parts.length > 1 ? parts[parts.length - 1] : parts[0];
 
-        // Clipboard query: container is asking to READ browser clipboard
-        if (b64 === '?' || b64 === '') {
-            (async () => {
-                let text = null;
-                try {
-                    text = await navigator.clipboard.readText();
-                } catch (_) {
-                    text = lastOsc52Text; // fallback to cached
-                }
-                if (text) {
-                    const resp = btoa(unescape(encodeURIComponent(text)));
-                    sendToTerminal('\x1b]52;c;' + resp + '\x1b\\');
-                    syncClipboard(text);
-                }
-            })();
+        if (b64 === '?' || b64 === '') return true;
+
+        let text;
+        try {
+            text = decodeURIComponent(escape(atob(b64)));
+        } catch (_) {
+            return true;
+        }
+        lastOsc52Text = text;
+
+        if (isTouchDevice) {
+            syncClipboard(text);
+            const rect = container.getBoundingClientRect();
+            showCopyToast(rect.left + rect.width / 2, rect.top + 40);
             return true;
         }
 
-        try {
-            const text = decodeURIComponent(escape(atob(b64)));
-            lastOsc52Text = text;
+        // Desktop: transient activation from recent mouse/keyboard covers
+        // writeText(). Don't sync on success; that preserves NeoVim's
+        // clipboard cache invariant (sync would race with nvim's
+        // verification paste).
+        navigator.clipboard.writeText(text)
+            .then(() => showCopiedFeedback())
+            .catch(() => {
+                syncClipboard(text);
+                showStatusFlash('Copied — Ctrl+Shift+C for system', 'copied');
+            });
 
-            // Try direct clipboard write (works on desktop with mouse gesture).
-            // Only show "Copied!" if it actually succeeds — on mobile the
-            // write fails silently and the copy toast handles feedback instead.
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(text).then(() => {
-                    showCopiedFeedback();
-                }).catch(() => {
-                    // writeText failed — sync to server so merlin-clip paste works
-                    syncClipboard(text);
-                    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
-                        // Touch: show copy pill for user gesture
-                        const rect = container.getBoundingClientRect();
-                        showCopyToast(rect.left + rect.width / 2, rect.top + 40);
-                    } else {
-                        // Desktop: Ctrl+Shift+C provides the gesture browsers need
-                        showStatusFlash('Copied — Ctrl+Shift+C for system', 'copied');
-                    }
-                });
-            }
-        } catch (_) {}
         return true;
     });
 
