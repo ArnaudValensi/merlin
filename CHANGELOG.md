@@ -2,6 +2,19 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.19.0 (2026-05-05)
+
+### Added
+- **File viewer sibling navigation** — Prev/next buttons in the file viewer header to walk through siblings without bouncing back to the directory listing.
+
+### Changed
+- **Mobile file viewer header** — Header splits into two rows on narrow screens so the title stays readable.
+- **Mobile sibling nav placement** — Prev/next controls dock to the right-thumb zone on mobile for one-handed reach.
+- **File viewer accessibility** — Tighter touch targets and improved keyboard/reader semantics across the file viewer.
+
+### Fixed
+- **Mobile clipboard lock on Brave** — Copy from tmux/NeoVim no longer accumulates non-gesture clipboard API calls; touch devices route copy through the Copy pill instead, which preserves the gesture context Brave requires.
+
 ## v0.18.0 (2026-04-21)
 
 ### Added
