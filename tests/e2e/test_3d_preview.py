@@ -276,6 +276,13 @@ class Test3DInteraction:
         page.close()
 
     def test_touch_drag_changes_camera(self, browser_context, test_files):
+        """OrbitControls (three.js r140+) listens to PointerEvents with
+        pointerType === 'touch'. Synthetic TouchEvents don't propagate as
+        pointer events in headless Chromium, but synthetic PointerEvents
+        with pointerType: 'touch' do — that's what we dispatch here, which
+        exercises the same code path a real iOS touch goes through inside
+        OrbitControls.
+        """
         ctx, url = browser_context
         page = _open_3d_file(ctx, url, str(test_files / "cube_20x30x40.stl"))
 
@@ -283,54 +290,41 @@ class Test3DInteraction:
             "() => Object.assign({}, window.__merlin3DTest.camera.position)"
         )
 
-        # Dispatch a touch sequence directly — Playwright's touchscreen API
-        # only does taps; for a drag we need to dispatch TouchEvents.
         page.evaluate("""() => {
             const canvas = window.__merlin3DTest.canvas;
             const r = canvas.getBoundingClientRect();
             const cx = r.x + r.width / 2;
             const cy = r.y + r.height / 2;
-            const make = (type, x, y) => {
-                const t = new Touch({
-                    identifier: 1,
-                    target: canvas,
+            const fire = (type, x, y, opts = {}) => {
+                canvas.dispatchEvent(new PointerEvent(type, {
+                    pointerId: 1,
+                    pointerType: 'touch',
+                    isPrimary: true,
+                    bubbles: true,
+                    cancelable: true,
                     clientX: x,
                     clientY: y,
-                    pageX: x,
-                    pageY: y,
-                });
-                return new TouchEvent(type, {
-                    cancelable: true,
-                    bubbles: true,
-                    touches: type === 'touchend' ? [] : [t],
-                    targetTouches: type === 'touchend' ? [] : [t],
-                    changedTouches: [t],
-                });
+                    ...opts,
+                }));
             };
-            canvas.dispatchEvent(make('touchstart', cx, cy));
+            fire('pointerdown', cx, cy, { button: 0, buttons: 1 });
             for (let i = 1; i <= 8; i++) {
-                canvas.dispatchEvent(make('touchmove', cx + i * 25, cy + i * 12));
+                fire('pointermove', cx + i * 25, cy + i * 12, { buttons: 1 });
             }
-            canvas.dispatchEvent(make('touchend', cx + 200, cy + 96));
+            fire('pointerup', cx + 200, cy + 96, { button: 0, buttons: 0 });
         }""")
 
-        try:
-            page.wait_for_function(
-                """(prev) => {
-                    const p = window.__merlin3DTest.camera.position;
-                    return Math.abs(p.x - prev.x) > 0.01
-                        || Math.abs(p.y - prev.y) > 0.01
-                        || Math.abs(p.z - prev.z) > 0.01;
-                }""",
-                arg=before,
-                timeout=5000,
-            )
-        except Exception:
-            # Some headless engines don't dispatch TouchEvent → orbit reliably.
-            # Skip rather than fail; mouse drag covers the same wiring.
-            pytest.skip("Touch event dispatch not honored in this headless browser")
-        finally:
-            page.close()
+        page.wait_for_function(
+            """(prev) => {
+                const p = window.__merlin3DTest.camera.position;
+                return Math.abs(p.x - prev.x) > 0.01
+                    || Math.abs(p.y - prev.y) > 0.01
+                    || Math.abs(p.z - prev.z) > 0.01;
+            }""",
+            arg=before,
+            timeout=5000,
+        )
+        page.close()
 
 
 class Test3DBadFileFallback:
