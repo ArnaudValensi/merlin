@@ -26,7 +26,28 @@ def cmd_test(args):
 
 
 def cmd_test_e2e(args):
-    """Run E2E tests with Playwright (~2min)."""
+    """Run E2E tests with Playwright (~2min).
+
+    Ensures both Firefox and Chromium are installed first. Firefox covers
+    the markdown / project-switcher suites; Chromium with swiftshader covers
+    the 3D preview suite (Firefox headless lacks a usable WebGL context on
+    most Linux CI images). Playwright's installer is idempotent — already
+    present browsers are skipped, so this adds no latency after first run.
+    """
+    install = run(
+        [
+            "uv",
+            "run",
+            "--with",
+            "playwright",
+            "playwright",
+            "install",
+            "firefox",
+            "chromium",
+        ]
+    )
+    if install.returncode != 0:
+        sys.exit(install.returncode)
     sys.exit(
         run(
             ["uv", "run", "--with", "playwright", "pytest", "tests/e2e/", "-v"]

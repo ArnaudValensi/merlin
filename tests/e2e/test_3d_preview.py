@@ -1,7 +1,10 @@
 """E2E tests for 3D model preview (STL + OBJ).
 
-Run with: uv run pytest tests/e2e/test_3d_preview.py -v
-Requires: uv run --with playwright playwright install firefox
+Run with: uv run scripts.py test-e2e
+(installs the needed browsers automatically — see cmd_test_e2e in scripts.py)
+
+This suite uses Chromium + swiftshader for software WebGL; Firefox headless
+lacks a usable WebGL context on most Linux CI images.
 """
 
 import os
