@@ -1004,6 +1004,11 @@
         mdRawMode = false;
         currentFileInfo = info;
 
+        // Tear down any previous 3D scene so it doesn't leak GPU/DOM
+        if (window.merlin3D && typeof window.merlin3D.disposeThreeContext === 'function') {
+            window.merlin3D.disposeThreeContext();
+        }
+
         // Clear stale sibling UI; updateSiblingUI() will repopulate after ensureSiblings resolves
         fileNavCluster.style.display = 'none';
 
@@ -1025,6 +1030,8 @@
             renderAudioPreview(info);
         } else if (info.is_video) {
             renderVideoPreview(info);
+        } else if (info.is_3d_model) {
+            await render3DPreview(info);
         } else if (info.is_text && isMarkdown(info.name)) {
             mdToggle.style.display = '';
             mdToggle.textContent = 'Raw';
@@ -1038,6 +1045,25 @@
             await renderTextFile(info);
         } else {
             renderBinaryInfo(info);
+        }
+    }
+
+    async function render3DPreview(info) {
+        if (!window.merlin3D || typeof window.merlin3D.render3DPreview !== 'function') {
+            // Module failed to load (offline, JS error) — fall back to binary
+            renderBinaryInfo(info);
+            return;
+        }
+        fileLoading.style.display = '';
+        try {
+            await window.merlin3D.render3DPreview(info, fileContent);
+        } catch (err) {
+            console.error('3D preview failed:', err);
+            // Wipe any partial DOM, fall back to binary info with the file's metadata
+            fileContent.innerHTML = '';
+            renderBinaryInfo(info);
+        } finally {
+            fileLoading.style.display = 'none';
         }
     }
 

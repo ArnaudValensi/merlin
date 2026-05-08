@@ -715,6 +715,53 @@
     color: var(--text-muted);
 }
 
+/* 3D model preview (STL, OBJ) */
+.model3d-preview {
+    position: relative;
+    width: 100%;
+    height: calc(100vh - 180px);
+    min-height: 320px;
+    background: var(--bg-page);
+    overflow: hidden;
+}
+
+.model3d-preview canvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+    /* Block page scroll while rotating on touch */
+    touch-action: none;
+}
+
+.model3d-dims {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    padding: 6px 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: 'Geist Mono', monospace;
+    font-size: 12px;
+    color: var(--text-primary);
+    line-height: 1.4;
+    pointer-events: none;
+    user-select: none;
+    z-index: 1;
+}
+
+@media (max-width: 768px) {
+    .model3d-preview {
+        height: calc(100vh - 220px);
+    }
+    .model3d-dims {
+        top: 8px;
+        right: 8px;
+        font-size: 11px;
+        padding: 4px 8px;
+    }
+}
+
 /* Binary file info */
 .binary-info {
     display: flex;

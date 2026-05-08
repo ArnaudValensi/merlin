@@ -4,6 +4,7 @@ import pytest
 
 from files.fs_helpers import (
     IMAGE_EXTENSIONS,
+    MODEL_3D_EXTENSIONS,
     TEXT_MAX_BYTES,
     _check_not_shallow,
     create_item,
@@ -271,6 +272,36 @@ class TestGetFileInfo:
             f.write_bytes(b"\x00")
             info = get_file_info(f)
             assert info["is_image"] is True, f"Expected {ext} to be detected as image"
+
+    def test_stl_file_is_3d_model(self, tmp_path):
+        f = tmp_path / "bracket.stl"
+        f.write_bytes(b"solid bracket\n")
+        info = get_file_info(f)
+        assert info["is_3d_model"] is True
+        assert info["is_image"] is False
+        assert info["is_audio"] is False
+        assert info["is_video"] is False
+
+    def test_obj_file_is_3d_model(self, tmp_path):
+        f = tmp_path / "model.obj"
+        f.write_text("v 0 0 0\n")
+        info = get_file_info(f)
+        assert info["is_3d_model"] is True
+
+    def test_non_3d_file_is_not_3d_model(self, tmp_path):
+        f = tmp_path / "photo.png"
+        f.write_bytes(b"\x89PNG\r\n")
+        info = get_file_info(f)
+        assert info["is_3d_model"] is False
+
+    def test_all_model_3d_extensions_detected(self, tmp_path):
+        for ext in MODEL_3D_EXTENSIONS:
+            f = tmp_path / f"test{ext}"
+            f.write_bytes(b"\x00")
+            info = get_file_info(f)
+            assert info["is_3d_model"] is True, (
+                f"Expected {ext} to be detected as 3D model"
+            )
 
 
 # ---------------------------------------------------------------------------
