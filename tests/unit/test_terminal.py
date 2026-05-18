@@ -791,3 +791,35 @@ class TestClipboardSync:
         tr._sync_clipboard("data")
         assert not (self.clip_dir / ".current.tmp").exists()
         assert (self.clip_dir / "current.txt").exists()
+
+
+class TestSafeBasename:
+    """_safe_basename sanitizes filenames for shell-safe path injection."""
+
+    def test_keeps_simple_name(self):
+        assert tr._safe_basename("report.pdf") == "report.pdf"
+
+    def test_strips_path_components(self):
+        assert tr._safe_basename("/etc/passwd") == "passwd"
+        assert tr._safe_basename("../../etc/passwd") == "passwd"
+
+    def test_replaces_whitespace(self):
+        assert tr._safe_basename("my file.txt") == "my_file.txt"
+
+    def test_replaces_shell_metacharacters(self):
+        assert tr._safe_basename("a;b&c|d.txt") == "a_b_c_d.txt"
+        assert tr._safe_basename("$(rm).sh") == "__rm_.sh"
+
+    def test_strips_leading_dots(self):
+        assert tr._safe_basename(".bashrc") == "bashrc"
+
+    def test_caps_length(self):
+        long = "a" * 200 + ".txt"
+        out = tr._safe_basename(long)
+        assert len(out) <= 80
+        assert out.endswith(".txt")
+
+    def test_empty_falls_back_to_file(self):
+        assert tr._safe_basename("") == "file"
+        assert tr._safe_basename(None) == "file"
+        assert tr._safe_basename("///") == "file"

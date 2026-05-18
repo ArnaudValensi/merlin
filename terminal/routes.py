@@ -253,31 +253,37 @@ def _cleanup_clipboard() -> None:
             pass
 
 
-_IMAGE_EXT = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/gif": ".gif",
-    "image/webp": ".webp",
-    "image/svg+xml": ".svg",
-}
+UPLOAD_MAX_SIZE = 100 * 1024 * 1024  # 100 MB
 
 
-@router.post("/api/upload-image")
-async def upload_image(file: UploadFile, _auth=Depends(require_auth)):
-    """Save an uploaded image to /tmp/merlin-clipboard/ and return its path."""
-    ct = (file.content_type or "").lower()
-    if not ct.startswith("image/"):
-        return JSONResponse({"error": "Not an image"}, status_code=400)
+def _safe_basename(name: str | None) -> str:
+    """Return a shell-safe basename: strip path, replace risky chars, cap length."""
+    base = Path(name or "").name
+    cleaned = []
+    for ch in base:
+        if ch.isalnum() or ch in "._-":
+            cleaned.append(ch)
+        else:
+            cleaned.append("_")
+    out = "".join(cleaned).lstrip(".")
+    if len(out) > 80:
+        stem = Path(out).stem[: 80 - len(Path(out).suffix)]
+        out = stem + Path(out).suffix
+    return out or "file"
 
+
+@router.post("/api/upload-file")
+async def upload_file(file: UploadFile, _auth=Depends(require_auth)):
+    """Save an uploaded file to /tmp/merlin-clipboard/ and return its path."""
     content = await file.read()
-    if len(content) > 25 * 1024 * 1024:
-        return JSONResponse({"error": "Image too large (25MB max)"}, status_code=413)
+    if len(content) > UPLOAD_MAX_SIZE:
+        return JSONResponse({"error": "File too large (100MB max)"}, status_code=413)
 
     _cleanup_clipboard()
     CLIPBOARD_DIR.mkdir(exist_ok=True)
 
-    ext = _IMAGE_EXT.get(ct, Path(file.filename or "image.png").suffix or ".png")
-    name = f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}{ext}"
+    safe = _safe_basename(file.filename)
+    name = f"{secrets.token_hex(3)}-{safe}"
     path = CLIPBOARD_DIR / name
     path.write_bytes(content)
 
