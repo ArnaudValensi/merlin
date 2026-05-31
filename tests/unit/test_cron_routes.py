@@ -51,3 +51,20 @@ def test_cron_page_loads_shared_chart_module(client):
 def test_cron_page_has_perf_empty_state(client):
     resp = client.get("/cron")
     assert "No cron runs in this range yet" in resp.text
+
+
+def test_cron_tab_order_is_jobs_performance_logs(client):
+    """Tabs read Jobs, Performance, Logs (Performance before Logs, matching /bot)."""
+    html = client.get("/cron").text
+    jobs = html.index('data-tab="jobs"')
+    perf = html.index('data-tab="performance"')
+    logs = html.index('data-tab="logs"')
+    assert jobs < perf < logs
+
+
+def test_cron_logs_rows_are_expandable(client):
+    """The Logs tab wires click-to-expand detail rows (parity with the bot logs)."""
+    html = client.get("/cron").text
+    assert "toggleLogRow" in html
+    assert "cron-logdetail-" in html
+    assert 'class="row-detail"' in html

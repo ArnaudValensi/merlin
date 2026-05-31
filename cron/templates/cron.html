@@ -601,8 +601,8 @@
 
     <div class="tabs" id="cron-tabs">
         <div class="tab active" data-tab="jobs">Jobs</div>
-        <div class="tab" data-tab="logs">Logs</div>
         <div class="tab" data-tab="performance">Performance</div>
+        <div class="tab" data-tab="logs">Logs</div>
     </div>
 
     <!-- ── Jobs tab ── -->
@@ -901,7 +901,7 @@ const Cron = {
         }
 
         let html = '<table class="log-table"><thead><tr><th>Time</th><th>Job</th><th>Status</th><th>Duration</th><th>Cost</th><th></th></tr></thead><tbody>';
-        entries.forEach(e => {
+        entries.forEach((e, i) => {
             const isError = e.exit_code != null && e.exit_code !== 0;
             const ts = e.timestamp || '';
             const time = ts ? formatDateTime(ts) : '—';
@@ -911,18 +911,42 @@ const Cron = {
                 ? '<span class="feed-badge badge-error">Error</span>'
                 : '<span class="feed-badge badge-success">OK</span>';
             const sessionLink = e.session_file
-                ? `<a class="session-link" href="/session/${encodeURIComponent(e.session_file)}?back=cron">View session</a>`
+                ? `<a class="session-link" href="/session/${encodeURIComponent(e.session_file)}?back=cron" onclick="event.stopPropagation()">View session</a>`
                 : '';
-            html += `<tr title="${utcString(ts)}">
+            html += `<tr class="clickable ${isError ? 'error' : ''}" onclick="Cron.toggleLogRow(${i}, '${e.job_id || ''}', '${ts}')" title="${utcString(ts)}">
                 <td>${time}</td>
                 <td class="duration">${(e.job_id || '—')}</td>
                 <td>${status}</td>
                 <td class="duration">${duration}</td>
                 <td class="duration">${cost}</td>
                 <td>${sessionLink}</td>
-            </tr>`;
+            </tr><tr class="row-detail" id="cron-logdetail-${i}"><td colspan="6"><pre></pre></td></tr>`;
         });
         container.innerHTML = html + '</tbody></table>';
+    },
+
+    // Expand a Logs-tab row to show that run's output (fetched on first open).
+    async toggleLogRow(i, jobId, timestamp) {
+        const detail = document.getElementById('cron-logdetail-' + i);
+        if (!detail) return;
+        const pre = detail.querySelector('pre');
+
+        if (detail.classList.contains('open')) {
+            detail.classList.remove('open');
+            return;
+        }
+        detail.classList.add('open');
+        if (detail.dataset.loaded === '1') return; // already fetched
+
+        if (!jobId || !timestamp) { pre.textContent = '(no detail available)'; return; }
+        pre.textContent = 'Loading...';
+        const resp = await fetch(`/api/cron/jobs/${encodeURIComponent(jobId)}/logs/${encodeURIComponent(timestamp)}`);
+        if (!resp.ok) { pre.textContent = 'Failed to load log detail'; return; }
+        const data = await resp.json();
+        let text = data.output || '(no output)';
+        if (data.output_truncated) text += '\n\n[Output truncated at 100KB]';
+        pre.textContent = text;
+        detail.dataset.loaded = '1';
     },
 
     showJobLogs(jobId) {
