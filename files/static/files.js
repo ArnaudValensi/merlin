@@ -738,6 +738,32 @@
         uploadProgress.style.display = 'none';
     }
 
+    // Warn before a full page unload (sidebar nav to another section, refresh,
+    // tab close) while a streaming zip download is in flight: unloading aborts
+    // the fetch and silently loses the download. In-Files navigation uses
+    // pushState (no unload), so it is unaffected and the download continues.
+    var activeZipDownloads = 0;
+
+    function warnBeforeUnload(e) {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+    }
+
+    function beginZipDownload() {
+        activeZipDownloads++;
+        if (activeZipDownloads === 1) {
+            window.addEventListener('beforeunload', warnBeforeUnload);
+        }
+    }
+
+    function endZipDownload() {
+        activeZipDownloads = Math.max(0, activeZipDownloads - 1);
+        if (activeZipDownloads === 0) {
+            window.removeEventListener('beforeunload', warnBeforeUnload);
+        }
+    }
+
     function triggerDownload(paths, btn) {
         // Single file → direct download via link
         if (paths.length === 1) {
@@ -774,10 +800,12 @@
         }
         if (btn) btn.classList.add('loading');
         showZipProgress(label);
+        beginZipDownload();
 
         function done() {
             hideZipProgress();
             if (btn) btn.classList.remove('loading');
+            endZipDownload();
         }
 
         fetch('/api/files/download', {
