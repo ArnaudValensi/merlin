@@ -6,7 +6,7 @@ rather than returning a bare 401 (see main.py:_auth_redirect_handler). The
 requirements doc phrased R9.1 as "returns 401"; we assert the real protective
 behavior: the request is redirected to login and the performance JSON is not
 served, which is what actually guards the endpoint here. Making /api/* return
-401 app-wide is tracked as future work in docs/todo.md.
+401 app-wide is tracked as future work in docs/TODO.md.
 """
 
 import json
