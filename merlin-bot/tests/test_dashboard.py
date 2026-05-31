@@ -191,12 +191,15 @@ class TestSessionReading:
 
 
 class TestStructuredLogFields:
-    """Verify that read_events can handle new session_file and cost_usd fields."""
+    """Bot dict-adapter (over the shared reader) surfaces session_file/cost_usd."""
 
     def test_events_with_session_file(self, tmp_path, monkeypatch):
-        """Events with session_file field are read correctly."""
+        """Events with session_file field are read correctly as dicts."""
+        from lib import event_log
+
         log_path = tmp_path / "engine-log.jsonl"
-        monkeypatch.setattr(db, "ENGINE_LOG_PATH", log_path)
+        # The shared reader resolves the path from lib.event_log.
+        monkeypatch.setattr(event_log, "ENGINE_LOG_PATH", log_path)
 
         event = {
             "type": "invocation",
@@ -214,10 +217,12 @@ class TestStructuredLogFields:
         }
         log_path.write_text(json.dumps(event) + "\n")
 
-        events = db.read_events()
+        events = db._read_event_dicts()
         assert len(events) == 1
         assert events[0]["session_file"] == "2026-02-06_12-00-00-discord-sess-abc.jsonl"
         assert events[0]["cost_usd"] == 0.05
+        # extra='allow' field survives the round-trip
+        assert events[0]["num_turns"] == 2
 
 
 # ---------------------------------------------------------------------------

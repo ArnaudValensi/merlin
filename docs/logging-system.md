@@ -164,11 +164,13 @@ Each file is the raw `--output-format stream-json` dump from one engine invocati
 ![Log consumers — what reads which file](logging-system/consumers.svg)
 ([mermaid source](logging-system/consumers.mmd))
 
-1. **Bot dashboard** (`/bot`, `/bot/performance`, `/bot/logs`) → reads `engine-log.jsonl` via `merlin_app.py read_events()`. Powers health cards, performance charts, and log tables.
+1. **Bot dashboard** (`/bot`, `/bot/performance`, `/bot/logs`) → reads `engine-log.jsonl` via the shared reader `lib/event_log.py:read_events()`. Powers health cards, performance charts, and log tables.
 2. **Session viewer** (`/session/{filename}`) → reads `logs/raw-sessions/*.jsonl`. Renders the full timeline with thinking blocks, tool calls, token counts.
-3. **Cron dashboard** (`/cron`) → reads `engine-log.jsonl` for crash events, reads `cron-logs/` for execution history and session links.
+3. **Cron dashboard** (`/cron`) → reads `engine-log.jsonl` via `lib/event_log.py` for two things: the **crash banner** (`cron_runner_crash` events) and the **Performance tab**, which keeps only cron callers (`caller` starts with `cron-`) and aggregates them server-side via `perf/aggregate.py` behind `GET /api/cron/performance`. Also reads `cron-logs/` for execution history and session links.
 4. **Engine resume** → reads `sessions/*.jsonl` to rebuild conversation history for `--resume`.
 5. **`merlin.log`** → manual debugging only (SSH into server and read).
+
+> **Consumer-side schema.** Writers stay free-form (`log_event(**fields)`), but every reader goes through typed Pydantic models in `lib/event_log.py` (`InvocationEvent`, `CronDispatchEvent`, `CronRunnerCrashEvent`, `BotEvent`, `AppLifecycleEvent`). Each model sets `extra="allow"`, so adding a field on the writer side never breaks a reader; lines that fail JSON decoding or model validation are skipped and counted (a single `WARNING` summary), never raised.
 
 ## Rotation
 
@@ -203,15 +205,17 @@ These parts of the app produce no structured events (though app-level errors go 
 | File | Purpose |
 |---|---|
 | `lib/engine.py` | Main `invoke()` entry point — writes to sessions, raw-sessions, engine log |
-| `lib/structured_log.py` | `log_event()`, `cleanup_old_logs()` — engine log + rotation |
+| `lib/structured_log.py` | `log_event()`, `cleanup_old_logs()` — engine log writer + rotation |
+| `lib/event_log.py` | Canonical **reader** for `engine-log.jsonl` — typed Pydantic event models, malformed-line resilience. Used by the bot dashboard, the cron crash banner, and cron performance. |
+| `perf/aggregate.py` | Pure aggregator — turns `InvocationEvent`s into chartable `PerformanceData` (no I/O; testable in isolation). |
 | `lib/session.py` | `append_turn()`, `create_session()` — conversation history in `sessions/` |
 | `main.py` | `_setup_logging()` — configures `merlin.*` RotatingFileHandler, calls cleanup at startup |
 | `merlin-bot/merlin_bot.py` | Discord handler — writes to engine log (bot_event), generates request_id |
-| `merlin-bot/merlin_app.py` | Dashboard — reads `engine-log.jsonl` and `logs/raw-sessions/` |
+| `merlin-bot/merlin_app.py` | Dashboard pages — reads `engine-log.jsonl` via `lib/event_log.py`; reads `logs/raw-sessions/` directly |
 | `cron/runner.py` | Cron dispatcher — writes to engine log (cron_dispatch), `cron-logs/` |
 | `cron/__init__.py` | Cron scheduler — writes to engine log on crash (cron_runner_crash) |
 | `cron/logs.py` | Cron execution log CRUD — reads/writes `cron-logs/`, has `cleanup_logs()` |
-| `cron/routes.py` | Cron dashboard API — reads engine log for crashes, `cron-logs/` for history |
+| `cron/routes.py` | Cron dashboard API — reads `engine-log.jsonl` via `lib/event_log.py` (crash banner + `/api/cron/performance`), `cron-logs/` for history |
 | `terminal/routes.py` | Terminal WebSocket — logs connect/disconnect, PTY errors |
 | `tunnel.py` | Cloudflare tunnel — logs lifecycle, restarts, URL |
 | `saas_tunnel.py` | SaaS tunnel — logs connect/disconnect, port forwarding, auth |

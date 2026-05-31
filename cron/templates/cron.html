@@ -602,6 +602,7 @@
     <div class="tabs" id="cron-tabs">
         <div class="tab active" data-tab="jobs">Jobs</div>
         <div class="tab" data-tab="logs">Logs</div>
+        <div class="tab" data-tab="performance">Performance</div>
     </div>
 
     <!-- ── Jobs tab ── -->
@@ -729,6 +730,37 @@
         </div>
     </div><!-- /cron-tab-logs -->
 
+    <!-- ── Performance tab ── -->
+    <div class="cron-tab-content" id="cron-tab-performance" style="display:none">
+        <div class="time-range" id="cron-perf-range">
+            <button data-range="1">24h</button>
+            <button data-range="7" class="active">7d</button>
+            <button data-range="30">30d</button>
+        </div>
+        <div class="empty-state" id="cron-perf-empty" style="display:none">No cron runs in this range yet. Run a job and refresh.</div>
+        <div id="cron-perf-charts">
+            <div class="stat-row">
+                <div class="chart-container" style="flex: 2;">
+                    <div class="chart-title">Execution Time Over Time</div>
+                    <canvas id="cron-perf-timeseries" class="chart-canvas"></canvas>
+                </div>
+                <div class="stat-box">
+                    <div class="chart-title">Success Rate</div>
+                    <canvas id="cron-perf-success" style="max-height: 200px;"></canvas>
+                    <div id="cron-perf-success-text" style="text-align: center; margin-top: 12px; font-size: 14px; color: var(--text-secondary);"></div>
+                </div>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">Execution Time by Job</div>
+                <canvas id="cron-perf-by-job-duration" class="chart-canvas"></canvas>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">Cost by Job</div>
+                <canvas id="cron-perf-by-job-cost" class="chart-canvas"></canvas>
+            </div>
+        </div>
+    </div><!-- /cron-tab-performance -->
+
 </div>
 
 <!-- Create/Edit Modal -->
@@ -821,6 +853,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/perf-charts.js"></script>
 <script>
 // ── Tab switching ──
 function switchCronTab(tab) {
@@ -829,17 +862,29 @@ function switchCronTab(tab) {
     document.querySelectorAll('.cron-tab-content').forEach(c => c.style.display = 'none');
     document.getElementById('cron-tab-' + tab).style.display = '';
     if (tab === 'logs') Cron.loadAllLogs();
+    if (tab === 'performance') Cron.loadPerformance();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('#cron-tabs .tab').forEach(t => {
         t.addEventListener('click', () => switchCronTab(t.dataset.tab));
     });
+
+    // Performance time-range buttons (re-fetch + re-render on change)
+    document.querySelectorAll('#cron-perf-range button').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('#cron-perf-range button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            Cron.setPerfRange(parseInt(btn.dataset.range));
+        });
+    });
 });
 
 const Cron = {
     _editingJobId: null,
     _validateTimer: null,
+    _perfRange: 7,          // selected time range in days (default 7)
+    _perfLoadedRange: null, // range currently rendered (null = not loaded yet)
 
     // ── Logs tab ──
     async loadAllLogs(filterJobId) {
@@ -884,6 +929,61 @@ const Cron = {
         const select = document.getElementById('cron-log-filter');
         if (select) select.value = jobId;
         switchCronTab('logs');
+    },
+
+    // ── Performance tab ──
+    _perfSince(days) {
+        const d = new Date();
+        d.setDate(d.getDate() - days);
+        return d.toISOString();
+    },
+
+    async loadPerformance(force) {
+        // Lazy load: one fetch per activation. Skip if the current range is
+        // already rendered (unless forced by a range change).
+        if (!force && this._perfLoadedRange === this._perfRange) return;
+        configureChartDefaults();
+
+        const since = this._perfSince(this._perfRange);
+        const data = await API.get('/api/cron/performance?since=' + encodeURIComponent(since));
+        if (!data) return;
+
+        this._perfLoadedRange = this._perfRange;
+        this._renderPerformance(data);
+    },
+
+    setPerfRange(days) {
+        this._perfRange = days;
+        this.loadPerformance(true); // re-fetch + re-render for the new range
+    },
+
+    _renderPerformance(data) {
+        const total = (data.success_rate && data.success_rate.total) || 0;
+        const emptyEl = document.getElementById('cron-perf-empty');
+        const chartsEl = document.getElementById('cron-perf-charts');
+
+        if (total === 0) {
+            if (chartsEl) chartsEl.style.display = 'none';
+            if (emptyEl) emptyEl.style.display = '';
+            return;
+        }
+        if (emptyEl) emptyEl.style.display = 'none';
+        if (chartsEl) chartsEl.style.display = '';
+
+        // Pre-aggregated server-side; renderers just draw. renderOrUpdate
+        // destroys any previous chart on each canvas, so range switches don't
+        // leak Chart.js instances.
+        PerfCharts.renderExecutionTimeOverTime('cron-perf-timeseries', data.timeseries);
+        PerfCharts.renderSuccessRate('cron-perf-success', data.success_rate);
+        PerfCharts.renderExecutionTimeByJob('cron-perf-by-job-duration', data.by_job_duration);
+        PerfCharts.renderCostByJob('cron-perf-by-job-cost', data.by_job_cost);
+
+        const txt = document.getElementById('cron-perf-success-text');
+        if (txt) {
+            const sr = data.success_rate;
+            const pct = sr.total > 0 ? Math.round((sr.success / sr.total) * 100) : 0;
+            txt.textContent = `${pct}% success (${sr.total} total)`;
+        }
     },
 
     // ── Modal ──

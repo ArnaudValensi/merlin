@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 
 import paths
+from lib.event_log import read_events
 from merlin_ext import make_templates
 
 _SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -49,41 +50,22 @@ MERLIN_APP_NAV_ITEMS = [
 # ---------------------------------------------------------------------------
 
 
-def read_events(
+def _read_event_dicts(
     event_type: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> list[dict]:
-    """Read events from engine-log.jsonl, optionally filtered."""
-    if not ENGINE_LOG_PATH.exists():
-        return []
+    """Adapt the shared typed reader to the plain dicts these pages expect.
 
-    events = []
-    for line in ENGINE_LOG_PATH.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        if event_type and event.get("type") != event_type:
-            continue
-
-        if since or until:
-            try:
-                ts = datetime.fromisoformat(event["timestamp"])
-            except (KeyError, ValueError):
-                continue
-            if since and ts < since:
-                continue
-            if until and ts > until:
-                continue
-
-        events.append(event)
-
-    return events
+    The bot pages predate the typed models and serialize events verbatim.
+    ``model_dump(exclude_unset=True)`` reproduces the exact source shape — the
+    declared fields that were actually present plus any extra fields — so the
+    JSON these endpoints emit is byte-for-byte unchanged.
+    """
+    return [
+        e.model_dump(exclude_unset=True)
+        for e in read_events(event_type=event_type, since=since, until=until)
+    ]
 
 
 def _validate_session_filename(filename: str) -> None:
@@ -159,7 +141,7 @@ def session_page(request: Request, filename: str):
 def api_health():
     """System health summary."""
     now = datetime.now(tz=timezone.utc)
-    events = read_events()
+    events = _read_event_dicts()
     invocations = [e for e in events if e["type"] == "invocation"]
     errors_24h = [
         e
@@ -233,7 +215,7 @@ def api_invocations(
     since_dt = datetime.fromisoformat(since) if since else None
     until_dt = datetime.fromisoformat(until) if until else None
 
-    events = read_events("invocation", since=since_dt, until=until_dt)
+    events = _read_event_dicts("invocation", since=since_dt, until=until_dt)
 
     if caller:
         events = [e for e in events if e.get("caller") == caller]
@@ -254,7 +236,7 @@ def api_events(
     since_dt = datetime.fromisoformat(since) if since else None
     until_dt = datetime.fromisoformat(until) if until else None
 
-    events = read_events(event_type=event_type, since=since_dt, until=until_dt)
+    events = _read_event_dicts(event_type=event_type, since=since_dt, until=until_dt)
 
     if status == "error":
         events = [

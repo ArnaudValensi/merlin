@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import json as _json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -12,7 +11,9 @@ from fastapi.responses import HTMLResponse
 
 from cron import logs, manage, state
 from cron.schemas import JobCreate, JobUpdate
+from lib.event_log import CronRunnerCrashEvent, InvocationEvent, read_events
 from merlin_ext import make_templates
+from perf.aggregate import PerformanceData, aggregate_invocations
 
 cron_router = APIRouter(prefix="/api/cron", tags=["cron"])
 cron_page_router = APIRouter(tags=["cron"])
@@ -278,57 +279,55 @@ def validate_schedule(request_body: dict):
         return {"valid": False, "error": "Invalid cron expression"}
 
 
+def _get_recent_crashes() -> list[CronRunnerCrashEvent]:
+    """Recent cron_runner_crash events (last 24h), via the shared event reader.
+
+    The shared reader already handles a missing/empty file and malformed lines.
+    We only guard against a read race (file removed mid-read) so the cron page
+    never 500s on a transient I/O error.
+    """
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=24)
+    try:
+        events = read_events(event_type="cron_runner_crash", since=cutoff)
+    except OSError:
+        return []
+    return [e for e in events if isinstance(e, CronRunnerCrashEvent)]
+
+
 @cron_router.get("/crashes")
 def get_crashes():
     """Get recent cron_runner_crash events (last 24h)."""
-    from datetime import timedelta
-
-    from lib.structured_log import ENGINE_LOG_PATH
-
-    try:
-        if not ENGINE_LOG_PATH.exists():
-            return []
-        now = datetime.now(tz=timezone.utc)
-        cutoff = now - timedelta(hours=24)
-        crashes: list[dict] = []
-        for line in ENGINE_LOG_PATH.read_text().splitlines():
-            try:
-                event = _json.loads(line)
-                if event.get("type") == "cron_runner_crash":
-                    ts = datetime.fromisoformat(event["timestamp"])
-                    if ts >= cutoff:
-                        crashes.append(event)
-            except (ValueError, KeyError):
-                continue
-        return crashes
-    except Exception:
-        return []
+    return [c.model_dump(exclude_unset=True) for c in _get_recent_crashes()]
 
 
-def _get_recent_crashes() -> list[dict]:
-    """Read recent cron_runner_crash events from structured log (last 24h)."""
-    from datetime import timedelta
+@cron_router.get("/performance")
+def cron_performance(since: str | None = None) -> PerformanceData:
+    """Aggregate performance metrics for cron callers (caller starts with 'cron-').
 
-    from lib.structured_log import ENGINE_LOG_PATH
+    The cron analogue of the bot performance view: read invocation events from
+    engine-log.jsonl, keep only cron callers, and aggregate server-side. A
+    missing/empty log yields a zeroed PerformanceData (HTTP 200, not 404).
+    """
+    now = datetime.now(tz=timezone.utc)
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail="Invalid 'since' timestamp"
+            ) from None
+        if since_dt.tzinfo is None:
+            since_dt = since_dt.replace(tzinfo=timezone.utc)
+    else:
+        since_dt = now - timedelta(days=7)
 
-    crashes: list[dict] = []
-    try:
-        if not ENGINE_LOG_PATH.exists():
-            return crashes
-        now_utc = datetime.now(tz=timezone.utc)
-        cutoff = now_utc - timedelta(hours=24)
-        for line in ENGINE_LOG_PATH.read_text().splitlines():
-            try:
-                event = _json.loads(line)
-                if event.get("type") == "cron_runner_crash":
-                    ts = datetime.fromisoformat(event["timestamp"])
-                    if ts >= cutoff:
-                        crashes.append(event)
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return crashes
+    raw = read_events(event_type="invocation", since=since_dt)
+    cron_events = [
+        e
+        for e in raw
+        if isinstance(e, InvocationEvent) and (e.caller or "").startswith("cron-")
+    ]
+    return aggregate_invocations(cron_events, now)
 
 
 # ---------------------------------------------------------------------------
