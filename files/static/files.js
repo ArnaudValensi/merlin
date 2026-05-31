@@ -726,7 +726,19 @@
     // Download helpers
     // ---------------------------------------------------------------------------
 
-    function triggerDownload(paths) {
+    function showZipProgress(label) {
+        uploadProgress.style.display = '';
+        uploadProgressFill.classList.remove('upload-progress-error');
+        uploadProgressFill.classList.add('indeterminate');
+        uploadProgressText.textContent = label;
+    }
+
+    function hideZipProgress() {
+        uploadProgressFill.classList.remove('indeterminate');
+        uploadProgress.style.display = 'none';
+    }
+
+    function triggerDownload(paths, btn) {
         // Single file → direct download via link
         if (paths.length === 1) {
             // Check if it's a file (not directory) by looking at currentDirData
@@ -750,7 +762,24 @@
             }
         }
 
-        // Multiple items or directory → fetch zip and trigger download
+        // Multiple items or directory → zip server-side. This can take a while
+        // with no native browser feedback (the response is buffered into a blob
+        // before the download starts), so show an in-flight indicator.
+        var label;
+        if (paths.length === 1) {
+            var base = paths[0].replace(/\/+$/, '').split('/').pop() || paths[0];
+            label = 'Zipping ' + base + '…';
+        } else {
+            label = 'Zipping ' + paths.length + ' items…';
+        }
+        if (btn) btn.classList.add('loading');
+        showZipProgress(label);
+
+        function done() {
+            hideZipProgress();
+            if (btn) btn.classList.remove('loading');
+        }
+
         fetch('/api/files/download', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -779,17 +808,17 @@
             });
         }).catch(function() {
             Toast.show('Download failed', 'error');
-        });
+        }).finally(done);
     }
 
     function handleDirectoryDownload() {
-        triggerDownload([currentPath]);
+        triggerDownload([currentPath], downloadDirBtn);
     }
 
     function handleSelectionDownload() {
         var paths = [...selectedPaths];
         if (paths.length === 0) return;
-        triggerDownload(paths);
+        triggerDownload(paths, downloadSelBtn);
     }
 
     // ---------------------------------------------------------------------------
@@ -1529,6 +1558,7 @@
         uploadProgress.style.display = '';
         uploadProgressFill.style.width = '0%';
         uploadProgressFill.classList.remove('upload-progress-error');
+        uploadProgressFill.classList.remove('indeterminate');
 
         const fileList = Array.from(files);
         let current = 0;

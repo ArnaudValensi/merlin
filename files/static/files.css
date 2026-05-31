@@ -57,6 +57,26 @@
     color: var(--accent-red);
     border-color: var(--accent-red);
 }
+/* Loading spinner: swap the icon for a spinner while an action is in flight */
+.header-action-btn.loading {
+    pointer-events: none;
+    color: var(--accent-blue);
+}
+.header-action-btn.loading svg {
+    display: none;
+}
+.header-action-btn.loading::after {
+    content: "";
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent-blue);
+    border-radius: 50%;
+    animation: btn-spin 0.6s linear infinite;
+}
+@keyframes btn-spin {
+    to { transform: rotate(360deg); }
+}
 
 /* Back button */
 .back-btn {
@@ -347,6 +367,17 @@
 .upload-progress-fill.upload-progress-error {
     background: var(--accent-red);
     width: 100% !important;
+}
+
+/* Indeterminate sliding fill: used when total size is unknown (e.g. zipping) */
+.upload-progress-fill.indeterminate {
+    width: 40% !important;
+    transition: none;
+    animation: progress-slide 1.1s ease-in-out infinite;
+}
+@keyframes progress-slide {
+    0% { margin-left: -40%; }
+    100% { margin-left: 100%; }
 }
 
 .upload-progress-text {
