@@ -21,6 +21,15 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* Respect declared font sizes on mobile. Without this, Safari/Chrome "font
+   boosting" (text auto-inflation) enlarges text once a block relayouts. It
+   showed up as expanded log-row <pre> blocks ballooning when a second row was
+   opened in the /bot and /cron Logs tabs. */
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
 body {
     font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     background: var(--bg-primary);
