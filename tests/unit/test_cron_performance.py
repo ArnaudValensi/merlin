@@ -167,3 +167,20 @@ def test_endpoint_empty_engine_log_returns_empty_perf_data(
     assert data["timeseries"] == []
     assert data["by_job_duration"] == []
     assert data["by_job_cost"] == []
+
+
+def test_endpoint_bad_since_returns_400(client, _isolated_engine_log):
+    """A non-ISO 'since' is a client error, not a 500."""
+    resp = client.get("/api/cron/performance", params={"since": "not-a-timestamp"})
+    assert resp.status_code == 400
+
+
+def test_endpoint_naive_since_is_accepted(client, _isolated_engine_log):
+    """A timezone-naive 'since' (no offset) is coerced to UTC, not a 500."""
+    now = datetime.now(tz=timezone.utc)
+    _write(_isolated_engine_log, _inv("cron-foo", now - timedelta(hours=1)))
+
+    naive = (now - timedelta(days=1)).replace(tzinfo=None).isoformat()
+    resp = client.get("/api/cron/performance", params={"since": naive})
+    assert resp.status_code == 200
+    assert resp.json()["success_rate"]["total"] == 1

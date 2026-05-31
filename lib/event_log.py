@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -149,19 +149,36 @@ def read_events(
         :class:`BaseEvent`.
 
     Resilience:
-        Missing or empty file returns ``[]``. Lines that fail JSON decoding or
-        model validation are skipped and counted; if any were skipped, a single
-        ``WARNING`` summary is logged. Comparison filters (``since`` / ``until``)
-        require timezone-aware datetimes, matching how the engine writes
-        timestamps.
+        Missing, empty, or unreadable file returns ``[]`` (a transient I/O
+        error or a corrupt/non-UTF-8 file never raises). Lines that fail JSON
+        decoding or model validation are skipped and counted; if any were
+        skipped, a single ``WARNING`` summary is logged. Naive ``since`` /
+        ``until`` bounds are treated as UTC for comparison.
     """
     if not ENGINE_LOG_PATH.exists():
+        return []
+
+    # Engine timestamps are timezone-aware; coerce naive bounds to UTC so a
+    # naive since/until never raises TypeError when compared against them.
+    if since is not None and since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    if until is not None and until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+
+    try:
+        # errors="replace" keeps a corrupt / non-UTF-8 byte run from raising:
+        # affected lines then fail JSON decode and are counted as malformed
+        # rather than crashing the read.
+        text = ENGINE_LOG_PATH.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        # File removed between the exists() check and the read, or a transient
+        # I/O error: degrade to empty, matching the missing-file contract.
         return []
 
     events: list[BaseEvent] = []
     malformed = 0
 
-    for raw_line in ENGINE_LOG_PATH.read_text(encoding="utf-8").splitlines():
+    for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
             continue
@@ -192,6 +209,8 @@ def read_events(
             ts = _parse_ts(event.timestamp)
             if ts is None:
                 continue
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
             if since is not None and ts < since:
                 continue
             if until is not None and ts > until:

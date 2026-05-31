@@ -15,10 +15,16 @@ import merlin_app as db
 @pytest.fixture(autouse=True)
 def _redirect_paths(tmp_path, monkeypatch):
     """Redirect RAW_SESSION_DIR and ENGINE_LOG_PATH to temp directory."""
+    from lib import event_log
+
     session_dir = tmp_path / "logs" / "raw-sessions"
     session_dir.mkdir(parents=True)
     monkeypatch.setattr(db, "RAW_SESSION_DIR", session_dir)
     monkeypatch.setattr(db, "ENGINE_LOG_PATH", tmp_path / "engine-log.jsonl")
+    # api_health/api_invocations/api_events now read via the shared reader, which
+    # resolves its own ENGINE_LOG_PATH; patch it too or those endpoints would
+    # read whatever log the import-time MERLIN_HOME pointed at (not isolated).
+    monkeypatch.setattr(event_log, "ENGINE_LOG_PATH", tmp_path / "engine-log.jsonl")
     return session_dir
 
 

@@ -217,6 +217,31 @@ def test_read_events_logs_malformed_summary(_isolated_log, caplog):
     assert "skipped 3 malformed lines in engine-log.jsonl" in caplog.text
 
 
+def test_read_events_naive_since_coerced(_isolated_log):
+    """A timezone-naive `since` must filter (treated as UTC), not raise TypeError."""
+    old = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    recent = datetime(2026, 5, 20, tzinfo=timezone.utc)
+    _write(
+        _isolated_log,
+        _invocation(caller="cron-old", timestamp=old.isoformat()),
+        _invocation(caller="cron-new", timestamp=recent.isoformat()),
+    )
+
+    naive_cutoff = datetime(2026, 5, 10)  # no tzinfo
+    events = el.read_events(since=naive_cutoff)
+    assert [e.caller for e in events] == ["cron-new"]
+
+
+def test_read_events_survives_non_utf8(_isolated_log):
+    """A corrupt non-UTF-8 byte run is counted malformed, never crashes the read."""
+    good = _invocation(caller="cron-ok").encode("utf-8")
+    _isolated_log.write_bytes(good + b"\n" + b"\xff\xfe not utf8 \x80\n" + good + b"\n")
+
+    events = el.read_events()  # must not raise
+    assert len(events) == 2
+    assert all(e.caller == "cron-ok" for e in events)
+
+
 def test_read_events_no_warning_when_all_valid(_isolated_log, caplog):
     """A clean read must not emit a malformed-lines warning."""
     _write(_isolated_log, _invocation(caller="cron-a"), _invocation(caller="cron-b"))

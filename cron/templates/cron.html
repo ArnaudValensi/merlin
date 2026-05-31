@@ -885,6 +885,7 @@ const Cron = {
     _validateTimer: null,
     _perfRange: 7,          // selected time range in days (default 7)
     _perfLoadedRange: null, // range currently rendered (null = not loaded yet)
+    _perfReqSeq: 0,         // monotonic request id; guards out-of-order responses
 
     // ── Logs tab ──
     async loadAllLogs(filterJobId) {
@@ -944,11 +945,15 @@ const Cron = {
         if (!force && this._perfLoadedRange === this._perfRange) return;
         configureChartDefaults();
 
-        const since = this._perfSince(this._perfRange);
+        // Guard against out-of-order responses: if the range changes again
+        // before this fetch resolves, only the latest request renders.
+        const seq = ++this._perfReqSeq;
+        const range = this._perfRange;
+        const since = this._perfSince(range);
         const data = await API.get('/api/cron/performance?since=' + encodeURIComponent(since));
-        if (!data) return;
+        if (seq !== this._perfReqSeq || !data) return;
 
-        this._perfLoadedRange = this._perfRange;
+        this._perfLoadedRange = range;
         this._renderPerformance(data);
     },
 
