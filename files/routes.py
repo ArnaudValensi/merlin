@@ -1,6 +1,5 @@
 """File browser — FastAPI routes (pages + API)."""
 
-import io
 import zipfile
 from collections.abc import Generator
 from pathlib import Path
@@ -10,6 +9,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
+from zipstream import ZipStream
 
 from merlin_ext import make_templates
 
@@ -202,27 +202,23 @@ def _collect_files(path: Path, base: Path) -> Generator[tuple[Path, str], None, 
             yield resolved, str(child.relative_to(base))
 
 
-def _build_zip(
-    items: list[tuple[Path, bool]],
-    base: Path,
-) -> Generator[bytes, None, None]:
-    """Build a zip archive in memory and yield it in chunks."""
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path, is_dir in items:
-            if is_dir:
-                for file_path, arcname in _collect_files(path, base):
-                    zf.write(file_path, arcname)
-            else:
-                arcname = str(path.relative_to(base))
-                zf.write(path, arcname)
-    # Yield the complete zip in 64 KB chunks
-    buf.seek(0)
-    while True:
-        chunk = buf.read(65536)
-        if not chunk:
-            break
-        yield chunk
+def _build_zip(items: list[tuple[Path, bool]], base: Path) -> ZipStream:
+    """Build a streaming zip archive.
+
+    Files are read lazily as the response is consumed, so the whole archive
+    never sits in RAM (or on disk) — memory stays flat regardless of size.
+    Directories are expanded via _collect_files so the symlink/blocked-path
+    filtering is preserved; we add each resolved file individually rather than
+    letting ZipStream recurse, so it can't bypass those checks.
+    """
+    zs = ZipStream(compress_type=zipfile.ZIP_DEFLATED)
+    for path, is_dir in items:
+        if is_dir:
+            for file_path, arcname in _collect_files(path, base):
+                zs.add_path(file_path, arcname)
+        else:
+            zs.add_path(path, str(path.relative_to(base)))
+    return zs
 
 
 @router.post("/api/files/download")

@@ -16,6 +16,7 @@ dependencies = [
     "python-dotenv",
     "python-multipart",
     "uvicorn[standard]",
+    "zipstream-ng",
 ]
 
 [dependency-groups]
