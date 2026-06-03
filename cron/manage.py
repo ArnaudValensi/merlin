@@ -184,7 +184,7 @@ def format_job_discord(job: dict, job_id: str) -> str:
     max_turns = job.get("max_turns", 0)
     description = job.get("description", "No description")
     prompt = job.get("prompt", "")
-    channel = job.get("channel", "")
+    channel = job.get("discord_channel", "")
 
     # Truncate prompt if too long
     prompt_display = prompt[:200] + "..." if len(prompt) > 200 else prompt
@@ -262,7 +262,7 @@ def cmd_add(args) -> dict:
         "description": args.description or job_id,
         "schedule": args.schedule,
         "prompt": args.prompt,
-        "channel": args.channel,
+        "discord_channel": args.discord_channel,
         "enabled": True,
         "report_mode": args.report_mode,
         "max_turns": args.max_turns,
@@ -385,7 +385,6 @@ Examples:
   uv run cron/manage.py add \\
     --schedule "0 9 * * *" \\
     --prompt "Check for new Python releases" \\
-    --channel YOUR_CHANNEL_ID \\
     --description "Daily Python check" \\
     --report-mode silent \\
     --dry-run
@@ -436,7 +435,11 @@ Output:
         "--schedule", required=True, help="Cron expression (e.g., '0 9 * * *')"
     )
     p_add.add_argument("--prompt", required=True, help="The prompt to send to Claude")
-    p_add.add_argument("--channel", required=True, help="Discord channel ID")
+    p_add.add_argument(
+        "--discord-channel",
+        default=None,
+        help="Discord channel ID for notifications (default: bot's default channel)",
+    )
     p_add.add_argument("--description", help="Human-readable description")
     p_add.add_argument(
         "--report-mode",

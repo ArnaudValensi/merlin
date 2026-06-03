@@ -98,7 +98,7 @@ Job ID is the filename without `.json` (e.g., `daily-digest.json` -> job ID `dai
 | `grace_minutes` | integer | `15` | Staleness window — jobs missed by more than this are skipped |
 | `created_at` | string | -- | ISO 8601 creation timestamp |
 
-> **Note**: The `discord_channel` field is optional. If omitted, notifications fall back to the bot's default channel (from `DISCORD_CHANNEL_IDS`). If the bot extension is not loaded, notifications are silently skipped. The legacy `channel` field (required in the old format) is no longer used.
+> **Note**: The `discord_channel` field is optional. If omitted, notifications fall back to the bot's default channel (from `DISCORD_CHANNEL_IDS`). If the bot extension is not loaded, notifications are silently skipped. The legacy `channel` field has been removed and is no longer read anywhere.
 
 ### Command Jobs
 
@@ -260,7 +260,7 @@ Each log file contains:
 
 1. Check `report_mode`: if `off`, skip; if `silent` and exit_code == 0, skip.
 2. If merlin-bot extension is loaded, send a formatted Discord message.
-3. Channel resolution: per-job `discord_channel` → legacy `channel` → bot's default `DISCORD_CHANNEL_IDS` → skip silently.
+3. Channel resolution: per-job `discord_channel` → bot's default `DISCORD_CHANNEL_IDS` → skip silently.
 4. Never raises — all errors are caught and logged.
 
 The engine has no notion of Discord or delivery. It returns text output, and `notify.py` decides whether and where to deliver it. This design means cron works standalone without Discord. When the bot extension is enabled, you get Discord notifications for free.

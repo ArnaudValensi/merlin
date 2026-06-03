@@ -1074,7 +1074,7 @@
                 <div class="form-group">
                     <label class="form-label" for="field-grace-minutes">Grace Minutes</label>
                     <input class="form-input" id="field-grace-minutes" type="number" min="0" value="15" style="font-family: 'Geist Mono', monospace;">
-                    <div class="form-help">Skip if previous run ended within this window</div>
+                    <div class="form-help">A missed run (Merlin offline) still fires up to this many minutes late, then is skipped</div>
                 </div>
             </div>
             {% if bot_loaded %}
@@ -1361,8 +1361,8 @@ const Cron = {
         if (errorId) errorId.textContent = '';
         const channelOverride = document.getElementById('field-discord-channel');
         if (channelOverride) {
-            // Old jobs may have "channel"; "default" means no specific override.
-            const specific = job.discord_channel || job.channel;
+            // "default" means no specific override.
+            const specific = job.discord_channel;
             channelOverride.value = specific && specific !== 'default' ? specific : '';
         }
         this.onNotifyChange();

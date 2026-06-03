@@ -205,8 +205,8 @@ class TestNotifyCronResult:
         mod.notify.assert_called_once()
         assert mod.notify.call_args[0][0] == "111222333"
 
-    def test_legacy_channel_field_used(self):
-        """Jobs with legacy 'channel' field use it for notification."""
+    def test_legacy_channel_field_ignored(self):
+        """The legacy 'channel' field is no longer read; falls back to default."""
         mod = _make_bot_module(channels={"111222333"})
         info = FakeExtensionInfo(loaded=True, module=mod)
         registry = _make_registry(info)
@@ -215,7 +215,7 @@ class TestNotifyCronResult:
             "daily-check", _sample_channel_job(), _sample_result(), registry
         )
         mod.notify.assert_called_once()
-        assert mod.notify.call_args[0][0] == "999"
+        assert mod.notify.call_args[0][0] == "111222333"
 
     def test_silent_mode_skips_on_success(self):
         """report_mode=silent skips notification on successful jobs."""

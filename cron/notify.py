@@ -54,8 +54,8 @@ def _do_notify(
     if not (bot_info and bot_info.notify is not None and bot_info.module is not None):
         return
 
-    # Channel: per-job discord_channel > job's legacy "channel" field > bot's global default
-    channel = job.get("discord_channel") or job.get("channel")
+    # Channel: per-job discord_channel > bot's global default
+    channel = job.get("discord_channel")
     if channel == "default":
         channel = None
     if not channel:

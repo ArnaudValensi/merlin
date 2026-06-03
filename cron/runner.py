@@ -643,7 +643,7 @@ Job file format (cron-jobs/<job-id>.json):
     "prompt": "Task for Claude",   # Prompt jobs: what to ask the agent
     "command": "echo hi",          # Command jobs: shell command run via bash -lc
     "working_dir": null,           # Command jobs: cwd; default MERLIN_LAUNCH_CWD then $HOME
-    "channel": "123456789",        # Discord channel for results
+    "discord_channel": "default",  # Discord destination ("default" or a channel ID)
     "enabled": true,               # Toggle on/off
     "report_mode": "silent",       # "always", "silent" (errors only), or "off"
     "max_turns": 0,                # Prompt jobs: 0 = unlimited
