@@ -972,13 +972,13 @@
                 <div class="builder-group" id="builder-weekly" style="display:none">
                     <label class="form-label">On days</label>
                     <div class="weekday-chips" id="weekday-chips">
-                        <button type="button" class="weekday-chip" data-dow="1" title="Monday">M</button>
-                        <button type="button" class="weekday-chip" data-dow="2" title="Tuesday">T</button>
-                        <button type="button" class="weekday-chip" data-dow="3" title="Wednesday">W</button>
-                        <button type="button" class="weekday-chip" data-dow="4" title="Thursday">T</button>
-                        <button type="button" class="weekday-chip" data-dow="5" title="Friday">F</button>
-                        <button type="button" class="weekday-chip" data-dow="6" title="Saturday">S</button>
-                        <button type="button" class="weekday-chip" data-dow="0" title="Sunday">S</button>
+                        <button type="button" class="weekday-chip" data-dow="1" title="Monday" onclick="Cron.toggleWeekday(this)">M</button>
+                        <button type="button" class="weekday-chip" data-dow="2" title="Tuesday" onclick="Cron.toggleWeekday(this)">T</button>
+                        <button type="button" class="weekday-chip" data-dow="3" title="Wednesday" onclick="Cron.toggleWeekday(this)">W</button>
+                        <button type="button" class="weekday-chip" data-dow="4" title="Thursday" onclick="Cron.toggleWeekday(this)">T</button>
+                        <button type="button" class="weekday-chip" data-dow="5" title="Friday" onclick="Cron.toggleWeekday(this)">F</button>
+                        <button type="button" class="weekday-chip" data-dow="6" title="Saturday" onclick="Cron.toggleWeekday(this)">S</button>
+                        <button type="button" class="weekday-chip" data-dow="0" title="Sunday" onclick="Cron.toggleWeekday(this)">S</button>
                     </div>
                     <div class="weekday-quick">
                         <button type="button" onclick="Cron.setWeekdays('weekdays')">Weekdays</button>
@@ -1678,6 +1678,11 @@ const Cron = {
     onBuilderChange() {
         document.getElementById('field-schedule').value = this.builderToCron();
         this.debounceValidate();
+    },
+
+    toggleWeekday(chip) {
+        chip.classList.toggle('active');
+        this.onBuilderChange();
     },
 
     setWeekdays(which) {

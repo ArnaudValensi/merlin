@@ -96,6 +96,13 @@ def test_cron_modal_has_schedule_builder(client):
     assert "resolvedOptions().timeZone" in html
 
 
+def test_weekday_chips_are_clickable(client):
+    """Each individual weekday chip toggles via Cron.toggleWeekday."""
+    html = client.get("/cron").text
+    assert html.count('onclick="Cron.toggleWeekday(this)"') == 7
+    assert "toggleWeekday(chip)" in html
+
+
 def test_cron_modal_repeat_options(client):
     """The Repeat dropdown offers the six frequency options."""
     html = client.get("/cron").text
