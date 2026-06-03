@@ -8,9 +8,12 @@ Jobs run in parallel (ThreadPoolExecutor) with per-job flock to prevent double d
 import json
 import logging
 import os
+import subprocess
 import sys
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -64,6 +67,10 @@ DEFAULT_GRACE_MINUTES = 15
 # Max parallel job executions
 MAX_WORKERS = 6
 
+# Safety timeout for command jobs (seconds). A hung command would otherwise hold
+# its per-job flock forever, blocking every future run of that job.
+COMMAND_TIMEOUT_SECONDS = 3600
+
 # Report mode — controls notification behavior in notify.py, not the prompt.
 # The engine has no notion of silent/always — it just returns text.
 
@@ -116,8 +123,13 @@ def load_job(path: Path) -> dict | None:
         logger.warning("Failed to load job %s: %s", path.name, e)
         return None
 
-    # Validate required fields
-    required = ["schedule", "prompt"]
+    # Validate required fields. "schedule" is always required; the action field
+    # depends on the job type ("command" needs a command, otherwise a prompt).
+    required = ["schedule"]
+    if data.get("type") == "command":
+        required.append("command")
+    else:
+        required.append("prompt")
     missing = [f for f in required if f not in data]
     if missing:
         logger.warning("Job %s missing required fields: %s", path.name, missing)
@@ -159,13 +171,33 @@ def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+def job_timezone(job: dict) -> ZoneInfo | None:
+    """Resolve a job's scheduling timezone.
+
+    Order: per-job ``timezone`` (if set and valid) -> server-wide ``CRON_TZ``
+    (from ``CRON_TIMEZONE``) -> None (meaning system/UTC, unchanged behavior).
+    """
+    name = job.get("timezone")
+    if name:
+        try:
+            return ZoneInfo(name)
+        except Exception:
+            logger.warning("Job has invalid timezone %r, using server default", name)
+    return CRON_TZ
+
+
 def is_job_due(
     job_id: str,
     schedule: str,
     now: datetime,
     grace_minutes: int = DEFAULT_GRACE_MINUTES,
+    tz: ZoneInfo | None = None,
 ) -> bool:
     """Check if a job is due to run based on schedule and last run time.
+
+    The schedule is interpreted in ``tz`` (the job's timezone) when given, else
+    the server-wide ``CRON_TZ``. Interpreting in a DST-aware zone keeps a
+    wall-clock schedule (e.g. "0 17 * * *" = 17:00 local) stable across DST.
 
     Includes staleness window and never-seen guard:
     - Never-seen jobs: state initialized to now, returns False (wait for next schedule)
@@ -184,11 +216,12 @@ def is_job_due(
         )
         return False
 
-    # Normalize to configured timezone so croniter interprets the schedule
-    # in the right timezone (e.g. "30 7" = 7:30 local, not 7:30 UTC)
-    if CRON_TZ:
-        last_run = last_run.astimezone(CRON_TZ)
-        now = now.astimezone(CRON_TZ)
+    # Normalize to the scheduling timezone so croniter interprets the schedule
+    # in the right timezone (e.g. "30 7" = 7:30 local, not 7:30 UTC).
+    effective_tz = tz or CRON_TZ
+    if effective_tz:
+        last_run = last_run.astimezone(effective_tz)
+        now = now.astimezone(effective_tz)
 
     # Get the next scheduled time after last run
     cron = croniter(schedule, last_run)
@@ -224,29 +257,80 @@ def build_prompt(job: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def run_job(job_id: str, job: dict) -> None:
-    """Execute a single cron job. Acquires per-job lock to prevent double dispatch."""
-    # Acquire per-job lock (non-blocking)
-    lock = acquire_job_lock(job_id)
-    if lock is None:
-        logger.warning("Job %s already running (locked), skipping", job_id)
-        return
+@dataclass
+class CommandResult:
+    """Result of a command job, mirroring the AgentResult fields that
+    `_execute_job` and the notification system consume."""
 
+    exit_code: int
+    duration: float
+    result: str  # combined stdout + stderr
+    stderr: str = ""
+    cost_usd: float | None = None
+    session_id: str | None = None
+
+
+def _run_command(job_id: str, job: dict) -> CommandResult:
+    """Run a command job via `bash -lc`, capturing combined output and timing.
+
+    No agent, no session, no token cost. Resolution order for the working
+    directory: job.working_dir -> MERLIN_LAUNCH_CWD -> the user's home.
+    """
+    command = job.get("command", "")
+    cwd = (
+        job.get("working_dir")
+        or os.environ.get("MERLIN_LAUNCH_CWD")
+        or str(Path.home())
+    )
+
+    start = time.monotonic()
     try:
-        _execute_job(job_id, job)
-    finally:
-        release_job_lock(lock)
+        proc = subprocess.run(
+            ["bash", "-lc", command],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+        duration = time.monotonic() - start
+        combined = (proc.stdout or "") + (proc.stderr or "")
+        return CommandResult(
+            exit_code=proc.returncode,
+            duration=duration,
+            result=combined,
+            stderr=proc.stderr or "",
+        )
+    except subprocess.TimeoutExpired as e:
+        duration = time.monotonic() - start
+
+        def _decode(buf) -> str:
+            if not buf:
+                return ""
+            return buf.decode(errors="replace") if isinstance(buf, bytes) else buf
+
+        msg = f"Command timed out after {COMMAND_TIMEOUT_SECONDS}s"
+        partial = _decode(e.stdout) + _decode(e.stderr)
+        logger.error("Command job %s timed out", job_id)
+        return CommandResult(
+            exit_code=124,
+            duration=duration,
+            result=(partial + "\n" + msg).strip(),
+            stderr=msg,
+        )
+    except OSError as e:
+        duration = time.monotonic() - start
+        msg = f"Failed to run command (cwd={cwd!r}): {e}"
+        logger.error("Command job %s could not start: %s", job_id, e)
+        return CommandResult(
+            exit_code=1,
+            duration=duration,
+            result=msg,
+            stderr=msg,
+        )
 
 
-def _execute_job(job_id: str, job: dict) -> None:
-    """Execute a job (internal — assumes lock is held)."""
-    # Channel: support both old format ("channel") and new format ("discord_channel")
-    # Support old format ("channel") and new format ("discord_channel").
-    # "default" means use bot's default — not a real channel ID for the prompt.
-    channel = job.get("channel")
-    if not channel:
-        dc = job.get("discord_channel")
-        channel = dc if dc and dc != "default" else None
+def _run_agent(job_id: str, job: dict, request_id: str):
+    """Run a prompt job through the agent engine. Returns an AgentResult."""
     max_turns_cfg = job.get("max_turns", DEFAULT_MAX_TURNS)
     # 0 means unlimited — pass None to wrapper so --max-turns flag is omitted
     max_turns = max_turns_cfg if max_turns_cfg > 0 else None
@@ -262,16 +346,44 @@ def _execute_job(job_id: str, job: dict) -> None:
 
     prompt = build_prompt(job)
 
+    # Build prompt — engine returns text, notification system handles delivery
+    full_prompt = f"[Cron job: {job_id}]\n\n{prompt}"
+
+    return invoke(
+        full_prompt,
+        caller=f"cron-{job_id}",
+        session_id=session,
+        max_turns=max_turns,
+        request_id=request_id,
+    )
+
+
+def run_job(job_id: str, job: dict) -> None:
+    """Execute a single cron job. Acquires per-job lock to prevent double dispatch."""
+    # Acquire per-job lock (non-blocking)
+    lock = acquire_job_lock(job_id)
+    if lock is None:
+        logger.warning("Job %s already running (locked), skipping", job_id)
+        return
+
+    try:
+        _execute_job(job_id, job)
+    finally:
+        release_job_lock(lock)
+
+
+def _execute_job(job_id: str, job: dict) -> None:
+    """Execute a job (internal — assumes lock is held).
+
+    Branches on job ``type``: a ``"command"`` job runs a shell command via
+    ``_run_command``; any other type (default ``"prompt"``) runs through the
+    agent engine via ``_run_agent``. Both return a result exposing the same
+    fields, so the state/history/log/notify tail below is shared.
+    """
+    job_type = job.get("type", "prompt")
     request_id = str(uuid.uuid4())
 
-    logger.info(
-        "[%s] Running job %s (channel=%s, max_turns=%s, ephemeral=%s)",
-        request_id[:8],
-        job_id,
-        channel or "none",
-        max_turns or "unlimited",
-        ephemeral,
-    )
+    logger.info("[%s] Running %s job %s", request_id[:8], job_type, job_id)
     log_event(
         "cron_dispatch",
         job_id=job_id,
@@ -284,16 +396,10 @@ def _execute_job(job_id: str, job: dict) -> None:
     # Mark as running BEFORE execution to prevent re-dispatch by concurrent schedulers
     set_last_run(job_id, _now())
 
-    # Build prompt — engine returns text, notification system handles delivery
-    full_prompt = f"[Cron job: {job_id}]\n\n{prompt}"
-
-    result = invoke(
-        full_prompt,
-        caller=f"cron-{job_id}",
-        session_id=session,
-        max_turns=max_turns,
-        request_id=request_id,
-    )
+    if job_type == "command":
+        result = _run_command(job_id, job)
+    else:
+        result = _run_agent(job_id, job, request_id)
 
     # Update state with actual completion time
     now = _now()
@@ -435,8 +541,10 @@ def run_dispatcher() -> None:
         schedule = job["schedule"]
         grace = job.get("grace_minutes", DEFAULT_GRACE_MINUTES)
 
-        # Check if due
-        if not is_job_due(job_id, schedule, now, grace_minutes=grace):
+        # Check if due (interpret the schedule in the job's timezone)
+        if not is_job_due(
+            job_id, schedule, now, grace_minutes=grace, tz=job_timezone(job)
+        ):
             logger.debug("Job %s not due yet", job_id)
             continue
 
@@ -530,14 +638,21 @@ Job file format (cron-jobs/<job-id>.json):
   {
     "description": "Human-readable summary",
     "schedule": "0 9 * * *",       # Cron expression
-    "prompt": "Task for Claude",   # What to do
+    "timezone": "Europe/Paris",    # Optional IANA zone; default CRON_TIMEZONE then UTC
+    "type": "prompt",              # "prompt" (agent, default) or "command" (shell)
+    "prompt": "Task for Claude",   # Prompt jobs: what to ask the agent
+    "command": "echo hi",          # Command jobs: shell command run via bash -lc
+    "working_dir": null,           # Command jobs: cwd; default MERLIN_LAUNCH_CWD then $HOME
     "channel": "123456789",        # Discord channel for results
     "enabled": true,               # Toggle on/off
     "report_mode": "silent",       # "silent" or "always"
-    "max_turns": 0,                # 0 = unlimited
-    "ephemeral": true,             # default; false = persistent session (costs grow)
+    "max_turns": 0,                # Prompt jobs: 0 = unlimited
+    "ephemeral": true,             # Prompt jobs: false = persistent session (costs grow)
     "grace_minutes": 15            # Optional: staleness window override
   }
+
+  Command jobs run with no agent and no token cost (cost_usd is null); a
+  COMMAND_TIMEOUT_SECONDS (default 3600) guard kills hung commands (exit 124).
 
 Related commands:
   uv run cron/manage.py --help    # Manage jobs (add, list, enable, etc.)

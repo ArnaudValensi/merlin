@@ -68,3 +68,59 @@ def test_cron_logs_rows_are_expandable(client):
     assert "toggleLogRow" in html
     assert "cron-logdetail-" in html
     assert 'class="row-detail"' in html
+
+
+def test_cron_modal_has_schedule_builder(client):
+    """The modal exposes the Repeat dropdown and contextual builder fields."""
+    html = client.get("/cron").text
+    assert 'id="field-repeat"' in html
+    for field_id in (
+        "builder-minutes",
+        "builder-hourly",
+        "builder-daily",
+        "builder-weekly",
+        "builder-monthly",
+        "builder-custom",
+        "field-schedule-raw",
+        "weekday-chips",
+    ):
+        assert f'id="{field_id}"' in html
+    # The generated cron still flows through the hidden #field-schedule.
+    assert 'id="field-schedule"' in html
+    # The builder JS entry points are present.
+    assert "builderToCron" in html
+    assert "cronToBuilder" in html
+    # Per-job timezone selector + browser-default population.
+    assert 'id="field-timezone"' in html
+    assert "supportedValuesOf" in html
+    assert "resolvedOptions().timeZone" in html
+
+
+def test_cron_modal_repeat_options(client):
+    """The Repeat dropdown offers the six frequency options."""
+    html = client.get("/cron").text
+    for value in ("minutes", "hourly", "daily", "weekly", "monthly", "custom"):
+        assert f'value="{value}"' in html
+
+
+def test_cron_modal_has_action_toggle_and_command_fields(client):
+    """The modal exposes the action toggle and command-job fields."""
+    html = client.get("/cron").text
+    assert 'id="field-type"' in html
+    assert 'data-type="prompt"' in html
+    assert 'data-type="command"' in html
+    assert 'id="field-command"' in html
+    assert 'id="field-working-dir"' in html
+    # Advanced disclosure groups the agent-only options.
+    assert 'id="advanced-body"' in html
+    # Save & run now button.
+    assert "saveAndRun" in html
+
+
+def test_cron_modal_working_dir_placeholder(client):
+    """The working-dir field placeholder is the resolved default cwd."""
+    import os
+
+    html = client.get("/cron").text
+    expected = os.environ.get("MERLIN_LAUNCH_CWD") or os.path.expanduser("~")
+    assert f'placeholder="{expected}"' in html

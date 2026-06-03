@@ -6,6 +6,7 @@ license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "asyncssh",
+    "cron-descriptor>=2.1.0",
     "croniter",
     "discord.py",
     "fastapi",

@@ -420,6 +420,49 @@ terminal/
 
 **Note:** Terminal handles its own auth internally (WebSocket cookie check) rather than using `Depends(require_auth)` on the router.
 
+### Cron Dashboard
+
+```
+cron/
+├── routes.py             # /cron page + REST API
+├── tz.py                 # cron_timezone() — shared UTC-fallback tz resolver
+└── templates/cron.html   # Jobs/Performance/Logs tabs + create/edit modal
+```
+
+**Pages:** `/cron` (see [`cron-system.md`](cron-system.md) for the backend).
+
+**Create/edit modal** — two coordinated pieces, both vanilla JS on the `Cron` object:
+
+- **Schedule builder.** A "Repeat" `<select>` (Every N minutes / Hourly / Daily /
+  Weekly / Monthly / Custom) reveals only the contextual fields for the choice
+  (minutes number, hourly minute, `<input type="time">`, weekday chips + time,
+  day-of-month + time, or a raw cron field for Custom). Weekday chips map M–S to cron
+  DOW `1,2,3,4,5,6,0` with Weekdays/Weekends/Every-day quick buttons. `builderToCron()`
+  writes the generated cron into a hidden `#field-schedule`; `cronToBuilder(expr)`
+  round-trips a stored expression back into the builder for edit mode, falling back to
+  Custom for shapes it doesn't recognize. We stay 100% on cron — storage and the
+  scheduler are untouched; this is presentation only. On every change it debounces a
+  call to `POST /api/cron/validate-schedule` and renders the plain-English description
+  (via the `cron-descriptor` dependency), the timezone, the next 3 runs, and the raw
+  `cron:` line. The preview is **timezone-correct**: runs are computed and preformatted
+  in the job's scheduling timezone, so it matches when the job fires.
+- **Per-job timezone.** A timezone `<select>` (`#field-timezone`, populated from
+  `Intl.supportedValuesOf('timeZone')`) defaults to the browser's zone
+  (`Intl.DateTimeFormat().resolvedOptions().timeZone`) for new jobs, or the stored zone
+  when editing. It is sent to the preview endpoint and saved as the job's `timezone`, so
+  schedules are DST-aware (17:00 stays 17:00 across the time change). Jobs without a
+  timezone fall back to the server-wide `CRON_TIMEZONE`. Cards show the zone when set.
+- **Action toggle.** A segmented control (`.segmented`, `#field-type`) switches between
+  **Agent prompt** (textarea + agent-only options grouped under an "Advanced"
+  disclosure: Max turns, Session mode) and **Shell command** (command textarea +
+  optional working-dir whose placeholder is the resolved `default_working_dir`). The
+  advanced disclosure is hidden entirely for command jobs. **Save & run now** saves,
+  triggers `POST /api/cron/jobs/{id}/run`, and deep-links to the Logs tab via a
+  `#logs=<id>` hash handler. Job cards show a type badge (`🤖 agent` purple /
+  `>_ command` green-mono), command jobs render the command preview and omit cost.
+
+**Dependency:** `cron-descriptor` (in `pyproject.toml`) powers `cron_to_human()`.
+
 ## Adding a New Page
 
 1. Create `templates/newpage.html` extending `base.html`

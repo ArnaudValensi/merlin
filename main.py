@@ -70,6 +70,11 @@ MERLIN_SAAS_API = os.getenv("MERLIN_SAAS_API", "https://merlincloud.dev")
 # CWD = where the user launched main.py
 CWD = Path.cwd().resolve()
 
+# Capture the launch directory so subprocesses (e.g. cron command jobs) can
+# default to running where Merlin was started. Inherited by child processes
+# through the environment. setdefault so an explicit override is respected.
+os.environ.setdefault("MERLIN_LAUNCH_CWD", str(CWD))
+
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("merlin")
 

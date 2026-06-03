@@ -23,10 +23,31 @@ _CRON_DIR = Path(__file__).parent.resolve()
 templates = make_templates(_CRON_DIR / "templates")
 
 
+def _job_tz(job: dict):
+    """Resolve a job's scheduling timezone: per-job `timezone` if set and valid,
+    otherwise the server-wide `CRON_TIMEZONE` (UTC fallback)."""
+    from zoneinfo import ZoneInfo
+
+    from cron.tz import cron_timezone
+
+    name = job.get("timezone")
+    if name:
+        try:
+            return ZoneInfo(name)
+        except Exception:
+            pass
+    return cron_timezone()
+
+
 def _enrich_job(job: dict) -> dict:
-    """Add last_run and next_run to a job dict."""
+    """Add last_run and next_run to a job dict.
+
+    next_run is computed in the job's scheduling timezone (per-job `timezone`,
+    else `CRON_TIMEZONE`) so the card's "Next" matches the time the job fires.
+    """
     from croniter import croniter
 
+    tz = _job_tz(job)
     job_id = job.get("id", "")
     schedule = job.get("schedule", "")
 
@@ -34,13 +55,15 @@ def _enrich_job(job: dict) -> dict:
     job["last_run"] = last_run.isoformat() if last_run else None
 
     if schedule:
-        base = last_run or datetime.now(tz=timezone.utc)
+        # Base croniter in the scheduling timezone so "0 9 * * *" means 09:00
+        # in that zone, not 09:00 UTC.
+        base = last_run.astimezone(tz) if last_run else datetime.now(tz=tz)
         try:
             cron = croniter(schedule, base)
             next_run = cron.get_next(datetime)
             # Ensure timezone-aware
             if next_run.tzinfo is None:
-                next_run = next_run.replace(tzinfo=timezone.utc)
+                next_run = next_run.replace(tzinfo=tz)
             job["next_run"] = next_run.isoformat()
         except (KeyError, ValueError):
             job["next_run"] = None
@@ -67,7 +90,11 @@ def create_job(body: JobCreate):
     job = {
         "description": body.description,
         "schedule": body.schedule,
+        "timezone": body.timezone,
+        "type": body.type,
         "prompt": body.prompt,
+        "command": body.command,
+        "working_dir": body.working_dir,
         "enabled": body.enabled,
         "report_mode": body.report_mode,
         "max_turns": body.max_turns,
@@ -266,15 +293,45 @@ def get_all_logs(job_id: str | None = None, limit: int = 100):
 
 @cron_router.post("/validate-schedule")
 def validate_schedule(request_body: dict):
-    """Validate a cron expression and return next 3 run times."""
+    """Validate a cron expression and return next 3 run times.
+
+    Runs are computed and preformatted in the requested timezone (the modal
+    sends the job's selected timezone; falls back to CRON_TIMEZONE, then UTC),
+    so the preview reflects when the job actually fires.
+    """
+    from zoneinfo import ZoneInfo
+
     from croniter import croniter
 
+    from cron.tz import cron_timezone
+
     schedule = request_body.get("schedule", "")
+    tz_name = request_body.get("timezone")
+    if tz_name:
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = cron_timezone()
+    else:
+        tz = cron_timezone()
     try:
-        c = croniter(schedule, datetime.now(tz=timezone.utc))
-        next_runs = [c.get_next(datetime).isoformat() for _ in range(3)]
+        c = croniter(schedule, datetime.now(tz=tz))
+        next_runs = []
+        for _ in range(3):
+            run = c.get_next(datetime)
+            if run.tzinfo is None:
+                run = run.replace(tzinfo=tz)
+            # Preformat in the cron timezone, e.g. "Wed Jun 4, 09:00".
+            next_runs.append(
+                run.strftime("%a %b ") + str(run.day) + run.strftime(", %H:%M")
+            )
         human = manage.cron_to_human(schedule)
-        return {"valid": True, "next_runs": next_runs, "human": human}
+        return {
+            "valid": True,
+            "human": human,
+            "timezone": str(tz),
+            "next_runs": next_runs,
+        }
     except (KeyError, ValueError):
         return {"valid": False, "error": "Invalid cron expression"}
 
@@ -370,6 +427,11 @@ def cron_page(request: Request):
     # Check for recent scheduler crashes
     crashes = _get_recent_crashes()
 
+    # Resolve the default working directory for command jobs (modal placeholder).
+    import os
+
+    default_working_dir = os.environ.get("MERLIN_LAUNCH_CWD") or str(Path.home())
+
     return templates.TemplateResponse(
         request,
         "cron.html",
@@ -377,5 +439,6 @@ def cron_page(request: Request):
             "jobs": jobs,
             "bot_loaded": bot_loaded,
             "crashes": crashes,
+            "default_working_dir": default_working_dir,
         },
     )

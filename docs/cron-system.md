@@ -52,7 +52,7 @@ All endpoints require authentication. Prefix: `/api/cron`.
 | `/api/cron/jobs/{job_id}/run` | POST | Trigger immediate run (202 Accepted) |
 | `/api/cron/jobs/{job_id}/logs` | GET | List execution logs (newest first) |
 | `/api/cron/jobs/{job_id}/logs/{timestamp}` | GET | Read a specific execution log |
-| `/api/cron/validate-schedule` | POST | Validate cron expression, return next 3 runs |
+| `/api/cron/validate-schedule` | POST | Validate cron expression; returns `{valid, human, timezone, next_runs[3]}` preformatted in the cron timezone |
 
 **Dashboard page**: `GET /cron` — renders the cron management UI.
 
@@ -66,6 +66,8 @@ Job ID is the filename without `.json` (e.g., `daily-digest.json` -> job ID `dai
 {
   "description": "Human-readable summary",
   "schedule": "30 2 * * *",
+  "timezone": "Europe/Paris",
+  "type": "prompt",
   "prompt": "The prompt sent to Claude when the job runs",
   "discord_channel": "YOUR_CHANNEL_ID",
   "enabled": true,
@@ -82,17 +84,46 @@ Job ID is the filename without `.json` (e.g., `daily-digest.json` -> job ID `dai
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `schedule` | string | **required** | 5-field cron expression (via `croniter`) |
-| `prompt` | string | **required** | Prompt sent to the engine (no delivery instructions — engine is a black box) |
+| `timezone` | string | `null` | IANA zone the schedule is interpreted in (e.g. `Europe/Paris`). `null` = fall back to server-wide `CRON_TIMEZONE`, then UTC. DST-aware (see below) |
+| `type` | string | `"prompt"` | Job action type: `"prompt"` (agent) or `"command"` (shell). Absent = `"prompt"` (backward compatible) |
+| `prompt` | string | required for `prompt` jobs | Prompt sent to the engine (no delivery instructions — engine is a black box) |
+| `command` | string | required for `command` jobs | Shell command run via `bash -lc` (see Command Jobs below) |
+| `working_dir` | string | `null` | Command jobs only: directory to run in. Falls back to `MERLIN_LAUNCH_CWD` then `$HOME` |
 | `discord_channel` | string | `null` | Discord channel ID for notifications (optional — falls back to bot default) |
 | `description` | string | `""` | Human-readable summary |
 | `enabled` | boolean | `true` | Toggle without deleting |
 | `report_mode` | string | `"always"` | `"always"` (always notify) or `"silent"` (only notify on errors) — handled by `notify.py`, not the prompt |
-| `max_turns` | integer | `0` | Max agentic turns (0 = unlimited) |
-| `ephemeral` | boolean | `true` | Fresh session each run (default). Set `false` for persistent sessions (costs grow per run) |
+| `max_turns` | integer | `0` | Prompt jobs only: max agentic turns (0 = unlimited) |
+| `ephemeral` | boolean | `true` | Prompt jobs only: fresh session each run (default). Set `false` for persistent sessions (costs grow per run) |
 | `grace_minutes` | integer | `15` | Staleness window — jobs missed by more than this are skipped |
 | `created_at` | string | -- | ISO 8601 creation timestamp |
 
 > **Note**: The `discord_channel` field is optional. If omitted, notifications fall back to the bot's default channel (from `DISCORD_CHANNEL_IDS`). If the bot extension is not loaded, notifications are silently skipped. The legacy `channel` field (required in the old format) is no longer used.
+
+### Command Jobs
+
+A job with `"type": "command"` runs an arbitrary shell command instead of invoking
+the agent. It executes with the same privileges as the web Terminal — no new attack
+surface, no agent, no token cost (`cost_usd` is always `null`).
+
+- **Execution**: `_run_command()` in `runner.py` runs `bash -lc <command>` via
+  `subprocess.run(..., capture_output=True, text=True)`, combining stdout + stderr
+  into the run output. Timed with a monotonic clock.
+- **Working directory**: resolved in order `job.working_dir` → `MERLIN_LAUNCH_CWD`
+  (the directory where `main.py` was launched, captured at startup and inherited by
+  the runner subprocess) → `Path.home()`.
+- **Timeout**: `COMMAND_TIMEOUT_SECONDS = 3600` (module constant in `runner.py`). A
+  command exceeding it is killed and recorded with `exit_code = 124`, so a hung
+  command can't hold its per-job flock forever.
+- **Shared machinery**: `_execute_job()` branches on `type` near the top — `command`
+  → `_run_command()`, otherwise `_run_agent()`. Both return the same result shape
+  (`exit_code`, `duration`, `result`/output, `cost_usd`, `session_id`, `stderr`), so
+  state, history, hybrid logs, `cron_dispatch` events, and `notify.py` are all shared.
+  Because `report_mode="silent"` notifies only on non-zero exit, it is the natural
+  default for backups/maintenance commands.
+- **Performance tab**: command runs do **not** emit `invocation` engine-log events
+  (only the agent `invoke()` path does), so they do not appear on the cron Performance
+  tab, which aggregates invocations. They do appear in the Jobs and Logs tabs.
 
 ### Report Mode
 
@@ -125,7 +156,11 @@ Standard 5-field cron format parsed by `croniter`:
 * * * * *
 ```
 
-**Timezone**: Controlled by `CRON_TIMEZONE` in `.env` (e.g., `Europe/Paris`). Defaults to UTC.
+**Timezone**: Each job carries an optional per-job `timezone` (IANA name). The runner resolves a job's zone in order: per-job `timezone` → server-wide `CRON_TIMEZONE` (`.env`) → UTC (`runner.py:job_timezone()`). `is_job_due()` interprets the schedule in that zone, so a wall-clock schedule like `0 17 * * *` fires at 17:00 **local** and stays 17:00 across DST transitions (storing local-time + zone, not a frozen UTC offset). The shared helper `cron/tz.py:cron_timezone()` resolves the server-wide default (UTC fallback) and is used by the preview/enrich helpers in `routes.py`, which prefer the job's own zone — so the dashboard's next-run preview and the cards' "Next" reflect when the job actually fires. The modal's timezone selector defaults to the browser's zone for new jobs.
+
+> **DST edge**: on a "spring-forward" day a wall-clock time in the skipped hour (e.g. 02:30 where the clock jumps 02:00→03:00) resolves to the next valid instant; this is `croniter`/`zoneinfo` behavior and is acceptable.
+
+**Human-readable descriptions**: `manage.py:cron_to_human()` delegates to the `cron-descriptor` library so every valid expression (including raw Custom ones) gets a correct English description; it falls back to the raw expression on error.
 
 ## Session Management
 

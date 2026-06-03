@@ -158,6 +158,69 @@ class TestCreateJob:
         resp = client.post("/api/cron/jobs", json=_sample_job(report_mode="verbose"))
         assert resp.status_code == 422
 
+    def test_create_command_job_persists_fields(self, client):
+        """POST a command job persists type/command/working_dir."""
+        resp = client.post(
+            "/api/cron/jobs",
+            json={
+                "id": "backup-job",
+                "schedule": "0 3 * * *",
+                "type": "command",
+                "command": "echo hi",
+                "working_dir": "/tmp/work",
+            },
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["type"] == "command"
+        assert data["command"] == "echo hi"
+        assert data["working_dir"] == "/tmp/work"
+
+    def test_create_command_job_without_command_returns_422(self, client):
+        """POST a command job without a command returns 422."""
+        resp = client.post(
+            "/api/cron/jobs",
+            json={"id": "bad-cmd", "schedule": "0 3 * * *", "type": "command"},
+        )
+        assert resp.status_code == 422
+
+    def test_create_command_job_allows_empty_prompt(self, client):
+        """A command job does not need a prompt."""
+        resp = client.post(
+            "/api/cron/jobs",
+            json={
+                "id": "cmd-only",
+                "schedule": "0 3 * * *",
+                "type": "command",
+                "command": "ls",
+            },
+        )
+        assert resp.status_code == 201
+        assert resp.json()["type"] == "command"
+
+    def test_create_default_type_is_prompt(self, client):
+        """A job created without a type defaults to prompt."""
+        resp = client.post("/api/cron/jobs", json=_sample_job())
+        assert resp.status_code == 201
+        assert resp.json()["type"] == "prompt"
+
+    def test_create_persists_timezone(self, client):
+        """POST with a timezone persists it."""
+        resp = client.post("/api/cron/jobs", json=_sample_job(timezone="Europe/Paris"))
+        assert resp.status_code == 201
+        assert resp.json()["timezone"] == "Europe/Paris"
+
+    def test_create_invalid_timezone_returns_422(self, client):
+        """POST with an invalid timezone returns 422."""
+        resp = client.post("/api/cron/jobs", json=_sample_job(timezone="Not/AZone"))
+        assert resp.status_code == 422
+
+    def test_create_default_timezone_is_null(self, client):
+        """A job created without a timezone stores null (server default)."""
+        resp = client.post("/api/cron/jobs", json=_sample_job())
+        assert resp.status_code == 201
+        assert resp.json()["timezone"] is None
+
 
 # ---------------------------------------------------------------------------
 # GET /api/cron/jobs — list
@@ -252,6 +315,21 @@ class TestUpdateJob:
         client.post("/api/cron/jobs", json=_sample_job())
         resp = client.put("/api/cron/jobs/test-job", json={"prompt": ""})
         assert resp.status_code == 422
+
+    def test_update_command_field(self, client):
+        """PUT updates a command job's command."""
+        client.post(
+            "/api/cron/jobs",
+            json={
+                "id": "cmd-job",
+                "schedule": "0 3 * * *",
+                "type": "command",
+                "command": "echo old",
+            },
+        )
+        resp = client.put("/api/cron/jobs/cmd-job", json={"command": "echo new"})
+        assert resp.status_code == 200
+        assert resp.json()["command"] == "echo new"
 
 
 # ---------------------------------------------------------------------------

@@ -51,22 +51,36 @@ class TestValidateCron:
 
 
 class TestCronToHuman:
-    """Tests for cron to human-readable conversion."""
+    """Tests for cron to human-readable conversion (via cron-descriptor)."""
 
     def test_common_patterns(self):
         from cron.manage import cron_to_human
 
         assert cron_to_human("* * * * *") == "every minute"
         assert cron_to_human("0 * * * *") == "every hour"
-        assert cron_to_human("0 9 * * *") == "daily at 9:00"
-        assert cron_to_human("0 9 * * 1") == "Mondays at 9:00"
-        assert cron_to_human("0 8 * * 1-5") == "weekdays at 8:00"
+        assert cron_to_human("0 9 * * *") == "at 09:00"
+        # Weekday restriction is described and not lowercased mid-string.
+        assert "Monday" in cron_to_human("0 9 * * 1")
+        weekdays = cron_to_human("0 8 * * 1-5")
+        assert "08:00" in weekdays
+        assert "Monday through Friday" in weekdays
 
     def test_interval_patterns(self):
         from cron.manage import cron_to_human
 
         assert cron_to_human("0 */2 * * *") == "every 2 hours"
         assert cron_to_human("*/15 * * * *") == "every 15 minutes"
+
+    def test_monthly_pattern(self):
+        from cron.manage import cron_to_human
+
+        assert cron_to_human("0 9 1 * *") == "at 09:00, on day 1 of the month"
+
+    def test_invalid_expression_falls_back_to_raw(self):
+        from cron.manage import cron_to_human
+
+        assert cron_to_human("not a cron") == "not a cron"
+        assert cron_to_human("* * *") == "* * *"
 
 
 class TestSlugify:
@@ -257,7 +271,7 @@ class TestCmdList:
         assert isinstance(result, str)
         assert "**Cron jobs (1 active)**" in result
         assert "**test-job**" in result
-        assert "daily at 9:00" in result
+        assert "at 09:00" in result
         assert "silent" in result
 
 

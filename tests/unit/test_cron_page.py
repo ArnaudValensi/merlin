@@ -160,7 +160,8 @@ class TestValidateSchedule:
         data = resp.json()
         assert data["valid"] is True
         assert len(data["next_runs"]) == 3
-        assert data["human"] == "daily at 9:00"
+        assert data["human"] == "at 09:00"
+        assert "timezone" in data
 
     def test_invalid_schedule(self, client):
         resp = client.post(

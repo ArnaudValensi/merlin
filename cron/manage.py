@@ -52,58 +52,24 @@ def validate_cron(expression: str) -> bool:
 
 
 def cron_to_human(expression: str) -> str:
-    """Convert a cron expression to human-readable format."""
-    parts = expression.split()
-    if len(parts) != 5:
+    """Convert a cron expression to a human-readable description.
+
+    Delegates to the maintained ``cron-descriptor`` library so every valid
+    expression — including ones the Custom schedule field produces — gets a
+    correct English description. Falls back to the raw expression on any error
+    (e.g. an invalid expression), preserving the original behavior.
+    """
+    try:
+        from cron_descriptor import get_description
+
+        description = get_description(expression)
+        # Lowercase just the leading character for a clean "every minute" /
+        # "at 09:00" reading without lowercasing names like "Monday".
+        if description:
+            return description[0].lower() + description[1:]
         return expression
-
-    minute, hour, dom, month, dow = parts
-
-    # Common patterns
-    if expression == "* * * * *":
-        return "every minute"
-    if minute == "0" and hour == "*" and dom == "*" and month == "*" and dow == "*":
-        return "every hour"
-    if (
-        minute == "0"
-        and hour.startswith("*/")
-        and dom == "*"
-        and month == "*"
-        and dow == "*"
-    ):
-        interval = hour[2:]
-        return f"every {interval} hours"
-    if minute == "0" and dom == "*" and month == "*" and dow == "*":
-        return f"daily at {hour}:00"
-    if minute != "*" and hour != "*" and dom == "*" and month == "*" and dow == "*":
-        return f"daily at {hour}:{minute.zfill(2)}"
-    if minute == "0" and dom == "*" and month == "*" and dow == "0":
-        return f"Sundays at {hour}:00"
-    if minute == "0" and dom == "*" and month == "*" and dow == "1":
-        return f"Mondays at {hour}:00"
-    if minute == "0" and dom == "*" and month == "*" and dow == "1-5":
-        return f"weekdays at {hour}:00"
-    if minute == "0" and dom == "1" and month == "*" and dow == "*":
-        return f"1st of month at {hour}:00"
-    if minute.startswith("*/"):
-        interval = minute[2:]
-        return f"every {interval} minutes"
-
-    # Day of week names
-    dow_names = {
-        "0": "Sun",
-        "1": "Mon",
-        "2": "Tue",
-        "3": "Wed",
-        "4": "Thu",
-        "5": "Fri",
-        "6": "Sat",
-        "7": "Sun",
-    }
-    if dow in dow_names and minute == "0" and dom == "*" and month == "*":
-        return f"{dow_names[dow]} at {hour}:00"
-
-    return expression  # Fall back to raw expression
+    except Exception:
+        return expression  # Fall back to raw expression
 
 
 def slugify(text: str) -> str:

@@ -448,6 +448,18 @@
     border-color: var(--accent-blue);
 }
 
+/* Normalize native date/time controls so they match the other inputs.
+   iOS renders type="time" with a centered, intrinsically-sized native control
+   that looks wider/different; appearance:none makes it a normal left-aligned
+   box while still opening the picker on tap. */
+.cron-modal input[type="time"].form-input,
+.cron-modal input[type="date"].form-input {
+    -webkit-appearance: none;
+    appearance: none;
+    text-align: left;
+    min-height: 38px;
+}
+
 .cron-modal textarea.form-input {
     min-height: 200px;
     resize: vertical;
@@ -488,6 +500,138 @@
 .cron-modal .schedule-preview.invalid {
     background: rgba(248, 113, 113, 0.1);
     color: var(--accent-red);
+}
+
+.cron-modal .schedule-preview .preview-human { font-weight: 600; }
+.cron-modal .schedule-preview .preview-runs {
+    margin-top: 3px;
+    color: var(--text-secondary);
+}
+.cron-modal .schedule-preview .preview-cron {
+    margin-top: 4px;
+    font-family: 'Geist Mono', monospace;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+/* ── Schedule builder ── */
+.cron-modal .builder-group {
+    margin-top: 10px;
+}
+.cron-modal .builder-group .form-label {
+    margin-top: 8px;
+}
+.cron-modal .builder-group .form-label:first-child {
+    margin-top: 0;
+}
+
+.cron-modal .weekday-chips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.cron-modal .weekday-chip {
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.cron-modal .weekday-chip:hover { background: var(--bg-hover); color: var(--text-primary); }
+.cron-modal .weekday-chip.active {
+    background: var(--accent-blue);
+    border-color: var(--accent-blue);
+    color: white;
+}
+.cron-modal .weekday-quick {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+}
+.cron-modal .weekday-quick button {
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-card);
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: pointer;
+}
+.cron-modal .weekday-quick button:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* ── Segmented action toggle ── */
+.cron-modal .segmented {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.cron-modal .segmented button {
+    flex: 1;
+    padding: 8px 12px;
+    background: var(--bg-card);
+    border: none;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.15s;
+}
+.cron-modal .segmented button + button { border-left: 1px solid var(--border); }
+.cron-modal .segmented button.active {
+    background: var(--accent-blue);
+    color: white;
+}
+
+/* ── Advanced disclosure ── */
+.cron-modal .advanced-toggle {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 4px 0;
+    font-family: inherit;
+}
+.cron-modal .advanced-toggle:hover { color: var(--text-primary); }
+.cron-modal .advanced-body { display: none; margin-top: 8px; }
+.cron-modal .advanced-body.open { display: block; }
+
+/* ── Type badge on cards ── */
+.cron-job-card .type-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+}
+.cron-job-card .type-badge.agent {
+    background: rgba(167, 139, 250, 0.14);
+    color: var(--accent-purple);
+}
+.cron-job-card .type-badge.command {
+    background: rgba(74, 222, 128, 0.12);
+    color: var(--accent-green);
+    font-family: 'Geist Mono', monospace;
+}
+.cron-job-card .job-command {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    font-family: 'Geist Mono', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .cron-modal .modal-actions {
@@ -631,6 +775,11 @@
                         <span class="status-dot error" title="Last run failed (exit {{ job.last_status }})"></span>
                         {% endif %}
                         <span>{{ job.id }}</span>
+                        {% if job.get('type') == 'command' %}
+                        <span class="type-badge command" title="Shell command job">&gt;_ command</span>
+                        {% else %}
+                        <span class="type-badge agent" title="Agent prompt job">&#129302; agent</span>
+                        {% endif %}
                         {% if not job.get('enabled', true) %}
                         <span class="paused-tag">paused</span>
                         {% endif %}
@@ -643,11 +792,20 @@
                     {% if job.get('description') %}
                     <div class="job-desc">{{ job.description }}</div>
                     {% endif %}
+                    {% if job.get('type') == 'command' and job.get('command') %}
+                    <div class="job-command" title="{{ job.command }}">$ {{ job.command }}</div>
+                    {% endif %}
                     <div class="job-meta">
                         <div class="job-meta-item">
                             <span class="meta-label">Schedule</span>
                             <span class="meta-value" title="{{ job.get('schedule', '') }}">{{ job.schedule_human }}</span>
                         </div>
+                        {% if job.get('timezone') %}
+                        <div class="job-meta-item">
+                            <span class="meta-label">TZ</span>
+                            <span class="meta-value">{{ job.timezone }}</span>
+                        </div>
+                        {% endif %}
                         {% if job.next_run %}
                         <div class="job-meta-item">
                             <span class="meta-label">Next</span>
@@ -784,14 +942,90 @@
                 <input class="form-input" id="field-description" placeholder="What does this job do?" style="font-family: 'Geist', -apple-system, system-ui, sans-serif;">
             </div>
             <div class="form-group">
-                <label class="form-label">Schedule (cron expression)</label>
-                <input class="form-input" id="field-schedule" placeholder="0 9 * * *" required oninput="Cron.debounceValidate()">
-                <div class="form-help">minute hour day-of-month month day-of-week</div>
+                <label class="form-label">Schedule</label>
+                <select class="form-input" id="field-repeat" onchange="Cron.onRepeatChange()">
+                    <option value="minutes">Every N minutes</option>
+                    <option value="hourly">Hourly</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                    <option value="custom">Custom (cron)</option>
+                </select>
+
+                <div class="builder-group" id="builder-minutes" style="display:none">
+                    <label class="form-label">Every</label>
+                    <input class="form-input" id="field-minutes-n" type="number" min="1" max="59" value="5" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
+                    <div class="form-help">minutes (1-59)</div>
+                </div>
+
+                <div class="builder-group" id="builder-hourly" style="display:none">
+                    <label class="form-label">At minute</label>
+                    <input class="form-input" id="field-hourly-minute" type="number" min="0" max="59" value="0" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
+                    <div class="form-help">minute past each hour (0-59)</div>
+                </div>
+
+                <div class="builder-group" id="builder-daily" style="display:none">
+                    <label class="form-label">At time</label>
+                    <input class="form-input" id="field-daily-time" type="time" value="09:00" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
+                </div>
+
+                <div class="builder-group" id="builder-weekly" style="display:none">
+                    <label class="form-label">On days</label>
+                    <div class="weekday-chips" id="weekday-chips">
+                        <button type="button" class="weekday-chip" data-dow="1" title="Monday">M</button>
+                        <button type="button" class="weekday-chip" data-dow="2" title="Tuesday">T</button>
+                        <button type="button" class="weekday-chip" data-dow="3" title="Wednesday">W</button>
+                        <button type="button" class="weekday-chip" data-dow="4" title="Thursday">T</button>
+                        <button type="button" class="weekday-chip" data-dow="5" title="Friday">F</button>
+                        <button type="button" class="weekday-chip" data-dow="6" title="Saturday">S</button>
+                        <button type="button" class="weekday-chip" data-dow="0" title="Sunday">S</button>
+                    </div>
+                    <div class="weekday-quick">
+                        <button type="button" onclick="Cron.setWeekdays('weekdays')">Weekdays</button>
+                        <button type="button" onclick="Cron.setWeekdays('weekends')">Weekends</button>
+                        <button type="button" onclick="Cron.setWeekdays('all')">Every day</button>
+                    </div>
+                    <label class="form-label">At time</label>
+                    <input class="form-input" id="field-weekly-time" type="time" value="09:00" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
+                </div>
+
+                <div class="builder-group" id="builder-monthly" style="display:none">
+                    <label class="form-label">Day of month</label>
+                    <input class="form-input" id="field-monthly-day" type="number" min="1" max="31" value="1" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
+                    <label class="form-label">At time</label>
+                    <input class="form-input" id="field-monthly-time" type="time" value="09:00" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
+                </div>
+
+                <div class="builder-group" id="builder-custom" style="display:none">
+                    <input class="form-input" id="field-schedule-raw" placeholder="0 9 * * *" oninput="Cron.onBuilderChange()">
+                    <div class="form-help">minute hour day-of-month month day-of-week</div>
+                </div>
+
+                <label class="form-label" style="margin-top: 12px;">Timezone</label>
+                <select class="form-input" id="field-timezone" onchange="Cron.onBuilderChange()" style="font-family: 'Geist', -apple-system, system-ui, sans-serif;"></select>
+                <div class="form-help">Fires at this wall-clock time. DST-aware: e.g. 17:00 stays 17:00 across the time change.</div>
+
+                <input type="hidden" id="field-schedule">
                 <div class="schedule-preview" id="schedule-preview" style="display:none"></div>
             </div>
             <div class="form-group">
+                <label class="form-label">Action</label>
+                <div class="segmented" id="field-type">
+                    <button type="button" data-type="prompt" class="active" onclick="Cron.setJobType('prompt')">&#129302; Agent prompt</button>
+                    <button type="button" data-type="command" onclick="Cron.setJobType('command')">&gt;_ Shell command</button>
+                </div>
+            </div>
+            <div class="form-group" id="prompt-group">
                 <label class="form-label">Prompt</label>
-                <textarea class="form-input" id="field-prompt" placeholder="The prompt to send to Claude..." required></textarea>
+                <textarea class="form-input" id="field-prompt" placeholder="The prompt to send to Claude..."></textarea>
+            </div>
+            <div class="form-group" id="command-group" style="display:none">
+                <label class="form-label">Command</label>
+                <textarea class="form-input" id="field-command" placeholder="echo hello&#10;# runs via bash -lc, stdout+stderr captured"></textarea>
+                <div class="form-help">Runs in your Merlin environment via <code>bash -lc</code>. No agent, no token cost.</div>
+                <label class="form-label" style="margin-top: 12px;">Working directory</label>
+                <input class="form-input" id="field-working-dir" placeholder="{{ default_working_dir }}">
+                <div class="form-help">Optional. Defaults to where Merlin was launched.</div>
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -802,24 +1036,29 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Max Turns</label>
-                    <input class="form-input" id="field-max-turns" type="number" min="0" value="0" style="font-family: 'Geist Mono', monospace;">
-                    <div class="form-help">0 = unlimited</div>
-                </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
                     <label class="form-label">Grace Minutes</label>
                     <input class="form-input" id="field-grace-minutes" type="number" min="0" value="15" style="font-family: 'Geist Mono', monospace;">
                     <div class="form-help">Skip if previous run ended within this window</div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Session Mode</label>
-                    <select class="form-input" id="field-ephemeral">
-                        <option value="true">Fresh session each run</option>
-                        <option value="false">Persistent session (keeps context)</option>
-                    </select>
-                    <div class="form-help">Fresh: each run starts clean (recommended). Persistent: Claude remembers previous runs, but costs grow over time.</div>
+            </div>
+            <div class="form-group" id="advanced-group">
+                <button type="button" class="advanced-toggle" id="advanced-toggle" onclick="Cron.toggleAdvanced()">&#9656; Advanced (agent options)</button>
+                <div class="advanced-body" id="advanced-body">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Max Turns</label>
+                            <input class="form-input" id="field-max-turns" type="number" min="0" value="0" style="font-family: 'Geist Mono', monospace;">
+                            <div class="form-help">0 = unlimited</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Session Mode</label>
+                            <select class="form-input" id="field-ephemeral">
+                                <option value="true">Fresh session each run</option>
+                                <option value="false">Persistent session (keeps context)</option>
+                            </select>
+                            <div class="form-help">Fresh: each run starts clean (recommended). Persistent: Claude remembers previous runs, but costs grow over time.</div>
+                        </div>
+                    </div>
                 </div>
             </div>
             {% if bot_loaded %}
@@ -841,6 +1080,7 @@
         </div><!-- /.cron-modal-body -->
             <div class="modal-actions">
                 <button type="button" class="modal-cancel-btn" onclick="Cron.closeModal()">Cancel</button>
+                <button type="button" class="modal-cancel-btn" id="modal-save-run-btn" onclick="Cron.saveAndRun()">Save &amp; run now</button>
                 <button type="submit" class="modal-submit-btn" id="modal-submit-btn">Create Job</button>
             </div>
         </form>
@@ -855,6 +1095,13 @@
 {% block scripts %}
 <script src="/static/perf-charts.js"></script>
 <script>
+// Escape text for safe innerHTML interpolation.
+function escapeHtml(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 // ── Tab switching ──
 function switchCronTab(tab) {
     document.querySelectorAll('#cron-tabs .tab').forEach(t => t.classList.remove('active'));
@@ -1023,12 +1270,21 @@ const Cron = {
         document.getElementById('field-id').value = '';
         document.getElementById('field-id').disabled = false;
         document.getElementById('field-description').value = '';
-        document.getElementById('field-schedule').value = '';
         document.getElementById('field-prompt').value = '';
+        document.getElementById('field-command').value = '';
+        document.getElementById('field-working-dir').value = '';
+        this.setJobType('prompt');
+        // Default timezone: the browser's zone.
+        this.setTimezone(null);
+        // Default schedule: Daily 09:00.
+        document.getElementById('field-daily-time').value = '09:00';
+        this.cronToBuilder('0 9 * * *');
         document.getElementById('field-report-mode').value = 'always';
         document.getElementById('field-max-turns').value = '0';
         document.getElementById('field-grace-minutes').value = '15';
         document.getElementById('field-ephemeral').value = 'true';
+        document.getElementById('advanced-body').classList.remove('open');
+        document.getElementById('advanced-toggle').innerHTML = '&#9656; Advanced (agent options)';
         const preview = document.getElementById('schedule-preview');
         if (preview) preview.style.display = 'none';
         const errorId = document.getElementById('error-id');
@@ -1056,8 +1312,16 @@ const Cron = {
         document.getElementById('field-id').value = jobId;
         document.getElementById('field-id').disabled = true;
         document.getElementById('field-description').value = job.description || '';
-        document.getElementById('field-schedule').value = job.schedule || '';
         document.getElementById('field-prompt').value = job.prompt || '';
+        document.getElementById('field-command').value = job.command || '';
+        document.getElementById('field-working-dir').value = job.working_dir || '';
+        this.setJobType(job.type === 'command' ? 'command' : 'prompt');
+        document.getElementById('advanced-body').classList.remove('open');
+        document.getElementById('advanced-toggle').innerHTML = '&#9656; Advanced (agent options)';
+        // Stored timezone if present, else the browser's zone.
+        this.setTimezone(job.timezone || null);
+        // Round-trip the stored cron into the builder (falls back to Custom).
+        this.cronToBuilder(job.schedule || '');
         document.getElementById('field-report-mode').value = job.report_mode || 'always';
         document.getElementById('field-max-turns').value = String(job.max_turns || 0);
         document.getElementById('field-grace-minutes').value = String(job.grace_minutes || 15);
@@ -1086,9 +1350,6 @@ const Cron = {
             }
         }
         document.getElementById('cron-modal-overlay').classList.add('open');
-
-        // Validate the existing schedule
-        if (job.schedule) this.validateSchedule();
     },
 
     closeModal() {
@@ -1096,44 +1357,87 @@ const Cron = {
         this._editingJobId = null;
     },
 
-    async submitJob() {
+    // ── Action type toggle + advanced disclosure ──
+    setJobType(type) {
+        document.querySelectorAll('#field-type button').forEach(b => {
+            b.classList.toggle('active', b.dataset.type === type);
+        });
+        const isCommand = type === 'command';
+        document.getElementById('prompt-group').style.display = isCommand ? 'none' : 'block';
+        document.getElementById('command-group').style.display = isCommand ? 'block' : 'none';
+        // Agent-only advanced options are irrelevant for commands.
+        document.getElementById('advanced-group').style.display = isCommand ? 'none' : 'block';
+    },
+
+    _jobType() {
+        const active = document.querySelector('#field-type button.active');
+        return active ? active.dataset.type : 'prompt';
+    },
+
+    toggleAdvanced() {
+        const body = document.getElementById('advanced-body');
+        const btn = document.getElementById('advanced-toggle');
+        const open = body.classList.toggle('open');
+        btn.innerHTML = (open ? '&#9662;' : '&#9656;') + ' Advanced (agent options)';
+    },
+
+    // Build and POST/PUT the job. Returns the job id on success, null otherwise.
+    async submitJob(opts = {}) {
         const id = document.getElementById('field-id').value.trim();
+        const type = this._jobType();
+        // Regenerate from the builder so the hidden field is always current.
+        document.getElementById('field-schedule').value = this.builderToCron();
         const schedule = document.getElementById('field-schedule').value.trim();
         const prompt = document.getElementById('field-prompt').value.trim();
+        const command = document.getElementById('field-command').value.trim();
 
-        if (!schedule || !prompt) {
-            this.toast('Schedule and prompt are required', 'error');
-            return;
+        if (!schedule) {
+            this.toast('A schedule is required', 'error');
+            return null;
+        }
+        if (type === 'command' ? !command : !prompt) {
+            this.toast(type === 'command' ? 'A command is required' : 'A prompt is required', 'error');
+            return null;
         }
 
         const body = {
             description: document.getElementById('field-description').value.trim(),
             schedule: schedule,
-            prompt: prompt,
+            timezone: this._timezone() || null,
+            type: type,
             report_mode: document.getElementById('field-report-mode').value,
-            max_turns: parseInt(document.getElementById('field-max-turns').value) || 0,
             grace_minutes: parseInt(document.getElementById('field-grace-minutes').value) || 15,
-            ephemeral: document.getElementById('field-ephemeral').value === 'true',
         };
+        if (type === 'command') {
+            body.command = command;
+            body.working_dir = document.getElementById('field-working-dir').value.trim() || null;
+        } else {
+            body.prompt = prompt;
+            body.max_turns = parseInt(document.getElementById('field-max-turns').value) || 0;
+            body.ephemeral = document.getElementById('field-ephemeral').value === 'true';
+        }
 
         // Discord notification: "default" = use bot's default channel, specific ID = override, null = disabled
         const discordEnabled = document.getElementById('field-discord-enabled');
         if (discordEnabled && discordEnabled.checked) {
             const ch = document.getElementById('field-discord-channel').value.trim();
             body.discord_channel = ch || 'default';
-        } else {
+        } else if (discordEnabled) {
             body.discord_channel = null;
         }
 
         let resp;
+        let savedId;
         if (this._editingJobId) {
+            savedId = this._editingJobId;
             resp = await fetch(`/api/cron/jobs/${this._editingJobId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
         } else {
-            if (!id) { this.toast('Job ID is required', 'error'); return; }
+            if (!id) { this.toast('Job ID is required', 'error'); return null; }
+            savedId = id;
             body.id = id;
             resp = await fetch('/api/cron/jobs', {
                 method: 'POST',
@@ -1143,9 +1447,12 @@ const Cron = {
         }
 
         if (resp.ok) {
+            const wasEditing = !!this._editingJobId;
+            if (opts.silent) return savedId;
             this.closeModal();
-            this.toast(this._editingJobId ? 'Job updated' : 'Job created', 'success');
+            this.toast(wasEditing ? 'Job updated' : 'Job created', 'success');
             setTimeout(() => location.reload(), 300);
+            return savedId;
         } else {
             const data = await resp.json().catch(() => ({}));
             const detail = data.detail || JSON.stringify(data);
@@ -1159,7 +1466,25 @@ const Cron = {
             } else {
                 this.toast('Error: ' + detail, 'error');
             }
+            return null;
         }
+    },
+
+    // Save the job, trigger an immediate run, then open its logs.
+    async saveAndRun() {
+        const savedId = await this.submitJob({ silent: true });
+        if (!savedId) return;
+        const resp = await fetch(`/api/cron/jobs/${savedId}/run`, { method: 'POST' });
+        this.closeModal();
+        if (resp.ok) {
+            this.toast('Saved and triggered — opening logs', 'success');
+        } else {
+            this.toast('Saved, but failed to trigger run', 'error');
+        }
+        // Reload so the new card + log filter options are present, then deep-link
+        // to this job's logs via the hash handler on load.
+        location.href = '/cron#logs=' + encodeURIComponent(savedId);
+        location.reload();
     },
 
     // ── Actions ──
@@ -1283,6 +1608,193 @@ const Cron = {
         outputEl.querySelector('pre').textContent = text;
     },
 
+    // ── Schedule builder ──
+    // The "Repeat" dropdown drives contextual fields; a pure builderToCron()
+    // writes the generated cron into the hidden #field-schedule. cronToBuilder()
+    // round-trips a stored expression back into the builder for edit mode.
+
+    _REPEAT_MODES: ['minutes', 'hourly', 'daily', 'weekly', 'monthly', 'custom'],
+    _tzPopulated: false,
+
+    // ── Timezone ──
+    _browserTz() {
+        try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
+        catch (e) { return 'UTC'; }
+    },
+
+    _populateTimezones() {
+        if (this._tzPopulated) return;
+        const sel = document.getElementById('field-timezone');
+        if (!sel) return;
+        let zones = [];
+        try { zones = Intl.supportedValuesOf('timeZone'); } catch (e) { /* older browser */ }
+        const set = new Set(zones);
+        set.add('UTC');
+        set.add(this._browserTz());
+        zones = Array.from(set).sort();
+        sel.innerHTML = zones.map(z =>
+            `<option value="${escapeHtml(z)}">${escapeHtml(z)}</option>`).join('');
+        this._tzPopulated = true;
+    },
+
+    setTimezone(tz) {
+        this._populateTimezones();
+        const sel = document.getElementById('field-timezone');
+        if (!sel) return;
+        const want = tz || this._browserTz();
+        // Add the stored zone if the browser's list doesn't include it.
+        if (!Array.from(sel.options).some(o => o.value === want)) {
+            const o = document.createElement('option');
+            o.value = want; o.textContent = want;
+            sel.appendChild(o);
+        }
+        sel.value = want;
+    },
+
+    _timezone() {
+        const sel = document.getElementById('field-timezone');
+        return sel ? sel.value : null;
+    },
+
+    setRepeat(mode) {
+        document.getElementById('field-repeat').value = mode;
+        this._REPEAT_MODES.forEach(m => {
+            const el = document.getElementById('builder-' + m);
+            if (el) el.style.display = (m === mode) ? 'block' : 'none';
+        });
+    },
+
+    onRepeatChange() {
+        const mode = document.getElementById('field-repeat').value;
+        this.setRepeat(mode);
+        // Seed weekly with Monday if nothing is selected yet.
+        if (mode === 'weekly') {
+            const any = document.querySelectorAll('#weekday-chips .weekday-chip.active').length;
+            if (!any) this.setWeekdays('weekdays');
+        }
+        this.onBuilderChange();
+    },
+
+    onBuilderChange() {
+        document.getElementById('field-schedule').value = this.builderToCron();
+        this.debounceValidate();
+    },
+
+    setWeekdays(which) {
+        const map = {
+            weekdays: ['1', '2', '3', '4', '5'],
+            weekends: ['0', '6'],
+            all: ['0', '1', '2', '3', '4', '5', '6'],
+        };
+        const want = new Set(map[which] || []);
+        document.querySelectorAll('#weekday-chips .weekday-chip').forEach(chip => {
+            chip.classList.toggle('active', want.has(chip.dataset.dow));
+        });
+        this.onBuilderChange();
+    },
+
+    builderToCron() {
+        const mode = document.getElementById('field-repeat').value;
+        const intIn = (id, def) => {
+            const v = parseInt(document.getElementById(id).value);
+            return Number.isFinite(v) ? v : def;
+        };
+        const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+        const splitTime = (id) => {
+            const [h, m] = (document.getElementById(id).value || '09:00').split(':');
+            return [clamp(parseInt(h) || 0, 0, 23), clamp(parseInt(m) || 0, 0, 59)];
+        };
+
+        if (mode === 'minutes') {
+            const n = clamp(intIn('field-minutes-n', 5), 1, 59);
+            return n === 1 ? '* * * * *' : `*/${n} * * * *`;
+        }
+        if (mode === 'hourly') {
+            const m = clamp(intIn('field-hourly-minute', 0), 0, 59);
+            return `${m} * * * *`;
+        }
+        if (mode === 'daily') {
+            const [h, m] = splitTime('field-daily-time');
+            return `${m} ${h} * * *`;
+        }
+        if (mode === 'weekly') {
+            const days = Array.from(document.querySelectorAll('#weekday-chips .weekday-chip.active'))
+                .map(c => parseInt(c.dataset.dow)).sort((a, b) => a - b);
+            const [h, m] = splitTime('field-weekly-time');
+            const dow = days.length ? days.join(',') : '*';
+            return `${m} ${h} * * ${dow}`;
+        }
+        if (mode === 'monthly') {
+            const d = clamp(intIn('field-monthly-day', 1), 1, 31);
+            const [h, m] = splitTime('field-monthly-time');
+            return `${m} ${h} ${d} * *`;
+        }
+        // custom
+        return document.getElementById('field-schedule-raw').value.trim();
+    },
+
+    cronToBuilder(expr) {
+        const pad = (s) => String(parseInt(s)).padStart(2, '0');
+        const parts = (expr || '').trim().split(/\s+/);
+        let mode = 'custom';
+
+        if (parts.length === 5) {
+            const [mn, hr, dom, mon, dow] = parts;
+            const isNum = s => /^\d+$/.test(s);
+            const everyN = /^\*\/(\d+)$/;
+
+            const parseDow = (s) => {
+                const out = new Set();
+                for (const part of s.split(',')) {
+                    if (/^\d+$/.test(part)) out.add(parseInt(part) % 7);
+                    else {
+                        const r = part.match(/^(\d+)-(\d+)$/);
+                        if (!r) return null;
+                        for (let i = +r[1]; i <= +r[2]; i++) out.add(i % 7);
+                    }
+                }
+                return out;
+            };
+
+            if (hr === '*' && dom === '*' && mon === '*' && dow === '*' && (mn === '*' || everyN.test(mn))) {
+                mode = 'minutes';
+                this.setRepeat('minutes');
+                document.getElementById('field-minutes-n').value = mn === '*' ? 1 : parseInt(mn.match(everyN)[1]);
+            } else if (isNum(mn) && hr === '*' && dom === '*' && mon === '*' && dow === '*') {
+                mode = 'hourly';
+                this.setRepeat('hourly');
+                document.getElementById('field-hourly-minute').value = parseInt(mn);
+            } else if (isNum(mn) && isNum(hr) && dom === '*' && mon === '*' && dow === '*') {
+                mode = 'daily';
+                this.setRepeat('daily');
+                document.getElementById('field-daily-time').value = pad(hr) + ':' + pad(mn);
+            } else if (isNum(mn) && isNum(hr) && dom === '*' && mon === '*' && dow !== '*') {
+                const set = parseDow(dow);
+                if (set) {
+                    mode = 'weekly';
+                    this.setRepeat('weekly');
+                    document.getElementById('field-weekly-time').value = pad(hr) + ':' + pad(mn);
+                    document.querySelectorAll('#weekday-chips .weekday-chip').forEach(chip => {
+                        chip.classList.toggle('active', set.has(parseInt(chip.dataset.dow)));
+                    });
+                }
+            } else if (isNum(mn) && isNum(hr) && isNum(dom) && mon === '*' && dow === '*') {
+                mode = 'monthly';
+                this.setRepeat('monthly');
+                document.getElementById('field-monthly-day').value = parseInt(dom);
+                document.getElementById('field-monthly-time').value = pad(hr) + ':' + pad(mn);
+            }
+        }
+
+        if (mode === 'custom') {
+            this.setRepeat('custom');
+            document.getElementById('field-schedule-raw').value = expr || '';
+        }
+
+        this.onBuilderChange();
+        return mode;
+    },
+
     // ── Schedule validation ──
     debounceValidate() {
         clearTimeout(this._validateTimer);
@@ -1302,16 +1814,20 @@ const Cron = {
         const resp = await fetch('/api/cron/validate-schedule', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ schedule }),
+            body: JSON.stringify({ schedule, timezone: this._timezone() }),
         });
 
         const data = await resp.json();
         preview.style.display = 'block';
 
         if (data.valid) {
-            const runs = data.next_runs.map(r => formatDateTimeFull(r)).join(', ');
+            const tz = data.timezone ? ' · ' + data.timezone : '';
+            const runs = (data.next_runs || []).join(' · ');
             preview.className = 'schedule-preview valid';
-            preview.textContent = data.human + ' — next: ' + runs;
+            preview.innerHTML =
+                '<div class="preview-human">' + escapeHtml(data.human) + escapeHtml(tz) + '</div>' +
+                '<div class="preview-runs">next: ' + escapeHtml(runs) + '</div>' +
+                '<div class="preview-cron">cron: ' + escapeHtml(schedule) + '</div>';
         } else {
             preview.className = 'schedule-preview invalid';
             preview.textContent = data.error || 'Invalid cron expression';
@@ -1385,6 +1901,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const iso = el.dataset.iso;
         if (iso) el.textContent = timeAgo(iso);
     });
+
+    // Deep-link from "Save & run now": #logs=<jobId> opens that job's logs.
+    if (location.hash.startsWith('#logs=')) {
+        const jobId = decodeURIComponent(location.hash.slice('#logs='.length));
+        if (jobId) Cron.showJobLogs(jobId);
+    }
 });
 </script>
 {% endblock %}
