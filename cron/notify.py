@@ -6,6 +6,7 @@ This module decides whether and how to deliver that output.
 report_mode controls notification behavior:
   - "always" (default): always send the result to Discord
   - "silent": only send if the job failed (non-zero exit code)
+  - "off": never send anything
 """
 
 from __future__ import annotations
@@ -38,6 +39,11 @@ def _do_notify(
     # report_mode controls whether to notify
     report_mode = job.get("report_mode", "always")
     exit_code = result.get("exit_code", -1)
+
+    if report_mode == "off":
+        # Notifications disabled for this job
+        logger.debug("Job %s has notifications off, skipping", job_id)
+        return
 
     if report_mode == "silent" and exit_code == 0:
         # Silent mode: only notify on errors

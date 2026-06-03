@@ -58,6 +58,19 @@ class TestJobCreateType:
             JobCreate(id="j", schedule="0 9 * * *", type="webhook", prompt="x")
 
 
+class TestReportMode:
+    def test_off_accepted(self):
+        job = JobCreate(id="j", schedule="0 9 * * *", prompt="x", report_mode="off")
+        assert job.report_mode == "off"
+
+    def test_invalid_mode_rejected(self):
+        with pytest.raises(ValidationError):
+            JobCreate(id="j", schedule="0 9 * * *", prompt="x", report_mode="verbose")
+
+    def test_update_accepts_off(self):
+        assert JobUpdate(report_mode="off").report_mode == "off"
+
+
 class TestJobTimezone:
     def test_default_timezone_is_none(self):
         job = JobCreate(id="j", schedule="0 9 * * *", prompt="x")

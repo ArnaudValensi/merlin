@@ -247,6 +247,26 @@ class TestNotifyCronResult:
         notify_cron_result("daily-check", job, _sample_result(exit_code=0), registry)
         mod.notify.assert_called_once()
 
+    def test_off_mode_skips_on_success(self):
+        """report_mode=off never notifies, even on success."""
+        mod = _make_bot_module(channels={"111222333"})
+        info = FakeExtensionInfo(loaded=True, module=mod)
+        registry = _make_registry(info)
+
+        job = _sample_job(report_mode="off")
+        notify_cron_result("daily-check", job, _sample_result(exit_code=0), registry)
+        mod.notify.assert_not_called()
+
+    def test_off_mode_skips_on_error(self):
+        """report_mode=off never notifies, even on failure."""
+        mod = _make_bot_module(channels={"111222333"})
+        info = FakeExtensionInfo(loaded=True, module=mod)
+        registry = _make_registry(info)
+
+        job = _sample_job(report_mode="off")
+        notify_cron_result("daily-check", job, _sample_result(exit_code=1), registry)
+        mod.notify.assert_not_called()
+
     def test_outer_exception_caught_and_logged(self, caplog):
         """Even if _do_notify raises unexpectedly, notify_cron_result never raises."""
         registry = {"merlin-bot": "not-an-extension-info"}  # Will cause AttributeError

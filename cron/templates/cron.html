@@ -726,27 +726,6 @@
     opacity: 0.9;
 }
 
-.cron-modal .discord-section {
-    padding: 12px;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    margin-top: 4px;
-}
-
-.cron-modal .discord-section label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: var(--text-secondary);
-    cursor: pointer;
-}
-
-.cron-modal .discord-section input[type="checkbox"] {
-    accent-color: var(--accent-blue);
-}
-
 /* Error text */
 .form-error {
     color: var(--accent-red);
@@ -1084,11 +1063,13 @@
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label" for="field-report-mode">Report Mode</label>
-                    <select class="form-input" id="field-report-mode">
-                        <option value="always">Always report</option>
-                        <option value="silent">Silent (noteworthy only)</option>
+                    <label class="form-label" for="field-report-mode">Notify</label>
+                    <select class="form-input" id="field-report-mode" onchange="Cron.onNotifyChange()">
+                        <option value="always">Always</option>
+                        <option value="silent">Errors only</option>
+                        <option value="off">Never</option>
                     </select>
+                    <div class="form-help">Discord notification after each run</div>
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="field-grace-minutes">Grace Minutes</label>
@@ -1096,6 +1077,13 @@
                     <div class="form-help">Skip if previous run ended within this window</div>
                 </div>
             </div>
+            {% if bot_loaded %}
+            <div class="form-group" id="discord-channel-group">
+                <label class="form-label" for="field-discord-channel">Discord channel override</label>
+                <input class="form-input" id="field-discord-channel" placeholder="Default channel">
+                <div class="form-help">Leave empty to use the bot's default channel.</div>
+            </div>
+            {% endif %}
             <div class="form-group" id="advanced-group">
                 <button type="button" class="advanced-toggle" id="advanced-toggle" aria-expanded="false" aria-controls="advanced-body" onclick="Cron.toggleAdvanced()">&#9656; Advanced (agent options)</button>
                 <div class="advanced-body" id="advanced-body">
@@ -1116,22 +1104,6 @@
                     </div>
                 </div>
             </div>
-            {% if bot_loaded %}
-            <div class="form-group">
-                <label class="form-label" for="field-discord-enabled">Discord Notifications</label>
-                <div class="discord-section">
-                    <label>
-                        <input type="checkbox" id="field-discord-enabled">
-                        Notify via Discord on completion
-                    </label>
-                    <div class="form-help" id="discord-default-hint" style="display:none; margin-top: 4px;">Uses default channel. <a href="#" id="discord-show-override" style="color: var(--accent-blue);">Override channel</a></div>
-                    <div class="form-group" id="discord-channel-group" style="margin-top: 10px; display: none;">
-                        <label class="form-label" for="field-discord-channel">Channel ID override</label>
-                        <input class="form-input" id="field-discord-channel" placeholder="Leave empty for default channel">
-                    </div>
-                </div>
-            </div>
-            {% endif %}
         </div><!-- /.cron-modal-body -->
             <div class="modal-actions">
                 <button type="button" class="modal-cancel-btn" onclick="Cron.closeModal()">Cancel</button>
@@ -1344,15 +1316,18 @@ const Cron = {
         if (preview) preview.style.display = 'none';
         const errorId = document.getElementById('error-id');
         if (errorId) errorId.textContent = '';
-        const discordEnabled = document.getElementById('field-discord-enabled');
-        if (discordEnabled) {
-            discordEnabled.checked = true;
-            const hint = document.getElementById('discord-default-hint');
-            if (hint) hint.style.display = 'block';
-            document.getElementById('discord-channel-group').style.display = 'none';
-            document.getElementById('field-discord-channel').value = '';
-        }
+        const channelOverride = document.getElementById('field-discord-channel');
+        if (channelOverride) channelOverride.value = '';
+        this.onNotifyChange();
         this._openOverlay('field-id');
+    },
+
+    // Show the Discord channel override only when notifications can fire.
+    onNotifyChange() {
+        const group = document.getElementById('discord-channel-group');
+        if (!group) return;
+        const mode = document.getElementById('field-report-mode').value;
+        group.style.display = mode === 'off' ? 'none' : 'block';
     },
 
     async openEditModal(jobId) {
@@ -1384,25 +1359,13 @@ const Cron = {
         if (preview) preview.style.display = 'none';
         const errorId = document.getElementById('error-id');
         if (errorId) errorId.textContent = '';
-        const discordEnabled = document.getElementById('field-discord-enabled');
-        if (discordEnabled) {
-            // Old jobs have "channel", new jobs have "discord_channel"
-            const hasDiscord = !!(job.discord_channel || job.channel);
-            discordEnabled.checked = hasDiscord;
-            // Show channel input only if a specific channel ID is set (not "default")
-            const specificChannel = job.discord_channel && job.discord_channel !== 'default' ? job.discord_channel : '';
-            const hint = document.getElementById('discord-default-hint');
-            const channelGroup = document.getElementById('discord-channel-group');
-            if (specificChannel) {
-                if (hint) hint.style.display = 'none';
-                if (channelGroup) channelGroup.style.display = 'block';
-                document.getElementById('field-discord-channel').value = specificChannel;
-            } else {
-                if (hint) hint.style.display = hasDiscord ? 'block' : 'none';
-                if (channelGroup) channelGroup.style.display = 'none';
-                document.getElementById('field-discord-channel').value = '';
-            }
+        const channelOverride = document.getElementById('field-discord-channel');
+        if (channelOverride) {
+            // Old jobs may have "channel"; "default" means no specific override.
+            const specific = job.discord_channel || job.channel;
+            channelOverride.value = specific && specific !== 'default' ? specific : '';
         }
+        this.onNotifyChange();
         this._openOverlay('field-description');
     },
 
@@ -1512,13 +1475,13 @@ const Cron = {
             body.ephemeral = document.getElementById('field-ephemeral').value === 'true';
         }
 
-        // Discord notification: "default" = use bot's default channel, specific ID = override, null = disabled
-        const discordEnabled = document.getElementById('field-discord-enabled');
-        if (discordEnabled && discordEnabled.checked) {
-            const ch = document.getElementById('field-discord-channel').value.trim();
+        // Notifications: report_mode says when ("off" = never, enforced by
+        // notify.py); discord_channel is only the destination. When off, the
+        // destination is left untouched so re-enabling keeps the channel.
+        const channelOverride = document.getElementById('field-discord-channel');
+        if (channelOverride && body.report_mode !== 'off') {
+            const ch = channelOverride.value.trim();
             body.discord_channel = ch || 'default';
-        } else if (discordEnabled) {
-            body.discord_channel = null;
         }
 
         if (!this._editingJobId && !id) {
@@ -2001,33 +1964,7 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// Discord checkbox toggle
 document.addEventListener('DOMContentLoaded', () => {
-    const discordEnabled = document.getElementById('field-discord-enabled');
-    const discordHint = document.getElementById('discord-default-hint');
-    const discordChannelGroup = document.getElementById('discord-channel-group');
-    const discordShowOverride = document.getElementById('discord-show-override');
-
-    if (discordEnabled) {
-        discordEnabled.addEventListener('change', () => {
-            if (discordEnabled.checked) {
-                // Show hint, hide override by default
-                if (discordHint) discordHint.style.display = 'block';
-                if (discordChannelGroup) discordChannelGroup.style.display = 'none';
-            } else {
-                if (discordHint) discordHint.style.display = 'none';
-                if (discordChannelGroup) discordChannelGroup.style.display = 'none';
-            }
-        });
-    }
-    if (discordShowOverride) {
-        discordShowOverride.addEventListener('click', (e) => {
-            e.preventDefault();
-            if (discordHint) discordHint.style.display = 'none';
-            if (discordChannelGroup) discordChannelGroup.style.display = 'block';
-        });
-    }
-
     // Populate relative times
     document.querySelectorAll('.job-next-run').forEach(el => {
         const iso = el.dataset.iso;

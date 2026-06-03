@@ -645,7 +645,7 @@ Job file format (cron-jobs/<job-id>.json):
     "working_dir": null,           # Command jobs: cwd; default MERLIN_LAUNCH_CWD then $HOME
     "channel": "123456789",        # Discord channel for results
     "enabled": true,               # Toggle on/off
-    "report_mode": "silent",       # "silent" or "always"
+    "report_mode": "silent",       # "always", "silent" (errors only), or "off"
     "max_turns": 0,                # Prompt jobs: 0 = unlimited
     "ephemeral": true,             # Prompt jobs: false = persistent session (costs grow)
     "grace_minutes": 15            # Optional: staleness window override

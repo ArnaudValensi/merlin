@@ -157,6 +157,17 @@ def test_no_off_palette_green(client):
     assert "rgba(74, 222, 128" not in html
 
 
+def test_notify_select_replaces_discord_checkbox(client):
+    """One Notify select (always/silent/off); the old checkbox is gone."""
+    html = client.get("/cron").text
+    assert 'value="off"' in html
+    assert 'value="silent"' in html
+    assert "onNotifyChange" in html
+    # The misleading enable/disable checkbox is removed.
+    assert "field-discord-enabled" not in html
+    assert "discord-default-hint" not in html
+
+
 def test_cron_modal_repeat_options(client):
     """The Repeat dropdown offers the six frequency options."""
     html = client.get("/cron").text

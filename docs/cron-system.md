@@ -92,7 +92,7 @@ Job ID is the filename without `.json` (e.g., `daily-digest.json` -> job ID `dai
 | `discord_channel` | string | `null` | Discord channel ID for notifications (optional — falls back to bot default) |
 | `description` | string | `""` | Human-readable summary |
 | `enabled` | boolean | `true` | Toggle without deleting |
-| `report_mode` | string | `"always"` | `"always"` (always notify) or `"silent"` (only notify on errors) — handled by `notify.py`, not the prompt |
+| `report_mode` | string | `"always"` | `"always"` (always notify), `"silent"` (only notify on errors), or `"off"` (never notify) — handled by `notify.py`, not the prompt |
 | `max_turns` | integer | `0` | Prompt jobs only: max agentic turns (0 = unlimited) |
 | `ephemeral` | boolean | `true` | Prompt jobs only: fresh session each run (default). Set `false` for persistent sessions (costs grow per run) |
 | `grace_minutes` | integer | `15` | Staleness window — jobs missed by more than this are skipped |
@@ -131,6 +131,12 @@ Handled by `notify.py` after job execution (not in the prompt):
 
 - **`always`** (default): Always send the engine's output to Discord.
 - **`silent`**: Only notify on errors (non-zero exit code). Successful silent jobs produce no Discord notification.
+- **`off`**: Never notify, regardless of outcome.
+
+The dashboard modal exposes this as a single **Notify** select (Always / Errors
+only / Never) plus an optional channel override. `report_mode` decides *when*
+to notify; `discord_channel` is only the *destination* (it falls back to the
+bot's default channel when unset or `"default"`).
 
 ### Full Prompt Format
 
@@ -252,7 +258,7 @@ Each log file contains:
 
 `cron/notify.py` provides graceful notification after job execution:
 
-1. Check `report_mode`: if `silent` and exit_code == 0, skip notification.
+1. Check `report_mode`: if `off`, skip; if `silent` and exit_code == 0, skip.
 2. If merlin-bot extension is loaded, send a formatted Discord message.
 3. Channel resolution: per-job `discord_channel` → legacy `channel` → bot's default `DISCORD_CHANNEL_IDS` → skip silently.
 4. Never raises — all errors are caught and logged.

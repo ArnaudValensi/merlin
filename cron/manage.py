@@ -164,6 +164,8 @@ def format_jobs_discord(jobs: list[dict]) -> str:
             suffix = " (disabled)"
         elif report_mode == "silent":
             suffix = " — silent"
+        elif report_mode == "off":
+            suffix = " — notifications off"
         elif report_mode == "always":
             suffix = " — always"
 
@@ -414,7 +416,8 @@ Cron expression cheat sheet:
 
 Report modes:
   always  - Always send results to Discord (default)
-  silent  - Only report when there's something noteworthy
+  silent  - Only report on errors (non-zero exit)
+  off     - Never send notifications
 
 Output:
   Without --discord: JSON (for programmatic use)
@@ -437,9 +440,9 @@ Output:
     p_add.add_argument("--description", help="Human-readable description")
     p_add.add_argument(
         "--report-mode",
-        choices=["always", "silent"],
+        choices=["always", "silent", "off"],
         default="always",
-        help="Report mode: always or silent (default: always)",
+        help="Report mode: always, silent (errors only), or off (default: always)",
     )
     p_add.add_argument(
         "--max-turns",

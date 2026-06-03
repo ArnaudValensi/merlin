@@ -10,7 +10,7 @@ from pydantic import BaseModel, field_validator, model_validator
 # Job ID pattern: lowercase + alphanumeric + single hyphens, no --, max 30 chars, starts with letter
 _ID_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 
-VALID_REPORT_MODES = ("always", "silent")
+VALID_REPORT_MODES = ("always", "silent", "off")
 
 
 def _validate_timezone(v: str | None) -> str | None:
