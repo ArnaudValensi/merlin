@@ -103,6 +103,60 @@ def test_weekday_chips_are_clickable(client):
     assert "toggleWeekday(chip)" in html
 
 
+def test_modal_dialog_semantics(client):
+    """The modal carries dialog ARIA and the close button is labelled."""
+    html = client.get("/cron").text
+    assert 'role="dialog"' in html
+    assert 'aria-modal="true"' in html
+    assert 'aria-labelledby="modal-title"' in html
+    assert 'aria-label="Close"' in html
+    # Escape-to-close handler is wired.
+    assert "e.key !== 'Escape'" in html
+
+
+def test_toggle_buttons_announce_state(client):
+    """Chips and the segmented action toggle expose aria-pressed."""
+    html = client.get("/cron").text
+    # 7 chips start unpressed; segmented has one pressed + one not.
+    assert html.count('aria-pressed="false"') >= 8
+    assert html.count('aria-pressed="true"') >= 1
+    assert 'aria-expanded="false"' in html  # advanced disclosure + action menus
+
+
+def test_labels_are_associated_with_inputs(client):
+    """Form labels use for= so screen readers and label-taps work."""
+    html = client.get("/cron").text
+    for field in (
+        "field-id",
+        "field-repeat",
+        "field-timezone",
+        "field-prompt",
+        "field-command",
+        "field-working-dir",
+        "field-report-mode",
+        "field-grace-minutes",
+        "field-max-turns",
+        "field-ephemeral",
+    ):
+        assert f'for="{field}"' in html
+
+
+def test_schedule_preview_is_live_region(client):
+    html = client.get("/cron").text
+    assert 'id="schedule-preview" aria-live="polite"' in html
+
+
+def test_focus_visible_styles_present(client):
+    html = client.get("/cron").text
+    assert "focus-visible" in html
+
+
+def test_no_off_palette_green(client):
+    """Greens trace to the dashboard accent (52,211,153), not the portal green."""
+    html = client.get("/cron").text
+    assert "rgba(74, 222, 128" not in html
+
+
 def test_cron_modal_repeat_options(client):
     """The Repeat dropdown offers the six frequency options."""
     html = client.get("/cron").text

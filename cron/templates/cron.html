@@ -168,8 +168,8 @@
 }
 
 .action-menu-btn {
-    width: 34px;
-    height: 34px;
+    width: 44px;
+    height: 44px;
     background: none;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -180,6 +180,10 @@
     justify-content: center;
     font-size: 16px;
     transition: all 0.15s;
+}
+
+@media (min-width: 769px) {
+    .action-menu-btn { width: 34px; height: 34px; }
 }
 
 .action-menu-btn:hover {
@@ -428,7 +432,8 @@
 
 .cron-modal .form-input {
     width: 100%;
-    padding: 8px 12px;
+    padding: 11px 12px;
+    min-height: 44px;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--bg-card);
@@ -440,12 +445,24 @@
 @media (min-width: 769px) {
     .cron-modal .form-input {
         font-size: 13px;
+        padding: 8px 12px;
+        min-height: 0;
     }
 }
 
 .cron-modal .form-input:focus {
     outline: none;
     border-color: var(--accent-blue);
+}
+
+/* Visible keyboard focus for all custom controls (chips, segmented, quick
+   buttons, disclosure, footer, menus). :focus-visible keeps taps clean. */
+.cron-page button:focus-visible,
+.cron-modal-overlay button:focus-visible,
+.cron-modal-overlay select:focus-visible,
+.cron-modal-overlay input:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
 }
 
 /* Normalize native date/time controls so they match the other inputs.
@@ -457,7 +474,6 @@
     -webkit-appearance: none;
     appearance: none;
     text-align: left;
-    min-height: 38px;
 }
 
 .cron-modal textarea.form-input {
@@ -472,7 +488,7 @@
 
 .cron-modal .form-help {
     font-size: 11px;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     margin-top: 3px;
 }
 
@@ -493,7 +509,7 @@
 }
 
 .cron-modal .schedule-preview.valid {
-    background: rgba(74, 222, 128, 0.1);
+    background: rgba(52, 211, 153, 0.1);
     color: var(--accent-green);
 }
 
@@ -510,7 +526,7 @@
 .cron-modal .schedule-preview .preview-cron {
     margin-top: 4px;
     font-family: 'Geist Mono', monospace;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     font-size: 11px;
 }
 
@@ -527,12 +543,12 @@
 
 .cron-modal .weekday-chips {
     display: flex;
-    gap: 6px;
+    gap: 8px;
     flex-wrap: wrap;
 }
 .cron-modal .weekday-chip {
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--bg-card);
@@ -550,18 +566,20 @@
 }
 .cron-modal .weekday-quick {
     display: flex;
-    gap: 6px;
-    margin-top: 6px;
+    gap: 8px;
+    margin-top: 8px;
     flex-wrap: wrap;
 }
 .cron-modal .weekday-quick button {
-    padding: 3px 10px;
+    min-height: 44px;
+    padding: 8px 14px;
     border: 1px solid var(--border);
     border-radius: 4px;
     background: var(--bg-card);
-    color: var(--text-muted);
-    font-size: 11px;
+    color: var(--text-secondary);
+    font-size: 12px;
     cursor: pointer;
+    font-family: inherit;
 }
 .cron-modal .weekday-quick button:hover { background: var(--bg-hover); color: var(--text-primary); }
 
@@ -574,6 +592,7 @@
 }
 .cron-modal .segmented button {
     flex: 1;
+    min-height: 44px;
     padding: 8px 12px;
     background: var(--bg-card);
     border: none;
@@ -592,8 +611,13 @@
 
 /* ── Advanced disclosure ── */
 .cron-modal .advanced-toggle {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 44px;
     background: none;
     border: none;
+    text-align: left;
     color: var(--text-secondary);
     font-size: 12px;
     font-weight: 500;
@@ -602,6 +626,14 @@
     font-family: inherit;
 }
 .cron-modal .advanced-toggle:hover { color: var(--text-primary); }
+
+/* Desktop: pointer-precise, compact variants */
+@media (min-width: 769px) {
+    .cron-modal .weekday-chip { width: 36px; height: 36px; }
+    .cron-modal .weekday-quick button { min-height: 0; padding: 4px 10px; font-size: 11px; }
+    .cron-modal .segmented button { min-height: 36px; }
+    .cron-modal .advanced-toggle { min-height: 0; }
+}
 .cron-modal .advanced-body { display: none; margin-top: 8px; }
 .cron-modal .advanced-body.open { display: block; }
 
@@ -620,7 +652,7 @@
     color: var(--accent-purple);
 }
 .cron-job-card .type-badge.command {
-    background: rgba(74, 222, 128, 0.12);
+    background: rgba(52, 211, 153, 0.12);
     color: var(--accent-green);
     font-family: 'Geist Mono', monospace;
 }
@@ -635,10 +667,16 @@
 }
 
 .cron-modal .modal-actions {
+    /* Mobile: stacked, primary action last (closest to the thumb) */
     display: flex;
+    flex-direction: column;
     gap: 8px;
     padding: 16px 20px;
     border-top: 1px solid var(--border);
+}
+
+@media (min-width: 769px) {
+    .cron-modal .modal-actions { flex-direction: row; }
 }
 
 .cron-modal .modal-actions button {
@@ -652,6 +690,12 @@
     min-height: 44px;
 }
 
+.cron-modal .modal-actions button:disabled {
+    opacity: 0.5;
+    cursor: default;
+    pointer-events: none;
+}
+
 .cron-modal .modal-actions .modal-cancel-btn {
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -660,6 +704,17 @@
 .cron-modal .modal-actions .modal-cancel-btn:hover {
     background: var(--bg-hover);
     color: var(--text-primary);
+}
+
+/* Secondary action: tinted accent so it reads as "does something",
+   clearly distinct from Cancel */
+.cron-modal .modal-actions .modal-secondary-btn {
+    background: rgba(74, 158, 255, 0.08);
+    border: 1px solid rgba(74, 158, 255, 0.35);
+    color: var(--accent-blue);
+}
+.cron-modal .modal-actions .modal-secondary-btn:hover {
+    background: rgba(74, 158, 255, 0.15);
 }
 
 .cron-modal .modal-actions .modal-submit-btn {
@@ -838,7 +893,7 @@
                         <span class="toggle-slider"></span>
                     </label>
                     <div class="action-menu">
-                        <button class="action-menu-btn" onclick="Cron.toggleMenu(this)" title="Actions">&#8942;</button>
+                        <button class="action-menu-btn" onclick="Cron.toggleMenu(this)" title="Actions" aria-label="Job actions" aria-haspopup="true" aria-expanded="false">&#8942;</button>
                         <div class="action-menu-dropdown">
                             <button class="action-menu-item" onclick="Cron.openEditModal('{{ job.id }}')">Edit</button>
                             <button class="action-menu-item" onclick="Cron.runJob('{{ job.id }}')">Run Now</button>
@@ -924,25 +979,25 @@
 <!-- Create/Edit Modal -->
 <div class="cron-modal-overlay" id="cron-modal-overlay">
     <div class="cron-modal-backdrop" onclick="Cron.closeModal()"></div>
-    <div class="cron-modal">
+    <div class="cron-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <div class="cron-modal-header">
             <h2 id="modal-title">New Cron Job</h2>
-            <button class="cron-modal-close" onclick="Cron.closeModal()">&times;</button>
+            <button class="cron-modal-close" aria-label="Close" onclick="Cron.closeModal()">&times;</button>
         </div>
         <form onsubmit="event.preventDefault(); Cron.submitJob();">
         <div class="cron-modal-body">
             <div class="form-group">
-                <label class="form-label">Job ID</label>
+                <label class="form-label" for="field-id">Job ID</label>
                 <input class="form-input" id="field-id" placeholder="daily-report" maxlength="30" pattern="[a-z][a-z0-9]*(-[a-z0-9]+)*" title="Lowercase letters, digits, and single hyphens. Must start with a letter. No consecutive hyphens." required oninput="this.value = this.value.toLowerCase().replace(/[^a-z0-9-]/g, '')">
                 <div class="form-help">Lowercase letters, digits, and hyphens. Starts with a letter.</div>
                 <div class="form-error" id="error-id"></div>
             </div>
             <div class="form-group">
-                <label class="form-label">Description</label>
+                <label class="form-label" for="field-description">Description</label>
                 <input class="form-input" id="field-description" placeholder="What does this job do?" style="font-family: 'Geist', -apple-system, system-ui, sans-serif;">
             </div>
             <div class="form-group">
-                <label class="form-label">Schedule</label>
+                <label class="form-label" for="field-repeat">Schedule</label>
                 <select class="form-input" id="field-repeat" onchange="Cron.onRepeatChange()">
                     <option value="minutes">Every N minutes</option>
                     <option value="hourly">Hourly</option>
@@ -953,105 +1008,105 @@
                 </select>
 
                 <div class="builder-group" id="builder-minutes" style="display:none">
-                    <label class="form-label">Every</label>
+                    <label class="form-label" for="field-minutes-n">Every</label>
                     <input class="form-input" id="field-minutes-n" type="number" min="1" max="59" value="5" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
                     <div class="form-help">minutes (1-59)</div>
                 </div>
 
                 <div class="builder-group" id="builder-hourly" style="display:none">
-                    <label class="form-label">At minute</label>
+                    <label class="form-label" for="field-hourly-minute">At minute</label>
                     <input class="form-input" id="field-hourly-minute" type="number" min="0" max="59" value="0" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
                     <div class="form-help">minute past each hour (0-59)</div>
                 </div>
 
                 <div class="builder-group" id="builder-daily" style="display:none">
-                    <label class="form-label">At time</label>
+                    <label class="form-label" for="field-daily-time">At time</label>
                     <input class="form-input" id="field-daily-time" type="time" value="09:00" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
                 </div>
 
                 <div class="builder-group" id="builder-weekly" style="display:none">
-                    <label class="form-label">On days</label>
-                    <div class="weekday-chips" id="weekday-chips">
-                        <button type="button" class="weekday-chip" data-dow="1" title="Monday" onclick="Cron.toggleWeekday(this)">M</button>
-                        <button type="button" class="weekday-chip" data-dow="2" title="Tuesday" onclick="Cron.toggleWeekday(this)">T</button>
-                        <button type="button" class="weekday-chip" data-dow="3" title="Wednesday" onclick="Cron.toggleWeekday(this)">W</button>
-                        <button type="button" class="weekday-chip" data-dow="4" title="Thursday" onclick="Cron.toggleWeekday(this)">T</button>
-                        <button type="button" class="weekday-chip" data-dow="5" title="Friday" onclick="Cron.toggleWeekday(this)">F</button>
-                        <button type="button" class="weekday-chip" data-dow="6" title="Saturday" onclick="Cron.toggleWeekday(this)">S</button>
-                        <button type="button" class="weekday-chip" data-dow="0" title="Sunday" onclick="Cron.toggleWeekday(this)">S</button>
+                    <label class="form-label" id="ondays-label">On days</label>
+                    <div class="weekday-chips" id="weekday-chips" role="group" aria-labelledby="ondays-label">
+                        <button type="button" class="weekday-chip" data-dow="1" title="Monday" aria-label="Monday" aria-pressed="false" onclick="Cron.toggleWeekday(this)">M</button>
+                        <button type="button" class="weekday-chip" data-dow="2" title="Tuesday" aria-label="Tuesday" aria-pressed="false" onclick="Cron.toggleWeekday(this)">T</button>
+                        <button type="button" class="weekday-chip" data-dow="3" title="Wednesday" aria-label="Wednesday" aria-pressed="false" onclick="Cron.toggleWeekday(this)">W</button>
+                        <button type="button" class="weekday-chip" data-dow="4" title="Thursday" aria-label="Thursday" aria-pressed="false" onclick="Cron.toggleWeekday(this)">T</button>
+                        <button type="button" class="weekday-chip" data-dow="5" title="Friday" aria-label="Friday" aria-pressed="false" onclick="Cron.toggleWeekday(this)">F</button>
+                        <button type="button" class="weekday-chip" data-dow="6" title="Saturday" aria-label="Saturday" aria-pressed="false" onclick="Cron.toggleWeekday(this)">S</button>
+                        <button type="button" class="weekday-chip" data-dow="0" title="Sunday" aria-label="Sunday" aria-pressed="false" onclick="Cron.toggleWeekday(this)">S</button>
                     </div>
                     <div class="weekday-quick">
                         <button type="button" onclick="Cron.setWeekdays('weekdays')">Weekdays</button>
                         <button type="button" onclick="Cron.setWeekdays('weekends')">Weekends</button>
                         <button type="button" onclick="Cron.setWeekdays('all')">Every day</button>
                     </div>
-                    <label class="form-label">At time</label>
+                    <label class="form-label" for="field-weekly-time">At time</label>
                     <input class="form-input" id="field-weekly-time" type="time" value="09:00" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
                 </div>
 
                 <div class="builder-group" id="builder-monthly" style="display:none">
-                    <label class="form-label">Day of month</label>
+                    <label class="form-label" for="field-monthly-day">Day of month</label>
                     <input class="form-input" id="field-monthly-day" type="number" min="1" max="31" value="1" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
-                    <label class="form-label">At time</label>
+                    <label class="form-label" for="field-monthly-time">At time</label>
                     <input class="form-input" id="field-monthly-time" type="time" value="09:00" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
                 </div>
 
                 <div class="builder-group" id="builder-custom" style="display:none">
-                    <input class="form-input" id="field-schedule-raw" placeholder="0 9 * * *" oninput="Cron.onBuilderChange()">
+                    <input class="form-input" id="field-schedule-raw" placeholder="0 9 * * *" aria-label="Cron expression" oninput="Cron.onBuilderChange()">
                     <div class="form-help">minute hour day-of-month month day-of-week</div>
                 </div>
 
-                <label class="form-label" style="margin-top: 12px;">Timezone</label>
+                <label class="form-label" for="field-timezone" style="margin-top: 12px;">Timezone</label>
                 <select class="form-input" id="field-timezone" onchange="Cron.onBuilderChange()" style="font-family: 'Geist', -apple-system, system-ui, sans-serif;"></select>
                 <div class="form-help">Fires at this wall-clock time. DST-aware: e.g. 17:00 stays 17:00 across the time change.</div>
 
                 <input type="hidden" id="field-schedule">
-                <div class="schedule-preview" id="schedule-preview" style="display:none"></div>
+                <div class="schedule-preview" id="schedule-preview" aria-live="polite" style="display:none"></div>
             </div>
             <div class="form-group">
-                <label class="form-label">Action</label>
-                <div class="segmented" id="field-type">
-                    <button type="button" data-type="prompt" class="active" onclick="Cron.setJobType('prompt')">&#129302; Agent prompt</button>
-                    <button type="button" data-type="command" onclick="Cron.setJobType('command')">&gt;_ Shell command</button>
+                <label class="form-label" id="action-label">Action</label>
+                <div class="segmented" id="field-type" role="group" aria-labelledby="action-label">
+                    <button type="button" data-type="prompt" class="active" aria-pressed="true" onclick="Cron.setJobType('prompt')">&#129302; Agent prompt</button>
+                    <button type="button" data-type="command" aria-pressed="false" onclick="Cron.setJobType('command')">&gt;_ Shell command</button>
                 </div>
             </div>
             <div class="form-group" id="prompt-group">
-                <label class="form-label">Prompt</label>
+                <label class="form-label" for="field-prompt">Prompt</label>
                 <textarea class="form-input" id="field-prompt" placeholder="The prompt to send to Claude..."></textarea>
             </div>
             <div class="form-group" id="command-group" style="display:none">
-                <label class="form-label">Command</label>
+                <label class="form-label" for="field-command">Command</label>
                 <textarea class="form-input" id="field-command" placeholder="echo hello&#10;# runs via bash -lc, stdout+stderr captured"></textarea>
                 <div class="form-help">Runs in your Merlin environment via <code>bash -lc</code>. No agent, no token cost.</div>
-                <label class="form-label" style="margin-top: 12px;">Working directory</label>
+                <label class="form-label" for="field-working-dir" style="margin-top: 12px;">Working directory</label>
                 <input class="form-input" id="field-working-dir" placeholder="{{ default_working_dir }}">
                 <div class="form-help">Optional. Defaults to where Merlin was launched.</div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">Report Mode</label>
+                    <label class="form-label" for="field-report-mode">Report Mode</label>
                     <select class="form-input" id="field-report-mode">
                         <option value="always">Always report</option>
                         <option value="silent">Silent (noteworthy only)</option>
                     </select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Grace Minutes</label>
+                    <label class="form-label" for="field-grace-minutes">Grace Minutes</label>
                     <input class="form-input" id="field-grace-minutes" type="number" min="0" value="15" style="font-family: 'Geist Mono', monospace;">
                     <div class="form-help">Skip if previous run ended within this window</div>
                 </div>
             </div>
             <div class="form-group" id="advanced-group">
-                <button type="button" class="advanced-toggle" id="advanced-toggle" onclick="Cron.toggleAdvanced()">&#9656; Advanced (agent options)</button>
+                <button type="button" class="advanced-toggle" id="advanced-toggle" aria-expanded="false" aria-controls="advanced-body" onclick="Cron.toggleAdvanced()">&#9656; Advanced (agent options)</button>
                 <div class="advanced-body" id="advanced-body">
                     <div class="form-row">
                         <div class="form-group">
-                            <label class="form-label">Max Turns</label>
+                            <label class="form-label" for="field-max-turns">Max Turns</label>
                             <input class="form-input" id="field-max-turns" type="number" min="0" value="0" style="font-family: 'Geist Mono', monospace;">
                             <div class="form-help">0 = unlimited</div>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Session Mode</label>
+                            <label class="form-label" for="field-ephemeral">Session Mode</label>
                             <select class="form-input" id="field-ephemeral">
                                 <option value="true">Fresh session each run</option>
                                 <option value="false">Persistent session (keeps context)</option>
@@ -1063,7 +1118,7 @@
             </div>
             {% if bot_loaded %}
             <div class="form-group">
-                <label class="form-label">Discord Notifications</label>
+                <label class="form-label" for="field-discord-enabled">Discord Notifications</label>
                 <div class="discord-section">
                     <label>
                         <input type="checkbox" id="field-discord-enabled">
@@ -1071,7 +1126,7 @@
                     </label>
                     <div class="form-help" id="discord-default-hint" style="display:none; margin-top: 4px;">Uses default channel. <a href="#" id="discord-show-override" style="color: var(--accent-blue);">Override channel</a></div>
                     <div class="form-group" id="discord-channel-group" style="margin-top: 10px; display: none;">
-                        <label class="form-label">Channel ID override</label>
+                        <label class="form-label" for="field-discord-channel">Channel ID override</label>
                         <input class="form-input" id="field-discord-channel" placeholder="Leave empty for default channel">
                     </div>
                 </div>
@@ -1080,7 +1135,7 @@
         </div><!-- /.cron-modal-body -->
             <div class="modal-actions">
                 <button type="button" class="modal-cancel-btn" onclick="Cron.closeModal()">Cancel</button>
-                <button type="button" class="modal-cancel-btn" id="modal-save-run-btn" onclick="Cron.saveAndRun()">Save &amp; run now</button>
+                <button type="button" class="modal-secondary-btn" id="modal-save-run-btn" onclick="Cron.saveAndRun()">Save &amp; run now</button>
                 <button type="submit" class="modal-submit-btn" id="modal-submit-btn">Create Job</button>
             </div>
         </form>
@@ -1130,6 +1185,7 @@ document.addEventListener('DOMContentLoaded', () => {
 const Cron = {
     _editingJobId: null,
     _validateTimer: null,
+    _returnFocus: null,
     _perfRange: 7,          // selected time range in days (default 7)
     _perfLoadedRange: null, // range currently rendered (null = not loaded yet)
     _perfReqSeq: 0,         // monotonic request id; guards out-of-order responses
@@ -1283,8 +1339,7 @@ const Cron = {
         document.getElementById('field-max-turns').value = '0';
         document.getElementById('field-grace-minutes').value = '15';
         document.getElementById('field-ephemeral').value = 'true';
-        document.getElementById('advanced-body').classList.remove('open');
-        document.getElementById('advanced-toggle').innerHTML = '&#9656; Advanced (agent options)';
+        this._resetAdvanced();
         const preview = document.getElementById('schedule-preview');
         if (preview) preview.style.display = 'none';
         const errorId = document.getElementById('error-id');
@@ -1297,7 +1352,7 @@ const Cron = {
             document.getElementById('discord-channel-group').style.display = 'none';
             document.getElementById('field-discord-channel').value = '';
         }
-        document.getElementById('cron-modal-overlay').classList.add('open');
+        this._openOverlay('field-id');
     },
 
     async openEditModal(jobId) {
@@ -1316,8 +1371,7 @@ const Cron = {
         document.getElementById('field-command').value = job.command || '';
         document.getElementById('field-working-dir').value = job.working_dir || '';
         this.setJobType(job.type === 'command' ? 'command' : 'prompt');
-        document.getElementById('advanced-body').classList.remove('open');
-        document.getElementById('advanced-toggle').innerHTML = '&#9656; Advanced (agent options)';
+        this._resetAdvanced();
         // Stored timezone if present, else the browser's zone.
         this.setTimezone(job.timezone || null);
         // Round-trip the stored cron into the builder (falls back to Custom).
@@ -1349,18 +1403,34 @@ const Cron = {
                 document.getElementById('field-discord-channel').value = '';
             }
         }
+        this._openOverlay('field-description');
+    },
+
+    // Open the modal overlay, remember where focus came from, and move
+    // focus to the first relevant field (dialog pattern).
+    _openOverlay(focusId) {
+        this._returnFocus = document.activeElement;
         document.getElementById('cron-modal-overlay').classList.add('open');
+        const el = document.getElementById(focusId);
+        if (el) el.focus();
     },
 
     closeModal() {
         document.getElementById('cron-modal-overlay').classList.remove('open');
         this._editingJobId = null;
+        // Restore focus to the element that opened the dialog.
+        if (this._returnFocus && document.contains(this._returnFocus)) {
+            try { this._returnFocus.focus(); } catch (e) { /* hidden or gone */ }
+        }
+        this._returnFocus = null;
     },
 
     // ── Action type toggle + advanced disclosure ──
     setJobType(type) {
         document.querySelectorAll('#field-type button').forEach(b => {
-            b.classList.toggle('active', b.dataset.type === type);
+            const on = b.dataset.type === type;
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-pressed', String(on));
         });
         const isCommand = type === 'command';
         document.getElementById('prompt-group').style.display = isCommand ? 'none' : 'block';
@@ -1379,6 +1449,31 @@ const Cron = {
         const btn = document.getElementById('advanced-toggle');
         const open = body.classList.toggle('open');
         btn.innerHTML = (open ? '&#9662;' : '&#9656;') + ' Advanced (agent options)';
+        btn.setAttribute('aria-expanded', String(open));
+    },
+
+    _resetAdvanced() {
+        document.getElementById('advanced-body').classList.remove('open');
+        const btn = document.getElementById('advanced-toggle');
+        btn.innerHTML = '&#9656; Advanced (agent options)';
+        btn.setAttribute('aria-expanded', 'false');
+    },
+
+    // Disable the footer while a save is in flight (prevents double-submit)
+    // and show progress on the primary button.
+    _setSubmitting(busy) {
+        document.querySelectorAll('.cron-modal .modal-actions button').forEach(b => {
+            b.disabled = busy;
+        });
+        const submit = document.getElementById('modal-submit-btn');
+        if (!submit) return;
+        if (busy) {
+            submit.dataset.label = submit.textContent;
+            submit.textContent = 'Saving...';
+        } else if (submit.dataset.label) {
+            submit.textContent = submit.dataset.label;
+            delete submit.dataset.label;
+        }
     },
 
     // Build and POST/PUT the job. Returns the job id on success, null otherwise.
@@ -1426,24 +1521,35 @@ const Cron = {
             body.discord_channel = null;
         }
 
+        if (!this._editingJobId && !id) {
+            this.toast('Job ID is required', 'error');
+            return null;
+        }
+
+        this._setSubmitting(true);
         let resp;
         let savedId;
-        if (this._editingJobId) {
-            savedId = this._editingJobId;
-            resp = await fetch(`/api/cron/jobs/${this._editingJobId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-        } else {
-            if (!id) { this.toast('Job ID is required', 'error'); return null; }
-            savedId = id;
-            body.id = id;
-            resp = await fetch('/api/cron/jobs', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
+        try {
+            if (this._editingJobId) {
+                savedId = this._editingJobId;
+                resp = await fetch(`/api/cron/jobs/${this._editingJobId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+            } else {
+                savedId = id;
+                body.id = id;
+                resp = await fetch('/api/cron/jobs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+            }
+        } catch (e) {
+            this._setSubmitting(false);
+            this.toast('Network error, job not saved', 'error');
+            return null;
         }
 
         if (resp.ok) {
@@ -1454,6 +1560,7 @@ const Cron = {
             setTimeout(() => location.reload(), 300);
             return savedId;
         } else {
+            this._setSubmitting(false);
             const data = await resp.json().catch(() => ({}));
             const detail = data.detail || JSON.stringify(data);
             const errorId = document.getElementById('error-id');
@@ -1474,10 +1581,14 @@ const Cron = {
     async saveAndRun() {
         const savedId = await this.submitJob({ silent: true });
         if (!savedId) return;
-        const resp = await fetch(`/api/cron/jobs/${savedId}/run`, { method: 'POST' });
+        let ok = false;
+        try {
+            const resp = await fetch(`/api/cron/jobs/${savedId}/run`, { method: 'POST' });
+            ok = resp.ok;
+        } catch (e) { ok = false; }
         this.closeModal();
-        if (resp.ok) {
-            this.toast('Saved and triggered — opening logs', 'success');
+        if (ok) {
+            this.toast('Saved and triggered, opening logs', 'success');
         } else {
             this.toast('Saved, but failed to trigger run', 'error');
         }
@@ -1680,8 +1791,15 @@ const Cron = {
         this.debounceValidate();
     },
 
+    // Single place that flips a chip: keeps the visual state and the
+    // aria-pressed announcement in sync.
+    _setChipActive(chip, on) {
+        chip.classList.toggle('active', on);
+        chip.setAttribute('aria-pressed', String(on));
+    },
+
     toggleWeekday(chip) {
-        chip.classList.toggle('active');
+        this._setChipActive(chip, !chip.classList.contains('active'));
         this.onBuilderChange();
     },
 
@@ -1693,7 +1811,7 @@ const Cron = {
         };
         const want = new Set(map[which] || []);
         document.querySelectorAll('#weekday-chips .weekday-chip').forEach(chip => {
-            chip.classList.toggle('active', want.has(chip.dataset.dow));
+            this._setChipActive(chip, want.has(chip.dataset.dow));
         });
         this.onBuilderChange();
     },
@@ -1780,7 +1898,7 @@ const Cron = {
                     this.setRepeat('weekly');
                     document.getElementById('field-weekly-time').value = pad(hr) + ':' + pad(mn);
                     document.querySelectorAll('#weekday-chips .weekday-chip').forEach(chip => {
-                        chip.classList.toggle('active', set.has(parseInt(chip.dataset.dow)));
+                        this._setChipActive(chip, set.has(parseInt(chip.dataset.dow)));
                     });
                 }
             } else if (isNum(mn) && isNum(hr) && isNum(dom) && mon === '*' && dow === '*') {
@@ -1845,10 +1963,12 @@ const Cron = {
         const wasOpen = dropdown.classList.contains('open');
         this.closeAllMenus();
         if (!wasOpen) dropdown.classList.add('open');
+        btn.setAttribute('aria-expanded', String(!wasOpen));
     },
 
     closeAllMenus() {
         document.querySelectorAll('.action-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+        document.querySelectorAll('.action-menu-btn[aria-expanded="true"]').forEach(b => b.setAttribute('aria-expanded', 'false'));
     },
 
     // ── Toast ──
@@ -1866,6 +1986,17 @@ const Cron = {
 // Close menus on outside click
 document.addEventListener('click', (e) => {
     if (!e.target.closest('.action-menu')) {
+        Cron.closeAllMenus();
+    }
+});
+
+// Escape closes the modal (and any open action menu) — dialog keyboard pattern
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const overlay = document.getElementById('cron-modal-overlay');
+    if (overlay && overlay.classList.contains('open')) {
+        Cron.closeModal();
+    } else {
         Cron.closeAllMenus();
     }
 });
