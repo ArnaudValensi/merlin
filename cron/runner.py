@@ -230,9 +230,12 @@ def is_job_due(
     if next_run > now:
         return False  # Not due yet
 
-    # Staleness check: if the job missed its window by too much, skip it
+    # Staleness check: if the job missed its window by too much, skip it.
+    # Sub-minute staleness is never "missed": the dispatcher always fires a
+    # second or two after the minute (subprocess boot), so grace_minutes=0
+    # would otherwise mean "never run".
     staleness_seconds = (now - next_run).total_seconds()
-    grace_seconds = grace_minutes * 60
+    grace_seconds = max(grace_minutes * 60, 59)
 
     if staleness_seconds > grace_seconds:
         logger.warning(

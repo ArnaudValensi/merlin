@@ -134,11 +134,17 @@ def test_labels_are_associated_with_inputs(client):
         "field-command",
         "field-working-dir",
         "field-report-mode",
-        "field-grace-minutes",
         "field-max-turns",
         "field-ephemeral",
     ):
         assert f'for="{field}"' in html
+
+
+def test_grace_minutes_not_in_form(client):
+    """grace_minutes is internal/API-only — the modal does not expose it."""
+    html = client.get("/cron").text
+    assert "field-grace-minutes" not in html
+    assert "Grace Minutes" not in html
 
 
 def test_schedule_preview_is_live_region(client):

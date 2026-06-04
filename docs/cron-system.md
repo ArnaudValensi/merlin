@@ -95,7 +95,7 @@ Job ID is the filename without `.json` (e.g., `daily-digest.json` -> job ID `dai
 | `report_mode` | string | `"always"` | `"always"` (always notify), `"silent"` (only notify on errors), or `"off"` (never notify) — handled by `notify.py`, not the prompt |
 | `max_turns` | integer | `0` | Prompt jobs only: max agentic turns (0 = unlimited) |
 | `ephemeral` | boolean | `true` | Prompt jobs only: fresh session each run (default). Set `false` for persistent sessions (costs grow per run) |
-| `grace_minutes` | integer | `15` | Staleness window — jobs missed by more than this are skipped |
+| `grace_minutes` | integer | `15` | Staleness window — jobs missed by more than this are skipped. Internal/API-only: not exposed in the dashboard form |
 | `created_at` | string | -- | ISO 8601 creation timestamp |
 
 > **Note**: The `discord_channel` field is optional. If omitted, notifications fall back to the bot's default channel (from `DISCORD_CHANNEL_IDS`). If the bot extension is not loaded, notifications are silently skipped. The legacy `channel` field has been removed and is no longer read anywhere.
@@ -267,17 +267,29 @@ The engine has no notion of Discord or delivery. It returns text output, and `no
 
 ## Staleness Guard
 
-Prevents restart floods where all overdue jobs fire immediately after a restart.
+**The user-facing contract is plain cron**: jobs fire on their schedule; a run
+missed during a brief restart still fires up to 15 minutes late; longer gaps
+are skipped (never a catch-up flood after downtime). The grace window is an
+internal detail — it is not shown in the dashboard form. Per-job
+`grace_minutes` in the job file (or via the API) overrides the default for
+power users.
 
 **Logic in `is_job_due()`**:
 
 1. Read `last_run` from state. If `None` (first time): initialize to now, return `False`.
 2. Compute `next_run` via `croniter` from `last_run`.
 3. If `now < next_run`: not due yet.
-4. If `now - next_run > grace_minutes * 60`: **stale** — skip job, advance state to now, log warning.
+4. If `now - next_run > max(grace_minutes * 60, 59)`: **stale** — skip job, advance state to now, log warning. (Sub-minute staleness is never "missed": the dispatcher always fires a second or two after the minute, so `grace_minutes: 0` would otherwise mean "never run".)
 5. Otherwise: job is due and within grace window.
 
-**Default grace period**: 15 minutes. Configurable per-job via `grace_minutes`.
+**Default grace period**: 15 minutes. Multiple missed slots within the window
+coalesce into a single catch-up run, never a burst.
+
+**Restart during a run**: the runner is a separate process and survives a
+Merlin restart — the in-flight job completes and writes history/logs; only its
+Discord notification is lost (the stdout pipe to the dead parent). State is
+marked *before* execution, so the slot is never double-fired; the flock blocks
+re-dispatch while the orphaned run is still executing.
 
 ## Parallel Execution
 

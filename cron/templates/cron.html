@@ -1061,21 +1061,14 @@
                 <input class="form-input" id="field-working-dir" placeholder="{{ default_working_dir }}">
                 <div class="form-help">Optional. Defaults to where Merlin was launched.</div>
             </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label" for="field-report-mode">Notify</label>
-                    <select class="form-input" id="field-report-mode" onchange="Cron.onNotifyChange()">
-                        <option value="always">Always</option>
-                        <option value="silent">Errors only</option>
-                        <option value="off">Never</option>
-                    </select>
-                    <div class="form-help">Discord notification after each run</div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="field-grace-minutes">Grace Minutes</label>
-                    <input class="form-input" id="field-grace-minutes" type="number" min="0" value="15" style="font-family: 'Geist Mono', monospace;">
-                    <div class="form-help">A missed run (Merlin offline) still fires up to this many minutes late, then is skipped</div>
-                </div>
+            <div class="form-group">
+                <label class="form-label" for="field-report-mode">Notify</label>
+                <select class="form-input" id="field-report-mode" onchange="Cron.onNotifyChange()">
+                    <option value="always">Always</option>
+                    <option value="silent">Errors only</option>
+                    <option value="off">Never</option>
+                </select>
+                <div class="form-help">Discord notification after each run</div>
             </div>
             {% if bot_loaded %}
             <div class="form-group" id="discord-channel-group">
@@ -1309,7 +1302,6 @@ const Cron = {
         this.cronToBuilder('0 9 * * *');
         document.getElementById('field-report-mode').value = 'always';
         document.getElementById('field-max-turns').value = '0';
-        document.getElementById('field-grace-minutes').value = '15';
         document.getElementById('field-ephemeral').value = 'true';
         this._resetAdvanced();
         const preview = document.getElementById('schedule-preview');
@@ -1353,7 +1345,6 @@ const Cron = {
         this.cronToBuilder(job.schedule || '');
         document.getElementById('field-report-mode').value = job.report_mode || 'always';
         document.getElementById('field-max-turns').value = String(job.max_turns || 0);
-        document.getElementById('field-grace-minutes').value = String(job.grace_minutes || 15);
         document.getElementById('field-ephemeral').value = job.ephemeral === false ? 'false' : 'true';
         const preview = document.getElementById('schedule-preview');
         if (preview) preview.style.display = 'none';
@@ -1464,7 +1455,6 @@ const Cron = {
             timezone: this._timezone() || null,
             type: type,
             report_mode: document.getElementById('field-report-mode').value,
-            grace_minutes: parseInt(document.getElementById('field-grace-minutes').value) || 15,
         };
         if (type === 'command') {
             body.command = command;

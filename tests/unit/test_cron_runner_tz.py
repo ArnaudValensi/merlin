@@ -76,3 +76,26 @@ class TestIsJobDueWithTz:
         # 15:00 UTC == 16:00 Paris winter — before the 17:00 schedule.
         now_utc = datetime(2026, 1, 15, 15, 0, tzinfo=timezone.utc)
         assert is_job_due("p", "0 17 * * *", now_utc, tz=paris) is False
+
+
+class TestGraceZeroFootgun:
+    def test_grace_zero_with_dispatcher_lag_still_due(self, temp_cron_dir):
+        """grace_minutes=0 must not mean 'never run': the dispatcher always
+        fires a second or two after the minute, and sub-minute staleness is
+        dispatch lag, not a missed run."""
+        from cron.runner import is_job_due
+        from cron.state import set_last_run
+
+        set_last_run("g", datetime(2026, 6, 3, 10, 0, 2, tzinfo=timezone.utc))
+        # Next slot 10:01:00; dispatcher evaluates at 10:01:02 (2s lag).
+        now = datetime(2026, 6, 3, 10, 1, 2, tzinfo=timezone.utc)
+        assert is_job_due("g", "* * * * *", now, grace_minutes=0) is True
+
+    def test_grace_zero_still_skips_truly_missed_runs(self, temp_cron_dir):
+        from cron.runner import is_job_due
+        from cron.state import set_last_run
+
+        # Daily 10:00 job last ran yesterday; today's slot missed by 3 minutes.
+        set_last_run("g", datetime(2026, 6, 2, 10, 0, 2, tzinfo=timezone.utc))
+        now = datetime(2026, 6, 3, 10, 3, 2, tzinfo=timezone.utc)
+        assert is_job_due("g", "0 10 * * *", now, grace_minutes=0) is False
