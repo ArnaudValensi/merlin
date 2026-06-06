@@ -499,6 +499,17 @@ def build_parser() -> argparse.ArgumentParser:
         add_help=False,
     )
 
+    # dashboard-url
+    subparsers.add_parser(
+        "dashboard-url",
+        help="Print the dashboard URL (credentials embedded if set)",
+        description=(
+            "Print the dashboard URL with login credentials embedded when "
+            "DASHBOARD_PASS is set. Resolution: MERLIN_DASHBOARD_URL > "
+            "https://TUNNEL_HOSTNAME > http://localhost:3123."
+        ),
+    )
+
     # version
     subparsers.add_parser("version", help="Print the current version")
 
@@ -578,6 +589,34 @@ def run_agent() -> None:
     print(content.rstrip())
 
 
+def run_dashboard_url() -> None:
+    """Print the dashboard URL, with login credentials embedded if set.
+
+    Resolution: MERLIN_DASHBOARD_URL (explicit override, e.g. a DNS name
+    pointing at the box) > https://TUNNEL_HOSTNAME (named tunnel) >
+    http://localhost:3123. Quick-tunnel URLs are ephemeral and unknown
+    here; set MERLIN_DASHBOARD_URL for a stable address.
+    """
+    from urllib.parse import quote, urlsplit, urlunsplit
+
+    paths.load_config_env()
+
+    base = os.getenv("MERLIN_DASHBOARD_URL", "").strip()
+    if not base:
+        hostname = os.getenv("TUNNEL_HOSTNAME", "").strip()
+        base = f"https://{hostname}" if hostname else "http://localhost:3123"
+
+    user = os.getenv("DASHBOARD_USER", "admin")
+    password = os.getenv("DASHBOARD_PASS", "")
+
+    parts = urlsplit(base)
+    if password and "@" not in parts.netloc:
+        netloc = f"{quote(user, safe='')}:{quote(password, safe='')}@{parts.netloc}"
+        parts = parts._replace(netloc=netloc)
+
+    print(urlunsplit(parts))
+
+
 def run_config(key: str | None) -> None:
     """Print resolved config values."""
     values = _get_config_values()
@@ -645,6 +684,9 @@ def cli_main(argv: list[str] | None = None) -> None:
 
     elif command == "agent":
         run_agent()
+
+    elif command == "dashboard-url":
+        run_dashboard_url()
 
     elif command == "setup":
         run_setup()

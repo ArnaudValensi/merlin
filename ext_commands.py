@@ -45,6 +45,7 @@ CORE_COMMANDS: tuple[str, ...] = (
     "agent",
     "cron",
     "chat",
+    "dashboard-url",
 )
 
 # Built-in extension ids and core module ids — never claimable by an

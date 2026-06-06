@@ -369,3 +369,100 @@ class TestAgentCommand:
             cli_main(["agent"])
         assert exc_info.value.code == 1
         assert "Brain doc not found" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# kb / remember top-level aliases
+# ---------------------------------------------------------------------------
+
+
+class TestTopLevelAliases:
+    def _capture_dispatch(self, monkeypatch):
+        import ext_commands
+
+        calls: list[list[str]] = []
+
+        def fake_dispatch(argv):
+            calls.append(argv)
+            raise SystemExit(0)
+
+        monkeypatch.setattr(ext_commands, "dispatch", fake_dispatch)
+        return calls
+
+    def test_kb_expands_to_notes_kb(self, monkeypatch):
+        calls = self._capture_dispatch(monkeypatch)
+        with pytest.raises(SystemExit):
+            cli_main(["kb", "add", "--title", "X"])
+        assert calls == [["notes", "kb", "add", "--title", "X"]]
+
+    def test_remember_expands_to_notes_remember(self, monkeypatch):
+        calls = self._capture_dispatch(monkeypatch)
+        with pytest.raises(SystemExit):
+            cli_main(["remember", "add", "a fact"])
+        assert calls == [["notes", "remember", "add", "a fact"]]
+
+    def test_aliases_listed_in_help(self):
+        help_text = build_parser().format_help()
+        assert "Top-level aliases:" in help_text
+        assert "merlin kb" in help_text
+        assert "merlin notes kb" in help_text
+        assert "merlin remember" in help_text
+
+    def test_alias_names_reserved(self):
+        import ext_commands
+
+        assert "kb" in ext_commands.reserved_names()
+        assert "remember" in ext_commands.reserved_names()
+
+
+# ---------------------------------------------------------------------------
+# merlin dashboard-url
+# ---------------------------------------------------------------------------
+
+
+class TestDashboardUrl:
+    @pytest.fixture(autouse=True)
+    def _clean_env(self, monkeypatch):
+        for key in (
+            "MERLIN_DASHBOARD_URL",
+            "TUNNEL_HOSTNAME",
+            "DASHBOARD_USER",
+            "DASHBOARD_PASS",
+        ):
+            monkeypatch.delenv(key, raising=False)
+
+    def test_default_localhost(self, capsys):
+        cli_main(["dashboard-url"])
+        assert capsys.readouterr().out.strip() == "http://localhost:3123"
+
+    def test_tunnel_hostname(self, monkeypatch, capsys):
+        monkeypatch.setenv("TUNNEL_HOSTNAME", "merlin.example.com")
+        cli_main(["dashboard-url"])
+        assert capsys.readouterr().out.strip() == "https://merlin.example.com"
+
+    def test_explicit_override_wins(self, monkeypatch, capsys):
+        monkeypatch.setenv("TUNNEL_HOSTNAME", "merlin.example.com")
+        monkeypatch.setenv("MERLIN_DASHBOARD_URL", "http://box.example.org:3123")
+        cli_main(["dashboard-url"])
+        assert capsys.readouterr().out.strip() == "http://box.example.org:3123"
+
+    def test_credentials_embedded(self, monkeypatch, capsys):
+        monkeypatch.setenv("DASHBOARD_USER", "admin")
+        monkeypatch.setenv("DASHBOARD_PASS", "s3cret")
+        cli_main(["dashboard-url"])
+        assert capsys.readouterr().out.strip() == "http://admin:s3cret@localhost:3123"
+
+    def test_credentials_quoted(self, monkeypatch, capsys):
+        monkeypatch.setenv("DASHBOARD_PASS", "p@ss/word")
+        cli_main(["dashboard-url"])
+        out = capsys.readouterr().out.strip()
+        assert out == "http://admin:p%40ss%2Fword@localhost:3123"
+
+    def test_reads_config_env(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        (tmp_path / "config.env").write_text(
+            "MERLIN_DASHBOARD_URL=http://home.example.net:3123\nDASHBOARD_PASS=pw\n"
+        )
+        cli_main(["dashboard-url"])
+        out = capsys.readouterr().out.strip()
+        assert out == "http://admin:pw@home.example.net:3123"

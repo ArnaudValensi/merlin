@@ -7,10 +7,13 @@ allowed-tools: Bash
 
 # Dashboard Link Skill
 
-When the user asks for the dashboard link, run this script and send the output to the user:
+When the user asks for the dashboard link, run this command (works from any
+directory) and send the output to the user:
 
 ```bash
-uv run .claude/skills/dashboard/dashboard_url.py
+merlin dashboard-url
 ```
 
-The script reads credentials from `.env` and outputs the full URL with basic auth embedded.
+It resolves the URL from the Merlin config (explicit `MERLIN_DASHBOARD_URL`
+override, then the named tunnel hostname, then localhost) and embeds the
+login credentials when a dashboard password is set.
