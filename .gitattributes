@@ -1,0 +1,5 @@
+# Dev-only tooling: present in the repo for contributors, excluded from
+# release tarballs (GitHub archive honors export-ignore), so end users
+# never receive the Merlin development skills.
+/.claude export-ignore
+.gitattributes export-ignore
