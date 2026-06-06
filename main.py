@@ -912,6 +912,30 @@ def _load_installed_extensions() -> None:
 
 _load_installed_extensions()
 
+
+def _skill_source_dirs() -> dict[str, Path]:
+    """Extension roots that contribute skills: enabled built-ins + installed."""
+    sources: dict[str, Path] = {}
+    for info in extension_registry.values():
+        if not info.loaded:
+            continue
+        if info.tier == "built-in":
+            sources[info.id] = paths.app_dir() / info.id
+        elif info.tier == "installed":
+            sources[info.id] = paths.extensions_dir() / info.id
+    return sources
+
+
+def _rebuild_skill_registry() -> None:
+    """Build the skill registry and the canonical aggregation dir."""
+    from lib import skills
+
+    try:
+        skills.rebuild(_skill_source_dirs())
+    except Exception:
+        logger.warning("Skill registry rebuild failed", exc_info=True)
+
+
 # Extensions nav item — always last in nav, before sidebar footer
 nav_items.append(EXTENSIONS_NAV_ITEM)
 
@@ -1087,6 +1111,10 @@ def start_server(
         TUNNEL_ENABLED = False
 
     _validate_config(TUNNEL_ENABLED)
+
+    # Aggregate skills from enabled extensions (rebuilt every startup so
+    # disabled extensions' skills disappear)
+    _rebuild_skill_registry()
 
     from structured_log import log_event
 
