@@ -210,3 +210,17 @@ class TestAgentsSkillsSync:
         link = home / ".agents" / "skills" / "cron"
         assert link.is_symlink()
         assert (link / "SKILL.md").is_file()
+
+
+class TestCwdHandling:
+    def test_explicit_cwd_passed_to_subprocess(self, tmp_path):
+        engine = OpenCodeEngine()
+        with mock.patch("subprocess.run", return_value=_mock_proc(stdout="ok")) as m:
+            engine.invoke("hello", cwd=tmp_path)
+        assert m.call_args.kwargs["cwd"] == tmp_path
+
+    def test_no_cwd_means_inherit_not_app_dir(self):
+        engine = OpenCodeEngine()
+        with mock.patch("subprocess.run", return_value=_mock_proc(stdout="ok")) as m:
+            engine.invoke("hello")
+        assert m.call_args.kwargs["cwd"] is None

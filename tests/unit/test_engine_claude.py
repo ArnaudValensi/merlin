@@ -415,3 +415,19 @@ class TestSkillsPlugin:
         with mock.patch("subprocess.run", return_value=_mock_proc(stdout="{}")) as m:
             engine.invoke("hello")
         assert "--plugin-dir" not in m.call_args[0][0]
+
+
+class TestCwdHandling:
+    """cwd means "where the job operates" — no app-dir fallback."""
+
+    def test_explicit_cwd_passed_to_subprocess(self, tmp_path):
+        engine = ClaudeCodeEngine()
+        with mock.patch("subprocess.run", return_value=_mock_proc(stdout="{}")) as m:
+            engine.invoke("hello", cwd=tmp_path)
+        assert m.call_args.kwargs["cwd"] == tmp_path
+
+    def test_no_cwd_means_inherit_not_app_dir(self):
+        engine = ClaudeCodeEngine()
+        with mock.patch("subprocess.run", return_value=_mock_proc(stdout="{}")) as m:
+            engine.invoke("hello")
+        assert m.call_args.kwargs["cwd"] is None

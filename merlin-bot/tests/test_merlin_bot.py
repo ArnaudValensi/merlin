@@ -656,3 +656,23 @@ class TestPluginInterface:
 
     def test_validate_is_callable(self):
         assert callable(merlin.validate)
+
+
+class TestLaunchCwd:
+    """Bot invocations run in the launch cwd (no working_dir concept)."""
+
+    def test_uses_merlin_launch_cwd(self, monkeypatch, tmp_path):
+        from pathlib import Path
+
+        import merlin_bot
+
+        monkeypatch.setenv("MERLIN_LAUNCH_CWD", str(tmp_path))
+        assert merlin_bot.launch_cwd() == Path(str(tmp_path))
+
+    def test_falls_back_to_home(self, monkeypatch):
+        from pathlib import Path
+
+        import merlin_bot
+
+        monkeypatch.delenv("MERLIN_LAUNCH_CWD", raising=False)
+        assert merlin_bot.launch_cwd() == Path.home()

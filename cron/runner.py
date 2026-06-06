@@ -255,6 +255,21 @@ def build_prompt(job: dict) -> str:
     return job["prompt"]
 
 
+def resolve_working_dir(job: dict) -> str:
+    """Working directory for a job (both types): where the job operates.
+
+    Resolution chain: job.working_dir -> MERLIN_LAUNCH_CWD -> $HOME.
+    An agent job pointed at a project repo auto-loads that repo's own
+    CLAUDE.md; Merlin context arrives by injection and the skill
+    adapters, not by cwd.
+    """
+    return (
+        job.get("working_dir")
+        or os.environ.get("MERLIN_LAUNCH_CWD")
+        or str(Path.home())
+    )
+
+
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------
@@ -276,15 +291,11 @@ class CommandResult:
 def _run_command(job_id: str, job: dict) -> CommandResult:
     """Run a command job via `bash -lc`, capturing combined output and timing.
 
-    No agent, no session, no token cost. Resolution order for the working
-    directory: job.working_dir -> MERLIN_LAUNCH_CWD -> the user's home.
+    No agent, no session, no token cost. Working directory resolved by
+    the shared chain in resolve_working_dir().
     """
     command = job.get("command", "")
-    cwd = (
-        job.get("working_dir")
-        or os.environ.get("MERLIN_LAUNCH_CWD")
-        or str(Path.home())
-    )
+    cwd = resolve_working_dir(job)
 
     start = time.monotonic()
     try:
@@ -358,6 +369,7 @@ def _run_agent(job_id: str, job: dict, request_id: str):
         session_id=session,
         max_turns=max_turns,
         request_id=request_id,
+        cwd=Path(resolve_working_dir(job)),
     )
 
 
@@ -645,7 +657,7 @@ Job file format (cron-jobs/<job-id>.json):
     "type": "prompt",              # "prompt" (agent, default) or "command" (shell)
     "prompt": "Task for Claude",   # Prompt jobs: what to ask the agent
     "command": "echo hi",          # Command jobs: shell command run via bash -lc
-    "working_dir": null,           # Command jobs: cwd; default MERLIN_LAUNCH_CWD then $HOME
+    "working_dir": null,           # Both job types: cwd; default MERLIN_LAUNCH_CWD then $HOME
     "discord_channel": "default",  # Discord destination ("default" or a channel ID)
     "enabled": true,               # Toggle on/off
     "report_mode": "silent",       # "always", "silent" (errors only), or "off"

@@ -151,6 +151,16 @@ def _generate_thread_title(content: str) -> str:
     return first_line or "Conversation"
 
 
+def launch_cwd() -> Path:
+    """Working directory for bot invocations: MERLIN_LAUNCH_CWD -> $HOME.
+
+    Same chain as cron jobs minus the per-job working_dir (the bot has no
+    such concept). cwd means "where the agent operates"; Merlin context
+    arrives by injection and the skill adapters, not by cwd.
+    """
+    return Path(os.environ.get("MERLIN_LAUNCH_CWD") or Path.home())
+
+
 def session_id_for_channel(channel_id: str | int) -> str:
     """Derive a deterministic UUID session ID from a channel ID."""
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"discord-channel-{channel_id}"))
@@ -395,6 +405,7 @@ async def on_message(message: discord.Message) -> None:
             caller="discord",
             session_id=session,
             request_id=request_id,
+            cwd=launch_cwd(),
         )
 
         duration = time.monotonic() - start

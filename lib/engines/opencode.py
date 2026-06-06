@@ -24,8 +24,6 @@ from lib.engine import AgentEngine, AgentResult
 
 logger = logging.getLogger("merlin.engine.opencode")
 
-_SCRIPT_DIR = Path(__file__).parent.parent.resolve()
-
 
 def _format_history(history: list[dict]) -> str:
     """Format conversation history as a text block for OpenCode.
@@ -160,7 +158,7 @@ class OpenCodeEngine(AgentEngine):
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                cwd=cwd or _SCRIPT_DIR,
+                cwd=cwd,
                 env=env,
             )
         except FileNotFoundError:

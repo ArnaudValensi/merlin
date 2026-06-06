@@ -594,3 +594,89 @@ class TestRunDispatcher:
 
         # But state should be initialized
         assert get_last_run("brand-new") is not None
+
+
+# ---------------------------------------------------------------------------
+# Working directory resolution (shared chain, both job types)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveWorkingDir:
+    def test_job_working_dir_wins(self, monkeypatch):
+        from cron.runner import resolve_working_dir
+
+        monkeypatch.setenv("MERLIN_LAUNCH_CWD", "/launch")
+        assert resolve_working_dir({"working_dir": "/explicit"}) == "/explicit"
+
+    def test_falls_back_to_launch_cwd(self, monkeypatch):
+        from cron.runner import resolve_working_dir
+
+        monkeypatch.setenv("MERLIN_LAUNCH_CWD", "/launch")
+        assert resolve_working_dir({}) == "/launch"
+
+    def test_falls_back_to_home(self, monkeypatch):
+        from pathlib import Path
+
+        from cron.runner import resolve_working_dir
+
+        monkeypatch.delenv("MERLIN_LAUNCH_CWD", raising=False)
+        assert resolve_working_dir({}) == str(Path.home())
+
+    def test_empty_working_dir_treated_as_unset(self, monkeypatch):
+        from cron.runner import resolve_working_dir
+
+        monkeypatch.setenv("MERLIN_LAUNCH_CWD", "/launch")
+        assert resolve_working_dir({"working_dir": ""}) == "/launch"
+
+
+class TestAgentJobCwd:
+    def _capture_invoke(self, monkeypatch):
+        import cron.runner as runner
+
+        calls = {}
+
+        def fake_invoke(prompt, **kwargs):
+            calls.update(kwargs, prompt=prompt)
+
+            class R:
+                exit_code = 0
+                duration = 0.1
+                result = "ok"
+                stderr = ""
+                cost_usd = None
+                session_id = "s"
+
+            return R()
+
+        monkeypatch.setattr(runner, "invoke", fake_invoke)
+        return calls
+
+    def test_agent_job_passes_explicit_working_dir(self, monkeypatch, tmp_path):
+        from pathlib import Path
+
+        import cron.runner as runner
+
+        calls = self._capture_invoke(monkeypatch)
+        job = {"prompt": "do it", "working_dir": str(tmp_path)}
+        runner._run_agent("my-job", job, "req-1")
+        assert calls["cwd"] == Path(str(tmp_path))
+
+    def test_agent_job_defaults_to_launch_cwd(self, monkeypatch, tmp_path):
+        from pathlib import Path
+
+        import cron.runner as runner
+
+        calls = self._capture_invoke(monkeypatch)
+        monkeypatch.setenv("MERLIN_LAUNCH_CWD", str(tmp_path))
+        runner._run_agent("my-job", {"prompt": "do it"}, "req-1")
+        assert calls["cwd"] == Path(str(tmp_path))
+
+    def test_agent_job_defaults_to_home_without_env(self, monkeypatch):
+        from pathlib import Path
+
+        import cron.runner as runner
+
+        calls = self._capture_invoke(monkeypatch)
+        monkeypatch.delenv("MERLIN_LAUNCH_CWD", raising=False)
+        runner._run_agent("my-job", {"prompt": "do it"}, "req-1")
+        assert calls["cwd"] == Path.home()

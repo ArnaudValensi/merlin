@@ -289,6 +289,7 @@ def invoke(
     max_turns: int | None = None,
     max_budget_usd: float | None = None,
     timeout: float | None = None,
+    cwd: Path | None = None,
     # Deprecated — ignored, kept for backward compat of callers not yet updated
     resume: bool = True,
     request_id: str | None = None,
@@ -331,6 +332,7 @@ def invoke(
         max_turns=max_turns,
         timeout=timeout,
         allowed_tools=allowed_tools,
+        cwd=cwd,
         session_id=session_id,
         skip_permissions=skip_permissions,
         model=model,

@@ -23,8 +23,6 @@ logger = logging.getLogger("merlin.engine.claude_code")
 
 DEFAULT_MODEL = "claude-opus-4-6"
 
-_SCRIPT_DIR = Path(__file__).parent.parent.resolve()
-
 # Manifest content for the generated skills plugin. The plugin wraps the
 # canonical skill dir (~/.merlin/skills) so Claude Code surfaces Merlin's
 # skills natively (namespaced merlin:<skill>).
@@ -241,12 +239,16 @@ class ClaudeCodeEngine(AgentEngine):
         start = time.monotonic()
 
         try:
+            # cwd means "where the job operates" — callers pass it
+            # explicitly; None inherits the server process cwd. The old
+            # fallback to the app dir made every managed agent read the
+            # development CLAUDE.md by accident.
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                cwd=cwd or _SCRIPT_DIR,
+                cwd=cwd,
                 env=env,
             )
         except FileNotFoundError:

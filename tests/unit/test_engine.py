@@ -398,3 +398,24 @@ class TestSkillsFallback:
 
         assert get_engine("claude-code").supports_native_skills is True
         assert get_engine("opencode").supports_native_skills is True
+
+
+class TestInvokeCwdPassThrough:
+    def test_cwd_reaches_engine(self, tmp_path, monkeypatch):
+        from lib.engine import invoke
+
+        captured: dict = {}
+
+        class CwdEngine(AgentEngine):
+            name = "cwd-capture"
+            context_window = 1000
+
+            def invoke(self, prompt, **kwargs):
+                captured.update(kwargs)
+                return AgentResult(content="ok", exit_code=0, duration=0.1)
+
+        register_engine("cwd-capture", CwdEngine)
+        monkeypatch.setenv("AGENT_ENGINE", "cwd-capture")
+
+        invoke("hello", caller="test", cwd=tmp_path)
+        assert captured["cwd"] == tmp_path

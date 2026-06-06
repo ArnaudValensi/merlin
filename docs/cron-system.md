@@ -88,7 +88,7 @@ Job ID is the filename without `.json` (e.g., `daily-digest.json` -> job ID `dai
 | `type` | string | `"prompt"` | Job action type: `"prompt"` (agent) or `"command"` (shell). Absent = `"prompt"` (backward compatible) |
 | `prompt` | string | required for `prompt` jobs | Prompt sent to the engine (no delivery instructions — engine is a black box) |
 | `command` | string | required for `command` jobs | Shell command run via `bash -lc` (see Command Jobs below) |
-| `working_dir` | string | `null` | Command jobs only: directory to run in. Falls back to `MERLIN_LAUNCH_CWD` then `$HOME` |
+| `working_dir` | string | `null` | Both job types: directory the job runs in. Falls back to `MERLIN_LAUNCH_CWD` then `$HOME`. Agent jobs pick up that directory's own CLAUDE.md |
 | `discord_channel` | string | `null` | Discord channel ID for notifications (optional — falls back to bot default) |
 | `description` | string | `""` | Human-readable summary |
 | `enabled` | boolean | `true` | Toggle without deleting |

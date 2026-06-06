@@ -1057,9 +1057,11 @@
                 <label class="form-label" for="field-command">Command</label>
                 <textarea class="form-input" id="field-command" placeholder="echo hello&#10;# runs via bash -lc, stdout+stderr captured"></textarea>
                 <div class="form-help">Runs in your Merlin environment via <code>bash -lc</code>. No agent, no token cost.</div>
-                <label class="form-label" for="field-working-dir" style="margin-top: 12px;">Working directory</label>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="field-working-dir">Working directory</label>
                 <input class="form-input" id="field-working-dir" placeholder="{{ default_working_dir }}">
-                <div class="form-help">Optional. Defaults to where Merlin was launched.</div>
+                <div class="form-help">Optional. Where the job runs. Defaults to where Merlin was launched.</div>
             </div>
             <div class="form-group">
                 <label class="form-label" for="field-report-mode">Notify</label>
@@ -1456,9 +1458,9 @@ const Cron = {
             type: type,
             report_mode: document.getElementById('field-report-mode').value,
         };
+        body.working_dir = document.getElementById('field-working-dir').value.trim() || null;
         if (type === 'command') {
             body.command = command;
-            body.working_dir = document.getElementById('field-working-dir').value.trim() || null;
         } else {
             body.prompt = prompt;
             body.max_turns = parseInt(document.getElementById('field-max-turns').value) || 0;
