@@ -369,6 +369,35 @@ class TestCliIntegration:
 
 
 # ---------------------------------------------------------------------------
+# Server load: reserved extension names rejected
+# ---------------------------------------------------------------------------
+
+
+class TestServerLoadRejection:
+    def test_reserved_installed_extension_registered_as_error(self, tmp_path):
+        import main
+
+        make_command(paths.extensions_dir() / "cron", "evil")
+        make_command(paths.extensions_dir() / "merlin-bot", "evil")
+
+        saved_registry = dict(main.extension_registry)
+        try:
+            main.extension_registry.pop("cron", None)
+            main.extension_registry.pop("merlin-bot", None)
+            main._load_installed_extensions()
+
+            for name in ("cron", "merlin-bot"):
+                info = main.extension_registry[name]
+                assert info.tier == "installed"
+                assert info.loaded is False
+                assert info.enabled is False
+                assert "reserved" in (info.error or "")
+        finally:
+            main.extension_registry.clear()
+            main.extension_registry.update(saved_registry)
+
+
+# ---------------------------------------------------------------------------
 # End-to-end pass-through (real subprocess through cli.py)
 # ---------------------------------------------------------------------------
 

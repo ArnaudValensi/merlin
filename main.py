@@ -861,13 +861,44 @@ def _load_bot():
 _load_extension("merlin-bot", "built-in", _load_bot, static_name="merlin-app")
 
 # --- Installed extensions (~/.merlin/extensions/) ---
-EXTENSIONS_DIR = paths.extensions_dir()
 
-if EXTENSIONS_DIR.is_dir():
-    for ext_dir in sorted(EXTENSIONS_DIR.iterdir()):
+
+def _load_installed_extensions() -> None:
+    """Load installed extensions, rejecting reserved directory names.
+
+    A directory named after a core command or built-in extension would
+    silently shadow it at CLI dispatch — fail fast with a visible error
+    instead (the extension shows as errored on the Extensions page).
+    """
+    global _extensions_with_errors
+    import ext_commands
+
+    extensions_dir = paths.extensions_dir()
+    if not extensions_dir.is_dir():
+        return
+
+    for ext_dir in sorted(extensions_dir.iterdir()):
         if not ext_dir.is_dir():
             continue
         ext_name = ext_dir.name
+
+        if ext_name in ext_commands.reserved_names():
+            _extensions_with_errors += 1
+            extension_registry[ext_name] = ExtensionInfo(
+                id=ext_name,
+                tier="installed",
+                enabled=False,
+                loaded=False,
+                error=(
+                    f"Extension name '{ext_name}' is reserved by a core "
+                    "command or built-in extension. Rename the directory "
+                    f"{ext_dir}."
+                ),
+            )
+            logger.warning(
+                "Installed extension '%s' rejected: name is reserved", ext_name
+            )
+            continue
 
         def _make_loader(d=ext_dir, n=ext_name):
             def _loader():
@@ -877,6 +908,9 @@ if EXTENSIONS_DIR.is_dir():
             return _loader
 
         _load_extension(ext_name, "installed", _make_loader())
+
+
+_load_installed_extensions()
 
 # Extensions nav item — always last in nav, before sidebar footer
 nav_items.append(EXTENSIONS_NAV_ITEM)
