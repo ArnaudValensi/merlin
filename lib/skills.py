@@ -83,7 +83,7 @@ def canonical_dir() -> Path:
     return paths.merlin_home() / "skills"
 
 
-def _discover_source(source_id: str, skills_dir: Path) -> list[SkillSpec]:
+def list_source_skills(source_id: str, skills_dir: Path) -> list[SkillSpec]:
     """Discover skills in one source's skills/ directory."""
     if not skills_dir.is_dir():
         return []
@@ -124,7 +124,7 @@ def build_registry(extension_dirs: dict[str, Path]) -> dict[str, SkillSpec]:
     sources.append(("user", user_skills_dir()))
 
     for source_id, skills_dir in sources:
-        for spec in _discover_source(source_id, skills_dir):
+        for spec in list_source_skills(source_id, skills_dir):
             existing = registry.get(spec.name)
             if existing is not None:
                 logger.warning(
@@ -205,7 +205,7 @@ def list_canonical_skills() -> list[SkillSpec]:
     The in-memory registry only exists in the process that built it; cron
     runner subprocesses and the engine fallback read the aggregation instead.
     """
-    return _discover_source("canonical", canonical_dir())
+    return list_source_skills("canonical", canonical_dir())
 
 
 # ---------------------------------------------------------------------------

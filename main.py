@@ -644,6 +644,37 @@ async def api_save_settings(request: Request, _auth=Depends(require_auth)):
     }
 
 
+def _extension_audit(info: ExtensionInfo) -> tuple[list[dict], list[dict]]:
+    """Skills and commands an extension ships — the security audit surface.
+
+    Both are code-equivalent (skills instruct the engine, commands execute),
+    so the Extensions page lists them read-only per extension.
+    """
+    if info.tier == "built-in":
+        ext_root = paths.app_dir() / info.id
+    elif info.tier == "installed":
+        ext_root = paths.extensions_dir() / info.id
+    else:
+        return [], []
+
+    import ext_commands
+    from lib import skills
+
+    skill_list = [
+        {"name": spec.name, "description": spec.description}
+        for spec in skills.list_source_skills(info.id, ext_root / "skills")
+    ]
+    command_list = [
+        {
+            "name": name,
+            "invocation": f"merlin {info.id} {name}",
+            "help": ext_commands.extract_help(file) or "",
+        }
+        for name, file in ext_commands.list_commands(ext_root).items()
+    ]
+    return skill_list, command_list
+
+
 def _build_extensions_list() -> list[dict]:
     """Build extension list for API/template use."""
     config_env = _read_config_env()
@@ -674,6 +705,8 @@ def _build_extensions_list() -> list[dict]:
                 enriched.append(field)
             meta["config_fields"] = enriched
 
+        skill_list, command_list = _extension_audit(info)
+
         ext_data = {
             "id": info.id,
             "tier": info.tier,
@@ -682,6 +715,8 @@ def _build_extensions_list() -> list[dict]:
             "error": info.error,
             "meta": meta,
             "nav_icon": nav_icon,
+            "skills": skill_list,
+            "commands": command_list,
         }
         result.append(ext_data)
     return result

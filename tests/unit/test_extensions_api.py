@@ -201,3 +201,70 @@ class TestRestart:
             resp = client.post("/api/restart")
             assert resp.status_code == 200
             assert resp.json()["ok"] is True
+
+
+class TestAuditSection:
+    """Skills + commands audit data in the extensions list."""
+
+    def test_builtin_bot_lists_skills_and_notes_commands(self):
+        from main import _build_extensions_list, extension_registry
+
+        # merlin-bot may be disabled in test state; check via the audit helper
+        from main import _extension_audit, ExtensionInfo
+
+        bot = ExtensionInfo(
+            id="merlin-bot", tier="built-in", enabled=True, loaded=True, error=None
+        )
+        skills_list, commands_list = _extension_audit(bot)
+        names = {s["name"] for s in skills_list}
+        assert {"cron", "dashboard", "discord", "notes", "self-awareness"} <= names
+        del extension_registry, _build_extensions_list  # imported for context
+
+    def test_notes_builtin_lists_commands(self):
+        from main import ExtensionInfo, _extension_audit
+
+        notes = ExtensionInfo(
+            id="notes", tier="built-in", enabled=True, loaded=True, error=None
+        )
+        _, commands_list = _extension_audit(notes)
+        invocations = {c["invocation"] for c in commands_list}
+        assert {
+            "merlin notes search",
+            "merlin notes kb",
+            "merlin notes remember",
+        } <= invocations
+        for command in commands_list:
+            assert command["help"]
+
+    def test_core_extension_has_no_audit(self):
+        from main import ExtensionInfo, _extension_audit
+
+        files = ExtensionInfo(
+            id="files", tier="core", enabled=True, loaded=True, error=None
+        )
+        assert _extension_audit(files) == ([], [])
+
+    def test_installed_extension_audit(self, tmp_path):
+        import paths
+        from main import ExtensionInfo, _extension_audit
+
+        ext_root = paths.extensions_dir() / "tasks"
+        skill_dir = ext_root / "skills" / "tasks"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: tasks\ndescription: Task skill.\n---\n"
+        )
+        commands_dir = ext_root / "commands"
+        commands_dir.mkdir(parents=True)
+        cmd = commands_dir / "add.py"
+        cmd.write_text('#!/usr/bin/env python3\n"""Add a task."""\n')
+        cmd.chmod(0o755)
+
+        info = ExtensionInfo(
+            id="tasks", tier="installed", enabled=True, loaded=True, error=None
+        )
+        skills_list, commands_list = _extension_audit(info)
+        assert skills_list == [{"name": "tasks", "description": "Task skill."}]
+        assert commands_list == [
+            {"name": "add", "invocation": "merlin tasks add", "help": "Add a task."}
+        ]

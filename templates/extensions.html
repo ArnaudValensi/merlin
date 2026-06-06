@@ -60,6 +60,30 @@
         <div class="ext-config-required">Requires configuration</div>
         {% endif %}
         <span class="ext-config-toggle" onclick="Extensions.toggleConfig('{{ ext.id }}')">Configure</span>
+        {% endif %}
+        {% if ext.skills or ext.commands %}
+        <span class="ext-config-toggle" onclick="Extensions.toggleAudit('{{ ext.id }}')">Skills &amp; commands</span>
+        <div class="ext-config ext-audit" id="audit-{{ ext.id }}">
+            {% if ext.skills %}
+            <div class="ext-audit-title">Skills</div>
+            <ul class="ext-audit-list">
+                {% for skill in ext.skills %}
+                <li><code>{{ skill.name }}</code>{% if skill.description %}: {{ skill.description }}{% endif %}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            {% if ext.commands %}
+            <div class="ext-audit-title">Commands</div>
+            <ul class="ext-audit-list">
+                {% for command in ext.commands %}
+                <li><code>{{ command.invocation }}</code>{% if command.help %}: {{ command.help }}{% endif %}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            <div class="ext-audit-note">Skills and commands run with Merlin's permissions. Review what an extension ships before enabling it.</div>
+        </div>
+        {% endif %}
+        {% if ext.meta.get('config_fields') %}
         <div class="ext-config" id="config-{{ ext.id }}">
             {% for field in ext.meta['config_fields'] %}
             <div class="ext-config-field"

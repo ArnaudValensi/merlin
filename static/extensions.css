@@ -334,3 +334,44 @@
         padding: 10px;
     }
 }
+
+/* Skills & commands audit section */
+.ext-audit-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.ext-audit-list {
+    list-style: none;
+    margin: 0 0 12px 0;
+    padding: 0;
+}
+
+.ext-audit-list li {
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding: 2px 0;
+}
+
+.ext-audit-list code {
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+}
+
+.ext-audit-note {
+    font-size: 11px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+}
+
+.ext-config-toggle + .ext-config-toggle {
+    margin-left: 14px;
+}

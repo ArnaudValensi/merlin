@@ -28,6 +28,11 @@ const Extensions = {
         if (config) config.classList.toggle('open');
     },
 
+    toggleAudit(extId) {
+        const audit = document.getElementById(`audit-${extId}`);
+        if (audit) audit.classList.toggle('open');
+    },
+
     async saveConfig(extId) {
         const form = document.getElementById(`config-${extId}`);
         if (!form) return;
