@@ -42,6 +42,7 @@ CORE_COMMANDS: tuple[str, ...] = (
     "setup",
     "update",
     "config",
+    "agent",
     "cron",
 )
 

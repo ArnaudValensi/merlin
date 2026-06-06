@@ -467,6 +467,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Connect to Merlin Cloud with this environment token (saves to config for future runs)",
     )
 
+    # agent
+    subparsers.add_parser(
+        "agent",
+        help="Print the agent-facing brain doc",
+        description=(
+            "Print the Merlin brain doc: what Merlin is and how to operate "
+            "it. Intended for AI agents; pipe it into a prompt or read it "
+            "on demand."
+        ),
+    )
+
     # cron — routed before argparse in cli_main so all args (including
     # --help) pass through to cron/manage.py's own parser. Registered here
     # only so it appears under Core commands in 'merlin --help'.
@@ -538,6 +549,23 @@ def _get_config_values() -> dict[str, str]:
     }
 
 
+def run_agent() -> None:
+    """Print the agent-facing brain doc.
+
+    Stub content for now; the agent-documentation epic writes the real doc
+    and adds the --personality / --user layer flags (names reserved there).
+    Read from the app dir so 'merlin update' refreshes it via the 'current'
+    symlink.
+    """
+    brain = paths.app_dir() / "agent" / "MERLIN.md"
+    try:
+        content = brain.read_text()
+    except OSError:
+        print(f"Brain doc not found at {brain}", file=sys.stderr)
+        sys.exit(1)
+    print(content.rstrip())
+
+
 def run_config(key: str | None) -> None:
     """Print resolved config values."""
     values = _get_config_values()
@@ -590,6 +618,9 @@ def cli_main(argv: list[str] | None = None) -> None:
 
     if command == "version":
         print(get_version())
+
+    elif command == "agent":
+        run_agent()
 
     elif command == "setup":
         run_setup()

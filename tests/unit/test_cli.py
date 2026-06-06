@@ -347,3 +347,25 @@ class TestCronDelegation:
         help_text = build_parser().format_help()
         assert "cron" in help_text
         assert "Manage scheduled cron jobs" in help_text
+
+
+# ---------------------------------------------------------------------------
+# merlin agent
+# ---------------------------------------------------------------------------
+
+
+class TestAgentCommand:
+    def test_prints_brain_doc(self, capsys):
+        paths.set_dev_mode(True)
+        cli_main(["agent"])
+        out = capsys.readouterr().out
+        assert "Merlin" in out
+        assert "merlin --help" in out
+
+    def test_missing_brain_doc_fails(self, tmp_path, monkeypatch, capsys):
+        paths.set_dev_mode(False)
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        with pytest.raises(SystemExit) as exc_info:
+            cli_main(["agent"])
+        assert exc_info.value.code == 1
+        assert "Brain doc not found" in capsys.readouterr().err
