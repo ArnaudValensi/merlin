@@ -303,3 +303,150 @@ class TestDispatch:
             ext_commands.dispatch(["notes", "search"])
         file, _ = capture_execv[0]
         assert file == str(builtin_file)
+
+
+# ---------------------------------------------------------------------------
+# CLI integration: routing and grouped help
+# ---------------------------------------------------------------------------
+
+
+class TestCliIntegration:
+    def test_core_commands_match_parser(self):
+        """Drift guard: ext_commands.CORE_COMMANDS mirrors the argparse tree."""
+        import argparse
+
+        from cli import build_parser
+
+        parser = build_parser()
+        subparsers = next(
+            a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
+        )
+        assert set(subparsers.choices) == set(ext_commands.CORE_COMMANDS)
+
+    def test_help_shows_three_groups(self, tmp_path, monkeypatch):
+        from cli import build_parser
+
+        builtin = tmp_path / "builtin-notes"
+        make_command(builtin, "search", docstring="Search the notes.")
+        monkeypatch.setattr(
+            ext_commands, "builtin_extension_dirs", lambda: {"notes": builtin}
+        )
+        make_command(paths.extensions_dir() / "tasks", "add", docstring="Add a task.")
+
+        help_text = build_parser().format_help()
+        assert "Core commands:" in help_text
+        assert "Built-in extensions:" in help_text
+        assert "merlin notes search" in help_text
+        assert "Search the notes." in help_text
+        assert "Installed extensions:" in help_text
+        assert "merlin tasks add" in help_text
+        assert "Add a task." in help_text
+
+    def test_cli_main_routes_unknown_token_to_dispatch(self, monkeypatch):
+        from cli import cli_main
+
+        called: list[list[str]] = []
+
+        def fake_dispatch(argv):
+            called.append(argv)
+            raise SystemExit(0)
+
+        monkeypatch.setattr(ext_commands, "dispatch", fake_dispatch)
+        with pytest.raises(SystemExit):
+            cli_main(["tasks", "add", "--due", "friday"])
+        assert called == [["tasks", "add", "--due", "friday"]]
+
+    def test_cli_main_core_command_not_dispatched(self, monkeypatch, capsys):
+        from cli import cli_main
+
+        monkeypatch.setattr(
+            ext_commands,
+            "dispatch",
+            lambda argv: pytest.fail("core command must not hit dispatch"),
+        )
+        cli_main(["version"])
+        assert capsys.readouterr().out.strip() != ""
+
+
+# ---------------------------------------------------------------------------
+# End-to-end pass-through (real subprocess through cli.py)
+# ---------------------------------------------------------------------------
+
+
+ECHO_BODY = """\
+import sys
+print("args:" + "|".join(sys.argv[1:]))
+print("err-line", file=sys.stderr)
+sys.exit(7)
+"""
+
+PEP723_SCRIPT = """\
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = []
+# ///
+\"\"\"PEP 723 fixture command.\"\"\"
+import sys
+print("pep723-ok:" + "|".join(sys.argv[1:]))
+"""
+
+
+def run_cli(argv: list[str], merlin_home: Path):
+    """Run cli.py in a subprocess with MERLIN_HOME pointing at a tmp dir."""
+    import subprocess
+    import sys as _sys
+
+    env = os.environ.copy()
+    env["MERLIN_HOME"] = str(merlin_home)
+    repo_root = Path(__file__).parent.parent.parent
+    return subprocess.run(
+        [_sys.executable, str(repo_root / "cli.py"), *argv],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+
+
+class TestEndToEnd:
+    def test_args_exit_code_and_stdio_pass_through(self, tmp_path):
+        ext_dir = tmp_path / "extensions" / "tasks"
+        make_command(ext_dir, "echoargs", docstring="Echo args.", body=ECHO_BODY)
+
+        result = run_cli(["tasks", "echoargs", "one", "--flag", "two"], tmp_path)
+        assert result.returncode == 7
+        assert "args:one|--flag|two" in result.stdout
+        assert "err-line" in result.stderr
+
+    def test_script_own_argparse_help_reachable(self, tmp_path):
+        body = (
+            "import argparse\n"
+            "p = argparse.ArgumentParser(description='Fixture add command.')\n"
+            "p.add_argument('--due')\n"
+            "p.parse_args()\n"
+        )
+        ext_dir = tmp_path / "extensions" / "tasks"
+        make_command(ext_dir, "add", docstring="Add a task.", body=body)
+
+        result = run_cli(["tasks", "add", "--help"], tmp_path)
+        assert result.returncode == 0
+        assert "Fixture add command." in result.stdout
+        assert "--due" in result.stdout
+
+    def test_unknown_extension_descriptive_error(self, tmp_path):
+        result = run_cli(["bogus", "cmd"], tmp_path)
+        assert result.returncode == 2
+        assert "Unknown command: 'bogus'" in result.stderr
+
+    def test_uv_script_shebang_runs(self, tmp_path):
+        """Verify-first assumption: '#!/usr/bin/env -S uv run --script' works."""
+        ext_dir = tmp_path / "extensions" / "tasks"
+        commands_dir = ext_dir / "commands"
+        commands_dir.mkdir(parents=True)
+        file = commands_dir / "pep.py"
+        file.write_text(PEP723_SCRIPT)
+        file.chmod(0o755)
+
+        result = run_cli(["tasks", "pep", "x"], tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert "pep723-ok:x" in result.stdout

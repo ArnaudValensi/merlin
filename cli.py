@@ -34,6 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.resolve()))
 
+import ext_commands
 import paths
 
 GITHUB_REPO = os.environ.get("MERLIN_REPO", "ArnaudValensi/merlin")
@@ -417,18 +418,27 @@ def run_setup(config_path: Path | None = None) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the CLI argument parser with subcommands."""
+    """Build the CLI argument parser with subcommands.
+
+    Extension commands (built-in and installed) are enumerated into the
+    epilog so 'merlin --help' is the full discovery catalog.
+    """
+    epilog = (
+        "Run 'merlin' with no arguments to start the dashboard.\n"
+        "Run 'merlin <command> --help' for command-specific help.\n"
+    )
+    extension_help = ext_commands.format_extension_help()
+    if extension_help:
+        epilog = f"{extension_help}\n\n{epilog}"
+
     parser = argparse.ArgumentParser(
         prog="merlin",
         description="Merlin — portable mobile dev environment.",
-        epilog="""
-Run 'merlin' with no arguments to start the dashboard.
-Run 'merlin <command> --help' for command-specific help.
-""",
+        epilog=epilog,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    subparsers = parser.add_subparsers(dest="command")
+    subparsers = parser.add_subparsers(dest="command", title="Core commands")
 
     # start (default)
     start_parser = subparsers.add_parser(
@@ -541,6 +551,16 @@ def cli_main(argv: list[str] | None = None) -> None:
     # If the first token is a flag (not -h/--help), route to the `start` subparser.
     if argv and argv[0].startswith("-") and argv[0] not in ("-h", "--help"):
         argv = ["start", *argv]
+
+    # First token is not a core command: try extension command dispatch.
+    # dispatch() either execs the command (never returns) or exits with a
+    # descriptive error.
+    if (
+        argv
+        and not argv[0].startswith("-")
+        and argv[0] not in ext_commands.CORE_COMMANDS
+    ):
+        ext_commands.dispatch(argv)
 
     parser = build_parser()
     args = parser.parse_args(argv)
