@@ -103,7 +103,6 @@ merlin notes search log --keyword "music" --from 2026-01-01 --to 2026-01-31
 
 - Research findings, decisions, discoveries
 - Interesting facts from conversations
-- Pre-compaction extracts (automatic via hook)
 - Anything worth remembering about the day
 
 ## 3. User Memory

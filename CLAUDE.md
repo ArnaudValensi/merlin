@@ -52,10 +52,7 @@ merlin/
 │   ├── discord_send.py        # Discord REST API transport (used by bot + merlin chat)
 │   ├── cron-jobs/             # Job files (*.json)
 │   ├── templates/             # Bot-specific templates (bot.html with tabs, session.html)
-│   ├── .claude/
-│   │   ├── settings.json      # Hooks config
-│   │   ├── hooks/             # PreToolUse hooks
-│   │   └── skills/            # Skills (discord/, cron/)
+│   ├── skills/                # Operational skills (cron/, notes/, discord/, ...)
 │   ├── .env                   # Bot token (gitignored)
 │   ├── tests/                 # Bot-specific tests
 │   └── logs/                  # Invocation logs (gitignored)
