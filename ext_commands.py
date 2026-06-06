@@ -36,7 +36,14 @@ import paths
 
 # Core CLI subcommands (cli.py argparse tree). Canonical list lives here so
 # dispatch and the server loader agree without importing cli.py.
-CORE_COMMANDS: tuple[str, ...] = ("start", "version", "setup", "update", "config")
+CORE_COMMANDS: tuple[str, ...] = (
+    "start",
+    "version",
+    "setup",
+    "update",
+    "config",
+    "cron",
+)
 
 # Built-in extension ids and core module ids — never claimable by an
 # installed extension.

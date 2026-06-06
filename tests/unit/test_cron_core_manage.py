@@ -409,3 +409,71 @@ class TestFormatting:
         ]
         result = format_jobs_discord(jobs)
         assert "1 active, 1 disabled" in result
+
+
+class TestTrigger:
+    """Tests for cmd_trigger — manual job execution via merlin cron trigger."""
+
+    def test_trigger_unknown_job(self, temp_cron_dir, monkeypatch):
+        from types import SimpleNamespace
+
+        from cron import runner
+        from cron.manage import cmd_trigger
+
+        monkeypatch.setattr(runner, "load_all_jobs", lambda: {})
+        result = cmd_trigger(SimpleNamespace(job_id="nope"))
+        assert result["ok"] is False
+        assert "not found" in result["error"].lower()
+
+    def test_trigger_runs_job(self, temp_cron_dir, monkeypatch):
+        from types import SimpleNamespace
+
+        from cron import runner
+        from cron.manage import cmd_trigger
+
+        ran: list[str] = []
+        monkeypatch.setattr(
+            runner, "load_all_jobs", lambda: {"my-job": {"schedule": "* * * * *"}}
+        )
+        monkeypatch.setattr(runner, "run_single_job", lambda job_id: ran.append(job_id))
+
+        result = cmd_trigger(SimpleNamespace(job_id="my-job"))
+        assert result["ok"] is True
+        assert ran == ["my-job"]
+
+    def test_trigger_failure_reported(self, temp_cron_dir, monkeypatch):
+        from types import SimpleNamespace
+
+        from cron import runner
+        from cron.manage import cmd_trigger
+
+        def boom(job_id):
+            raise SystemExit(1)
+
+        monkeypatch.setattr(
+            runner, "load_all_jobs", lambda: {"my-job": {"schedule": "* * * * *"}}
+        )
+        monkeypatch.setattr(runner, "run_single_job", boom)
+
+        result = cmd_trigger(SimpleNamespace(job_id="my-job"))
+        assert result["ok"] is False
+
+
+class TestMainArgv:
+    """main() accepts an explicit argv and prog (merlin cron delegation)."""
+
+    def test_main_list_with_argv(self, temp_cron_dir, capsys):
+        from cron.manage import main
+
+        main(["list"])
+        out = capsys.readouterr().out
+        assert '"ok": true' in out
+
+    def test_main_help_uses_prog(self, temp_cron_dir, capsys):
+        from cron.manage import main
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--help"], prog="merlin cron")
+        assert exc_info.value.code == 0
+        out = capsys.readouterr().out
+        assert "merlin cron" in out

@@ -33,6 +33,9 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.resolve()))
+# lib/ holds shared modules (structured_log, engine) imported by cron and
+# other delegated core commands.
+sys.path.insert(1, str(Path(__file__).parent.resolve() / "lib"))
 
 import ext_commands
 import paths
@@ -464,6 +467,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Connect to Merlin Cloud with this environment token (saves to config for future runs)",
     )
 
+    # cron — routed before argparse in cli_main so all args (including
+    # --help) pass through to cron/manage.py's own parser. Registered here
+    # only so it appears under Core commands in 'merlin --help'.
+    subparsers.add_parser(
+        "cron",
+        help="Manage scheduled cron jobs (list/get/add/enable/disable/remove/trigger/history)",
+        add_help=False,
+    )
+
     # version
     subparsers.add_parser("version", help="Print the current version")
 
@@ -551,6 +563,14 @@ def cli_main(argv: list[str] | None = None) -> None:
     # If the first token is a flag (not -h/--help), route to the `start` subparser.
     if argv and argv[0].startswith("-") and argv[0] not in ("-h", "--help"):
         argv = ["start", *argv]
+
+    # Delegated core commands: routed before argparse so every arg
+    # (including --help) passes through to the command's own parser.
+    if argv and argv[0] == "cron":
+        from cron.manage import main as cron_main
+
+        cron_main(argv[1:], prog="merlin cron")
+        return
 
     # First token is not a core command: try extension command dispatch.
     # dispatch() either execs the command (never returns) or exits with a

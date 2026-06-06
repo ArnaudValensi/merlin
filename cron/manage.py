@@ -355,6 +355,21 @@ def cmd_remove(args) -> dict:
     return {"ok": True, "message": f"Removed job '{args.job_id}'"}
 
 
+def cmd_trigger(args) -> dict:
+    """Run a job immediately, bypassing the schedule check."""
+    from cron import runner
+
+    if args.job_id not in runner.load_all_jobs():
+        return {"ok": False, "error": f"Job not found: {args.job_id}"}
+
+    try:
+        runner.run_single_job(args.job_id)
+    except SystemExit:
+        return {"ok": False, "error": f"Job '{args.job_id}' failed"}
+
+    return {"ok": True, "message": f"Triggered job '{args.job_id}'"}
+
+
 def cmd_history(args) -> dict | str:
     """Show run history for a job."""
     limit = args.limit or 10
@@ -376,13 +391,14 @@ def cmd_history(args) -> dict | str:
         return {"ok": True, "history": all_history}
 
 
-def main():
+def main(argv: list[str] | None = None, prog: str | None = None):
     parser = argparse.ArgumentParser(
+        prog=prog,
         description="Manage Merlin cron jobs — add, list, enable/disable, remove, and view history.",
         epilog="""
 Examples:
   # Add a new job (with dry-run preview)
-  uv run cron/manage.py add \\
+  merlin cron add \\
     --schedule "0 9 * * *" \\
     --prompt "Check for new Python releases" \\
     --description "Daily Python check" \\
@@ -390,20 +406,23 @@ Examples:
     --dry-run
 
   # List all jobs (Discord-formatted)
-  uv run cron/manage.py list --discord
+  merlin cron list --discord
 
   # Get job details
-  uv run cron/manage.py get daily-python-check --discord
+  merlin cron get daily-python-check --discord
 
   # Enable/disable a job
-  uv run cron/manage.py disable daily-python-check
-  uv run cron/manage.py enable daily-python-check
+  merlin cron disable daily-python-check
+  merlin cron enable daily-python-check
 
   # Remove a job
-  uv run cron/manage.py remove daily-python-check
+  merlin cron remove daily-python-check
+
+  # Run a job immediately (bypasses the schedule check)
+  merlin cron trigger daily-python-check
 
   # View run history
-  uv run cron/manage.py history daily-python-check --discord
+  merlin cron history daily-python-check --discord
 
 Cron expression cheat sheet:
   * * * * *     Every minute
@@ -490,6 +509,13 @@ Output:
     p_remove.add_argument("job_id", help="Job ID")
     p_remove.set_defaults(func=cmd_remove)
 
+    # trigger
+    p_trigger = subparsers.add_parser(
+        "trigger", help="Run a job immediately (bypasses schedule check)"
+    )
+    p_trigger.add_argument("job_id", help="Job ID")
+    p_trigger.set_defaults(func=cmd_trigger)
+
     # history
     p_history = subparsers.add_parser("history", help="Show run history")
     p_history.add_argument(
@@ -501,7 +527,7 @@ Output:
     )
     p_history.set_defaults(func=cmd_history)
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     result = args.func(args)
 
     # Output result

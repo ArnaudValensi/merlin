@@ -318,3 +318,32 @@ class TestCliRouting:
             paths.set_dev_mode(True)  # Skip first-run check
             cli_main(["start", "--port", "9999", "--host", "127.0.0.1", "--no-tunnel"])
         m.assert_called_once_with(port=9999, host="127.0.0.1", no_tunnel=True)
+
+
+# ---------------------------------------------------------------------------
+# merlin cron delegation
+# ---------------------------------------------------------------------------
+
+
+class TestCronDelegation:
+    def test_cron_routes_to_manage(self, monkeypatch, capsys):
+        import cron.manage
+
+        monkeypatch.setattr(cron.manage, "CRON_JOBS_DIR", paths.cron_jobs_dir())
+        cli_main(["cron", "list"])
+        out = capsys.readouterr().out
+        assert '"ok": true' in out
+        assert '"jobs"' in out
+
+    def test_cron_help_passes_through(self, capsys):
+        with pytest.raises(SystemExit) as exc_info:
+            cli_main(["cron", "--help"])
+        assert exc_info.value.code == 0
+        out = capsys.readouterr().out
+        assert "merlin cron" in out
+        assert "trigger" in out
+
+    def test_cron_listed_in_core_help(self):
+        help_text = build_parser().format_help()
+        assert "cron" in help_text
+        assert "Manage scheduled cron jobs" in help_text
