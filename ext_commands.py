@@ -44,6 +44,7 @@ CORE_COMMANDS: tuple[str, ...] = (
     "config",
     "agent",
     "cron",
+    "chat",
 )
 
 # Built-in extension ids and core module ids — never claimable by an
@@ -58,9 +59,17 @@ BUILTIN_IDS: tuple[str, ...] = (
 )
 
 
+# Curated top-level aliases — a built-in privilege only. Maps the alias to
+# the (extension, command) it expands to; cli.py rewrites argv accordingly.
+TOP_LEVEL_ALIASES: dict[str, tuple[str, str]] = {
+    "kb": ("notes", "kb"),
+    "remember": ("notes", "remember"),
+}
+
+
 def reserved_names() -> set[str]:
     """All names an installed extension directory may not use."""
-    return set(CORE_COMMANDS) | set(BUILTIN_IDS)
+    return set(CORE_COMMANDS) | set(BUILTIN_IDS) | set(TOP_LEVEL_ALIASES)
 
 
 # ---------------------------------------------------------------------------
@@ -108,8 +117,11 @@ def list_commands(ext_dir: Path) -> dict[str, Path]:
     """Map command name -> executable file under ``<ext_dir>/commands/``.
 
     Command name is the filename without its extension. Dotfiles,
-    directories, and non-executable files are skipped. On a stem collision
-    (``add.py`` and ``add.sh``) the first in sorted order wins.
+    underscore-prefixed files (``__init__.py``, templates), directories,
+    and non-executable files are skipped. The executable check reads the
+    stat mode bits rather than os.access, which over-reports on some bind
+    mounts. On a stem collision (``add.py`` and ``add.sh``) the first in
+    sorted order wins.
     """
     commands_dir = ext_dir / "commands"
     if not commands_dir.is_dir():
@@ -117,9 +129,9 @@ def list_commands(ext_dir: Path) -> dict[str, Path]:
 
     commands: dict[str, Path] = {}
     for entry in sorted(commands_dir.iterdir()):
-        if entry.name.startswith(".") or not entry.is_file():
+        if entry.name.startswith((".", "_")) or not entry.is_file():
             continue
-        if not os.access(entry, os.X_OK):
+        if not (entry.stat().st_mode & 0o111):
             continue
         commands.setdefault(entry.stem, entry)
     return commands

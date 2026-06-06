@@ -430,6 +430,11 @@ def build_parser() -> argparse.ArgumentParser:
         "Run 'merlin' with no arguments to start the dashboard.\n"
         "Run 'merlin <command> --help' for command-specific help.\n"
     )
+    alias_lines = ["Top-level aliases:"]
+    for alias, (ext_id, command) in ext_commands.TOP_LEVEL_ALIASES.items():
+        target = f"merlin {ext_id} {command}"
+        alias_lines.append(f"  merlin {alias:<21} alias for: {target}")
+    epilog = "\n".join(alias_lines) + "\n\n" + epilog
     extension_help = ext_commands.format_extension_help()
     if extension_help:
         epilog = f"{extension_help}\n\n{epilog}"
@@ -484,6 +489,13 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "cron",
         help="Manage scheduled cron jobs (list/get/add/enable/disable/remove/trigger/history)",
+        add_help=False,
+    )
+
+    # chat — routed before argparse in cli_main (same pass-through as cron)
+    subparsers.add_parser(
+        "chat",
+        help="Send messages, replies, and reactions to the chat channel",
         add_help=False,
     )
 
@@ -592,12 +604,24 @@ def cli_main(argv: list[str] | None = None) -> None:
     if argv and argv[0].startswith("-") and argv[0] not in ("-h", "--help"):
         argv = ["start", *argv]
 
+    # Curated top-level aliases (built-in privilege): expand to their
+    # extension command, then fall through to dispatch below.
+    if argv and argv[0] in ext_commands.TOP_LEVEL_ALIASES:
+        ext_id, command = ext_commands.TOP_LEVEL_ALIASES[argv[0]]
+        argv = [ext_id, command, *argv[1:]]
+
     # Delegated core commands: routed before argparse so every arg
     # (including --help) passes through to the command's own parser.
     if argv and argv[0] == "cron":
         from cron.manage import main as cron_main
 
         cron_main(argv[1:], prog="merlin cron")
+        return
+
+    if argv and argv[0] == "chat":
+        from lib.chat import main as chat_main
+
+        chat_main(argv[1:])
         return
 
     # First token is not a core command: try extension command dispatch.
