@@ -1,7 +1,7 @@
 """End-to-end tests for the notes system.
 
 Tests the full flow across all notes components:
-remember.py, kb_add.py, notes_search.py working together.
+the remember, kb, and search commands working together.
 """
 
 import textwrap
@@ -12,9 +12,9 @@ import pytest
 @pytest.fixture
 def notes_env(tmp_path, monkeypatch):
     """Set up a complete temporary notes environment for all scripts."""
-    import notes_search
-    import kb_add
-    import remember
+    from notes.commands import search as notes_search
+    from notes.commands import kb as kb_add
+    from notes.commands import remember
 
     kb_dir = tmp_path / "kb"
     logs_dir = tmp_path / "logs"
@@ -89,8 +89,8 @@ class TestFullFlow:
     def test_kb_add_then_search(self, notes_env, capsys):
         """Create a KB entry, then verify search finds it."""
         import argparse
-        from kb_add import cmd_add
-        from notes_search import cmd_kb
+        from notes.commands.kb import cmd_add
+        from notes.commands.search import cmd_kb
 
         # Add a KB entry
         cmd_add(
@@ -119,7 +119,7 @@ class TestFullFlow:
     def test_kb_add_links_related(self, notes_env, capsys):
         """Create two related KB entries and verify they link to each other."""
         import argparse
-        from kb_add import cmd_add, parse_frontmatter
+        from notes.commands.kb import cmd_add, parse_frontmatter
 
         kb_dir = notes_env / "kb"
 
@@ -158,7 +158,7 @@ class TestFullFlow:
 
     def test_remember_then_list(self, notes_env, capsys):
         """Remember facts, then verify they show up in list."""
-        from remember import add_fact, list_facts
+        from notes.commands.remember import add_fact, list_facts
 
         add_fact("Name: Alex", section="identity")
         add_fact("Prefers dark mode", section="preferences")
@@ -174,7 +174,7 @@ class TestFullFlow:
     def test_log_search_finds_entries(self, notes_env, capsys):
         """Search logs for content."""
         import argparse
-        from notes_search import cmd_log
+        from notes.commands.search import cmd_log
 
         cmd_log(
             argparse.Namespace(
@@ -191,8 +191,8 @@ class TestFullFlow:
     def test_tags_reflect_kb_entries(self, notes_env, capsys):
         """Tag index should reflect all KB entries."""
         import argparse
-        from kb_add import cmd_add
-        from notes_search import cmd_tags
+        from notes.commands.kb import cmd_add
+        from notes.commands.search import cmd_tags
 
         cmd_add(
             argparse.Namespace(
@@ -228,7 +228,7 @@ class TestFullFlow:
     def test_duplicate_detection_across_flow(self, notes_env, capsys):
         """Creating a duplicate KB entry should warn."""
         import argparse
-        from kb_add import cmd_add
+        from notes.commands.kb import cmd_add
 
         cmd_add(
             argparse.Namespace(

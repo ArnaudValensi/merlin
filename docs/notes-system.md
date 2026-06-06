@@ -45,7 +45,7 @@ A flat markdown file containing facts about the user — preferences, background
 
 ### Management
 
-- **Add facts**: `uv run remember.py --help` — appends user facts with dedup
+- **Add facts**: `merlin remember --help` — appends user facts with dedup
 - **Read**: Claude reads `user.md` as context via CLAUDE.md instructions
 - **Edit**: Can be edited directly or via the notes editor dashboard
 
@@ -130,7 +130,7 @@ Tags are flat strings. Current categories include:
 
 ### Auto-Linking
 
-When creating KB entries via `kb_add.py`, related notes are automatically discovered based on shared tags and suggested for cross-linking.
+When creating KB entries via `merlin kb add`, related notes are automatically discovered based on shared tags and suggested for cross-linking.
 
 ### File Naming
 
@@ -138,24 +138,24 @@ Kebab-case filenames: `tqwt-tapered-quarter-wave-tube-theory.md`
 
 ## Tools
 
-### `notes_search.py` — Search Notes
+### `merlin notes search` — Search Notes
 
 Search across KB, logs, and user profile.
 
 ```bash
-uv run notes_search.py --help
-uv run notes_search.py "search query"
-uv run notes_search.py --tags           # List all tags
-uv run notes_search.py --tag piano      # Filter by tag
+merlin notes search --help
+merlin notes search kb --keyword "search query"
+merlin notes search tags                # List all tags
+merlin notes search kb --tag piano      # Filter by tag
 ```
 
-### `kb_add.py` — Add KB Entry
+### `merlin kb add` — Add KB Entry
 
 Create a new KB note with auto-linking to related notes.
 
 ```bash
-uv run kb_add.py --help
-uv run kb_add.py --title "Note Title" --tags tag1,tag2 --summary "Description"
+merlin kb add --help
+merlin kb add --title "Note Title" --tags tag1,tag2 --summary "Description"
 ```
 
 - Generates kebab-case filename from title
@@ -163,13 +163,13 @@ uv run kb_add.py --title "Note Title" --tags tag1,tag2 --summary "Description"
 - Updates `_index.md` with new entry
 - Creates proper frontmatter
 
-### `remember.py` — Add User Facts
+### `merlin remember` — Add User Facts
 
 Append facts to `user.md` with deduplication.
 
 ```bash
-uv run remember.py --help
-uv run remember.py "User prefers dark mode"
+merlin remember --help
+merlin remember add "User prefers dark mode"
 ```
 
 ## Memory Injection
@@ -212,9 +212,9 @@ JSON array of URLs shared in daily digests, used for dedup:
 
 | File | Purpose |
 |------|---------|
-| `notes_search.py` | Search across all notes layers |
-| `kb_add.py` | Create KB entries with auto-linking |
-| `remember.py` | Add user facts to `user.md` |
+| `merlin notes search` | Search across all notes layers |
+| `merlin kb add` | Create KB entries with auto-linking |
+| `merlin remember` | Add user facts to `user.md` |
 | `<notes-dir>/user.md` | User profile |
 | `<notes-dir>/logs/` | Daily conversation logs |
 | `<notes-dir>/kb/` | Knowledge base notes |

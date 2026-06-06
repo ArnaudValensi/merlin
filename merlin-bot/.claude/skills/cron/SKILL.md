@@ -7,24 +7,27 @@ allowed-tools: Bash
 
 # Cron Jobs Skill
 
-Manage scheduled tasks using `cron/manage.py`. All operations use this script for validation and consistent formatting.
+Manage scheduled tasks using the `merlin cron` command. All operations use
+this command for validation and consistent formatting. It works from any
+directory.
 
-**IMPORTANT: Never read or write `cron-jobs/*.json` files directly.** Always use the `cron/manage.py` commands below. The script handles path resolution, validation, and formatting. Reading files directly wastes cycles on path guessing; writing directly bypasses validation and can create broken jobs.
+**IMPORTANT: Never read or write `cron-jobs/*.json` files directly.** Always
+use the `merlin cron` commands below. The command handles path resolution,
+validation, and formatting. Reading files directly wastes cycles on path
+guessing; writing directly bypasses validation and can create broken jobs.
 
 ## Commands
-
-All commands run from the project root directory.
 
 ### List Jobs
 
 ```bash
-uv run cron/manage.py list
+merlin cron list
 ```
 
 ### Get Job Details
 
 ```bash
-uv run cron/manage.py get <job-id>
+merlin cron get <job-id>
 ```
 
 ### Add Job
@@ -36,7 +39,7 @@ uv run cron/manage.py get <job-id>
 
 **Preview with dry-run:**
 ```bash
-uv run cron/manage.py add \
+merlin cron add \
   --schedule "0 9 * * *" \
   --prompt "Check for new Python releases" \
   --description "Daily Python check" \
@@ -47,7 +50,7 @@ uv run cron/manage.py add \
 Show the user a summary and ask for confirmation. After confirmation, run without `--dry-run`:
 
 ```bash
-uv run cron/manage.py add \
+merlin cron add \
   --schedule "0 9 * * *" \
   --prompt "Check for new Python releases" \
   --description "Daily Python check" \
@@ -67,8 +70,8 @@ uv run cron/manage.py add \
 ### Enable/Disable Job
 
 ```bash
-uv run cron/manage.py enable <job-id>
-uv run cron/manage.py disable <job-id>
+merlin cron enable <job-id>
+merlin cron disable <job-id>
 ```
 
 Confirm the action to the user after running.
@@ -80,7 +83,7 @@ Confirm the action to the user after running.
 2. Only after confirmation:
 
 ```bash
-uv run cron/manage.py remove <job-id>
+merlin cron remove <job-id>
 ```
 
 ### Run Job Now
@@ -88,7 +91,7 @@ uv run cron/manage.py remove <job-id>
 Run a job immediately, bypassing the schedule:
 
 ```bash
-uv run cron/runner.py --job <job-id>
+merlin cron trigger <job-id>
 ```
 
 This executes the job exactly like the scheduler would — same logging, history tracking, and session handling. Useful for:
@@ -99,12 +102,12 @@ This executes the job exactly like the scheduler would — same logging, history
 ### Run History
 
 ```bash
-uv run cron/manage.py history <job-id>
+merlin cron history <job-id>
 ```
 
 Or for all jobs:
 ```bash
-uv run cron/manage.py history
+merlin cron history
 ```
 
 ## Cron Expression Cheat Sheet
@@ -135,4 +138,4 @@ uv run cron/manage.py history
 - Use `--dry-run` to preview job creation before confirming
 - `report_mode: silent` — only notifies on errors (good for monitoring jobs)
 - `report_mode: always` — always sends the result (good for digests, reports)
-- The script validates cron expressions — invalid ones will error
+- The command validates cron expressions — invalid ones will error

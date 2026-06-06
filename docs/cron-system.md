@@ -323,13 +323,14 @@ async def _cron_scheduler() -> None:
 ## CLI Management
 
 ```bash
-uv run cron/manage.py add --schedule "0 9 * * *" --prompt "..." --description "..."
-uv run cron/manage.py list
-uv run cron/manage.py get <job-id>
-uv run cron/manage.py enable <job-id>
-uv run cron/manage.py disable <job-id>
-uv run cron/manage.py remove <job-id>
-uv run cron/manage.py history [<job-id>] [--limit N]
+merlin cron add --schedule "0 9 * * *" --prompt "..." --description "..."
+merlin cron list
+merlin cron get <job-id>
+merlin cron enable <job-id>
+merlin cron disable <job-id>
+merlin cron remove <job-id>
+merlin cron trigger <job-id>
+merlin cron history [<job-id>] [--limit N]
 ```
 
 **Manual execution** (bypasses schedule, reuses logging/history):
@@ -351,7 +352,7 @@ uv run cron/runner.py --job <job-id>
 |------|---------|
 | `cron/__init__.py` | Scheduler loop (`_cron_scheduler`, `start()`) |
 | `cron/runner.py` | Dispatcher (check due jobs, execute in parallel) |
-| `cron/manage.py` | Job CRUD + CLI for management |
+| `cron/manage.py` | Job CRUD + implementation of `merlin cron` |
 | `cron/state.py` | State/history/lock helpers |
 | `cron/schemas.py` | Pydantic models for REST API validation |
 | `cron/routes.py` | REST API endpoints + dashboard page |

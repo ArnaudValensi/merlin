@@ -193,7 +193,7 @@ cli.py (merlin start)
 | `lib/engines/claude_code.py` | Claude Code CLI engine (default) |
 | `lib/engines/opencode.py` | OpenCode CLI engine |
 | `merlin-bot/merlin_bot.py` | Discord handler, session resolution, prompt building |
-| `merlin-bot/discord_send.py` | Discord REST API (send/reply/react/rename) |
+| `merlin-bot/discord_send.py` | Discord REST transport (send/reply/react/rename; CLI: `merlin chat`) |
 | `merlin-bot/session_registry.py` | Thread/message → session mapping |
 | `cron/runner.py` | Job dispatcher (check due, execute via engine) |
 | `cron/notify.py` | Notification delivery (report_mode logic, Discord fallback) |

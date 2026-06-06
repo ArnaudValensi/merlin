@@ -1,4 +1,4 @@
-"""Tests for remember.py — user context management."""
+"""Tests for notes/commands/remember.py — user context management."""
 
 import textwrap
 
@@ -57,7 +57,7 @@ USER_MD_WITH_FACTS = textwrap.dedent("""\
 @pytest.fixture
 def user_md(tmp_path, monkeypatch):
     """Create a temporary user.md with the template content."""
-    import remember
+    from notes.commands import remember
 
     md = tmp_path / "user.md"
     md.write_text(USER_MD_TEMPLATE)
@@ -69,7 +69,7 @@ def user_md(tmp_path, monkeypatch):
 @pytest.fixture
 def user_md_with_facts(tmp_path, monkeypatch):
     """Create a user.md with existing facts."""
-    import remember
+    from notes.commands import remember
 
     md = tmp_path / "user.md"
     md.write_text(USER_MD_WITH_FACTS)
@@ -80,7 +80,7 @@ def user_md_with_facts(tmp_path, monkeypatch):
 
 class TestGetSections:
     def test_finds_all_sections(self, user_md):
-        from remember import get_sections
+        from notes.commands.remember import get_sections
 
         text = user_md.read_text()
         sections = get_sections(text)
@@ -90,7 +90,7 @@ class TestGetSections:
         assert "notes" in sections
 
     def test_section_ranges(self, user_md):
-        from remember import get_sections
+        from notes.commands.remember import get_sections
 
         text = user_md.read_text()
         sections = get_sections(text)
@@ -103,7 +103,7 @@ class TestGetSections:
 
 class TestAddFact:
     def test_add_to_default_section(self, user_md):
-        from remember import add_fact
+        from notes.commands.remember import add_fact
 
         result = add_fact("Likes coffee")
         assert "Notes" in result
@@ -113,7 +113,7 @@ class TestAddFact:
         assert "- Likes coffee" in text
 
     def test_add_to_identity(self, user_md):
-        from remember import add_fact
+        from notes.commands.remember import add_fact
 
         result = add_fact("Name: Alex", section="identity")
         assert "Identity" in result
@@ -124,21 +124,21 @@ class TestAddFact:
         assert "(to be filled in)" not in text.split("## Preferences")[0]
 
     def test_add_to_preferences(self, user_md):
-        from remember import add_fact
+        from notes.commands.remember import add_fact
 
         add_fact("Prefers dark mode", section="preferences")
         text = user_md.read_text()
         assert "- Prefers dark mode" in text
 
     def test_add_to_context(self, user_md):
-        from remember import add_fact
+        from notes.commands.remember import add_fact
 
         add_fact("Working on Merlin bot", section="context")
         text = user_md.read_text()
         assert "- Working on Merlin bot" in text
 
     def test_removes_placeholders(self, user_md):
-        from remember import add_fact
+        from notes.commands.remember import add_fact
 
         add_fact("Name: Alex", section="identity")
         text = user_md.read_text()
@@ -152,7 +152,7 @@ class TestAddFact:
         assert "(to be filled in)" in prefs_section
 
     def test_append_to_existing_facts(self, user_md_with_facts):
-        from remember import add_fact
+        from notes.commands.remember import add_fact
 
         add_fact("Languages: French, English", section="identity")
         text = user_md_with_facts.read_text()
@@ -162,14 +162,14 @@ class TestAddFact:
         assert "- Languages: French, English" in text
 
     def test_auto_adds_bullet(self, user_md):
-        from remember import add_fact
+        from notes.commands.remember import add_fact
 
         add_fact("No bullet here", section="notes")
         text = user_md.read_text()
         assert "- No bullet here" in text
 
     def test_preserves_existing_bullet(self, user_md):
-        from remember import add_fact
+        from notes.commands.remember import add_fact
 
         add_fact("- Already has bullet", section="notes")
         text = user_md.read_text()
@@ -178,7 +178,7 @@ class TestAddFact:
         assert "- Already has bullet" in text
 
     def test_multiple_adds_to_same_section(self, user_md):
-        from remember import add_fact
+        from notes.commands.remember import add_fact
 
         add_fact("Fact one", section="notes")
         add_fact("Fact two", section="notes")
@@ -190,8 +190,8 @@ class TestAddFact:
         assert "- Fact three" in text
 
     def test_file_not_found(self, tmp_path, monkeypatch):
-        import remember
-        from remember import add_fact as _add_fact
+        from notes.commands import remember
+        from notes.commands.remember import add_fact as _add_fact
 
         monkeypatch.setattr(remember, "USER_MD", tmp_path / "nonexistent.md")
         result = _add_fact("Something")
@@ -200,14 +200,14 @@ class TestAddFact:
 
 class TestListFacts:
     def test_list_empty(self, user_md):
-        from remember import list_facts
+        from notes.commands.remember import list_facts
 
         output = list_facts()
         assert "User Memory" in output
         assert "(empty)" in output
 
     def test_list_with_facts(self, user_md_with_facts):
-        from remember import list_facts
+        from notes.commands.remember import list_facts
 
         output = list_facts()
         assert "Name: Alex" in output
@@ -217,8 +217,8 @@ class TestListFacts:
         assert "flat directory" in output
 
     def test_file_not_found(self, tmp_path, monkeypatch):
-        import remember
-        from remember import list_facts as _list_facts
+        from notes.commands import remember
+        from notes.commands.remember import list_facts as _list_facts
 
         monkeypatch.setattr(remember, "USER_MD", tmp_path / "nonexistent.md")
         output = _list_facts()
@@ -228,7 +228,7 @@ class TestListFacts:
 class TestCmdAdd:
     def test_cli_add(self, user_md, capsys):
         import argparse
-        from remember import cmd_add
+        from notes.commands.remember import cmd_add
 
         args = argparse.Namespace(fact="Test fact", section="notes")
         cmd_add(args)
@@ -239,7 +239,7 @@ class TestCmdAdd:
 
     def test_cli_add_default_section(self, user_md, capsys):
         import argparse
-        from remember import cmd_add
+        from notes.commands.remember import cmd_add
 
         args = argparse.Namespace(fact="Default section fact", section=None)
         cmd_add(args)
@@ -251,7 +251,7 @@ class TestCmdAdd:
 class TestCmdList:
     def test_cli_list(self, user_md_with_facts, capsys):
         import argparse
-        from remember import cmd_list
+        from notes.commands.remember import cmd_list
 
         args = argparse.Namespace()
         cmd_list(args)

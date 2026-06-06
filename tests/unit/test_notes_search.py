@@ -1,4 +1,4 @@
-"""Tests for notes_search.py — notes search tools."""
+"""Tests for notes/commands/search.py — notes search tools."""
 
 import textwrap
 
@@ -8,7 +8,7 @@ import pytest
 @pytest.fixture
 def notes_dir(tmp_path, monkeypatch):
     """Create a temporary notes directory structure with test data."""
-    import notes_search
+    from notes.commands import search as notes_search
 
     kb_dir = tmp_path / "kb"
     logs_dir = tmp_path / "logs"
@@ -124,7 +124,7 @@ class TestParseFrontmatter:
     """Tests for YAML frontmatter parsing."""
 
     def test_full_frontmatter(self, kb_with_entries):
-        from notes_search import _parse_frontmatter
+        from notes.commands.search import _parse_frontmatter
 
         fm = _parse_frontmatter(kb_with_entries / "docker-setup.md")
         assert fm["title"] == "Docker Setup"
@@ -133,7 +133,7 @@ class TestParseFrontmatter:
         assert fm["summary"] == "How to set up Docker containers"
 
     def test_no_frontmatter(self, tmp_path):
-        from notes_search import _parse_frontmatter
+        from notes.commands.search import _parse_frontmatter
 
         f = tmp_path / "plain.md"
         f.write_text("# Just a heading\n\nNo frontmatter here.\n")
@@ -141,7 +141,7 @@ class TestParseFrontmatter:
         assert fm == {}
 
     def test_empty_file(self, tmp_path):
-        from notes_search import _parse_frontmatter
+        from notes.commands.search import _parse_frontmatter
 
         f = tmp_path / "empty.md"
         f.write_text("")
@@ -153,7 +153,7 @@ class TestKbSearch:
     """Tests for knowledge base search."""
 
     def test_kb_list(self, kb_with_entries, capsys):
-        from notes_search import cmd_kb
+        from notes.commands.search import cmd_kb
         import argparse
 
         args = argparse.Namespace(keyword=None, tag=None, discord=False)
@@ -166,7 +166,7 @@ class TestKbSearch:
         assert "Knowledge Base Index" not in output
 
     def test_kb_tag_search(self, kb_with_entries, capsys):
-        from notes_search import cmd_kb
+        from notes.commands.search import cmd_kb
         import argparse
 
         args = argparse.Namespace(keyword=None, tag="tech", discord=False)
@@ -176,7 +176,7 @@ class TestKbSearch:
         assert "Docker Setup" not in output
 
     def test_kb_tag_no_results(self, kb_with_entries, capsys):
-        from notes_search import cmd_kb
+        from notes.commands.search import cmd_kb
         import argparse
 
         args = argparse.Namespace(keyword=None, tag="nonexistent", discord=False)
@@ -185,7 +185,7 @@ class TestKbSearch:
         assert "no KB entries" in output
 
     def test_kb_keyword_search(self, kb_with_entries, capsys):
-        from notes_search import cmd_kb
+        from notes.commands.search import cmd_kb
         import argparse
 
         args = argparse.Namespace(keyword="keyboard", tag=None, discord=False)
@@ -195,7 +195,7 @@ class TestKbSearch:
         assert "keyboard" in output
 
     def test_kb_keyword_no_results(self, kb_with_entries, capsys):
-        from notes_search import cmd_kb
+        from notes.commands.search import cmd_kb
         import argparse
 
         args = argparse.Namespace(keyword="nonexistent_xyz", tag=None, discord=False)
@@ -204,7 +204,7 @@ class TestKbSearch:
         assert "no KB matches" in output
 
     def test_kb_empty(self, notes_dir, capsys):
-        from notes_search import cmd_kb
+        from notes.commands.search import cmd_kb
         import argparse
 
         args = argparse.Namespace(keyword=None, tag=None, discord=False)
@@ -217,7 +217,7 @@ class TestLogSearch:
     """Tests for daily log search."""
 
     def test_log_list_all(self, logs_with_entries, capsys):
-        from notes_search import cmd_log
+        from notes.commands.search import cmd_log
         import argparse
 
         args = argparse.Namespace(
@@ -230,7 +230,7 @@ class TestLogSearch:
         assert "2026-02-05.md" in output
 
     def test_log_list_date_range(self, logs_with_entries, capsys):
-        from notes_search import cmd_log
+        from notes.commands.search import cmd_log
         import argparse
 
         args = argparse.Namespace(
@@ -247,7 +247,7 @@ class TestLogSearch:
         assert "2026-02-01.md" in output
 
     def test_log_keyword_search(self, logs_with_entries, capsys):
-        from notes_search import cmd_log
+        from notes.commands.search import cmd_log
         import argparse
 
         args = argparse.Namespace(
@@ -259,7 +259,7 @@ class TestLogSearch:
         assert "cron" in output.lower()
 
     def test_log_keyword_no_results(self, logs_with_entries, capsys):
-        from notes_search import cmd_log
+        from notes.commands.search import cmd_log
         import argparse
 
         args = argparse.Namespace(
@@ -274,7 +274,7 @@ class TestLogSearch:
         assert "no log matches" in output
 
     def test_log_last_n_days(self, logs_with_entries, capsys):
-        from notes_search import _resolve_date_range
+        from notes.commands.search import _resolve_date_range
         import argparse
 
         args = argparse.Namespace(date_from=None, date_to=None, last=7)
@@ -283,7 +283,7 @@ class TestLogSearch:
         assert date_to is not None
 
     def test_log_empty_dir(self, notes_dir, capsys):
-        from notes_search import cmd_log
+        from notes.commands.search import cmd_log
         import argparse
 
         args = argparse.Namespace(
@@ -298,27 +298,27 @@ class TestHelpers:
     """Tests for helper functions."""
 
     def test_get_log_files_no_filter(self, logs_with_entries):
-        from notes_search import _get_log_files
+        from notes.commands.search import _get_log_files
 
         files = _get_log_files(None, None)
         assert len(files) == 3
 
     def test_get_log_files_from_filter(self, logs_with_entries):
-        from notes_search import _get_log_files
+        from notes.commands.search import _get_log_files
 
         files = _get_log_files("2026-02-01", None)
         assert len(files) == 2
         assert all("2026-01" not in f.name for f in files)
 
     def test_get_log_files_to_filter(self, logs_with_entries):
-        from notes_search import _get_log_files
+        from notes.commands.search import _get_log_files
 
         files = _get_log_files(None, "2026-02-01")
         assert len(files) == 2
         assert all("2026-02-05" not in f.name for f in files)
 
     def test_format_kb_result(self, kb_with_entries):
-        from notes_search import _format_kb_result
+        from notes.commands.search import _format_kb_result
 
         result = _format_kb_result(kb_with_entries / "docker-setup.md")
         assert "Docker Setup" in result
@@ -330,7 +330,7 @@ class TestTagIndex:
     """Tests for tag index generation."""
 
     def test_lists_all_tags(self, kb_with_entries, capsys):
-        from notes_search import cmd_tags
+        from notes.commands.search import cmd_tags
         import argparse
 
         args = argparse.Namespace()
@@ -342,7 +342,7 @@ class TestTagIndex:
         assert "personal" in output
 
     def test_tag_counts(self, kb_with_entries, capsys):
-        from notes_search import cmd_tags
+        from notes.commands.search import cmd_tags
         import argparse
 
         args = argparse.Namespace()
@@ -353,7 +353,7 @@ class TestTagIndex:
         assert "docker-setup.md" in output
 
     def test_no_tags(self, notes_dir, capsys):
-        from notes_search import cmd_tags
+        from notes.commands.search import cmd_tags
         import argparse
 
         args = argparse.Namespace()

@@ -7,7 +7,7 @@ allowed-tools: Bash, Read
 
 # Notes Skill
 
-Merlin's notes system has three layers. Use the tools below to search and manage them.
+Merlin's notes system has three layers. Use the commands below to search and manage them. They work from any directory.
 
 The notes directory is at `$(merlin config notes-dir)` (run this to get the resolved path).
 
@@ -19,35 +19,35 @@ The KB is a network of atomic, interconnected markdown notes in `$(merlin config
 
 ```bash
 # List all entries
-uv run notes_search.py kb
+merlin notes search kb
 
 # Search by keyword
-uv run notes_search.py kb --keyword "docker"
+merlin notes search kb --keyword "docker"
 
 # Search by tag
-uv run notes_search.py kb --tag "devops"
+merlin notes search kb --tag "devops"
 ```
 
 ### Add a new entry
 
-Use `kb_add.py` — it automatically finds related notes, links them, and adds backlinks:
+Use `merlin kb add` — it automatically finds related notes, links them, and adds backlinks:
 
 ```bash
 # Add a note (auto-discovers related notes and links them)
-uv run kb_add.py \
+merlin kb add \
   --title "Topic Name" \
   --tags "tag1, tag2" \
   --summary "One-line description" \
   --content "The actual content of the note..."
 
 # Preview first (shows related notes without creating)
-uv run kb_add.py --title "Topic Name" --tags "tag1" --content "..." --dry-run
+merlin kb add --title "Topic Name" --tags "tag1" --content "..." --dry-run
 
 # Pipe long content via stdin
-echo "Long content..." | uv run kb_add.py --title "Topic" --tags "tag1"
+echo "Long content..." | merlin kb add --title "Topic" --tags "tag1"
 ```
 
-The script handles:
+The command handles:
 - **Duplicate detection** — warns if a similar note exists
 - **Related note discovery** — searches by tag overlap, title words, content keywords
 - **Bidirectional linking** — links the new note to related notes AND adds backlinks
@@ -65,7 +65,7 @@ Before writing a KB note, run through this process:
 
 **Refine** — One concept per note. Cut anything that doesn't serve the core idea. Write a genuinely useful one-line summary, not a vague label. Aim for crisp notes — tight paragraphs, not brain dumps.
 
-**Connect** — `kb_add.py` handles auto-linking, but also think about *how* top related notes connect: does the new note extend, support, or contradict them? Mention it in the content.
+**Connect** — `merlin kb add` handles auto-linking, but also think about *how* top related notes connect: does the new note extend, support, or contradict them? Mention it in the content.
 
 **When to go light:** If the user says "just save this" or it's a simple reference (URL, spec, config), still write a summary in your own words but skip Q and keep R minimal.
 
@@ -87,16 +87,16 @@ Day journal in `$(merlin config notes-dir)/logs/YYYY-MM-DD.md` — for anything 
 
 ```bash
 # List all logs
-uv run notes_search.py log
+merlin notes search log
 
 # Search by keyword
-uv run notes_search.py log --keyword "deployment"
+merlin notes search log --keyword "deployment"
 
 # Last N days
-uv run notes_search.py log --keyword "error" --last 7
+merlin notes search log --keyword "error" --last 7
 
 # Date range
-uv run notes_search.py log --keyword "music" --from 2026-01-01 --to 2026-01-31
+merlin notes search log --keyword "music" --from 2026-01-01 --to 2026-01-31
 ```
 
 ### What goes in daily logs
@@ -110,19 +110,19 @@ uv run notes_search.py log --keyword "music" --from 2026-01-01 --to 2026-01-31
 
 `$(merlin config notes-dir)/user.md` — durable facts about the user. Always loaded automatically.
 
-Use `remember.py` to manage user facts:
+Use `merlin remember` to manage user facts:
 
 ```bash
 # Add a fact (defaults to Notes section)
-uv run remember.py add "Prefers dark mode in all editors"
+merlin remember add "Prefers dark mode in all editors"
 
 # Add to a specific section
-uv run remember.py add "Name: Alex" --section identity
-uv run remember.py add "Likes concise responses" --section preferences
-uv run remember.py add "Working on Merlin bot" --section context
+merlin remember add "Name: Alex" --section identity
+merlin remember add "Likes concise responses" --section preferences
+merlin remember add "Working on Merlin bot" --section context
 
 # List all stored facts
-uv run remember.py list
+merlin remember list
 ```
 
 **Sections:** identity, preferences, context, notes
@@ -131,13 +131,13 @@ uv run remember.py list
 
 | If the user says... | Do this |
 |---------------------|---------|
-| "Remember that I prefer X" | `remember.py add "Prefers X" --section preferences` |
-| "My name is X" / "I'm in timezone X" | `remember.py add "..." --section identity` |
-| "I'm working on X" / "I'm interested in X" | `remember.py add "..." --section context` |
-| "Remember this fact about X" (general) | `remember.py add "..."` (goes to notes) |
-| "Save this research about X" (long/detailed) | `kb_add.py` (knowledge base entry) |
+| "Remember that I prefer X" | `merlin remember add "Prefers X" --section preferences` |
+| "My name is X" / "I'm in timezone X" | `merlin remember add "..." --section identity` |
+| "I'm working on X" / "I'm interested in X" | `merlin remember add "..." --section context` |
+| "Remember this fact about X" (general) | `merlin remember add "..."` (goes to notes) |
+| "Save this research about X" (long/detailed) | `merlin kb add` (knowledge base entry) |
 
-**Rule of thumb:** Short personal facts → `remember.py`. Longer knowledge → `kb_add.py`.
+**Rule of thumb:** Short personal facts → `merlin remember add`. Longer knowledge → `merlin kb add`.
 
 ## Reading Full Entries
 

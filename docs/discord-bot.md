@@ -108,7 +108,7 @@ Processing indicators:
 
 Reaction updates are wrapped in try/except to handle Discord API failures gracefully.
 
-## discord_send.py — REST API Script
+## discord_send.py — REST Transport (CLI: merlin chat)
 
 Standalone script for sending messages via Discord REST API. Used by the bot handler to deliver engine responses, and by `notify.py` for cron notifications.
 
@@ -116,16 +116,16 @@ Standalone script for sending messages via Discord REST API. Used by the bot han
 
 ```bash
 # Send a message
-uv run discord_send.py send --channel <id> --content "text" [--file path...] [--thread-on-chunk]
+merlin chat send --channel <id> --content "text" [--file path...] [--thread-on-chunk]
 
 # Reply to a message
-uv run discord_send.py reply --channel <id> --message <id> --content "text" [--file path...]
+merlin chat reply --channel <id> --message <id> --content "text" [--file path...]
 
 # React to a message
-uv run discord_send.py react --channel <id> --message <id> --emoji "emoji"
+merlin chat react --channel <id> --message <id> --emoji "emoji"
 
 # Rename a thread
-uv run discord_send.py rename-thread --thread <id> --name "New title"
+merlin chat rename-thread --thread <id> --name "New title"
 ```
 
 ### Output Format
@@ -146,8 +146,8 @@ Discord has a 2000-character limit. Long messages are split intelligently:
 ### File Attachments
 
 ```bash
-uv run discord_send.py send --channel <id> --file screenshot.png --content "Here's the result"
-uv run discord_send.py send --channel <id> --file a.png --file b.png
+merlin chat send --channel <id> --file screenshot.png --content "Here's the result"
+merlin chat send --channel <id> --file a.png --file b.png
 ```
 
 Sent via multipart/form-data. Files attached to first chunk.
@@ -169,7 +169,7 @@ The bot never crashes from a single message failure.
 | File | Purpose |
 |------|---------|
 | `merlin_bot.py` | `on_message()` handler, session resolution, prompt building, response delivery, EXTENSION_META |
-| `discord_send.py` | REST API script (send/reply/react/rename) — used by bot handler and notify.py |
+| `discord_send.py` | REST transport (send/reply/react/rename) — used by bot handler, notify.py, and `merlin chat` |
 | `discord_directives.md` | Discord writing style reference (not injected into engine) |
 | `session_registry.py` | Thread/message → session mapping |
 | `transcribe.py` | Voice message transcription |

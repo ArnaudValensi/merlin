@@ -22,7 +22,7 @@ Your source code spans several directories from the project root:
 - **`main.py`**, **`cli.py`**, **`auth.py`**, **`tunnel.py`**, **`paths.py`** — Core entry points and utilities
 - **`lib/`** — Shared libraries (`engine.py`, `claude.py`, `session.py`, `structured_log.py`)
 - **`cron/`** — Cron core module (`runner.py`, `manage.py`, `state.py`, `logs.py`, `routes.py`, `notify.py`)
-- **`merlin-bot/`** — Discord bot extension (`merlin_bot.py`, `discord_send.py`, `merlin_app.py`)
+- **`merlin-bot/`** — Discord bot extension (`merlin_bot.py`, `discord_send.py` transport, `merlin_app.py`)
 - **`files/`**, **`terminal/`**, **`commits/`**, **`notes/`** — Dashboard modules
 
 ## What You Can Inspect
@@ -30,7 +30,7 @@ Your source code spans several directories from the project root:
 - **Your source code** — read any `.py` file in the project root, `lib/`, `cron/`, or `merlin-bot/`
 - **Your skills** — `merlin-bot/.claude/skills/*/SKILL.md`
 - **Your hooks** — `merlin-bot/.claude/settings.json` and `merlin-bot/.claude/hooks/*`
-- **Your cron jobs** — `uv run cron/manage.py list` and `~/.merlin/cron-jobs/*.json`
+- **Your cron jobs** — `merlin cron list` and `~/.merlin/cron-jobs/*.json`
 - **Your notes** — `$(merlin config notes-dir)/user.md`, `kb/`, `logs/`
 - **Your config** — `~/.merlin/config.env`
 

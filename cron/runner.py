@@ -658,7 +658,7 @@ Job file format (cron-jobs/<job-id>.json):
   COMMAND_TIMEOUT_SECONDS (default 3600) guard kills hung commands (exit 124).
 
 Related commands:
-  uv run cron/manage.py --help    # Manage jobs (add, list, enable, etc.)
+  merlin cron --help              # Manage jobs (add, list, enable, etc.)
 
 Logs:
   logs/merlin.log                 # Unified app log (shared with main process)

@@ -48,11 +48,11 @@ The KB is a web of interconnected atomic notes, inspired by the Zettelkasten met
 - Don't just dump information — write atomic, well-linked notes that fit into the web
 - Search the KB before research — you may already have relevant knowledge
 
-**Use the notes skill** (`notes_search.py`) to search the KB and logs:
+**Use the notes skill** (`merlin notes search`) to search the KB and logs:
 ```bash
-uv run notes_search.py kb --keyword "topic"
-uv run notes_search.py kb --tag "tag-name"
-uv run notes_search.py log --keyword "something" --last 7
+merlin notes search kb --keyword "topic"
+merlin notes search kb --tag "tag-name"
+merlin notes search log --keyword "something" --last 7
 ```
 
 ## Cron Jobs

@@ -1,4 +1,4 @@
-"""Tests for kb_add.py — knowledge base entry creation with link discovery."""
+"""Tests for notes/commands/kb.py — KB entry creation with link discovery."""
 
 import textwrap
 
@@ -8,7 +8,7 @@ import pytest
 @pytest.fixture
 def kb_dir(tmp_path, monkeypatch):
     """Create a temporary KB directory and patch kb_add to use it."""
-    import kb_add
+    from notes.commands import kb as kb_add
 
     kb = tmp_path / "kb"
     kb.mkdir()
@@ -90,39 +90,39 @@ def kb_with_notes(kb_dir):
 
 class TestSlugify:
     def test_basic(self):
-        from kb_add import slugify
+        from notes.commands.kb import slugify
 
         assert slugify("Docker Setup") == "docker-setup"
 
     def test_special_chars(self):
-        from kb_add import slugify
+        from notes.commands.kb import slugify
 
         assert slugify("What's New? (2026)") == "whats-new-2026"
 
     def test_extra_spaces(self):
-        from kb_add import slugify
+        from notes.commands.kb import slugify
 
         assert slugify("  Multiple   Spaces  ") == "multiple-spaces"
 
     def test_already_slugified(self):
-        from kb_add import slugify
+        from notes.commands.kb import slugify
 
         assert slugify("already-a-slug") == "already-a-slug"
 
 
 class TestParseTags:
     def test_comma_separated(self):
-        from kb_add import parse_tags
+        from notes.commands.kb import parse_tags
 
         assert parse_tags("music, gear, shopping") == ["music", "gear", "shopping"]
 
     def test_yaml_format(self):
-        from kb_add import parse_tags
+        from notes.commands.kb import parse_tags
 
         assert parse_tags("[music, gear]") == ["music", "gear"]
 
     def test_empty(self):
-        from kb_add import parse_tags
+        from notes.commands.kb import parse_tags
 
         assert parse_tags("") == []
         assert parse_tags("[]") == []
@@ -130,19 +130,19 @@ class TestParseTags:
 
 class TestFindDuplicates:
     def test_exact_filename_match(self, kb_with_notes):
-        from kb_add import find_duplicates
+        from notes.commands.kb import find_duplicates
 
         dupes = find_duplicates("Docker Setup", [])
         assert any("docker-setup.md" in d[0] for d in dupes)
 
     def test_exact_title_match(self, kb_with_notes):
-        from kb_add import find_duplicates
+        from notes.commands.kb import find_duplicates
 
         dupes = find_duplicates("Tech Gear", [])
         assert any("tech-gear.md" in d[0] for d in dupes)
 
     def test_no_duplicates(self, kb_with_notes):
-        from kb_add import find_duplicates
+        from notes.commands.kb import find_duplicates
 
         dupes = find_duplicates("Completely New Topic", [])
         assert dupes == []
@@ -150,7 +150,7 @@ class TestFindDuplicates:
 
 class TestFindRelatedNotes:
     def test_finds_by_tag_overlap(self, kb_with_notes):
-        from kb_add import find_related_notes
+        from notes.commands.kb import find_related_notes
 
         related = find_related_notes(
             "Container Orchestration",
@@ -161,7 +161,7 @@ class TestFindRelatedNotes:
         assert "docker-setup.md" in related
 
     def test_finds_by_title_words(self, kb_with_notes):
-        from kb_add import find_related_notes
+        from notes.commands.kb import find_related_notes
 
         related = find_related_notes(
             "Docker Networking",
@@ -172,7 +172,7 @@ class TestFindRelatedNotes:
         assert "docker-setup.md" in related
 
     def test_no_matches(self, kb_with_notes):
-        from kb_add import find_related_notes
+        from notes.commands.kb import find_related_notes
 
         related = find_related_notes(
             "Quantum Physics",
@@ -183,7 +183,7 @@ class TestFindRelatedNotes:
         assert len(related) == 0
 
     def test_excludes_target_file(self, kb_with_notes):
-        from kb_add import find_related_notes
+        from notes.commands.kb import find_related_notes
 
         related = find_related_notes(
             "Docker Setup",
@@ -194,7 +194,7 @@ class TestFindRelatedNotes:
         assert "docker-setup.md" not in related
 
     def test_excludes_index(self, kb_with_notes):
-        from kb_add import find_related_notes
+        from notes.commands.kb import find_related_notes
 
         related = find_related_notes(
             "Index Test",
@@ -206,14 +206,14 @@ class TestFindRelatedNotes:
 
 class TestCreateNote:
     def test_creates_file(self, kb_dir):
-        from kb_add import create_note
+        from notes.commands.kb import create_note
 
         path = create_note("Test Note", ["test"], "A test", "Content here.", [])
         assert path.exists()
         assert path.name == "test-note.md"
 
     def test_frontmatter(self, kb_dir):
-        from kb_add import create_note
+        from notes.commands.kb import create_note
 
         path = create_note("My Topic", ["tag1", "tag2"], "Summary", "Body.", [])
         text = path.read_text()
@@ -222,7 +222,7 @@ class TestCreateNote:
         assert "summary: Summary" in text
 
     def test_related_links_in_frontmatter(self, kb_dir):
-        from kb_add import create_note
+        from notes.commands.kb import create_note
 
         path = create_note(
             "Linked Note", [], "", "Content.", ["other.md", "another.md"]
@@ -231,7 +231,7 @@ class TestCreateNote:
         assert "related: [other.md, another.md]" in text
 
     def test_see_also_section(self, kb_with_notes):
-        from kb_add import create_note
+        from notes.commands.kb import create_note
 
         path = create_note("New Note", [], "", "Content.", ["docker-setup.md"])
         text = path.read_text()
@@ -239,7 +239,7 @@ class TestCreateNote:
         assert "[Docker Setup](docker-setup.md)" in text
 
     def test_custom_filename(self, kb_dir):
-        from kb_add import create_note
+        from notes.commands.kb import create_note
 
         path = create_note("Title", [], "", "Content.", [], filename="custom-name.md")
         assert path.name == "custom-name.md"
@@ -247,7 +247,7 @@ class TestCreateNote:
 
 class TestUpdateRelatedNote:
     def test_adds_backlink(self, kb_with_notes):
-        from kb_add import update_related_note
+        from notes.commands.kb import update_related_note
 
         note_path = kb_with_notes / "docker-setup.md"
         updated = update_related_note(note_path, "new-note.md")
@@ -257,7 +257,7 @@ class TestUpdateRelatedNote:
         assert "new-note.md" in text
 
     def test_no_duplicate_backlink(self, kb_with_notes):
-        from kb_add import update_related_note
+        from notes.commands.kb import update_related_note
 
         note_path = kb_with_notes / "arch-linux.md"
         # docker-setup.md is already in related
@@ -265,7 +265,7 @@ class TestUpdateRelatedNote:
         assert updated is False
 
     def test_adds_to_existing_related(self, kb_with_notes):
-        from kb_add import update_related_note, parse_frontmatter
+        from notes.commands.kb import update_related_note, parse_frontmatter
 
         note_path = kb_with_notes / "arch-linux.md"
         update_related_note(note_path, "new-note.md")
@@ -277,7 +277,7 @@ class TestUpdateRelatedNote:
 
 class TestBuildFrontmatter:
     def test_basic(self):
-        from kb_add import build_frontmatter
+        from notes.commands.kb import build_frontmatter
 
         fm = build_frontmatter("Title", ["t1", "t2"], "A summary", ["other.md"])
         assert "title: Title" in fm
@@ -286,7 +286,7 @@ class TestBuildFrontmatter:
         assert "related: [other.md]" in fm
 
     def test_empty_tags(self):
-        from kb_add import build_frontmatter
+        from notes.commands.kb import build_frontmatter
 
         fm = build_frontmatter("Title", [], "", [])
         assert "tags: []" in fm
@@ -297,7 +297,7 @@ class TestCmdAdd:
     def test_full_flow(self, kb_with_notes, capsys):
         """End-to-end: create a note that auto-links to related notes."""
         import argparse
-        from kb_add import cmd_add
+        from notes.commands.kb import cmd_add
 
         args = argparse.Namespace(
             title="Docker Volumes",
@@ -324,7 +324,7 @@ class TestCmdAdd:
 
     def test_dry_run(self, kb_with_notes, capsys):
         import argparse
-        from kb_add import cmd_add
+        from notes.commands.kb import cmd_add
 
         args = argparse.Namespace(
             title="Docker Volumes",
@@ -346,7 +346,7 @@ class TestCmdAdd:
 
     def test_duplicate_blocks(self, kb_with_notes):
         import argparse
-        from kb_add import cmd_add
+        from notes.commands.kb import cmd_add
 
         args = argparse.Namespace(
             title="Docker Setup",
@@ -362,7 +362,7 @@ class TestCmdAdd:
 
     def test_duplicate_force(self, kb_with_notes, capsys):
         import argparse
-        from kb_add import cmd_add
+        from notes.commands.kb import cmd_add
 
         args = argparse.Namespace(
             title="Docker Setup",

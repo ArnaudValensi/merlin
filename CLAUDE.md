@@ -42,13 +42,14 @@ merlin/
 ├── terminal/                  # Web terminal module (xterm.js + tmux)
 ├── commits/                   # Git commit browser module
 ├── notes/                     # Notes editor module (markdown)
+│   └── commands/              # merlin notes search / kb / remember commands
 ├── tests/                     # Tests for core modules
 ├── merlin-bot/                # Merlin Bot extension (optional, built-in, Discord-only)
 │   ├── CLAUDE.md              # Bot personality and directives
 │   ├── merlin_bot.py          # Discord bot + extension interface (EXTENSION_META)
 │   ├── merlin_app.py          # App interface (bot monitoring page with tabs)
 │   ├── discord_directives.md  # Bot-specific personality overlay
-│   ├── discord_send.py        # Discord REST API (send, reply, react)
+│   ├── discord_send.py        # Discord REST API transport (used by bot + merlin chat)
 │   ├── cron-jobs/             # Job files (*.json)
 │   ├── templates/             # Bot-specific templates (bot.html with tabs, session.html)
 │   ├── .claude/
@@ -168,10 +169,7 @@ When creating new scripts:
 | `merlin_bot.py` | Discord bot + extension interface (router, start, validate, EXTENSION_META) | [`discord-bot`](docs/discord-bot.md) |
 | `merlin_app.py` | Bot monitoring page with tabs (Overview, Performance, Logs) | [`dashboard-architecture`](docs/dashboard-architecture.md) |
 | `discord_directives.md` | Discord writing style reference (not injected into engine) | [`discord-bot`](docs/discord-bot.md) |
-| `discord_send.py` | Send/reply/react to Discord | `--help`, [`discord-bot`](docs/discord-bot.md) |
-| `notes_search.py` | Search KB, logs, and list tags | `--help`, [`notes-system`](docs/notes-system.md) |
-| `kb_add.py` | Add KB entries with auto-linking | `--help`, [`notes-system`](docs/notes-system.md) |
-| `remember.py` | Add user facts to user.md | `--help`, [`notes-system`](docs/notes-system.md) |
+| `discord_send.py` | Discord REST transport (CLI: `merlin chat`) | [`discord-bot`](docs/discord-bot.md) |
 
 ### CWD (Current Working Directory)
 
@@ -208,7 +206,7 @@ Strategy: **resume-first** — try `--resume` first, fall back to `--session-id`
 
 - **Bot token**: `merlin-bot/.env` (see `.env.example`)
 - **Default channel**: Set via `DISCORD_CHANNEL_IDS` in config
-- **Script**: `uv run discord_send.py --help`
+- **CLI**: `merlin chat --help`
 
 ## Cron Jobs
 
@@ -216,7 +214,7 @@ Strategy: **resume-first** — try `--resume` first, fall back to `--session-id`
 
 - **Core module**: `cron/` — scheduler, runner, state, REST API, logs, notifications
 - **Job files**: `cron-jobs/*.json`
-- **Management CLI**: `uv run cron/manage.py --help`
+- **Management CLI**: `merlin cron --help`
 - **REST API**: `/api/cron/jobs/*` — full CRUD + toggle + trigger + logs
 - **Dashboard**: `/cron` — web UI for managing jobs
 - **Scheduler**: Started from `main.py` via `cron.start()` (always runs, independent of merlin-bot)

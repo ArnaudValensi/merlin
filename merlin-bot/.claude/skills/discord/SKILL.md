@@ -7,50 +7,48 @@ allowed-tools: Bash
 
 # Discord Skill
 
-Send messages, replies, and reactions to Discord channels using `discord_send.py`.
+Send messages, replies, and reactions to Discord channels using the `merlin chat` command. It works from any directory.
 
 ## Usage
-
-All commands are run from the `merlin-bot/` directory with `uv run`:
 
 ### Send a message
 
 ```bash
-uv run discord_send.py send --channel <channel_id> --content "Your message here"
+merlin chat send --channel <channel_id> --content "Your message here"
 ```
 
 ### Send with attachments
 
 ```bash
 # Message with an image
-uv run discord_send.py send --channel <channel_id> --content "Here's the screenshot" --file screenshot.png
+merlin chat send --channel <channel_id> --content "Here's the screenshot" --file screenshot.png
 
 # Just a file (no text)
-uv run discord_send.py send --channel <channel_id> --file report.pdf
+merlin chat send --channel <channel_id> --file report.pdf
 
 # Multiple files
-uv run discord_send.py send --channel <channel_id> --file a.png --file b.png --content "Two images"
+merlin chat send --channel <channel_id> --file a.png --file b.png --content "Two images"
 ```
 
 ### Reply to a message
 
 ```bash
-uv run discord_send.py reply --channel <channel_id> --message <message_id> --content "Your reply here"
+merlin chat reply --channel <channel_id> --message <message_id> --content "Your reply here"
 
 # Reply with attachment
-uv run discord_send.py reply --channel <channel_id> --message <message_id> --content "Here you go" --file result.png
+merlin chat reply --channel <channel_id> --message <message_id> --content "Here you go" --file result.png
 ```
 
 ### React to a message
 
 ```bash
-uv run discord_send.py react --channel <channel_id> --message <message_id> --emoji "✅"
+merlin chat react --channel <channel_id> --message <message_id> --emoji "✅"
 ```
 
 ### Rename a thread
 
 ```bash
-uv run discord_send.py rename-thread --thread <thread_id> --name "Short descriptive title"
+merlin chat rename-thread --thread <thread_id> --name "Short descriptive title"
 ```
 
 ## Output
@@ -72,7 +70,7 @@ For `reply`, only the first chunk is sent as an actual reply (with the reply ind
 When sending long messages to the **main channel** (not a thread), use `--thread-on-chunk` to preserve session continuity:
 
 ```bash
-uv run discord_send.py send --channel <channel_id> --content "Long message..." --thread-on-chunk
+merlin chat send --channel <channel_id> --content "Long message..." --thread-on-chunk
 ```
 
 This creates a thread from the first message and sends remaining chunks there. The user can then reply in the thread and Merlin will resume with the correct session context.
