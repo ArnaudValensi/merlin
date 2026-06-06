@@ -16,6 +16,7 @@ import subprocess
 import time
 from pathlib import Path
 
+import paths
 from lib.engine import AgentEngine, AgentResult
 
 logger = logging.getLogger("merlin.engine.claude_code")
@@ -23,6 +24,67 @@ logger = logging.getLogger("merlin.engine.claude_code")
 DEFAULT_MODEL = "claude-opus-4-6"
 
 _SCRIPT_DIR = Path(__file__).parent.parent.resolve()
+
+# Manifest content for the generated skills plugin. The plugin wraps the
+# canonical skill dir (~/.merlin/skills) so Claude Code surfaces Merlin's
+# skills natively (namespaced merlin:<skill>).
+_PLUGIN_MANIFEST = {
+    "name": "merlin",
+    "description": "Merlin operational skills",
+    "version": "1.0.0",
+}
+
+
+def skills_plugin_dir() -> Path:
+    """Location of the generated Claude Code skills plugin."""
+    return paths.merlin_home() / "skills-plugin"
+
+
+def ensure_skills_plugin() -> Path | None:
+    """Generate ~/.merlin/skills-plugin wrapping the canonical skill dir.
+
+    Layout: <plugin>/.claude-plugin/plugin.json plus <plugin>/skills as a
+    symlink to ~/.merlin/skills. Idempotent. Returns the plugin dir, or
+    None when there are no skills to expose (or generation fails).
+    """
+    from lib import skills
+
+    canonical = skills.canonical_dir()
+    try:
+        has_skills = canonical.is_dir() and any(
+            entry.is_dir() for entry in canonical.iterdir()
+        )
+    except OSError:
+        return None
+    if not has_skills:
+        return None
+
+    plugin_dir = skills_plugin_dir()
+    manifest = plugin_dir / ".claude-plugin" / "plugin.json"
+    desired = json.dumps(_PLUGIN_MANIFEST, indent=2) + "\n"
+
+    try:
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        if not manifest.exists() or manifest.read_text() != desired:
+            manifest.write_text(desired)
+
+        skills_link = plugin_dir / "skills"
+        if skills_link.is_symlink():
+            if skills_link.resolve() != canonical.resolve():
+                skills_link.unlink()
+                skills_link.symlink_to(canonical)
+        elif skills_link.exists():
+            logger.warning(
+                "%s exists and is not a symlink; not touching it", skills_link
+            )
+            return None
+        else:
+            skills_link.symlink_to(canonical)
+    except OSError as e:
+        logger.warning("Could not generate skills plugin: %s", e)
+        return None
+
+    return plugin_dir
 
 
 def _parse_stream_json(stdout: str) -> dict:
@@ -153,6 +215,11 @@ class ClaudeCodeEngine(AgentEngine):
 
         if max_budget_usd is not None:
             cmd.extend(["--max-budget-usd", str(max_budget_usd)])
+
+        # Expose Merlin's skills natively via the generated plugin
+        plugin_dir = ensure_skills_plugin()
+        if plugin_dir is not None:
+            cmd.extend(["--plugin-dir", str(plugin_dir)])
 
         # Format history as conversation context prepended to prompt
         full_prompt = prompt

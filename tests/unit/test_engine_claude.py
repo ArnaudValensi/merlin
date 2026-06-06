@@ -343,3 +343,75 @@ class TestErrorHandling:
             r = engine.invoke("hello")
         assert r.exit_code == 1
         assert r.stderr == "error"
+
+
+# ---------------------------------------------------------------------------
+# Skills plugin adapter
+# ---------------------------------------------------------------------------
+
+
+class TestSkillsPlugin:
+    def _make_canonical_skill(self, tmp_path, name="cron"):
+        from lib import skills
+
+        skill_dir = tmp_path / "src" / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: Test.\n---\n"
+        )
+        canonical = skills.canonical_dir()
+        canonical.mkdir(parents=True, exist_ok=True)
+        (canonical / name).symlink_to(skill_dir)
+        return canonical
+
+    def test_ensure_generates_manifest_and_symlink(self, tmp_path):
+        import json as _json
+
+        from lib import skills
+        from lib.engines.claude_code import ensure_skills_plugin
+
+        canonical = self._make_canonical_skill(tmp_path)
+        plugin_dir = ensure_skills_plugin()
+
+        assert plugin_dir is not None
+        manifest = _json.loads(
+            (plugin_dir / ".claude-plugin" / "plugin.json").read_text()
+        )
+        assert manifest["name"] == "merlin"
+        skills_link = plugin_dir / "skills"
+        assert skills_link.is_symlink()
+        assert skills_link.resolve() == canonical.resolve()
+        assert (skills_link / "cron" / "SKILL.md").is_file()
+        del skills  # imported for parity with other tests
+
+    def test_ensure_none_when_no_skills(self, tmp_path):
+        from lib.engines.claude_code import ensure_skills_plugin
+
+        assert ensure_skills_plugin() is None
+
+    def test_ensure_idempotent(self, tmp_path):
+        from lib.engines.claude_code import ensure_skills_plugin
+
+        self._make_canonical_skill(tmp_path)
+        first = ensure_skills_plugin()
+        second = ensure_skills_plugin()
+        assert first == second
+
+    def test_invoke_passes_plugin_dir(self, tmp_path):
+        from lib.engines.claude_code import ensure_skills_plugin
+
+        self._make_canonical_skill(tmp_path)
+        plugin_dir = ensure_skills_plugin()
+
+        engine = ClaudeCodeEngine()
+        with mock.patch("subprocess.run", return_value=_mock_proc(stdout="{}")) as m:
+            engine.invoke("hello")
+        cmd = m.call_args[0][0]
+        assert "--plugin-dir" in cmd
+        assert cmd[cmd.index("--plugin-dir") + 1] == str(plugin_dir)
+
+    def test_invoke_no_plugin_dir_without_skills(self, tmp_path):
+        engine = ClaudeCodeEngine()
+        with mock.patch("subprocess.run", return_value=_mock_proc(stdout="{}")) as m:
+            engine.invoke("hello")
+        assert "--plugin-dir" not in m.call_args[0][0]
