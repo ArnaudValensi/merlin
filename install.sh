@@ -365,5 +365,7 @@ if $DRY_RUN; then
     info "[dry-run] No changes were made."
 else
     info "Run 'merlin' to start (you may need to restart your shell first)."
+    info "On first start, Merlin exposes its skills to your own agents via"
+    info "~/.claude/skills and ~/.agents/skills (symlinks, refreshed each start)."
 fi
 echo ""

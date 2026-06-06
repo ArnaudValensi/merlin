@@ -927,11 +927,19 @@ def _skill_source_dirs() -> dict[str, Path]:
 
 
 def _rebuild_skill_registry() -> None:
-    """Build the skill registry and the canonical aggregation dir."""
+    """Build the skill registry, canonical aggregation, and user shims."""
     from lib import skills
 
     try:
         skills.rebuild(_skill_source_dirs())
+        # Interactive shims: expose the same skills to the user's own
+        # terminal agents (automatic, refreshed every startup)
+        skills.sync_interactive_shims()
+        logger.info(
+            "Skill shims refreshed in %s and %s",
+            skills.claude_skills_dir(),
+            skills.agents_skills_dir(),
+        )
     except Exception:
         logger.warning("Skill registry rebuild failed", exc_info=True)
 

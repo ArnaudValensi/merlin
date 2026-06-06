@@ -298,6 +298,32 @@ def _save_saas_token(token: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _refresh_skills() -> None:
+    """Build the skill registry and refresh the interactive shims.
+
+    Best-effort: setup must not fail because a shim could not be created.
+    The server startup repeats this on every start anyway.
+    """
+    try:
+        from lib import skills
+
+        sources = dict(ext_commands.builtin_extension_dirs())
+        reserved = ext_commands.reserved_names()
+        for ext_id, ext_dir in ext_commands.installed_extension_dirs().items():
+            if ext_id not in reserved:
+                sources[ext_id] = ext_dir
+
+        registry = skills.rebuild(sources)
+        skills.sync_interactive_shims()
+        print(
+            f"Skills: {len(registry)} aggregated into {skills.canonical_dir()}\n"
+            f"  Exposed to your own agents via {skills.claude_skills_dir()} "
+            f"and {skills.agents_skills_dir()}"
+        )
+    except Exception as e:
+        print(f"Warning: could not refresh skill shims: {e}", file=sys.stderr)
+
+
 def run_setup(config_path: Path | None = None) -> None:
     """Interactive first-run setup wizard.
 
@@ -413,6 +439,8 @@ def run_setup(config_path: Path | None = None) -> None:
     except OSError:
         pass  # Windows or unusual filesystem
     print(f"\nConfig saved to {target}")
+
+    _refresh_skills()
 
 
 # ---------------------------------------------------------------------------

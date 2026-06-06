@@ -18,11 +18,21 @@ def _reset_paths():
     paths._dev_mode_override = None
 
 
+# run_setup() refreshes skill shims under $HOME — never touch the real one
+# in tests. The dedicated shim test below opts back in with a fake HOME.
+@pytest.fixture(autouse=True)
+def _no_real_home_shims(monkeypatch):
+    import cli
+
+    monkeypatch.setattr(cli, "_refresh_skills", lambda: None)
+
+
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
 
 from cli import build_parser, get_version, run_setup, run_config, cli_main
+from cli import _refresh_skills as _real_refresh_skills  # captured pre-stub
 
 
 class TestArgumentParsing:
@@ -466,3 +476,34 @@ class TestDashboardUrl:
         cli_main(["dashboard-url"])
         out = capsys.readouterr().out.strip()
         assert out == "http://admin:pw@home.example.net:3123"
+
+
+# ---------------------------------------------------------------------------
+# Setup refreshes skills and shims
+# ---------------------------------------------------------------------------
+
+
+class TestSetupSkillRefresh:
+    def test_refresh_skills_builds_registry_and_shims(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        import cli
+
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path / "merlin-home"))
+
+        # The autouse fixture stubs cli._refresh_skills; call the original
+        # function object captured at import time.
+        del cli  # only the original matters here
+        _real_refresh_skills()
+        out = capsys.readouterr().out
+        assert "Skills:" in out
+
+        from lib import skills
+
+        # Built-in bot skills exposed through both shim scopes
+        assert (home / ".claude" / "skills" / "cron").is_symlink()
+        assert (home / ".agents" / "skills" / "cron").is_symlink()
+        assert (skills.canonical_dir() / "cron").is_symlink()
