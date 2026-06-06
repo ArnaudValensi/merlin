@@ -313,3 +313,88 @@ class TestInvoke:
         cmd = mock_run.call_args[0][0]
         idx = cmd.index("--append-system-prompt")
         assert "Be nice" in cmd[idx + 1]
+
+
+# ---------------------------------------------------------------------------
+# Skills fallback injection (engines without a native adapter)
+# ---------------------------------------------------------------------------
+
+
+class TestSkillsFallback:
+    def _make_canonical_skill(self, tmp_path, name="cron", description="Cron skill."):
+        from lib import skills
+
+        skill_dir = tmp_path / "src" / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: {description}\n---\n"
+        )
+        canonical = skills.canonical_dir()
+        canonical.mkdir(parents=True, exist_ok=True)
+        (canonical / name).symlink_to(skill_dir)
+
+    def _register_capture_engine(self, *, native_skills: bool):
+        captured: dict = {}
+
+        class CaptureEngine(AgentEngine):
+            name = "capture"
+            context_window = 1000
+
+            def invoke(self, prompt, **kwargs):
+                captured.update(kwargs)
+                return AgentResult(content="ok", exit_code=0, duration=0.1)
+
+            @property
+            def supports_native_skills(self):
+                return native_skills
+
+        register_engine("capture", CaptureEngine)
+        return captured
+
+    def test_fallback_injected_for_non_native_engine(self, tmp_path, monkeypatch):
+        from lib.engine import invoke
+
+        self._make_canonical_skill(tmp_path)
+        captured = self._register_capture_engine(native_skills=False)
+        monkeypatch.setenv("AGENT_ENGINE", "capture")
+
+        invoke("hello", caller="test")
+        system_prompt = captured["system_prompt"]
+        assert "# Available Skills" in system_prompt
+        assert "cron: Cron skill." in system_prompt
+        assert "SKILL.md" in system_prompt
+
+    def test_no_fallback_for_native_engine(self, tmp_path, monkeypatch):
+        from lib.engine import invoke
+
+        self._make_canonical_skill(tmp_path)
+        captured = self._register_capture_engine(native_skills=True)
+        monkeypatch.setenv("AGENT_ENGINE", "capture")
+
+        invoke("hello", caller="test")
+        assert "Available Skills" not in (captured["system_prompt"] or "")
+
+    def test_no_fallback_when_no_skills(self, tmp_path, monkeypatch):
+        from lib.engine import invoke
+
+        captured = self._register_capture_engine(native_skills=False)
+        monkeypatch.setenv("AGENT_ENGINE", "capture")
+
+        invoke("hello", caller="test")
+        assert "Available Skills" not in (captured["system_prompt"] or "")
+
+    def test_base_class_default_not_native(self):
+        class Bare(AgentEngine):
+            name = "bare"
+            context_window = 1
+
+            def invoke(self, prompt, **kwargs):
+                return AgentResult(content="", exit_code=0, duration=0)
+
+        assert Bare().supports_native_skills is False
+
+    def test_builtin_engines_are_native(self):
+        from lib.engine import get_engine
+
+        assert get_engine("claude-code").supports_native_skills is True
+        assert get_engine("opencode").supports_native_skills is True

@@ -185,3 +185,28 @@ class TestErrorHandling:
             r = engine.invoke("hello", timeout=10)
         assert r.exit_code == 124
         assert "timed out" in r.stderr
+
+
+class TestAgentsSkillsSync:
+    def test_invoke_syncs_agents_skills(self, tmp_path, monkeypatch):
+        from lib import skills
+
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+
+        # One canonical skill
+        skill_dir = tmp_path / "src" / "cron"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("---\nname: cron\ndescription: X.\n---\n")
+        canonical = skills.canonical_dir()
+        canonical.mkdir(parents=True, exist_ok=True)
+        (canonical / "cron").symlink_to(skill_dir)
+
+        engine = OpenCodeEngine()
+        with mock.patch("subprocess.run", return_value=_mock_proc(stdout="ok")):
+            engine.invoke("hello")
+
+        link = home / ".agents" / "skills" / "cron"
+        assert link.is_symlink()
+        assert (link / "SKILL.md").is_file()

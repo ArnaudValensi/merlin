@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 import paths
 from lib import skills
 
@@ -217,3 +219,97 @@ class TestMainSources:
         finally:
             main.extension_registry.clear()
             main.extension_registry.update(saved)
+
+
+# ---------------------------------------------------------------------------
+# Shim links (~/.agents/skills, ~/.claude/skills)
+# ---------------------------------------------------------------------------
+
+
+class TestShimLinks:
+    @pytest.fixture(autouse=True)
+    def _fake_home(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        self.home = home
+
+    def _canonical_with_skill(self, tmp_path, name="cron"):
+        bot_dir = tmp_path / "merlin-bot"
+        make_skill(bot_dir, name)
+        skills.rebuild({"merlin-bot": bot_dir})
+
+    def test_creates_per_skill_links(self, tmp_path):
+        self._canonical_with_skill(tmp_path, "cron")
+        skills.sync_shim_links(skills.agents_skills_dir())
+
+        link = self.home / ".agents" / "skills" / "cron"
+        assert link.is_symlink()
+        assert (link / "SKILL.md").is_file()
+        # Raw target points into the canonical dir (single source of truth)
+        import os as _os
+
+        assert str(skills.canonical_dir()) in _os.readlink(link)
+
+    def test_removes_stale_merlin_links_only(self, tmp_path):
+        self._canonical_with_skill(tmp_path, "cron")
+        target = skills.agents_skills_dir()
+        skills.sync_shim_links(target)
+        assert (target / "cron").is_symlink()
+
+        # Skill disappears from canonical
+        skills.rebuild({})
+        skills.sync_shim_links(target)
+        assert not (target / "cron").exists()
+
+    def test_foreign_entries_untouched(self, tmp_path, caplog):
+        foreign_dir = skills.agents_skills_dir() / "my-own-skill"
+        foreign_dir.mkdir(parents=True)
+        (foreign_dir / "SKILL.md").write_text("---\nname: my-own-skill\n---\n")
+
+        foreign_link_target = tmp_path / "elsewhere"
+        foreign_link_target.mkdir()
+        foreign_link = skills.agents_skills_dir() / "linked-skill"
+        foreign_link.symlink_to(foreign_link_target)
+
+        self._canonical_with_skill(tmp_path, "cron")
+        skills.sync_shim_links(skills.agents_skills_dir())
+
+        assert foreign_dir.is_dir() and not foreign_dir.is_symlink()
+        assert foreign_link.is_symlink()
+        assert foreign_link.resolve() == foreign_link_target.resolve()
+
+    def test_collision_with_foreign_entry_skipped(self, tmp_path, caplog):
+        taken = skills.agents_skills_dir() / "cron"
+        taken.mkdir(parents=True)
+
+        self._canonical_with_skill(tmp_path, "cron")
+        skills.sync_shim_links(skills.agents_skills_dir())
+
+        assert taken.is_dir() and not taken.is_symlink()
+        assert "skipped" in caplog.text.lower()
+
+    def test_sync_interactive_shims_covers_both_scopes(self, tmp_path):
+        self._canonical_with_skill(tmp_path, "cron")
+        skills.sync_interactive_shims()
+        assert (self.home / ".claude" / "skills" / "cron").is_symlink()
+        assert (self.home / ".agents" / "skills" / "cron").is_symlink()
+
+
+# ---------------------------------------------------------------------------
+# Canonical read-back
+# ---------------------------------------------------------------------------
+
+
+class TestListCanonical:
+    def test_lists_after_rebuild(self, tmp_path):
+        bot_dir = tmp_path / "merlin-bot"
+        make_skill(bot_dir, "cron", description="Cron skill.")
+        skills.rebuild({"merlin-bot": bot_dir})
+
+        specs = skills.list_canonical_skills()
+        assert [s.name for s in specs] == ["cron"]
+        assert specs[0].description == "Cron skill."
+
+    def test_empty_when_no_canonical(self):
+        assert skills.list_canonical_skills() == []

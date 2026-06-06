@@ -118,6 +118,15 @@ class OpenCodeEngine(AgentEngine):
         max_budget_usd: float | None = None,
     ) -> AgentResult:
         """Invoke OpenCode CLI in non-interactive mode."""
+        # OpenCode reads ~/.agents/skills/<name>/SKILL.md natively (no
+        # nesting) — refresh the per-skill links before invoking.
+        from lib import skills
+
+        try:
+            skills.sync_shim_links(skills.agents_skills_dir())
+        except OSError as e:
+            logger.warning("Could not sync ~/.agents/skills links: %s", e)
+
         cmd = ["opencode", "run"]
 
         if model:
@@ -207,3 +216,7 @@ class OpenCodeEngine(AgentEngine):
     @property
     def supports_streaming(self) -> bool:
         return False
+
+    @property
+    def supports_native_skills(self) -> bool:
+        return True  # Via ~/.agents/skills per-skill links

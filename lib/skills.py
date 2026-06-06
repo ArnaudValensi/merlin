@@ -22,6 +22,7 @@ The Extensions page lists each extension's skills and commands read-only.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -196,3 +197,88 @@ def rebuild(extension_dirs: dict[str, Path]) -> dict[str, SkillSpec]:
 def get_registry() -> dict[str, SkillSpec]:
     """The registry from the last rebuild (empty if never built)."""
     return _registry
+
+
+def list_canonical_skills() -> list[SkillSpec]:
+    """Read skills back from the canonical dir (works across processes).
+
+    The in-memory registry only exists in the process that built it; cron
+    runner subprocesses and the engine fallback read the aggregation instead.
+    """
+    return _discover_source("canonical", canonical_dir())
+
+
+# ---------------------------------------------------------------------------
+# Interactive shims and per-skill engine link farms
+# ---------------------------------------------------------------------------
+
+
+def agents_skills_dir() -> Path:
+    """The cross-engine user skill location (~/.agents/skills).
+
+    Read natively by OpenCode and Pi. Skills must sit directly at
+    ``~/.agents/skills/<name>/SKILL.md`` (no nesting), hence per-skill links.
+    """
+    return Path.home() / ".agents" / "skills"
+
+
+def claude_skills_dir() -> Path:
+    """Claude Code's personal skill location (~/.claude/skills)."""
+    return Path.home() / ".claude" / "skills"
+
+
+def _is_merlin_link(entry: Path) -> bool:
+    """True if entry is a symlink we own (raw target inside the canonical dir)."""
+    if not entry.is_symlink():
+        return False
+    try:
+        raw_target = Path(os.readlink(entry))
+    except OSError:
+        return False
+    canonical = canonical_dir()
+    return raw_target == canonical / entry.name or raw_target.is_relative_to(canonical)
+
+
+def sync_shim_links(target_dir: Path) -> None:
+    """Mirror the canonical skills into ``target_dir`` via per-skill symlinks.
+
+    Unlike the canonical dir (where every symlink is managed), shim dirs are
+    shared with the user's own skills: only symlinks pointing into the
+    canonical dir are touched. Foreign entries are skipped with a warning on
+    name collision, never overwritten.
+    """
+    canonical = canonical_dir()
+    names = {spec.name for spec in list_canonical_skills()}
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    for entry in target_dir.iterdir():
+        if _is_merlin_link(entry) and entry.name not in names:
+            entry.unlink()
+
+    for name in sorted(names):
+        link = target_dir / name
+        if _is_merlin_link(link):
+            continue
+        if link.exists() or link.is_symlink():
+            logger.warning(
+                "Skill shim '%s' skipped: %s already exists and is not "
+                "managed by Merlin",
+                name,
+                link,
+            )
+            continue
+        link.symlink_to(canonical / name)
+
+
+def sync_interactive_shims() -> None:
+    """Refresh the user-scope shims (~/.claude/skills and ~/.agents/skills).
+
+    This is what gives the user's own terminal agents Merlin's skills from
+    any cwd. Called at server startup and by 'merlin setup'.
+    """
+    for target in (claude_skills_dir(), agents_skills_dir()):
+        try:
+            sync_shim_links(target)
+        except OSError as e:
+            logger.warning("Could not sync skill shims into %s: %s", target, e)

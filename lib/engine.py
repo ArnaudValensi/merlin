@@ -117,6 +117,15 @@ class AgentEngine(ABC):
         """Whether stdout can be streamed in real-time."""
         return False
 
+    @property
+    def supports_native_skills(self) -> bool:
+        """Whether this engine surfaces Merlin's skills natively.
+
+        Engines without a native adapter get a fallback: a table of skill
+        names and descriptions injected into the system prompt.
+        """
+        return False
+
 
 # ---------------------------------------------------------------------------
 # Engine registry
@@ -212,6 +221,30 @@ def _build_system_prompt(
     return "\n\n".join(parts) if parts else None
 
 
+def _build_skills_fallback() -> str | None:
+    """System-prompt skill table for engines without a native adapter.
+
+    Reads the canonical aggregation from disk so it works in any process
+    (the in-memory registry only exists where it was built).
+    """
+    from lib import skills
+
+    specs = skills.list_canonical_skills()
+    if not specs:
+        return None
+
+    lines = [
+        "# Available Skills",
+        "",
+        "To use a skill, read its SKILL.md at the given path and follow it.",
+        "",
+    ]
+    for spec in specs:
+        description = spec.description or "(no description)"
+        lines.append(f"- {spec.name}: {description} (read {spec.path / 'SKILL.md'})")
+    return "\n".join(lines)
+
+
 def _save_session_file(
     stdout: str, caller: str, session_id: str | None, start_time: datetime
 ) -> str | None:
@@ -278,6 +311,14 @@ def invoke(
 
     # Build system prompt
     system_prompt = _build_system_prompt(append_system_prompt, extra_system_prompts)
+
+    # Engines without a native skill adapter get the fallback table appended
+    if not engine.supports_native_skills:
+        skills_block = _build_skills_fallback()
+        if skills_block:
+            system_prompt = (
+                f"{system_prompt}\n\n{skills_block}" if system_prompt else skills_block
+            )
 
     # Load session history if available
     history = load_session(session_id) if session_id else None

@@ -313,3 +313,7 @@ class ClaudeCodeEngine(AgentEngine):
     @property
     def supports_streaming(self) -> bool:
         return False
+
+    @property
+    def supports_native_skills(self) -> bool:
+        return True  # Via the generated --plugin-dir skills plugin
