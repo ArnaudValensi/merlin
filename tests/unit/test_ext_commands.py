@@ -135,6 +135,13 @@ class TestListCommands:
     def test_missing_commands_dir(self, tmp_path):
         assert ext_commands.list_commands(tmp_path / "nothing") == {}
 
+    def test_skips_underscore_prefixed_files(self, tmp_path):
+        ext_dir = tmp_path / "ext"
+        make_command(ext_dir, "real")
+        make_command(ext_dir, "__init__")  # executable or not, never a command
+        make_command(ext_dir, "_helper")
+        assert sorted(ext_commands.list_commands(ext_dir)) == ["real"]
+
     def test_stem_collision_first_sorted_wins(self, tmp_path):
         ext_dir = tmp_path / "ext"
         make_command(ext_dir, "add", suffix=".py")
@@ -189,8 +196,19 @@ class TestFormatExtensionHelp:
         assert "merlin tasks add" in text
         assert "Add a task to the list." in text
 
-    def test_empty_when_no_commands(self):
+    def test_empty_when_no_commands(self, monkeypatch):
+        # The real notes built-in ships commands; stub built-ins out to
+        # exercise the no-commands case.
+        monkeypatch.setattr(ext_commands, "builtin_extension_dirs", lambda: {})
         assert ext_commands.format_extension_help() == ""
+
+    def test_real_notes_builtin_enumerated(self):
+        """The shipped notes built-in appears in the help catalog."""
+        text = ext_commands.format_extension_help()
+        assert "Built-in extensions:" in text
+        assert "merlin notes search" in text
+        assert "merlin notes kb" in text
+        assert "merlin notes remember" in text
 
     def test_reserved_installed_extension_skipped_with_warning(
         self, tmp_path, capsys, monkeypatch
@@ -479,3 +497,50 @@ class TestEndToEnd:
         result = run_cli(["tasks", "pep", "x"], tmp_path)
         assert result.returncode == 0, result.stderr
         assert "pep723-ok:x" in result.stdout
+
+
+class TestBuiltinNotesEndToEnd:
+    """The notes built-in ships real convention commands — exercise them."""
+
+    def _make_kb(self, home: Path) -> None:
+        kb = home / "notes" / "kb"
+        kb.mkdir(parents=True)
+        (kb / "docker-tips.md").write_text(
+            "---\n"
+            "title: Docker Tips\n"
+            "created: 2026-01-01\n"
+            "tags: [devops]\n"
+            "summary: Compose patterns\n"
+            "---\n\n# Docker Tips\n"
+        )
+
+    def test_merlin_notes_search_kb(self, tmp_path):
+        self._make_kb(tmp_path)
+        result = run_cli(["notes", "search", "kb"], tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert "Docker Tips" in result.stdout
+
+    def test_merlin_kb_alias_add_dry_run(self, tmp_path):
+        self._make_kb(tmp_path)
+        result = run_cli(
+            [
+                "kb",
+                "add",
+                "--title",
+                "New Note",
+                "--tags",
+                "devops",
+                "--content",
+                "Some content",
+                "--dry-run",
+            ],
+            tmp_path,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "Dry run" in result.stdout
+        assert "new-note.md" in result.stdout
+
+    def test_merlin_remember_help(self, tmp_path):
+        result = run_cli(["remember", "--help"], tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert "merlin remember" in result.stdout

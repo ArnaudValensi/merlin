@@ -1,4 +1,8 @@
-"""Search Merlin's notes: knowledge base and daily logs."""
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = []
+# ///
+"""Search Merlin's notes: knowledge base (Zettelkasten) and daily logs."""
 
 from __future__ import annotations
 
@@ -9,8 +13,10 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))  # project root for paths module
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root for paths
 import paths
+
+paths.load_config_env()  # Honor config.env (e.g. NOTES_DIR) from any cwd
 
 NOTES_DIR = paths.notes_dir()
 KB_DIR = NOTES_DIR / "kb"
@@ -338,34 +344,35 @@ def cmd_tags(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
+        prog="merlin notes search",
         description="Search Merlin's notes (knowledge base and daily logs).",
         epilog="""
 Examples:
   # List all KB entries
-  uv run notes_search.py kb
+  merlin notes search kb
 
   # Search KB by keyword
-  uv run notes_search.py kb --keyword "docker"
+  merlin notes search kb --keyword "docker"
 
   # Search KB by tag
-  uv run notes_search.py kb --tag "project"
+  merlin notes search kb --tag "project"
 
   # List all daily logs
-  uv run notes_search.py log
+  merlin notes search log
 
   # Search logs from last 7 days
-  uv run notes_search.py log --keyword "deployment" --last 7
+  merlin notes search log --keyword "deployment" --last 7
 
   # Search logs in date range
-  uv run notes_search.py log --keyword "error" --from 2026-01-01 --to 2026-01-31
+  merlin notes search log --keyword "error" --from 2026-01-01 --to 2026-01-31
 
   # List all tags used in the KB
-  uv run notes_search.py tags
+  merlin notes search tags
 
   # With Discord formatting
-  uv run notes_search.py kb --keyword "music" --discord
+  merlin notes search kb --keyword "music" --discord
 
 Output:
   Results are printed to stdout as formatted text (markdown-ish).
@@ -415,7 +422,7 @@ Output:
     )
     tags_parser.set_defaults(func=cmd_tags)
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.command:
         parser.print_help()

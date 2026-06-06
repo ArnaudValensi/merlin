@@ -1,9 +1,13 @@
-"""Add facts to Merlin's user memory (notes/user.md).
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = []
+# ///
+"""Add facts to Merlin's user memory (user.md).
 
 Appends facts to the appropriate section of user.md. Facts are short,
 durable things about the user — preferences, identity, context.
 
-For longer knowledge entries, use kb_add.py instead.
+For longer knowledge entries, use 'merlin kb add' instead.
 """
 
 from __future__ import annotations
@@ -13,8 +17,10 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))  # project root for paths module
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root for paths
 import paths
+
+paths.load_config_env()  # Honor config.env (e.g. NOTES_DIR) from any cwd
 
 NOTES_DIR = paths.notes_dir()
 USER_MD = NOTES_DIR / "user.md"
@@ -171,21 +177,22 @@ def cmd_list(args: argparse.Namespace) -> None:
     print(list_facts())
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Manage Merlin's user memory (notes/user.md).",
+        prog="merlin remember",
+        description="Manage Merlin's user memory (user.md).",
         epilog="""
 Examples:
   # Add a fact to the Notes section (default)
-  uv run remember.py add "Prefers dark mode in all editors"
+  merlin remember add "Prefers dark mode in all editors"
 
   # Add to a specific section
-  uv run remember.py add "Name: Alex" --section identity
-  uv run remember.py add "Likes concise responses" --section preferences
-  uv run remember.py add "Working on Merlin bot project" --section context
+  merlin remember add "Name: Alex" --section identity
+  merlin remember add "Likes concise responses" --section preferences
+  merlin remember add "Working on Merlin bot project" --section context
 
   # List all stored facts
-  uv run remember.py list
+  merlin remember list
 
 Sections:
   identity     — Name, timezone, personal details
@@ -193,7 +200,9 @@ Sections:
   context      — Current projects, interests, ongoing work
   notes        — General facts (default)
 
-For longer knowledge entries, use kb_add.py instead.
+For longer knowledge entries, use 'merlin kb add' instead.
+
+Also available as: merlin notes remember
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -220,7 +229,7 @@ For longer knowledge entries, use kb_add.py instead.
     )
     list_parser.set_defaults(func=cmd_list)
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.command:
         parser.print_help()

@@ -1,3 +1,7 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = []
+# ///
 """Add entries to Merlin's knowledge base with automatic link discovery.
 
 Creates atomic KB notes following the Zettelkasten method:
@@ -19,8 +23,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))  # project root for paths module
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root for paths
 import paths
+
+paths.load_config_env()  # Honor config.env (e.g. NOTES_DIR) from any cwd
 
 NOTES_DIR = paths.notes_dir()
 KB_DIR = NOTES_DIR / "kb"
@@ -392,27 +398,37 @@ def cmd_add(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Add entries to Merlin's knowledge base with automatic link discovery.",
+        prog="merlin kb",
+        description="Merlin's knowledge base (Zettelkasten).",
+        epilog="Also available as: merlin notes kb",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+
+    add_parser = subparsers.add_parser(
+        "add",
+        help="Add a KB entry with automatic link discovery",
+        description="Add an entry to the knowledge base with automatic link discovery.",
         epilog="""
 Examples:
   # Add a simple note
-  uv run kb_add.py --title "Docker Compose Tips" \\
+  merlin kb add --title "Docker Compose Tips" \\
     --tags "devops, docker" \\
     --summary "Useful patterns for docker-compose" \\
     --content "Use volumes for persistent data..."
 
   # Pipe content from a file or command
-  echo "Long article content..." | uv run kb_add.py \\
+  echo "Long article content..." | merlin kb add \\
     --title "Article Notes" --tags "reading"
 
   # Preview without creating (shows related notes found)
-  uv run kb_add.py --title "Mechanical Keyboards" \\
+  merlin kb add --title "Mechanical Keyboards" \\
     --tags "tech, gear" --content "..." --dry-run
 
   # Force create even if duplicate detected
-  uv run kb_add.py --title "Docker Setup" \\
+  merlin kb add --title "Docker Setup" \\
     --tags "devops" --content "..." --force
 
 How it works:
@@ -427,32 +443,40 @@ context clean (Zettelkasten link discovery can be token-heavy).
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument(
+    add_parser.add_argument(
         "--title",
         "-t",
         required=True,
         help="Note title (also used to generate filename)",
     )
-    parser.add_argument(
+    add_parser.add_argument(
         "--tags", "-T", help="Comma-separated tags (e.g. 'music, gear, shopping')"
     )
-    parser.add_argument("--summary", "-s", help="One-line summary for quick scanning")
-    parser.add_argument("--content", "-c", help="Note content (or pipe via stdin)")
-    parser.add_argument(
+    add_parser.add_argument(
+        "--summary", "-s", help="One-line summary for quick scanning"
+    )
+    add_parser.add_argument("--content", "-c", help="Note content (or pipe via stdin)")
+    add_parser.add_argument(
         "--filename", "-f", help="Override auto-generated filename (without .md)"
     )
-    parser.add_argument(
+    add_parser.add_argument(
         "--dry-run",
         "-n",
         action="store_true",
         help="Preview what would be created (no file changes)",
     )
-    parser.add_argument(
+    add_parser.add_argument(
         "--force", action="store_true", help="Create even if duplicate detected"
     )
+    add_parser.set_defaults(func=cmd_add)
 
-    args = parser.parse_args()
-    cmd_add(args)
+    args = parser.parse_args(argv)
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    args.func(args)
 
 
 if __name__ == "__main__":

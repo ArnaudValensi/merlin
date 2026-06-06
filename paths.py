@@ -83,6 +83,30 @@ def bot_config_path() -> Path:
     return merlin_home() / "config.env"
 
 
+def load_config_env() -> None:
+    """Load config.env into os.environ (existing env vars win).
+
+    Stdlib-only equivalent of dotenv's load_dotenv for KEY=VALUE files, so
+    dependency-free command scripts can honor config.env (e.g. NOTES_DIR)
+    from any cwd.
+    """
+    config = config_path()
+    if not config.exists():
+        return
+    try:
+        lines = config.read_text().splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key:
+            os.environ.setdefault(key, value.strip())
+
+
 def notes_dir() -> Path:
     """Notes directory (notes, kb/, user.md, logs/).
 
