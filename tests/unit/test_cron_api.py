@@ -316,6 +316,38 @@ class TestUpdateJob:
         resp = client.put("/api/cron/jobs/test-job", json={"prompt": ""})
         assert resp.status_code == 422
 
+    def test_update_type_switch_without_command_rejected(self, client):
+        """Switching a prompt job to type=command requires a command."""
+        client.post("/api/cron/jobs", json=_sample_job())
+        resp = client.put("/api/cron/jobs/test-job", json={"type": "command"})
+        assert resp.status_code == 422
+        assert "command" in resp.json()["detail"]
+
+    def test_update_type_switch_with_command_accepted(self, client):
+        """Switching to type=command works when a command is supplied."""
+        client.post("/api/cron/jobs", json=_sample_job())
+        resp = client.put(
+            "/api/cron/jobs/test-job",
+            json={"type": "command", "command": "echo hi"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["type"] == "command"
+
+    def test_update_type_switch_to_prompt_without_prompt_rejected(self, client):
+        """Switching a command job to type=prompt requires a prompt."""
+        client.post(
+            "/api/cron/jobs",
+            json={
+                "id": "cmd-only",
+                "schedule": "0 3 * * *",
+                "type": "command",
+                "command": "echo hi",
+            },
+        )
+        resp = client.put("/api/cron/jobs/cmd-only", json={"type": "prompt"})
+        assert resp.status_code == 422
+        assert "prompt" in resp.json()["detail"]
+
     def test_update_command_field(self, client):
         """PUT updates a command job's command."""
         client.post(

@@ -135,6 +135,21 @@ def update_job(job_id: str, body: JobUpdate):
     for key, value in update_data.items():
         job[key] = value
 
+    # Validate the MERGED job: switching type without supplying the matching
+    # action field would otherwise persist e.g. an empty command that runs
+    # `bash -lc ""` and "succeeds" forever.
+    if job.get("type", "prompt") == "command":
+        if not (job.get("command") or "").strip():
+            raise HTTPException(
+                status_code=422,
+                detail="command must be non-empty for a command job",
+            )
+    elif not (job.get("prompt") or "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail="prompt must be non-empty for a prompt job",
+        )
+
     manage.save_job(job_id, job)
 
     job["id"] = job_id
