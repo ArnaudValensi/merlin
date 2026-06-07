@@ -346,3 +346,71 @@ class TestModuleIntegration:
         """In dev mode, app_dir should point to the repo root (which exists)."""
         paths.set_dev_mode(True)
         assert paths.app_dir().is_dir()
+
+
+class TestLoadConfigEnv:
+    """load_config_env matches dotenv semantics for hand-edited files."""
+
+    def _write(self, tmp_path, content):
+        import paths
+
+        paths.config_path().write_text(content)
+
+    def test_plain_values(self, tmp_path, monkeypatch):
+        import paths
+
+        monkeypatch.delenv("MY_TEST_KEY", raising=False)
+        self._write(tmp_path, "MY_TEST_KEY=plain value\n")
+        paths.load_config_env()
+        import os
+
+        assert os.environ.pop("MY_TEST_KEY") == "plain value"
+
+    def test_quoted_values_stripped(self, tmp_path, monkeypatch):
+        import os
+
+        import paths
+
+        for raw, expected, key in (
+            ('"/home/u/my notes"', "/home/u/my notes", "Q_DOUBLE"),
+            ("'/home/u/my notes'", "/home/u/my notes", "Q_SINGLE"),
+        ):
+            monkeypatch.delenv(key, raising=False)
+            self._write(tmp_path, f"{key}={raw}\n")
+            paths.load_config_env()
+            assert os.environ.pop(key) == expected
+
+    def test_export_prefix_stripped(self, tmp_path, monkeypatch):
+        import os
+
+        import paths
+
+        monkeypatch.delenv("EXPORTED_KEY", raising=False)
+        self._write(tmp_path, "export EXPORTED_KEY=value\n")
+        paths.load_config_env()
+        assert os.environ.pop("EXPORTED_KEY") == "value"
+
+    def test_existing_env_wins(self, tmp_path, monkeypatch):
+        import os
+
+        import paths
+
+        monkeypatch.setenv("PRESET_KEY", "from-env")
+        self._write(tmp_path, "PRESET_KEY=from-file\n")
+        paths.load_config_env()
+        assert os.environ["PRESET_KEY"] == "from-env"
+
+    def test_mismatched_quotes_kept(self, tmp_path, monkeypatch):
+        import os
+
+        import paths
+
+        monkeypatch.delenv("ODD_KEY", raising=False)
+        self._write(tmp_path, 'ODD_KEY="half quoted\n')
+        paths.load_config_env()
+        assert os.environ.pop("ODD_KEY") == '"half quoted'
+
+    def test_missing_file_noop(self, tmp_path):
+        import paths
+
+        paths.load_config_env()  # No config.env in tmp home: no crash

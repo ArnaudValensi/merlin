@@ -88,7 +88,9 @@ def load_config_env() -> None:
 
     Stdlib-only equivalent of dotenv's load_dotenv for KEY=VALUE files, so
     dependency-free command scripts can honor config.env (e.g. NOTES_DIR)
-    from any cwd.
+    from any cwd. Matches dotenv's handling of hand-edited files: an
+    optional ``export `` prefix and matching surrounding quotes are
+    stripped, so every Merlin process resolves the same values.
     """
     config = config_path()
     if not config.exists():
@@ -101,10 +103,15 @@ def load_config_env() -> None:
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
+        if line.startswith("export "):
+            line = line[len("export ") :]
         key, _, value = line.partition("=")
         key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
         if key:
-            os.environ.setdefault(key, value.strip())
+            os.environ.setdefault(key, value)
 
 
 def notes_dir() -> Path:
