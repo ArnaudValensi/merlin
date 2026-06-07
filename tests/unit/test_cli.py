@@ -468,6 +468,18 @@ class TestDashboardUrl:
         out = capsys.readouterr().out.strip()
         assert out == "http://admin:p%40ss%2Fword@localhost:3123"
 
+    def test_scheme_less_override_normalized(self, monkeypatch, capsys):
+        monkeypatch.setenv("MERLIN_DASHBOARD_URL", "box.example.com:3123")
+        monkeypatch.setenv("DASHBOARD_PASS", "pw")
+        cli_main(["dashboard-url"])
+        out = capsys.readouterr().out.strip()
+        assert out == "http://admin:pw@box.example.com:3123"
+
+    def test_scheme_less_bare_host(self, monkeypatch, capsys):
+        monkeypatch.setenv("MERLIN_DASHBOARD_URL", "box.example.com")
+        cli_main(["dashboard-url"])
+        assert capsys.readouterr().out.strip() == "http://box.example.com"
+
     def test_reads_config_env(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
         (tmp_path / "config.env").write_text(

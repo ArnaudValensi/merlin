@@ -621,13 +621,19 @@ def run_dashboard_url() -> None:
     Resolution: MERLIN_DASHBOARD_URL (explicit override, e.g. a DNS name
     pointing at the box) > https://TUNNEL_HOSTNAME (named tunnel) >
     http://localhost:3123. Quick-tunnel URLs are ephemeral and unknown
-    here; set MERLIN_DASHBOARD_URL for a stable address.
+    here; set MERLIN_DASHBOARD_URL for a stable address. A scheme-less
+    override (bare host or host:port) is normalized to http://.
     """
     from urllib.parse import quote, urlsplit, urlunsplit
 
     paths.load_config_env()
 
     base = os.getenv("MERLIN_DASHBOARD_URL", "").strip()
+    if base and "://" not in base:
+        # A bare DNS name (which the resolution above invites) would land
+        # in urlsplit's .path and produce a mangled URL with credentials
+        # attached to an empty host.
+        base = f"http://{base}"
     if not base:
         hostname = os.getenv("TUNNEL_HOSTNAME", "").strip()
         base = f"https://{hostname}" if hostname else "http://localhost:3123"
