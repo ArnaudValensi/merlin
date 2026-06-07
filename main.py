@@ -191,8 +191,12 @@ class ExtensionInfo:
 
 extension_registry: dict[str, ExtensionInfo] = {}
 
-# Built-in extension defaults (hardcoded, not declared by extensions)
-BUILT_IN_DEFAULTS: dict[str, bool] = {"notes": True, "merlin-bot": False}
+# Built-in extension defaults — single source of truth lives in
+# ext_commands.py so the CLI (merlin setup) resolves enabled state the
+# same way the server does.
+import ext_commands as _ext_commands
+
+BUILT_IN_DEFAULTS: dict[str, bool] = _ext_commands.BUILTIN_DEFAULT_ENABLED
 
 
 def _load_extensions_state() -> dict:

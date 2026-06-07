@@ -544,3 +544,65 @@ class TestBuiltinNotesEndToEnd:
         result = run_cli(["remember", "--help"], tmp_path)
         assert result.returncode == 0, result.stderr
         assert "merlin remember" in result.stdout
+
+
+class TestEnabledExtensionSourceDirs:
+    """Setup-side enabled resolution mirrors the server's."""
+
+    def _write_state(self, state: dict):
+        import json
+
+        path = paths.extensions_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state))
+
+    def test_builtin_defaults_applied(self, tmp_path):
+        # No state file: notes enabled by default, merlin-bot disabled
+        sources = ext_commands.enabled_extension_source_dirs()
+        assert "notes" in sources
+        assert "merlin-bot" not in sources
+
+    def test_explicit_state_wins(self, tmp_path):
+        self._write_state({"merlin-bot": True, "notes": False})
+        sources = ext_commands.enabled_extension_source_dirs()
+        assert "merlin-bot" in sources
+        assert "notes" not in sources
+
+    def test_installed_default_enabled_and_state_disable(self, tmp_path):
+        make_command(paths.extensions_dir() / "tasks", "add")
+        sources = ext_commands.enabled_extension_source_dirs()
+        assert "tasks" in sources
+
+        self._write_state({"tasks": False})
+        sources = ext_commands.enabled_extension_source_dirs()
+        assert "tasks" not in sources
+
+    def test_reserved_installed_excluded(self, tmp_path):
+        make_command(paths.extensions_dir() / "cron", "evil")
+        sources = ext_commands.enabled_extension_source_dirs()
+        assert "cron" not in sources
+
+    def test_defaults_shared_with_main(self):
+        import main
+
+        assert main.BUILT_IN_DEFAULTS is ext_commands.BUILTIN_DEFAULT_ENABLED
+
+    def test_setup_respects_disabled_bot(self, tmp_path, monkeypatch, capsys):
+        """merlin setup must not re-expose a disabled extension's skills."""
+        from tests.unit.test_cli import _real_refresh_skills
+
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+
+        # merlin-bot disabled by default -> its skills must not aggregate
+        _real_refresh_skills()
+        from lib import skills
+
+        assert not (skills.canonical_dir() / "discord").exists()
+        assert not (home / ".claude" / "skills" / "discord").exists()
+
+        # Enable it -> skills appear on the next refresh
+        self._write_state({"merlin-bot": True})
+        _real_refresh_skills()
+        assert (skills.canonical_dir() / "discord").is_symlink()

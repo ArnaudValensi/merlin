@@ -67,6 +67,10 @@ TOP_LEVEL_ALIASES: dict[str, tuple[str, str]] = {
     "remember": ("notes", "remember"),
 }
 
+# Default enabled state for built-in extensions when extensions.json has no
+# entry. Shared with main.py so the CLI and the server agree.
+BUILTIN_DEFAULT_ENABLED: dict[str, bool] = {"notes": True, "merlin-bot": False}
+
 
 def reserved_names() -> set[str]:
     """All names an installed extension directory may not use."""
@@ -153,6 +157,42 @@ def installed_extension_dirs() -> dict[str, Path]:
     if not extensions_dir.is_dir():
         return {}
     return {d.name: d for d in sorted(extensions_dir.iterdir()) if d.is_dir()}
+
+
+def enabled_extension_source_dirs() -> dict[str, Path]:
+    """Extension roots whose surfaces (skills) are active per extensions.json.
+
+    Mirrors the server's enabled resolution (explicit state, then built-in
+    defaults, then enabled-by-default for installed) without importing
+    main.py, so 'merlin setup' aggregates the same skill set the server
+    will. Reserved-named installed dirs are excluded, matching the server
+    loader's rejection.
+    """
+    import json
+
+    state: dict = {}
+    state_path = paths.extensions_state_path()
+    if state_path.exists():
+        try:
+            data = json.loads(state_path.read_text())
+            if isinstance(data, dict):
+                state = data
+        except (OSError, json.JSONDecodeError):
+            state = {}
+
+    sources: dict[str, Path] = {}
+    for ext_id, ext_dir in builtin_extension_dirs().items():
+        if state.get(ext_id, BUILTIN_DEFAULT_ENABLED.get(ext_id, True)):
+            sources[ext_id] = ext_dir
+
+    reserved = reserved_names()
+    for ext_id, ext_dir in installed_extension_dirs().items():
+        if ext_id in reserved:
+            continue
+        if state.get(ext_id, True):
+            sources[ext_id] = ext_dir
+
+    return sources
 
 
 # ---------------------------------------------------------------------------

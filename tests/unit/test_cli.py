@@ -487,16 +487,21 @@ class TestSetupSkillRefresh:
     def test_refresh_skills_builds_registry_and_shims(
         self, tmp_path, monkeypatch, capsys
     ):
-        import cli
+        import json
 
         home = tmp_path / "home"
         home.mkdir()
         monkeypatch.setenv("HOME", str(home))
         monkeypatch.setenv("MERLIN_HOME", str(tmp_path / "merlin-home"))
 
+        # merlin-bot is disabled by default; enable it so its skills (the
+        # only built-in skills today) participate in the refresh.
+        state_path = paths.extensions_state_path()
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps({"merlin-bot": True}))
+
         # The autouse fixture stubs cli._refresh_skills; call the original
         # function object captured at import time.
-        del cli  # only the original matters here
         _real_refresh_skills()
         out = capsys.readouterr().out
         assert "Skills:" in out

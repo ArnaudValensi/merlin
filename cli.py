@@ -307,11 +307,9 @@ def _refresh_skills() -> None:
     try:
         from lib import skills
 
-        sources = dict(ext_commands.builtin_extension_dirs())
-        reserved = ext_commands.reserved_names()
-        for ext_id, ext_dir in ext_commands.installed_extension_dirs().items():
-            if ext_id not in reserved:
-                sources[ext_id] = ext_dir
+        # Same enabled-state resolution as the server: a disabled
+        # extension's skills must not be re-exposed by setup.
+        sources = ext_commands.enabled_extension_source_dirs()
 
         registry = skills.rebuild(sources)
         skills.sync_interactive_shims()
