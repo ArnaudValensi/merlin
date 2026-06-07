@@ -446,6 +446,35 @@ def run_setup(config_path: Path | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _delegate_cron(argv: list[str]) -> None:
+    from cron.manage import main as cron_main
+
+    cron_main(argv, prog="merlin cron")
+
+
+def _delegate_chat(argv: list[str]) -> None:
+    from lib.chat import main as chat_main
+
+    chat_main(argv)
+
+
+# Delegated core commands: cli_main routes them before argparse so every arg
+# (including --help) reaches the command's own parser, and build_parser
+# registers a help stub from the same entry. Adding a command here is the
+# whole job (plus listing it in ext_commands.CORE_COMMANDS, which the drift
+# test enforces).
+DELEGATED_COMMANDS: dict[str, tuple] = {
+    "cron": (
+        _delegate_cron,
+        "Manage scheduled cron jobs (list/get/add/enable/disable/remove/trigger/history)",
+    ),
+    "chat": (
+        _delegate_chat,
+        "Send messages, replies, and reactions to the chat channel",
+    ),
+}
+
+
 def build_parser(include_extension_help: bool = True) -> argparse.ArgumentParser:
     """Build the CLI argument parser with subcommands.
 
@@ -513,21 +542,11 @@ def build_parser(include_extension_help: bool = True) -> argparse.ArgumentParser
         ),
     )
 
-    # cron — routed before argparse in cli_main so all args (including
-    # --help) pass through to cron/manage.py's own parser. Registered here
-    # only so it appears under Core commands in 'merlin --help'.
-    subparsers.add_parser(
-        "cron",
-        help="Manage scheduled cron jobs (list/get/add/enable/disable/remove/trigger/history)",
-        add_help=False,
-    )
-
-    # chat — routed before argparse in cli_main (same pass-through as cron)
-    subparsers.add_parser(
-        "chat",
-        help="Send messages, replies, and reactions to the chat channel",
-        add_help=False,
-    )
+    # Delegated commands — routed before argparse in cli_main so all args
+    # (including --help) pass through to the command's own parser. The same
+    # table entry yields the routing and this help stub; they cannot drift.
+    for name, (_handler, help_text) in DELEGATED_COMMANDS.items():
+        subparsers.add_parser(name, help=help_text, add_help=False)
 
     # dashboard-url
     subparsers.add_parser(
@@ -687,16 +706,9 @@ def cli_main(argv: list[str] | None = None) -> None:
 
     # Delegated core commands: routed before argparse so every arg
     # (including --help) passes through to the command's own parser.
-    if argv and argv[0] == "cron":
-        from cron.manage import main as cron_main
-
-        cron_main(argv[1:], prog="merlin cron")
-        return
-
-    if argv and argv[0] == "chat":
-        from lib.chat import main as chat_main
-
-        chat_main(argv[1:])
+    if argv and argv[0] in DELEGATED_COMMANDS:
+        handler, _help = DELEGATED_COMMANDS[argv[0]]
+        handler(argv[1:])
         return
 
     # First token is not a core command: try extension command dispatch.

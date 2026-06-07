@@ -561,3 +561,22 @@ class TestLazyExtensionHelp:
         )
         assert result.returncode == 0
         assert "merlin tasks add" in result.stdout
+
+
+class TestDelegatedCommandsTable:
+    """One table entry yields routing, the help stub, and reservation."""
+
+    def test_delegated_commands_are_core_commands(self):
+        import ext_commands
+        from cli import DELEGATED_COMMANDS
+
+        assert set(DELEGATED_COMMANDS) <= set(ext_commands.CORE_COMMANDS)
+
+    def test_every_delegated_command_routes_to_its_own_parser(self, capsys):
+        from cli import DELEGATED_COMMANDS
+
+        for name in DELEGATED_COMMANDS:
+            with pytest.raises(SystemExit) as exc_info:
+                cli_main([name, "--help"])
+            assert exc_info.value.code == 0
+            assert f"merlin {name}" in capsys.readouterr().out
