@@ -373,27 +373,36 @@ def _run_agent(job_id: str, job: dict, request_id: str):
     )
 
 
-def run_job(job_id: str, job: dict) -> None:
-    """Execute a single cron job. Acquires per-job lock to prevent double dispatch."""
+def run_job(job_id: str, job: dict, *, emit_result: bool = True):
+    """Execute a single cron job. Acquires per-job lock to prevent double dispatch.
+
+    Returns the job result (AgentResult or CommandResult), or None when the
+    job is already running (locked).
+    """
     # Acquire per-job lock (non-blocking)
     lock = acquire_job_lock(job_id)
     if lock is None:
         logger.warning("Job %s already running (locked), skipping", job_id)
-        return
+        return None
 
     try:
-        _execute_job(job_id, job)
+        return _execute_job(job_id, job, emit_result=emit_result)
     finally:
         release_job_lock(lock)
 
 
-def _execute_job(job_id: str, job: dict) -> None:
-    """Execute a job (internal — assumes lock is held).
+def _execute_job(job_id: str, job: dict, *, emit_result: bool = True):
+    """Execute a job (internal — assumes lock is held). Returns the result.
 
     Branches on job ``type``: a ``"command"`` job runs a shell command via
     ``_run_command``; any other type (default ``"prompt"``) runs through the
     agent engine via ``_run_agent``. Both return a result exposing the same
     fields, so the state/history/log/notify tail below is shared.
+
+    ``emit_result`` controls the structured job_complete line on stdout. It
+    exists for the subprocess contract (the scheduler and the REST trigger
+    parse it for notifications); in-process callers like 'merlin cron
+    trigger' pass False so their own stdout stays a single JSON document.
     """
     job_type = job.get("type", "prompt")
     request_id = str(uuid.uuid4())
@@ -485,32 +494,39 @@ def _execute_job(job_id: str, job: dict) -> None:
 
     # Emit structured JSON to stdout so the scheduler (main process) can
     # pick it up and send Discord notifications via notify_cron_result().
-    try:
-        import json as _json
+    if emit_result:
+        try:
+            import json as _json
 
-        print(
-            _json.dumps(
-                {
-                    "type": "job_complete",
-                    "job_id": job_id,
-                    "job": job,
-                    "result": {
-                        "exit_code": result.exit_code,
-                        "duration_seconds": round(result.duration, 2),
-                        "cost_usd": result.cost_usd,
-                        "session_id": result.session_id,
-                        "output": result.result or "",
-                    },
-                }
-            ),
-            flush=True,
-        )
-    except Exception:
-        pass  # Never fail the job for a notification issue
+            print(
+                _json.dumps(
+                    {
+                        "type": "job_complete",
+                        "job_id": job_id,
+                        "job": job,
+                        "result": {
+                            "exit_code": result.exit_code,
+                            "duration_seconds": round(result.duration, 2),
+                            "cost_usd": result.cost_usd,
+                            "session_id": result.session_id,
+                            "output": result.result or "",
+                        },
+                    }
+                ),
+                flush=True,
+            )
+        except Exception:
+            pass  # Never fail the job for a notification issue
+
+    return result
 
 
-def run_single_job(job_id: str) -> None:
-    """Run a specific job immediately (manual execution)."""
+def run_single_job(job_id: str, *, emit_result: bool = True):
+    """Run a specific job immediately (manual execution).
+
+    Returns the job result, or None when the job is locked (already
+    running). Raises SystemExit on unknown job or unexpected errors.
+    """
     logger.info("Manual execution requested for job %s", job_id)
 
     jobs = load_all_jobs()
@@ -529,12 +545,13 @@ def run_single_job(job_id: str) -> None:
         )
 
     try:
-        run_job(job_id, job)
+        result = run_job(job_id, job, emit_result=emit_result)
     except Exception:
         logger.exception("Unexpected error running job %s", job_id)
         raise SystemExit(1)
 
     logger.info("Manual execution completed")
+    return result
 
 
 def run_dispatcher() -> None:

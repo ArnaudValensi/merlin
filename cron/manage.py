@@ -356,18 +356,44 @@ def cmd_remove(args) -> dict:
 
 
 def cmd_trigger(args) -> dict:
-    """Run a job immediately, bypassing the schedule check."""
+    """Run a job immediately, bypassing the schedule check.
+
+    Runs in-process with emit_result=False so stdout stays a single JSON
+    document (the job_complete line is a subprocess contract for the
+    scheduler/REST paths, not for this CLI), and reports the job's real
+    exit code instead of a blanket success.
+    """
     from cron import runner
 
     if args.job_id not in runner.load_all_jobs():
         return {"ok": False, "error": f"Job not found: {args.job_id}"}
 
     try:
-        runner.run_single_job(args.job_id)
+        result = runner.run_single_job(args.job_id, emit_result=False)
     except SystemExit:
-        return {"ok": False, "error": f"Job '{args.job_id}' failed"}
+        return {"ok": False, "error": f"Job '{args.job_id}' failed to run"}
 
-    return {"ok": True, "message": f"Triggered job '{args.job_id}'"}
+    if result is None:
+        return {
+            "ok": False,
+            "error": f"Job '{args.job_id}' is already running (locked)",
+        }
+
+    ok = result.exit_code == 0
+    response: dict = {
+        "ok": ok,
+        "job_id": args.job_id,
+        "exit_code": result.exit_code,
+        "duration_seconds": round(result.duration, 2),
+    }
+    if result.session_id:
+        response["session_id"] = result.session_id
+    response["message"] = (
+        f"Job '{args.job_id}' completed"
+        if ok
+        else f"Job '{args.job_id}' failed (exit {result.exit_code})"
+    )
+    return response
 
 
 def cmd_history(args) -> dict | str:

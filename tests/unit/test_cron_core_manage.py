@@ -425,6 +425,19 @@ class TestTrigger:
         assert result["ok"] is False
         assert "not found" in result["error"].lower()
 
+    @staticmethod
+    def _fake_result(exit_code=0, duration=1.234, session_id="sess-1"):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            exit_code=exit_code,
+            duration=duration,
+            result="output",
+            stderr="",
+            cost_usd=None,
+            session_id=session_id,
+        )
+
     def test_trigger_runs_job(self, temp_cron_dir, monkeypatch):
         from types import SimpleNamespace
 
@@ -432,14 +445,61 @@ class TestTrigger:
         from cron.manage import cmd_trigger
 
         ran: list[str] = []
+
+        def fake_run(job_id, *, emit_result=True):
+            ran.append((job_id, emit_result))
+            return self._fake_result()
+
         monkeypatch.setattr(
             runner, "load_all_jobs", lambda: {"my-job": {"schedule": "* * * * *"}}
         )
-        monkeypatch.setattr(runner, "run_single_job", lambda job_id: ran.append(job_id))
+        monkeypatch.setattr(runner, "run_single_job", fake_run)
 
         result = cmd_trigger(SimpleNamespace(job_id="my-job"))
         assert result["ok"] is True
-        assert ran == ["my-job"]
+        assert result["exit_code"] == 0
+        assert result["duration_seconds"] == 1.23
+        assert result["session_id"] == "sess-1"
+        # In-process trigger must suppress the runner's stdout job_complete line
+        assert ran == [("my-job", False)]
+
+    def test_trigger_reports_failed_job(self, temp_cron_dir, monkeypatch):
+        """A job that ran but exited non-zero is reported as ok: false."""
+        from types import SimpleNamespace
+
+        from cron import runner
+        from cron.manage import cmd_trigger
+
+        monkeypatch.setattr(
+            runner, "load_all_jobs", lambda: {"my-job": {"schedule": "* * * * *"}}
+        )
+        monkeypatch.setattr(
+            runner,
+            "run_single_job",
+            lambda job_id, *, emit_result=True: self._fake_result(exit_code=1),
+        )
+
+        result = cmd_trigger(SimpleNamespace(job_id="my-job"))
+        assert result["ok"] is False
+        assert result["exit_code"] == 1
+        assert "failed (exit 1)" in result["message"]
+
+    def test_trigger_locked_job(self, temp_cron_dir, monkeypatch):
+        from types import SimpleNamespace
+
+        from cron import runner
+        from cron.manage import cmd_trigger
+
+        monkeypatch.setattr(
+            runner, "load_all_jobs", lambda: {"my-job": {"schedule": "* * * * *"}}
+        )
+        monkeypatch.setattr(
+            runner, "run_single_job", lambda job_id, *, emit_result=True: None
+        )
+
+        result = cmd_trigger(SimpleNamespace(job_id="my-job"))
+        assert result["ok"] is False
+        assert "already running" in result["error"]
 
     def test_trigger_failure_reported(self, temp_cron_dir, monkeypatch):
         from types import SimpleNamespace
@@ -447,7 +507,7 @@ class TestTrigger:
         from cron import runner
         from cron.manage import cmd_trigger
 
-        def boom(job_id):
+        def boom(job_id, *, emit_result=True):
             raise SystemExit(1)
 
         monkeypatch.setattr(

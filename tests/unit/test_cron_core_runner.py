@@ -680,3 +680,31 @@ class TestAgentJobCwd:
         monkeypatch.delenv("MERLIN_LAUNCH_CWD", raising=False)
         runner._run_agent("my-job", {"prompt": "do it"}, "req-1")
         assert calls["cwd"] == Path.home()
+
+
+class TestEmitResult:
+    """The job_complete stdout line is a subprocess contract, suppressible."""
+
+    def _job(self):
+        return {"type": "command", "command": "echo hi", "schedule": "* * * * *"}
+
+    def test_default_emits_job_complete(self, capsys):
+        from cron.runner import run_job
+
+        result = run_job("emit-test", self._job())
+        assert result is not None and result.exit_code == 0
+        out = capsys.readouterr().out
+        assert '"type": "job_complete"' in out
+
+    def test_emit_result_false_keeps_stdout_clean(self, capsys):
+        from cron.runner import run_job
+
+        result = run_job("quiet-test", self._job(), emit_result=False)
+        assert result is not None and result.exit_code == 0
+        assert '"job_complete"' not in capsys.readouterr().out
+
+    def test_locked_job_returns_none(self, monkeypatch):
+        import cron.runner as runner
+
+        monkeypatch.setattr(runner, "acquire_job_lock", lambda job_id: None)
+        assert runner.run_job("locked-test", self._job()) is None
