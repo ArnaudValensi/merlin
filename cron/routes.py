@@ -442,10 +442,10 @@ def cron_page(request: Request):
     # Check for recent scheduler crashes
     crashes = _get_recent_crashes()
 
-    # Resolve the default working directory for command jobs (modal placeholder).
-    import os
+    # Resolve the default working directory for jobs (modal placeholder).
+    import paths
 
-    default_working_dir = os.environ.get("MERLIN_LAUNCH_CWD") or str(Path.home())
+    default_working_dir = str(paths.launch_cwd())
 
     return templates.TemplateResponse(
         request,

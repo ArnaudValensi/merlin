@@ -414,3 +414,19 @@ class TestLoadConfigEnv:
         import paths
 
         paths.load_config_env()  # No config.env in tmp home: no crash
+
+
+class TestLaunchCwd:
+    """Shared default working directory: MERLIN_LAUNCH_CWD -> $HOME."""
+
+    def test_uses_merlin_launch_cwd(self, monkeypatch, tmp_path):
+        import paths
+
+        monkeypatch.setenv("MERLIN_LAUNCH_CWD", str(tmp_path))
+        assert paths.launch_cwd() == Path(str(tmp_path))
+
+    def test_falls_back_to_home(self, monkeypatch):
+        import paths
+
+        monkeypatch.delenv("MERLIN_LAUNCH_CWD", raising=False)
+        assert paths.launch_cwd() == Path.home()

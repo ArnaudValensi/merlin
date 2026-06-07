@@ -114,6 +114,16 @@ def load_config_env() -> None:
             os.environ.setdefault(key, value)
 
 
+def launch_cwd() -> Path:
+    """Default working directory for jobs and agents: where Merlin was
+    launched, falling back to the user's home.
+
+    main.py exports MERLIN_LAUNCH_CWD at startup; cron jobs layer a
+    per-job working_dir on top of this chain.
+    """
+    return Path(os.environ.get("MERLIN_LAUNCH_CWD") or Path.home())
+
+
 def notes_dir() -> Path:
     """Notes directory (notes, kb/, user.md, logs/).
 

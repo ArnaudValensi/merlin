@@ -258,16 +258,13 @@ def build_prompt(job: dict) -> str:
 def resolve_working_dir(job: dict) -> str:
     """Working directory for a job (both types): where the job operates.
 
-    Resolution chain: job.working_dir -> MERLIN_LAUNCH_CWD -> $HOME.
-    An agent job pointed at a project repo auto-loads that repo's own
-    CLAUDE.md; Merlin context arrives by injection and the skill
+    Resolution chain: job.working_dir -> MERLIN_LAUNCH_CWD -> $HOME
+    (the env/home default lives in paths.launch_cwd, shared with the
+    bot). An agent job pointed at a project repo auto-loads that repo's
+    own CLAUDE.md; Merlin context arrives by injection and the skill
     adapters, not by cwd.
     """
-    return (
-        job.get("working_dir")
-        or os.environ.get("MERLIN_LAUNCH_CWD")
-        or str(Path.home())
-    )
+    return job.get("working_dir") or str(paths.launch_cwd())
 
 
 # ---------------------------------------------------------------------------
