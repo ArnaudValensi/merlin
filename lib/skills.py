@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,26 +50,25 @@ class SkillSpec:
 
 
 def parse_skill_frontmatter(skill_md: Path) -> dict[str, str]:
-    """Extract flat ``key: value`` frontmatter fields from a SKILL.md.
+    """Extract frontmatter fields from a SKILL.md as strings.
 
-    Minimal parser (same convention as the notes tooling): no nested YAML.
-    Returns {} when the file is missing, unreadable, or has no frontmatter.
+    Delegates to the canonical parser in lib/frontmatter.py (shared with
+    the notes module); list values (YAML arrays) are joined for the
+    string-only registry fields. Returns {} when the file is missing,
+    unreadable, or has no frontmatter.
     """
+    from lib.frontmatter import parse_frontmatter
+
     try:
         text = skill_md.read_text(errors="replace")
     except OSError:
         return {}
 
-    match = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
-    if not match:
-        return {}
-
-    fields: dict[str, str] = {}
-    for line in match.group(1).splitlines():
-        if ":" in line:
-            key, _, value = line.partition(":")
-            fields[key.strip()] = value.strip()
-    return fields
+    meta, _body = parse_frontmatter(text)
+    return {
+        key: ", ".join(value) if isinstance(value, list) else str(value)
+        for key, value in meta.items()
+    }
 
 
 def user_skills_dir() -> Path:

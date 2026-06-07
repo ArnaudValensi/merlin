@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 import paths
 from merlin_ext import make_templates
 
-from .frontmatter import parse_frontmatter
+from lib.frontmatter import parse_frontmatter
 
 
 def _notes_dir() -> Path:
