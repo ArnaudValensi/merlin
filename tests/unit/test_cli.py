@@ -524,3 +524,40 @@ class TestSetupSkillRefresh:
         assert (home / ".claude" / "skills" / "cron").is_symlink()
         assert (home / ".agents" / "skills" / "cron").is_symlink()
         assert (skills.canonical_dir() / "cron").is_symlink()
+
+
+class TestLazyExtensionHelp:
+    """The extension scan only runs when help will render."""
+
+    def test_non_help_invocations_skip_the_scan(self, monkeypatch, capsys):
+        import ext_commands
+
+        def fail():
+            raise AssertionError("extension help must not be built here")
+
+        monkeypatch.setattr(ext_commands, "format_extension_help", fail)
+        cli_main(["version"])  # Would raise if the scan ran
+        assert capsys.readouterr().out.strip() != ""
+
+    def test_help_invocation_includes_extensions(self, tmp_path):
+        import os
+        import subprocess
+        import sys as _sys
+
+        from tests.unit.test_ext_commands import make_command
+
+        ext_dir = tmp_path / "extensions" / "tasks"
+        make_command(ext_dir, "add", docstring="Add a task.")
+
+        env = os.environ.copy()
+        env["MERLIN_HOME"] = str(tmp_path)
+        repo_root = Path(__file__).parent.parent.parent
+        result = subprocess.run(
+            [_sys.executable, str(repo_root / "cli.py"), "--help"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=60,
+        )
+        assert result.returncode == 0
+        assert "merlin tasks add" in result.stdout

@@ -446,11 +446,14 @@ def run_setup(config_path: Path | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(include_extension_help: bool = True) -> argparse.ArgumentParser:
     """Build the CLI argument parser with subcommands.
 
     Extension commands (built-in and installed) are enumerated into the
-    epilog so 'merlin --help' is the full discovery catalog.
+    epilog so 'merlin --help' is the full discovery catalog. The
+    enumeration reads and parses every command file, so cli_main only
+    requests it when help will actually render; other invocations
+    (merlin config, version, start) skip the scan.
     """
     epilog = (
         "Run 'merlin' with no arguments to start the dashboard.\n"
@@ -461,9 +464,10 @@ def build_parser() -> argparse.ArgumentParser:
         target = f"merlin {ext_id} {command}"
         alias_lines.append(f"  merlin {alias:<21} alias for: {target}")
     epilog = "\n".join(alias_lines) + "\n\n" + epilog
-    extension_help = ext_commands.format_extension_help()
-    if extension_help:
-        epilog = f"{extension_help}\n\n{epilog}"
+    if include_extension_help:
+        extension_help = ext_commands.format_extension_help()
+        if extension_help:
+            epilog = f"{extension_help}\n\n{epilog}"
 
     parser = argparse.ArgumentParser(
         prog="merlin",
@@ -705,7 +709,8 @@ def cli_main(argv: list[str] | None = None) -> None:
     ):
         ext_commands.dispatch(argv)
 
-    parser = build_parser()
+    wants_help = any(arg in ("-h", "--help") for arg in argv)
+    parser = build_parser(include_extension_help=wants_help)
     args = parser.parse_args(argv)
 
     # Default to 'start' when no subcommand given
