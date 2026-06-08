@@ -199,6 +199,18 @@ The registry is used by:
 - Extensions page — lists all extensions with status
 - `register_template_globals()` — publishes `extensions_error_count` to all template instances for the sidebar badge
 
+## Extensions and skills
+
+An **enabled** extension's `skills/` directory feeds the separate **skill
+registry** (`lib/skills.py`) — disabling the extension drops its skills on the
+next rebuild. `ext_commands.all_extension_states()` reports every extension and
+its enabled flag; `enabled_extension_source_dirs()` is the enabled subset the
+skill registry aggregates. Precedence is **core > extension > user**, so an
+extension can shadow the user home but never a core skill. The Extensions page
+audit lists **only that extension's** skills (a per-extension security
+surface); core and user skills have no extension row, so they appear in
+`merlin skills` instead. Full reference: [`skill-system.md`](skill-system.md).
+
 ## Creating an Installed Extension
 
 1. Create a folder in `~/.merlin/extensions/` (e.g., `my-tool/`)

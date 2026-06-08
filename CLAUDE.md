@@ -77,6 +77,7 @@ Read these docs when working on the corresponding systems:
 | [`docs/session-viewer.md`](docs/session-viewer.md) | Session transcripts, stream-json format, timeline rendering |
 | [`docs/notes-editor.md`](docs/notes-editor.md) | Notes routes, command palette, git ops, media upload, content search |
 | [`docs/extension-system.md`](docs/extension-system.md) | Extension tiers, interface, state, registry, Extensions/Settings pages |
+| [`docs/skill-system.md`](docs/skill-system.md) | Skill registry: sources, precedence (core > extension > user), canonical aggregation, engine adapters, shims, `merlin skills` |
 | [`docs/dashboard-architecture.md`](docs/dashboard-architecture.md) | Dashboard theme, CSS variables, JS patterns, API endpoints |
 | [`docs/claude-code-reference.md`](docs/claude-code-reference.md) | Claude Code CLI flags and options |
 | [`docs/releasing.md`](docs/releasing.md) | Tagging, GitHub Releases, install/update flow, rollback |

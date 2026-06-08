@@ -41,18 +41,23 @@ Set `MERLIN_HOME=/custom/path` to override the default `~/.merlin/` location. Al
 
 ```
 ~/.merlin/
-├── bin/
-│   └── merlin           # Launcher: exec uv run ~/.merlin/current/cli.py "$@"
 ├── versions/
 │   ├── 0.1.0/           # Extracted release tarballs
 │   └── 0.2.0/
+│       └── bin/merlin   # Launcher ships in the release; PATH points at current/bin
 ├── current -> versions/0.2.0  # Symlink to active version
 ├── config.env           # User config (created by merlin setup)
 ├── notes/               # User data (survives updates)
 ├── cron-jobs/           # Scheduled jobs
 ├── logs/                # Logs
-└── data/                # Session registry, structured log
+├── data/                # Session registry, structured log
+├── extensions/          # Installed extensions (each may ship commands/ and skills/)
+├── skills/              # Canonical aggregated skill dir (managed symlinks)
+├── skills-user/         # Personal skills (per-environment, unsynced)
+└── skills-plugin/       # Generated Claude Code plugin wrapping skills/
 ```
+
+See [`skill-system.md`](skill-system.md) for how `skills/`, `skills-user/`, and `skills-plugin/` are built and surfaced to each engine.
 
 ## CLI Subcommands (`cli.py`)
 
@@ -67,6 +72,11 @@ Set `MERLIN_HOME=/custom/path` to override the default `~/.merlin/` location. Al
 | `merlin update` | Download latest release, swap symlink |
 | `merlin config` | List all resolved config values |
 | `merlin config notes-dir` | Print the notes directory path |
+| `merlin skills` | List every skill and its source (see [`skill-system.md`](skill-system.md)) |
+| `merlin agent` | Print the agent-facing brain doc |
+| `merlin cron ...` | Manage scheduled jobs (wraps `cron/manage.py`) |
+| `merlin chat ...` | Discord transport: `send`/`reply`/`react`/`rename-thread` |
+| `merlin dashboard-url` | Print the dashboard URL |
 
 ### First-Run Setup
 
@@ -88,7 +98,7 @@ merlin config home                   # Print Merlin home (~/.merlin)
 cat "$(merlin config notes-dir)/kb/topic.md"  # Use in shell commands
 ```
 
-Available keys: `notes-dir`, `home`, `app-dir`, `data-dir`, `config-path`, `logs-dir`, `sessions-dir`, `cron-jobs-dir`, `extensions-dir`, `version`.
+Available keys: `notes-dir`, `skills-user-dir`, `home`, `app-dir`, `data-dir`, `config-path`, `logs-dir`, `sessions-dir`, `cron-jobs-dir`, `extensions-dir`, `version`.
 
 Read-only — use the Settings/Extensions UI or edit `config.env` directly to change values.
 
