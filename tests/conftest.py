@@ -38,10 +38,18 @@ for _stale in _tmp.glob("merlin-test-*"):
 
 @pytest.fixture(autouse=True)
 def _isolated_merlin_home(monkeypatch, tmp_path):
-    """Point MERLIN_HOME to a per-test temp dir so no test touches ~/.merlin/."""
+    """Point MERLIN_HOME to a per-test temp dir so no test touches ~/.merlin/.
+
+    Also clear any ambient MERLIN_DEV so dev-mode detection is deterministic:
+    with the override reset and the env var gone, is_dev_mode() falls back to
+    the repo's .git presence (dev mode), so app_dir() resolves to the repo.
+    Tests that need a specific mode set it explicitly (MERLIN_DEV in the test
+    body, or paths.set_dev_mode), which still wins over this default.
+    """
     import paths
 
     monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+    monkeypatch.delenv("MERLIN_DEV", raising=False)
     paths._dev_mode_override = None
     yield
     paths._dev_mode_override = None

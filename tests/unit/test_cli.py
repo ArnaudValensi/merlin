@@ -513,8 +513,9 @@ class TestSetupSkillRefresh:
         monkeypatch.setenv("HOME", str(home))
         monkeypatch.setenv("MERLIN_HOME", str(tmp_path / "merlin-home"))
 
-        # merlin-bot is disabled by default; enable it so its skills (the
-        # only built-in skills today) participate in the refresh.
+        # merlin-bot is disabled by default; enable it so its bot-gated
+        # skill (discord) participates in the refresh. (Core skills like cron
+        # aggregate regardless of the bot, so they cannot prove bot refresh.)
         state_path = paths.extensions_state_path()
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps({"merlin-bot": True}))
@@ -527,10 +528,10 @@ class TestSetupSkillRefresh:
 
         from lib import skills
 
-        # Built-in bot skills exposed through both shim scopes
-        assert (home / ".claude" / "skills" / "cron").is_symlink()
-        assert (home / ".agents" / "skills" / "cron").is_symlink()
-        assert (skills.canonical_dir() / "cron").is_symlink()
+        # Bot-gated skill exposed through both shim scopes
+        assert (home / ".claude" / "skills" / "discord").is_symlink()
+        assert (home / ".agents" / "skills" / "discord").is_symlink()
+        assert (skills.canonical_dir() / "discord").is_symlink()
 
 
 class TestLazyExtensionHelp:
