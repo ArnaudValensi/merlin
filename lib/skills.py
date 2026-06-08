@@ -147,12 +147,24 @@ def build_registry(extension_dirs: dict[str, Path]) -> dict[str, SkillSpec]:
         for spec in list_source_skills(source_id, skills_dir):
             existing = registry.get(spec.name)
             if existing is not None:
-                logger.warning(
-                    "Skill name conflict: '%s' from %s shadowed by %s",
-                    spec.name,
-                    spec.source,
-                    existing.source,
-                )
+                if existing.source == "core":
+                    # A lower-precedence source tried to reuse a core skill's
+                    # name. Core cannot be shadowed; surface it as a security
+                    # event, not a neutral conflict.
+                    logger.warning(
+                        "Blocked skill override: '%s' from %s ignored - a core "
+                        "skill of that name takes precedence and cannot be "
+                        "shadowed",
+                        spec.name,
+                        spec.source,
+                    )
+                else:
+                    logger.warning(
+                        "Skill name conflict: '%s' from %s shadowed by %s",
+                        spec.name,
+                        spec.source,
+                        existing.source,
+                    )
                 continue
             registry[spec.name] = spec
 

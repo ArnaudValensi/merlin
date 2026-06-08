@@ -154,7 +154,11 @@ class TestBuildRegistry:
         registry = skills.build_registry({"ext": ext})
         assert registry["cron"].source == "core"
         assert registry["cron"].description == "Core cron."
-        assert "conflict" in caplog.text.lower()
+        # Both blocked overrides are surfaced as a security warning naming
+        # each dropped source.
+        warning = caplog.text.lower()
+        assert "blocked skill override" in warning
+        assert "from ext" in warning and "from user" in warning
 
     def test_extension_shadows_user(self, tmp_path):
         # extension > user for a non-core name collision.
