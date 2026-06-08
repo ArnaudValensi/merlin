@@ -576,6 +576,7 @@ def build_parser(include_extension_help: bool = True) -> argparse.ArgumentParser
         epilog="""
 Available keys:
   notes-dir       Notes directory (notes, KB, user.md, logs)
+  skills-user-dir Personal skill home (always-active, per-environment)
   home            Merlin home directory (~/.merlin)
   app-dir         Application code directory
   data-dir        User data directory
@@ -607,8 +608,11 @@ def _get_config_values() -> dict[str, str]:
 
     load_dotenv(paths.config_path())
 
+    from lib import skills
+
     return {
         "notes-dir": str(paths.notes_dir()),
+        "skills-user-dir": str(skills.user_skills_dir()),
         "home": str(paths.merlin_home()),
         "app-dir": str(paths.app_dir()),
         "data-dir": str(paths.data_dir()),

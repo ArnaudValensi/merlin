@@ -113,6 +113,13 @@ class TestRunConfig:
         output = capsys.readouterr().out.strip()
         assert output == str(paths.notes_dir())
 
+    def test_prints_skills_user_dir(self, capsys):
+        from lib import skills
+
+        run_config("skills-user-dir")
+        output = capsys.readouterr().out.strip()
+        assert output == str(skills.user_skills_dir())
+
     def test_prints_all_keys(self, capsys):
         run_config(None)
         output = capsys.readouterr().out
