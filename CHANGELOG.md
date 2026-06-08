@@ -2,6 +2,11 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.20.1 (2026-06-08)
+
+### Fixed
+- **Colored `merlin --help`** — Help text renders with color again in Merlin Cloud / managed environments. Merlin now pins its Python interpreter to 3.14, so environments no longer resolve an older Python whose argparse help is uncolored.
+
 ## v0.20.0 (2026-06-08)
 
 ### Added
