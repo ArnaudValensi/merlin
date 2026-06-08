@@ -9,9 +9,20 @@ import paths
 
 @pytest.fixture(autouse=True)
 def _reset_paths(monkeypatch, tmp_path):
-    """Reset paths module state before each test."""
+    """Reset paths module state before each test.
+
+    These tests deliberately unset MERLIN_HOME to exercise the ``~/.merlin``
+    fallback in merlin_home(). Pin HOME to a tmp dir so that fallback
+    resolves under tmp, never the developer's real home: a write-test that
+    resolves config_path() with MERLIN_HOME unset must not be able to touch
+    the real ~/.merlin/config.env. test_paths.py never shells out, so
+    pinning HOME here has no effect on other test files (no uv-cache or
+    gitconfig fallout).
+    """
     # Clear the dev mode override
     paths._dev_mode_override = None
+    # Pin HOME first so the ~/.merlin fallback can never reach the real home.
+    monkeypatch.setenv("HOME", str(tmp_path))
     # Clear env vars that affect path resolution
     monkeypatch.delenv("MERLIN_DEV", raising=False)
     monkeypatch.delenv("MERLIN_HOME", raising=False)
@@ -351,25 +362,17 @@ class TestModuleIntegration:
 class TestLoadConfigEnv:
     """load_config_env matches dotenv semantics for hand-edited files."""
 
-    @pytest.fixture(autouse=True)
-    def _pin_home(self, tmp_path, monkeypatch):
-        """Pin MERLIN_HOME to tmp.
-
-        The module-level ``_reset_paths`` fixture deletes MERLIN_HOME (to
-        test default resolution), which would make config_path() resolve to
-        the real ~/.merlin. These tests WRITE config.env, so they must point
-        at tmp explicitly.
-        """
-        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
-
     def _write(self, tmp_path, content):
         import paths
 
         target = paths.config_path()
-        # Defense in depth: never write outside the per-test tmp dir.
-        assert target == tmp_path / "config.env", (
+        # Defense in depth: _reset_paths pins HOME to tmp, so config_path()
+        # must resolve under tmp even with MERLIN_HOME unset. Fail loudly
+        # rather than ever write to a real path.
+        assert str(target).startswith(str(tmp_path)), (
             f"refusing to write config.env outside tmp: {target}"
         )
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)
 
     def test_plain_values(self, tmp_path, monkeypatch):
