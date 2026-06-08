@@ -127,19 +127,28 @@ class TestBuildRegistry:
     def test_user_home_is_skills_user_dir(self, tmp_path):
         assert skills.user_skills_dir() == paths.merlin_home() / "skills-user"
 
-    def test_core_skills_active_without_extensions(self):
-        # Managed-env guarantee: with the bot off and no user skills, the
-        # shipped core skills (real repo skills/) still aggregate.
+    def test_core_source_always_active(self, tmp_path, monkeypatch):
+        # No extensions, no bot: the always-active core source still
+        # contributes. Mode-agnostic — point core at a controlled dir rather
+        # than depending on app_dir() resolving to the repo (see the
+        # installed-mode wiring test for the production path).
+        make_skill_in(tmp_path / "app" / "skills", "core-only", description="Core.")
+        monkeypatch.setattr(
+            skills, "core_skills_dir", lambda: tmp_path / "app" / "skills"
+        )
         registry = skills.build_registry({})
-        for name in ("cron", "dashboard", "notes", "self-awareness"):
-            assert registry[name].source == "core"
+        assert registry["core-only"].source == "core"
 
-    def test_personal_skill_overrides_core(self, tmp_path):
-        # A user skill named like a real core skill wins (personal > core).
-        make_skill_in(skills.user_skills_dir(), "cron", description="Personal cron.")
+    def test_personal_skill_overrides_core(self, tmp_path, monkeypatch):
+        # A user skill shadows a core skill of the same name (personal > core).
+        make_skill_in(tmp_path / "app" / "skills", "shared", description="Core.")
+        monkeypatch.setattr(
+            skills, "core_skills_dir", lambda: tmp_path / "app" / "skills"
+        )
+        make_skill_in(skills.user_skills_dir(), "shared", description="Personal.")
         registry = skills.build_registry({})
-        assert registry["cron"].source == "user"
-        assert registry["cron"].description == "Personal cron."
+        assert registry["shared"].source == "user"
+        assert registry["shared"].description == "Personal."
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +251,23 @@ class TestRealRepoSkills:
             )
         }
         assert "teacher" not in core | bot
+
+    def test_core_skills_aggregate_in_installed_mode(self, repo_root):
+        # The bug's home turf: in installed (production) mode app_dir() is
+        # ~/.merlin/current, so core skills must aggregate through
+        # current/skills, where a release unpacks them. Simulate that layout
+        # (current/skills -> the shipped skills) and force installed mode.
+        # This exercises the managed-env path the dev-mode tests never hit;
+        # it would go red if app_dir()/skills did not resolve.
+        current = paths.merlin_home() / "current"
+        current.mkdir(parents=True, exist_ok=True)
+        (current / "skills").symlink_to(repo_root / "skills")
+        paths.set_dev_mode(False)  # conftest resets the override after the test
+        assert paths.app_dir() == current
+
+        registry = skills.build_registry({})  # bot off, no user skills
+        for name in ("cron", "dashboard", "notes", "self-awareness"):
+            assert registry[name].source == "core"
 
 
 # ---------------------------------------------------------------------------
