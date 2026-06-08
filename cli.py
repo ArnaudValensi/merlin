@@ -778,11 +778,19 @@ def run_skills() -> None:
 
     active_names: set[str] = set()
     current: str | None = None
+    first_in_group = False
     for entry in audited:
         if entry.source != current:
             current = entry.source
             print()
             print(header(entry.source))
+            first_in_group = True
+
+        # Blank line between skills in a group so wrapped descriptions don't
+        # run together (but keep the first skill tight under its header).
+        if not first_in_group:
+            print()
+        first_in_group = False
 
         if not entry.source_active:
             emit_row(
