@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-MERLIN_CLIP = (
-    Path(__file__).resolve().parents[3] / "infra" / "images" / "managed" / "merlin-clip"
-)
+# merlin-clip ships in the Merlin repo (bin/), reached on PATH via
+# ~/.merlin/current/bin in both managed and standalone installs.
+MERLIN_CLIP = Path(__file__).resolve().parents[2] / "bin" / "merlin-clip"
 
 
 @pytest.fixture
