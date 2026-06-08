@@ -351,10 +351,26 @@ class TestModuleIntegration:
 class TestLoadConfigEnv:
     """load_config_env matches dotenv semantics for hand-edited files."""
 
+    @pytest.fixture(autouse=True)
+    def _pin_home(self, tmp_path, monkeypatch):
+        """Pin MERLIN_HOME to tmp.
+
+        The module-level ``_reset_paths`` fixture deletes MERLIN_HOME (to
+        test default resolution), which would make config_path() resolve to
+        the real ~/.merlin. These tests WRITE config.env, so they must point
+        at tmp explicitly.
+        """
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+
     def _write(self, tmp_path, content):
         import paths
 
-        paths.config_path().write_text(content)
+        target = paths.config_path()
+        # Defense in depth: never write outside the per-test tmp dir.
+        assert target == tmp_path / "config.env", (
+            f"refusing to write config.env outside tmp: {target}"
+        )
+        target.write_text(content)
 
     def test_plain_values(self, tmp_path, monkeypatch):
         import paths
