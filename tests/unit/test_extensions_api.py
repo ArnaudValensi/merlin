@@ -206,7 +206,7 @@ class TestRestart:
 class TestAuditSection:
     """Skills + commands audit data in the extensions list."""
 
-    def test_builtin_bot_lists_skills_and_notes_commands(self):
+    def test_builtin_bot_lists_discord_skill(self):
         from main import _build_extensions_list, extension_registry
 
         # merlin-bot may be disabled in test state; check via the audit helper
@@ -217,7 +217,11 @@ class TestAuditSection:
         )
         skills_list, commands_list = _extension_audit(bot)
         names = {s["name"] for s in skills_list}
-        assert {"cron", "dashboard", "discord", "notes", "self-awareness"} <= names
+        # discord stays bot-gated. The operational skills moved to the
+        # always-active core repo skills/ source, so they no longer appear
+        # under the bot extension row (the audit is per-extension).
+        assert "discord" in names
+        assert names.isdisjoint({"cron", "dashboard", "notes", "self-awareness"})
         del extension_registry, _build_extensions_list  # imported for context
 
     def test_notes_builtin_lists_commands(self):

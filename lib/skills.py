@@ -5,10 +5,16 @@ Merlin owns one canonical skill registry; per-engine adapters surface it in
 each engine's native format (Claude Code plugin, ~/.agents/skills symlinks,
 system-prompt fallback). Sources, in precedence order:
 
-1. Built-in extensions' ``skills/`` directories (e.g. ``merlin-bot/skills/``)
+1. Built-in extensions' ``skills/`` directories (e.g. ``merlin-bot/skills/``),
+   gated by the extension's enabled state
 2. Installed extensions' ``~/.merlin/extensions/<ext>/skills/``
-3. The user-skill home ``<notes-dir>/skills/`` (personal skills as data;
-   follows the user through notes sync)
+3. The user-skill home ``<merlin-home>/skills-user/`` (personal skills,
+   always active, per-environment / unsynced)
+4. The core repo ``skills/`` directory (shipped operational skills, always
+   active regardless of the bot)
+
+On a name conflict the first source wins, so personal skills override core
+ones (personal > core).
 
 Aggregation: every registered skill directory is symlinked into
 ``~/.merlin/skills/`` (the canonical dir), rebuilt at startup so disabled
@@ -72,8 +78,18 @@ def parse_skill_frontmatter(skill_md: Path) -> dict[str, str]:
 
 
 def user_skills_dir() -> Path:
-    """The user-skill home: personal skills as data, under the notes dir."""
-    return paths.notes_dir() / "skills"
+    """The user-skill home: personal skills, always active, per-environment.
+
+    Personal skills are behavior, not notes data, so they live in a dedicated
+    ``skills-user/`` home rather than under the notes dir. Per-environment and
+    unsynced by decision (no cross-environment sync system yet).
+    """
+    return paths.merlin_home() / "skills-user"
+
+
+def core_skills_dir() -> Path:
+    """The core repo skill source: shipped operational skills, always active."""
+    return paths.app_dir() / "skills"
 
 
 def canonical_dir() -> Path:
@@ -108,11 +124,13 @@ def list_source_skills(source_id: str, skills_dir: Path) -> list[SkillSpec]:
 
 
 def build_registry(extension_dirs: dict[str, Path]) -> dict[str, SkillSpec]:
-    """Build {name -> SkillSpec} from extension dirs plus the user-skill home.
+    """Build {name -> SkillSpec} from extension dirs, the user-skill home, and
+    the always-active core repo ``skills/`` source.
 
     ``extension_dirs`` maps extension id -> extension root (its ``skills/``
-    subdirectory is the source). Iteration order sets precedence; on a name
-    conflict the first wins with a warning.
+    subdirectory is the source). The user home and core source are appended
+    unconditionally. Iteration order sets precedence; on a name conflict the
+    first wins with a warning, so personal skills override core ones.
     """
     registry: dict[str, SkillSpec] = {}
 
@@ -120,6 +138,7 @@ def build_registry(extension_dirs: dict[str, Path]) -> dict[str, SkillSpec]:
         (ext_id, ext_dir / "skills") for ext_id, ext_dir in extension_dirs.items()
     ]
     sources.append(("user", user_skills_dir()))
+    sources.append(("core", core_skills_dir()))
 
     for source_id, skills_dir in sources:
         for spec in list_source_skills(source_id, skills_dir):
