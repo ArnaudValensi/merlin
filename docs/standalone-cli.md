@@ -94,7 +94,7 @@ Read-only — use the Settings/Extensions UI or edit `config.env` directly to ch
 
 ## Install Script (`install.sh`)
 
-9-step installer:
+Installer steps:
 1. Print banner
 2. Check/install uv (required)
 3. Check/install tmux (optional)
@@ -102,11 +102,20 @@ Read-only — use the Settings/Extensions UI or edit `config.env` directly to ch
 5. Fetch latest release tag from GitHub API
 6. Download and extract tarball to `~/.merlin/versions/<tag>/`
 7. Create `~/.merlin/current` symlink (atomic: `ln -sfn` + `mv -Tf`)
-8. Write `~/.merlin/bin/merlin` launcher script
-9. Offer to add `~/.merlin/bin` to PATH
+8. Launcher: none generated — `bin/merlin` (and `bin/merlin-clip`) ship in
+   the release and are reached through `~/.merlin/current/bin`
+9. Offer to add `~/.merlin/current/bin` to PATH
 10. Create data directories
 
-Supports `--dry-run` flag for testing.
+Supports `--dry-run` (preview) and `--non-interactive` / `-y` (no prompts;
+required deps auto-install, optional deps are skipped, PATH added without
+asking). The managed container reuses `install.sh --non-interactive` from
+`merlin-setup.sh` instead of reimplementing the install.
+
+The launcher ships in the repo at `bin/merlin` (`exec uv run --project
+~/.merlin/current ~/.merlin/current/cli.py "$@"`, respecting `MERLIN_HOME`).
+Because it lives at `current/bin`, it tracks the release and never goes
+stale — there is no generated `~/.merlin/bin/merlin` to drift.
 
 ## Update Mechanism
 
