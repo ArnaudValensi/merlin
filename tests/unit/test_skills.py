@@ -115,8 +115,13 @@ class TestBuildRegistry:
         assert "conflict" in caplog.text.lower()
 
     def test_missing_sources_are_fine(self, tmp_path):
-        # A non-existent source dir is tolerated (no error); it adds nothing.
-        registry = skills.build_registry({"ghost": tmp_path / "ghost"})
+        # A non-existent source dir is skipped (no error) without disturbing a
+        # real sibling source registered in the same build.
+        make_skill(tmp_path / "real", "gamma", description="Gamma skill.")
+        registry = skills.build_registry(
+            {"ghost": tmp_path / "ghost", "real": tmp_path / "real"}
+        )
+        assert registry["gamma"].source == "real"
         assert not any(spec.source == "ghost" for spec in registry.values())
 
     def test_user_home_is_skills_user_dir(self, tmp_path):
