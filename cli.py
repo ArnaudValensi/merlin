@@ -710,9 +710,40 @@ def _skills_use_color() -> bool:
     return sys.stdout.isatty() and os.environ.get("TERM") != "dumb"
 
 
+_SGR = {
+    "reset": "\033[0m",
+    "bold": "\033[1m",
+    "dim": "\033[2m",
+    "cyan": "\033[36m",
+    "green": "\033[32m",
+    "yellow": "\033[33m",
+}
+
+
+def _sgr(text: str, *styles: str) -> str:
+    """Wrap text in the given ANSI styles, or return it plain when color is off."""
+    if not _skills_use_color():
+        return text
+    codes = "".join(_SGR[s] for s in styles)
+    return f"{codes}{text}{_SGR['reset']}"
+
+
 def _dim(text: str) -> str:
-    """Wrap text in ANSI dim, or return it unchanged when color is off."""
-    return f"\033[2m{text}\033[0m" if _skills_use_color() else text
+    """Dim text (de-emphasis), or return it plain when color is off."""
+    return _sgr(text, "dim")
+
+
+def _highlight_name(line: str, name: str) -> str:
+    """Style the skill name in place on a row's first line.
+
+    The name is left-justified starting at column 2 (after the two-space
+    indent), so only that slice is recolored; the padding and description
+    keep their default styling and the column width is unchanged.
+    """
+    start, end = 2, 2 + len(name)
+    if line[start:end] != name:  # defensive: layout changed, skip styling
+        return line
+    return line[:start] + _sgr(name, "bold", "green") + line[end:]
 
 
 def _wrap_skill_row(
@@ -770,11 +801,16 @@ def run_skills() -> None:
         width = (
             shutil.get_terminal_size((100, 24)).columns if sys.stdout.isatty() else None
         )
-        for line in _wrap_skill_row(name, text, width):
-            line = line.rstrip()
-            print(_dim(line) if dim else line)
+        lines = [line.rstrip() for line in _wrap_skill_row(name, text, width)]
+        if dim:
+            for line in lines:
+                print(_dim(line))  # whole row de-emphasized
+        else:
+            lines[0] = _highlight_name(lines[0], name)  # active: name pops
+            for line in lines:
+                print(line)
 
-    print("Skills, in precedence order (core > extension > user):")
+    print(_sgr("Skills, in precedence order (core > extension > user):", "bold"))
 
     active_names: set[str] = set()
     current: str | None = None
@@ -783,7 +819,7 @@ def run_skills() -> None:
         if entry.source != current:
             current = entry.source
             print()
-            print(header(entry.source))
+            print(_sgr(header(entry.source), "bold", "cyan"))
             first_in_group = True
 
         # Blank line between skills in a group so wrapped descriptions don't
@@ -817,9 +853,10 @@ def run_skills() -> None:
     if active_names != live:
         print()
         print(
-            _dim(
+            _sgr(
                 "note: the live skill folder differs from the above; run "
-                "`merlin setup` or restart Merlin to apply."
+                "`merlin setup` or restart Merlin to apply.",
+                "yellow",
             )
         )
 

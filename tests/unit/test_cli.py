@@ -205,6 +205,31 @@ class TestRunSkills:
         assert lines[0].startswith("  cron")
         assert lines[0].endswith(desc)
 
+    def test_sgr_styles_only_when_color_on(self, monkeypatch):
+        import cli
+
+        monkeypatch.setattr(cli, "_skills_use_color", lambda: True)
+        assert cli._sgr("x", "bold") == "\033[1mx\033[0m"
+
+        monkeypatch.setattr(cli, "_skills_use_color", lambda: False)
+        assert cli._sgr("x", "bold", "green") == "x"
+
+    def test_highlight_name_recolors_only_the_name(self, monkeypatch):
+        import cli
+
+        monkeypatch.setattr(cli, "_skills_use_color", lambda: True)
+        line = "  cron               Manage scheduled cron jobs."
+        out = cli._highlight_name(line, "cron")
+        # name wrapped in style codes; padding and description untouched.
+        assert out.startswith("  \033[1m\033[32mcron\033[0m")
+        assert out.endswith("Manage scheduled cron jobs.")
+
+    def test_highlight_name_noop_when_layout_unexpected(self):
+        import cli
+
+        line = "  other text without the name at the expected slice"
+        assert cli._highlight_name(line, "cron") == line
+
 
 # ---------------------------------------------------------------------------
 # Version detection
