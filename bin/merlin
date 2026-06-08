@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Merlin launcher — runs the active installed version via uv.
+#
+# This file ships in the repo and is exposed on PATH through
+# ~/.merlin/current/bin, so it tracks the release and never goes stale.
+# It pins the uv project to the active version so dependencies resolve
+# regardless of the current working directory.
+home="${MERLIN_HOME:-$HOME/.merlin}"
+exec uv run --project "$home/current" "$home/current/cli.py" "$@"

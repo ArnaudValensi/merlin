@@ -1,0 +1,66 @@
+#!/bin/sh
+# merlin-clip — clipboard bridge for Merlin web terminal
+#
+# Copy:  echo "text" | merlin-clip copy
+# Paste: merlin-clip paste
+#
+# Works by sending/reading OSC 52 escape sequences through tmux to the
+# browser's clipboard via xterm.js. Requires tmux allow-passthrough on.
+
+CLIP_FILE="/tmp/merlin-clipboard/current.txt"
+
+_copy() {
+    # Read stdin, base64-encode, emit OSC 52 write sequence.
+    # Inside tmux: write directly to the client TTY to bypass tmux
+    # (tmux does not reliably forward OSC 52 to the outer terminal).
+    data=$(base64 | tr -d '\n')
+    if [ -n "$TMUX" ]; then
+        tty=$(tmux display-message -p '#{client_tty}' 2>/dev/null)
+        if [ -n "$tty" ] && [ -w "$tty" ]; then
+            printf '\033]52;c;%s\033\\' "$data" > "$tty"
+        else
+            printf '\033]52;c;%s\033\\' "$data"
+        fi
+    else
+        printf '\033]52;c;%s\033\\' "$data"
+    fi
+}
+
+_paste() {
+    # Read from clipboard sync file (written by browser on every paste action)
+    if [ -f "$CLIP_FILE" ]; then
+        cat "$CLIP_FILE"
+    fi
+}
+
+_usage() {
+    echo "Usage: merlin-clip [copy|paste]"
+    echo ""
+    echo "  copy, c    Read stdin → copy to browser clipboard (OSC 52)"
+    echo "  paste, p   Output browser clipboard contents"
+    echo ""
+    echo "Shorthand: echo text | merlin-clip  (pipe = copy)"
+    echo ""
+    echo "Aliases: pbcopy='merlin-clip copy'  pbpaste='merlin-clip paste'"
+}
+
+case "${1:-}" in
+    copy|c)
+        _copy
+        ;;
+    paste|p)
+        _paste
+        ;;
+    "")
+        # No argument: if stdin is a pipe, copy. Otherwise show help.
+        if [ ! -t 0 ]; then
+            _copy
+        else
+            _usage
+        fi
+        ;;
+    *)
+        _usage
+        exit 1
+        ;;
+esac
