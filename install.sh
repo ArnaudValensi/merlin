@@ -11,16 +11,28 @@ set -euo pipefail
 # Configuration
 # ---------------------------------------------------------------------------
 
-INSTALLER_VERSION="0.16.3"
+INSTALLER_VERSION="0.17.0"
 MERLIN_HOME="${MERLIN_HOME:-$HOME/.merlin}"
 GITHUB_REPO="${MERLIN_REPO:-ArnaudValensi/merlin}"  # owner/repo
-BIN_DIR="$MERLIN_HOME/bin"
+# The active version's bin/ goes on PATH. The launcher (bin/merlin) ships
+# in the repo and is reached through the current symlink, so it tracks the
+# release instead of being a generated, drift-prone install artifact.
+BIN_DIR="$MERLIN_HOME/current/bin"
 VERSIONS_DIR="$MERLIN_HOME/versions"
 
+# --non-interactive (-y): no prompts. Required deps auto-install (uv, a
+# user-level installer), optional deps are skipped with a warning, and the
+# PATH line is added without asking. Combined with the managed container
+# (uv/tmux already present, PATH set by the image), this collapses to a
+# pure code install — which is how merlin-setup.sh reuses this script.
 DRY_RUN=false
-if [[ "${1:-}" == "--dry-run" ]]; then
-    DRY_RUN=true
-fi
+NON_INTERACTIVE=false
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=true ;;
+        --non-interactive | -y) NON_INTERACTIVE=true ;;
+    esac
+done
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,6 +56,9 @@ confirm() {
     if $DRY_RUN; then
         info "[dry-run] Would ask: $prompt [y/N]"
         return 0
+    fi
+    if $NON_INTERACTIVE; then
+        return 0  # no prompts; callers decide per-step what "yes" means
     fi
     # Read from /dev/tty so confirm works even when piped (curl | bash)
     read -rp "  $prompt [y/N] " answer < /dev/tty
@@ -138,7 +153,9 @@ if command -v tmux >/dev/null 2>&1; then
 else
     warn "tmux not found (optional — needed for web terminal)"
     cmd=$(install_cmd tmux)
-    if [[ -n "$cmd" ]]; then
+    if $NON_INTERACTIVE; then
+        info "Skipped (non-interactive). Install later: ${cmd:-via your package manager}"
+    elif [[ -n "$cmd" ]]; then
         if confirm "Install tmux? ($cmd)"; then
             if install_pkg tmux; then
                 info "tmux installed"
@@ -163,7 +180,9 @@ if command -v cloudflared >/dev/null 2>&1; then
 else
     warn "cloudflared not found (optional — needed for tunnel access)"
     cmd=$(install_cmd cloudflared)
-    if [[ -n "$cmd" ]]; then
+    if $NON_INTERACTIVE; then
+        info "Skipped (non-interactive). Install later: ${cmd:-via your package manager}"
+    elif [[ -n "$cmd" ]]; then
         if confirm "Install cloudflared? ($cmd)"; then
             if install_pkg cloudflared; then
                 info "cloudflared installed"
@@ -243,6 +262,13 @@ else
             rm -rf "$VERSION_DIR"
             exit 1
         fi
+        # The launcher ships in the release (bin/merlin), reached via
+        # current/bin on PATH. Fail fast if a release lacks it.
+        if [[ ! -x "$VERSION_DIR/bin/merlin" ]]; then
+            error "Extraction incomplete — bin/merlin missing or not executable"
+            rm -rf "$VERSION_DIR"
+            exit 1
+        fi
 
         rm -f "$TMPFILE"
         trap - EXIT
@@ -270,21 +296,12 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 7: Write launcher script
+# Step 7: Launcher
 # ---------------------------------------------------------------------------
-
-step "Creating launcher..."
-if $DRY_RUN; then
-    info "[dry-run] Would write $BIN_DIR/merlin"
-else
-    mkdir -p "$BIN_DIR"
-    cat > "$BIN_DIR/merlin" << LAUNCHER
-#!/usr/bin/env bash
-exec uv run --project "${MERLIN_HOME}/current" "${MERLIN_HOME}/current/cli.py" "\$@"
-LAUNCHER
-    chmod +x "$BIN_DIR/merlin"
-    info "Launcher: $BIN_DIR/merlin"
-fi
+# No generation: bin/merlin (and bin/merlin-clip) ship in the release and
+# are exposed on PATH via current/bin below. This is what keeps the
+# launcher versioned with the code instead of frozen at install time.
+info "Launcher: $BIN_DIR/merlin (shipped in the release)"
 
 # ---------------------------------------------------------------------------
 # Step 8: Add to PATH
@@ -313,8 +330,9 @@ else
     PATH_LINE="export PATH=\"$BIN_DIR:\$PATH\""
 
     if [[ -n "$SHELL_CONFIG" ]]; then
-        # Skip if already added
-        if grep -qF 'merlin/bin' "$SHELL_CONFIG" 2>/dev/null; then
+        # Skip if already added (match the current/bin fragment, robust to
+        # the absolute home path differing across machines)
+        if grep -qF 'merlin/current/bin' "$SHELL_CONFIG" 2>/dev/null; then
             info "PATH entry already exists in $SHELL_CONFIG"
         elif confirm "Add $BIN_DIR to PATH in $SHELL_CONFIG?"; then
             if $DRY_RUN; then

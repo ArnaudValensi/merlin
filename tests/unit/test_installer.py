@@ -74,10 +74,14 @@ class TestDryRun:
         result = run_installer()
         assert "Would symlink" in result.stdout
 
-    def test_creates_launcher(self):
+    def test_launcher_shipped_not_generated(self):
+        """Under B the launcher ships in the release; install.sh no longer
+        writes one, and the PATH entry is the active version's bin/."""
         result = run_installer()
-        assert "Would write" in result.stdout
-        assert "bin/merlin" in result.stdout
+        assert "shipped in the release" in result.stdout
+        assert "current/bin/merlin" in result.stdout
+        # The old generated-launcher heredoc must be gone.
+        assert "Would write" not in result.stdout
 
     def test_checks_path(self):
         result = run_installer()
@@ -92,6 +96,47 @@ class TestDryRun:
     def test_no_changes_message(self):
         result = run_installer()
         assert "No changes were made" in result.stdout
+
+
+class TestNonInteractive:
+    """--non-interactive: no prompts; optional deps skipped, not sudo-installed."""
+
+    def _run(self, *args, env_overrides=None):
+        env = os.environ.copy()
+        if env_overrides:
+            env.update(env_overrides)
+        return subprocess.run(
+            ["bash", str(INSTALL_SH), "--non-interactive", "--dry-run", *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+
+    def test_completes_and_skips_optional_deps(self):
+        # --non-interactive --dry-run previews a full install without error.
+        # The no-prompt guarantee itself is the `return 0` on NON_INTERACTIVE
+        # in confirm(); a real (non-dry-run) prompt would read /dev/tty.
+        result = self._run()
+        assert result.returncode == 0
+        assert "Merlin installed" in result.stdout
+        # Optional deps that are absent must be skipped, never sudo-installed.
+        if "cloudflared not found" in result.stdout:
+            assert "Skipped (non-interactive)" in result.stdout
+
+    def test_flag_accepted_in_any_order(self):
+        # -y alias, and order independent from --dry-run
+        result = subprocess.run(
+            ["bash", str(INSTALL_SH), "--dry-run", "-y"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0
+
+    def test_path_uses_current_bin(self):
+        result = self._run()
+        assert "current/bin" in result.stdout
 
 
 class TestCustomMerlinHome:
