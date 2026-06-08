@@ -28,7 +28,7 @@ Your source code spans several directories from the project root:
 ## What You Can Inspect
 
 - **Your source code** — read any `.py` file in the project root, `lib/`, `cron/`, or `merlin-bot/`
-- **Your skills** — `merlin-bot/skills/*/SKILL.md` (aggregated into `~/.merlin/skills/`)
+- **Your skills** — core skills ship in `skills/*/SKILL.md`; bot-gated skills in `merlin-bot/skills/*/SKILL.md`; personal skills in `$(merlin config skills-user-dir)/*/SKILL.md`. All are aggregated into `~/.merlin/skills/`
 - **Your cron jobs** — `merlin cron list` and `~/.merlin/cron-jobs/*.json`
 - **Your notes** — `$(merlin config notes-dir)/user.md`, `kb/`, `logs/`
 - **Your config** — `~/.merlin/config.env`

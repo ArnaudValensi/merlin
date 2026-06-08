@@ -43,6 +43,7 @@ merlin/
 ├── commits/                   # Git commit browser module
 ├── notes/                     # Notes editor module (markdown)
 │   └── commands/              # merlin notes search / kb / remember commands
+├── skills/                    # Core operational skills (cron/, notes/, dashboard/, self-awareness/) — always active, aggregated regardless of the bot
 ├── tests/                     # Tests for core modules
 ├── merlin-bot/                # Merlin Bot extension (optional, built-in, Discord-only)
 │   ├── CLAUDE.md              # Bot personality and directives
@@ -52,7 +53,7 @@ merlin/
 │   ├── discord_send.py        # Discord REST API transport (used by bot + merlin chat)
 │   ├── cron-jobs/             # Job files (*.json)
 │   ├── templates/             # Bot-specific templates (bot.html with tabs, session.html)
-│   ├── skills/                # Operational skills (cron/, notes/, discord/, ...)
+│   ├── skills/                # Bot-gated skills (discord/) — only active when the bot is enabled
 │   ├── .env                   # Bot token (gitignored)
 │   ├── tests/                 # Bot-specific tests
 │   └── logs/                  # Invocation logs (gitignored)
