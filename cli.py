@@ -26,6 +26,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import textwrap
 import time
 import tempfile
 import urllib.request
@@ -714,6 +715,24 @@ def _dim(text: str) -> str:
     return f"\033[2m{text}\033[0m" if _skills_use_color() else text
 
 
+def _wrap_skill_row(
+    name: str, text: str, width: int | None, name_w: int = 18
+) -> list[str]:
+    """Format one skill row into display lines, keeping the full description.
+
+    When ``width`` is given (a TTY), the description wraps under its column
+    with a hanging indent; when ``width`` is None (piped output) it stays on
+    one line so it remains greppable.
+    """
+    indent = 2 + name_w + 1  # column where the description starts
+    prefix = f"  {name:<{name_w}} "
+    if width is None:
+        wrapped = [text]
+    else:
+        wrapped = textwrap.wrap(text, width=max(20, width - indent)) or [""]
+    return [prefix + wrapped[0]] + [" " * indent + w for w in wrapped[1:]]
+
+
 def run_skills() -> None:
     """List every skill and where it comes from (core / extension / user).
 
@@ -747,6 +766,14 @@ def run_skills() -> None:
         enabled = ext_states.get(source_id, (None, True))[1]
         return f"{source_id}  (extension{'' if enabled else ', disabled'})"
 
+    def emit_row(name: str, text: str, dim: bool) -> None:
+        width = (
+            shutil.get_terminal_size((100, 24)).columns if sys.stdout.isatty() else None
+        )
+        for line in _wrap_skill_row(name, text, width):
+            line = line.rstrip()
+            print(_dim(line) if dim else line)
+
     print("Skills, in precedence order (core > extension > user):")
 
     active_names: set[str] = set()
@@ -757,20 +784,25 @@ def run_skills() -> None:
             print()
             print(header(entry.source))
 
-        desc = entry.description
-        if len(desc) > 70:
-            desc = desc[:67].rstrip() + "..."
-        row = f"  {entry.name:<18} {desc}".rstrip()
-
         if not entry.source_active:
-            print(_dim(f"{row}  [inactive: extension disabled]"))
+            emit_row(
+                entry.name, f"{entry.description} [inactive: extension disabled]", True
+            )
         elif entry.shadowed_by == "core":
-            print(_dim(f"{row}  [blocked: a core skill takes precedence]"))
+            emit_row(
+                entry.name,
+                f"{entry.description} [blocked: a core skill takes precedence]",
+                True,
+            )
         elif entry.shadowed_by:
-            print(_dim(f"{row}  [shadowed by {entry.shadowed_by}]"))
+            emit_row(
+                entry.name,
+                f"{entry.description} [shadowed by {entry.shadowed_by}]",
+                True,
+            )
         else:
             active_names.add(entry.name)
-            print(row)
+            emit_row(entry.name, entry.description, False)
 
     # Staleness hint: what would aggregate now vs the live folder agents read.
     live = {s.name for s in skills.list_canonical_skills()}

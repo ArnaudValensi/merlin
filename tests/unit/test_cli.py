@@ -180,6 +180,31 @@ class TestRunSkills:
         out = capsys.readouterr().out
         assert "precedence order" in out.lower()
 
+    def test_wrap_keeps_full_description_with_hanging_indent(self):
+        from cli import _wrap_skill_row
+
+        long_desc = "word " * 40  # ~200 chars, must wrap
+        lines = _wrap_skill_row("cron", long_desc.strip(), width=60)
+
+        assert len(lines) > 1  # actually wrapped
+        assert lines[0].startswith("  cron")
+        # continuation lines align under the description column (21).
+        assert all(line.startswith(" " * 21) for line in lines[1:])
+        # nothing dropped: line 0 carries the name, the rest is the full
+        # description reflowed in order.
+        words = " ".join(line.strip() for line in lines).split()
+        assert words[0] == "cron"
+        assert words[1:] == long_desc.split()
+
+    def test_no_wrap_when_piped(self):
+        from cli import _wrap_skill_row
+
+        desc = "A fairly long single-line description that is not wrapped here."
+        lines = _wrap_skill_row("cron", desc, width=None)
+        assert len(lines) == 1
+        assert lines[0].startswith("  cron")
+        assert lines[0].endswith(desc)
+
 
 # ---------------------------------------------------------------------------
 # Version detection
