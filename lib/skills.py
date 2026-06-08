@@ -49,7 +49,23 @@ class SkillSpec:
     name: str
     description: str
     path: Path  # The skill directory (contains SKILL.md)
-    source: str  # Extension id, or "user" for the user-skill home
+    source: str  # "core", an extension id, or "user" for the user-skill home
+
+
+@dataclass(frozen=True)
+class AuditedSkill:
+    """One skill entry for the full audit view (every source, winners + losers).
+
+    Unlike the registry (winners only), the audit keeps every discovered skill
+    so callers can show what was shadowed or came from a disabled source.
+    """
+
+    name: str
+    description: str
+    path: Path
+    source: str  # "core", an extension id, or "user"
+    source_active: bool  # False for e.g. a disabled extension; never wins
+    shadowed_by: str | None  # winning source if this entry lost a name clash
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +141,44 @@ def list_source_skills(source_id: str, skills_dir: Path) -> list[SkillSpec]:
     return specs
 
 
+def audit_sources(sources: list[tuple[str, Path, bool]]) -> list[AuditedSkill]:
+    """Enumerate every skill from every source, in precedence order, tagging
+    each entry with its status.
+
+    ``sources`` is ``(source_id, skills_dir, active)`` in precedence order.
+    ``active=False`` marks a source (e.g. a disabled extension) whose skills
+    are surfaced but never win. A skill wins its name when it is the first
+    *active* source to claim it; a later claimant carries ``shadowed_by`` set
+    to the winner's source. Inactive sources never participate in winner
+    resolution (``shadowed_by`` stays ``None``; ``source_active`` is ``False``).
+
+    This is the single enumerator shared with ``build_registry``, so the live
+    registry and any audit view cannot drift.
+    """
+    winners: dict[str, str] = {}
+    audited: list[AuditedSkill] = []
+    for source_id, skills_dir, active in sources:
+        for spec in list_source_skills(source_id, skills_dir):
+            shadowed_by: str | None = None
+            if active:
+                winner = winners.get(spec.name)
+                if winner is not None:
+                    shadowed_by = winner
+                else:
+                    winners[spec.name] = source_id
+            audited.append(
+                AuditedSkill(
+                    name=spec.name,
+                    description=spec.description,
+                    path=spec.path,
+                    source=source_id,
+                    source_active=active,
+                    shadowed_by=shadowed_by,
+                )
+            )
+    return audited
+
+
 def build_registry(extension_dirs: dict[str, Path]) -> dict[str, SkillSpec]:
     """Build {name -> SkillSpec} from the always-active core repo ``skills/``
     source, the extension dirs, and the user-skill home.
@@ -135,38 +189,40 @@ def build_registry(extension_dirs: dict[str, Path]) -> dict[str, SkillSpec]:
     conflict the first wins with a warning (core > extension > user), so a
     core skill is never shadowed.
     """
-    registry: dict[str, SkillSpec] = {}
-
-    sources: list[tuple[str, Path]] = [("core", core_skills_dir())]
+    sources: list[tuple[str, Path, bool]] = [("core", core_skills_dir(), True)]
     sources += [
-        (ext_id, ext_dir / "skills") for ext_id, ext_dir in extension_dirs.items()
+        (ext_id, ext_dir / "skills", True) for ext_id, ext_dir in extension_dirs.items()
     ]
-    sources.append(("user", user_skills_dir()))
+    sources.append(("user", user_skills_dir(), True))
 
-    for source_id, skills_dir in sources:
-        for spec in list_source_skills(source_id, skills_dir):
-            existing = registry.get(spec.name)
-            if existing is not None:
-                if existing.source == "core":
-                    # A lower-precedence source tried to reuse a core skill's
-                    # name. Core cannot be shadowed; surface it as a security
-                    # event, not a neutral conflict.
-                    logger.warning(
-                        "Blocked skill override: '%s' from %s ignored - a core "
-                        "skill of that name takes precedence and cannot be "
-                        "shadowed",
-                        spec.name,
-                        spec.source,
-                    )
-                else:
-                    logger.warning(
-                        "Skill name conflict: '%s' from %s shadowed by %s",
-                        spec.name,
-                        spec.source,
-                        existing.source,
-                    )
-                continue
-            registry[spec.name] = spec
+    registry: dict[str, SkillSpec] = {}
+    for entry in audit_sources(sources):
+        if entry.shadowed_by is not None:
+            if entry.shadowed_by == "core":
+                # A lower-precedence source tried to reuse a core skill's name.
+                # Core cannot be shadowed; surface it as a security event, not
+                # a neutral conflict.
+                logger.warning(
+                    "Blocked skill override: '%s' from %s ignored - a core "
+                    "skill of that name takes precedence and cannot be "
+                    "shadowed",
+                    entry.name,
+                    entry.source,
+                )
+            else:
+                logger.warning(
+                    "Skill name conflict: '%s' from %s shadowed by %s",
+                    entry.name,
+                    entry.source,
+                    entry.shadowed_by,
+                )
+            continue
+        registry[entry.name] = SkillSpec(
+            name=entry.name,
+            description=entry.description,
+            path=entry.path,
+            source=entry.source,
+        )
 
     return registry
 

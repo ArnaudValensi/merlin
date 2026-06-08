@@ -42,6 +42,7 @@ CORE_COMMANDS: tuple[str, ...] = (
     "setup",
     "update",
     "config",
+    "skills",
     "agent",
     "cron",
     "chat",
@@ -159,40 +160,56 @@ def installed_extension_dirs() -> dict[str, Path]:
     return {d.name: d for d in sorted(extensions_dir.iterdir()) if d.is_dir()}
 
 
-def enabled_extension_source_dirs() -> dict[str, Path]:
-    """Extension roots whose surfaces (skills) are active per extensions.json.
-
-    Mirrors the server's enabled resolution (explicit state, then built-in
-    defaults, then enabled-by-default for installed) without importing
-    main.py, so 'merlin setup' aggregates the same skill set the server
-    will. Reserved-named installed dirs are excluded, matching the server
-    loader's rejection.
-    """
+def _load_extensions_state() -> dict:
+    """Read extensions.json (the enabled/disabled map); {} if missing/invalid."""
     import json
 
-    state: dict = {}
     state_path = paths.extensions_state_path()
     if state_path.exists():
         try:
             data = json.loads(state_path.read_text())
             if isinstance(data, dict):
-                state = data
+                return data
         except (OSError, json.JSONDecodeError):
-            state = {}
+            pass
+    return {}
 
-    sources: dict[str, Path] = {}
+
+def all_extension_states() -> dict[str, tuple[Path, bool]]:
+    """Every extension (built-in + installed) -> (root dir, enabled).
+
+    Mirrors the server's enabled resolution (explicit extensions.json state,
+    then built-in defaults, then enabled-by-default for installed) without
+    importing main.py. Reserved-named installed dirs are excluded, matching
+    the server loader's rejection. Built-ins come first, then installed.
+    """
+    state = _load_extensions_state()
+
+    result: dict[str, tuple[Path, bool]] = {}
     for ext_id, ext_dir in builtin_extension_dirs().items():
-        if state.get(ext_id, BUILTIN_DEFAULT_ENABLED.get(ext_id, True)):
-            sources[ext_id] = ext_dir
+        enabled = bool(state.get(ext_id, BUILTIN_DEFAULT_ENABLED.get(ext_id, True)))
+        result[ext_id] = (ext_dir, enabled)
 
     reserved = reserved_names()
     for ext_id, ext_dir in installed_extension_dirs().items():
         if ext_id in reserved:
             continue
-        if state.get(ext_id, True):
-            sources[ext_id] = ext_dir
+        result[ext_id] = (ext_dir, bool(state.get(ext_id, True)))
 
-    return sources
+    return result
+
+
+def enabled_extension_source_dirs() -> dict[str, Path]:
+    """Extension roots whose surfaces (skills) are active per extensions.json.
+
+    The enabled subset of ``all_extension_states`` — so 'merlin setup'
+    aggregates the same skill set the server will.
+    """
+    return {
+        ext_id: ext_dir
+        for ext_id, (ext_dir, enabled) in all_extension_states().items()
+        if enabled
+    }
 
 
 # ---------------------------------------------------------------------------

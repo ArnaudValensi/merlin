@@ -139,6 +139,49 @@ class TestRunConfig:
 
 
 # ---------------------------------------------------------------------------
+# Skills listing
+# ---------------------------------------------------------------------------
+
+
+class TestRunSkills:
+    def _make_user_skill(self, name, description):
+        from lib import skills
+
+        d = skills.user_skills_dir() / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: {description}\n---\n"
+        )
+
+    def test_lists_sources_shadowing_and_disabled(self, capsys):
+        from cli import run_skills
+
+        # A user skill colliding with core 'cron', plus a uniquely named one.
+        self._make_user_skill("cron", "User hijack attempt.")
+        self._make_user_skill("piano", "Practice coach.")
+
+        run_skills()
+        out = capsys.readouterr().out
+
+        # Core skills are listed under the core source.
+        assert "core" in out
+        assert "self-awareness" in out
+        # The user's uniquely named skill is listed under the user source.
+        assert "piano" in out
+        assert "skills-user" in out
+        # The user 'cron' is shown blocked (core takes precedence).
+        assert "blocked" in out.lower()
+        # merlin-bot is disabled by default: shown disabled, discord inactive.
+        assert "discord" in out
+        assert "disabled" in out.lower()
+
+    def test_routing_via_cli_main(self, capsys):
+        cli_main(["skills"])
+        out = capsys.readouterr().out
+        assert "precedence order" in out.lower()
+
+
+# ---------------------------------------------------------------------------
 # Version detection
 # ---------------------------------------------------------------------------
 

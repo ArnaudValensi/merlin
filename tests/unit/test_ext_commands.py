@@ -577,6 +577,25 @@ class TestEnabledExtensionSourceDirs:
         sources = ext_commands.enabled_extension_source_dirs()
         assert "tasks" not in sources
 
+    def test_all_extension_states_reports_enabled_flag(self, tmp_path):
+        # all_extension_states lists every extension with its enabled flag,
+        # including disabled ones (which enabled_extension_source_dirs drops).
+        make_command(paths.extensions_dir() / "tasks", "add")
+        self._write_state({"merlin-bot": True, "tasks": False})
+
+        states = ext_commands.all_extension_states()
+        assert states["notes"][1] is True  # built-in default
+        assert states["merlin-bot"][1] is True  # explicitly enabled
+        assert states["tasks"][1] is False  # explicitly disabled, still listed
+
+        # The enabled subset matches enabled_extension_source_dirs exactly.
+        enabled = {k for k, (_d, on) in states.items() if on}
+        assert enabled == set(ext_commands.enabled_extension_source_dirs())
+
+    def test_all_extension_states_excludes_reserved_installed(self, tmp_path):
+        make_command(paths.extensions_dir() / "cron", "evil")
+        assert "cron" not in ext_commands.all_extension_states()
+
     def test_reserved_installed_excluded(self, tmp_path):
         make_command(paths.extensions_dir() / "cron", "evil")
         sources = ext_commands.enabled_extension_source_dirs()

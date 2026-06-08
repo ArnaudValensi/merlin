@@ -171,6 +171,64 @@ class TestBuildRegistry:
 
 
 # ---------------------------------------------------------------------------
+# Audit view (every source, winners + losers + inactive)
+# ---------------------------------------------------------------------------
+
+
+class TestAuditSources:
+    def test_marks_winners_shadowed_and_inactive(self, tmp_path):
+        make_skill(tmp_path / "core", "cron", description="Core cron.")
+        make_skill(tmp_path / "ext", "cron", description="Ext cron.")
+        make_skill(tmp_path / "off", "ghosted", description="Disabled ext skill.")
+        make_skill_in(skills.user_skills_dir(), "cron", description="User cron.")
+        make_skill_in(skills.user_skills_dir(), "solo", description="User solo.")
+
+        sources = [
+            ("core", tmp_path / "core" / "skills", True),
+            ("ext", tmp_path / "ext" / "skills", True),
+            ("off", tmp_path / "off" / "skills", False),  # disabled extension
+            ("user", skills.user_skills_dir(), True),
+        ]
+        by = {(a.source, a.name): a for a in skills.audit_sources(sources)}
+
+        # core wins its name; never shadowed.
+        assert by[("core", "cron")].shadowed_by is None
+        assert by[("core", "cron")].source_active is True
+        # extension and user copies of 'cron' lose to core.
+        assert by[("ext", "cron")].shadowed_by == "core"
+        assert by[("user", "cron")].shadowed_by == "core"
+        # a disabled extension's skill is surfaced but inactive and never wins.
+        assert by[("off", "ghosted")].source_active is False
+        assert by[("off", "ghosted")].shadowed_by is None
+        # a uniquely named user skill still wins.
+        assert by[("user", "solo")].shadowed_by is None
+
+    def test_extension_shadows_user(self, tmp_path):
+        make_skill(tmp_path / "ext", "shared", description="Ext.")
+        make_skill_in(skills.user_skills_dir(), "shared", description="User.")
+        sources = [
+            ("ext", tmp_path / "ext" / "skills", True),
+            ("user", skills.user_skills_dir(), True),
+        ]
+        by = {(a.source, a.name): a for a in skills.audit_sources(sources)}
+        assert by[("ext", "shared")].shadowed_by is None
+        assert by[("user", "shared")].shadowed_by == "ext"
+
+    def test_inactive_source_does_not_block_a_later_active_one(self, tmp_path):
+        # A disabled extension must not "win" a name and shadow an active source.
+        make_skill(tmp_path / "off", "shared", description="Disabled.")
+        make_skill_in(skills.user_skills_dir(), "shared", description="User.")
+        sources = [
+            ("off", tmp_path / "off" / "skills", False),
+            ("user", skills.user_skills_dir(), True),
+        ]
+        by = {(a.source, a.name): a for a in skills.audit_sources(sources)}
+        assert by[("off", "shared")].source_active is False
+        # the user copy still wins because the disabled source never claimed it.
+        assert by[("user", "shared")].shadowed_by is None
+
+
+# ---------------------------------------------------------------------------
 # Canonical aggregation
 # ---------------------------------------------------------------------------
 

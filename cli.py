@@ -598,6 +598,18 @@ Examples:
         "key", nargs="?", help="Config key to print (omit to list all)"
     )
 
+    # skills
+    subparsers.add_parser(
+        "skills",
+        help="List all skills and where each comes from",
+        description=(
+            "List every skill and its source (core / extension / user) in "
+            "precedence order (core > extension > user). Skills shadowed by a "
+            "higher-precedence source, and skills from disabled extensions, "
+            "are shown dimmed."
+        ),
+    )
+
     return parser
 
 
@@ -692,6 +704,86 @@ def run_config(key: str | None) -> None:
         sys.exit(1)
 
 
+def _skills_use_color() -> bool:
+    """True when stdout is an interactive TTY that should get ANSI styling."""
+    return sys.stdout.isatty() and os.environ.get("TERM") != "dumb"
+
+
+def _dim(text: str) -> str:
+    """Wrap text in ANSI dim, or return it unchanged when color is off."""
+    return f"\033[2m{text}\033[0m" if _skills_use_color() else text
+
+
+def run_skills() -> None:
+    """List every skill and where it comes from (core / extension / user).
+
+    Reuses the same registry-building code that aggregates the live skill
+    folder, so the listing matches what agents actually see. Skills shadowed
+    by a higher-precedence source, and skills from disabled extensions, are
+    shown dimmed.
+    """
+    from lib import skills
+
+    # Mirror build_registry's precedence (core > extension > user), but keep
+    # disabled extensions so they can be shown as inactive.
+    ext_states = ext_commands.all_extension_states()
+    sources: list[tuple[str, Path, bool]] = [("core", skills.core_skills_dir(), True)]
+    sources += [
+        (ext_id, ext_dir / "skills", enabled)
+        for ext_id, (ext_dir, enabled) in ext_states.items()
+    ]
+    sources.append(("user", skills.user_skills_dir(), True))
+
+    audited = skills.audit_sources(sources)
+    if not audited:
+        print("No skills found.")
+        return
+
+    def header(source_id: str) -> str:
+        if source_id == "core":
+            return "core"
+        if source_id == "user":
+            return f"user  ({skills.user_skills_dir()})"
+        enabled = ext_states.get(source_id, (None, True))[1]
+        return f"{source_id}  (extension{'' if enabled else ', disabled'})"
+
+    print("Skills, in precedence order (core > extension > user):")
+
+    active_names: set[str] = set()
+    current: str | None = None
+    for entry in audited:
+        if entry.source != current:
+            current = entry.source
+            print()
+            print(header(entry.source))
+
+        desc = entry.description
+        if len(desc) > 70:
+            desc = desc[:67].rstrip() + "..."
+        row = f"  {entry.name:<18} {desc}".rstrip()
+
+        if not entry.source_active:
+            print(_dim(f"{row}  [inactive: extension disabled]"))
+        elif entry.shadowed_by == "core":
+            print(_dim(f"{row}  [blocked: a core skill takes precedence]"))
+        elif entry.shadowed_by:
+            print(_dim(f"{row}  [shadowed by {entry.shadowed_by}]"))
+        else:
+            active_names.add(entry.name)
+            print(row)
+
+    # Staleness hint: what would aggregate now vs the live folder agents read.
+    live = {s.name for s in skills.list_canonical_skills()}
+    if active_names != live:
+        print()
+        print(
+            _dim(
+                "note: the live skill folder differs from the above; run "
+                "`merlin setup` or restart Merlin to apply."
+            )
+        )
+
+
 def cli_main(argv: list[str] | None = None) -> None:
     """Main CLI entry point."""
     if argv is None:
@@ -749,6 +841,9 @@ def cli_main(argv: list[str] | None = None) -> None:
 
     elif command == "config":
         run_config(getattr(args, "key", None))
+
+    elif command == "skills":
+        run_skills()
 
     elif command == "start":
         dev = getattr(args, "dev", False)
