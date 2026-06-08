@@ -2,6 +2,29 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.20.0 (2026-06-08)
+
+### Added
+- **`merlin` subcommands** — Operate Merlin from the command line, from any directory: `merlin cron` (manage scheduled jobs), `merlin notes search` / `merlin kb add` / `merlin remember`, `merlin chat` (send/reply/react), `merlin dashboard-url`, and `merlin agent`. `merlin --help` is the catalog.
+- **Extension commands** — Extensions can ship a `commands/` folder whose scripts appear automatically as `merlin <extension> <command>`.
+- **Agent skills across engines** — Merlin's operational skills are exposed natively to Claude Code and OpenCode, and to your own terminal agents via `~/.claude/skills` and `~/.agents/skills`, so they work from any directory.
+- **Skills & commands audit** — The Extensions page lists the skills and commands each extension ships, as a security-review surface.
+- **`merlin-clip` for standalone installs** — The OSC 52 clipboard bridge (`pbcopy`/`pbpaste`) now ships with every install, not just managed containers.
+- **Cron schedule builder** — Build schedules visually, with shell-command jobs (no agent, no token cost) and per-job timezones.
+- **Cron performance tab** — A performance view with run/cost aggregation.
+- **3D model preview** — Preview STL and OBJ files in the file browser.
+- **Directory downloads** — Download a folder as a streamed zip, with progress feedback and a leave-page warning.
+
+### Changed
+- **Managed agents run where the job operates** — The Discord bot and cron agent jobs run in the configured working/launch directory, so an agent job pointed at a project repo picks up that repo's own context. Dev-only skills are no longer shipped to end users.
+- **Web terminal uploads** — The upload button accepts any file type, not just images.
+- **Cron page** — Notify control merges report-mode and the Discord toggle; expandable Logs rows; reordered tabs; accessibility and touch-target improvements.
+- **Install & launcher** — `merlin` launches from a versioned `bin/merlin` that ships with each release (via `~/.merlin/current/bin`), so it never goes stale; `install.sh` gains `--non-interactive`.
+
+### Fixed
+- **Cron weekday selection** — Individual weekday chips in the schedule builder toggle correctly.
+- **Mobile cron logs** — Expanded log rows no longer get inflated by mobile font-boosting.
+
 ## v0.19.0 (2026-05-05)
 
 ### Added
