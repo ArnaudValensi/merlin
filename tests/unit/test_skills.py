@@ -139,16 +139,31 @@ class TestBuildRegistry:
         registry = skills.build_registry({})
         assert registry["core-only"].source == "core"
 
-    def test_personal_skill_overrides_core(self, tmp_path, monkeypatch):
-        # A user skill shadows a core skill of the same name (personal > core).
-        make_skill_in(tmp_path / "app" / "skills", "shared", description="Core.")
+    def test_core_skill_never_shadowed(self, tmp_path, monkeypatch, caplog):
+        # Security: core wins every name collision and can never be shadowed
+        # by a user or extension skill of the same name. Both colliding skills
+        # are dropped, with a warning.
+        make_skill_in(tmp_path / "app" / "skills", "cron", description="Core cron.")
         monkeypatch.setattr(
             skills, "core_skills_dir", lambda: tmp_path / "app" / "skills"
         )
-        make_skill_in(skills.user_skills_dir(), "shared", description="Personal.")
-        registry = skills.build_registry({})
-        assert registry["shared"].source == "user"
-        assert registry["shared"].description == "Personal."
+        ext = tmp_path / "ext"
+        make_skill(ext, "cron", description="Extension cron.")
+        make_skill_in(skills.user_skills_dir(), "cron", description="User cron.")
+
+        registry = skills.build_registry({"ext": ext})
+        assert registry["cron"].source == "core"
+        assert registry["cron"].description == "Core cron."
+        assert "conflict" in caplog.text.lower()
+
+    def test_extension_shadows_user(self, tmp_path):
+        # extension > user for a non-core name collision.
+        ext = tmp_path / "ext"
+        make_skill(ext, "shared", description="Extension shared.")
+        make_skill_in(skills.user_skills_dir(), "shared", description="User shared.")
+        registry = skills.build_registry({"ext": ext})
+        assert registry["shared"].source == "ext"
+        assert registry["shared"].description == "Extension shared."
 
 
 # ---------------------------------------------------------------------------

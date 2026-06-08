@@ -5,16 +5,18 @@ Merlin owns one canonical skill registry; per-engine adapters surface it in
 each engine's native format (Claude Code plugin, ~/.agents/skills symlinks,
 system-prompt fallback). Sources, in precedence order:
 
-1. Built-in extensions' ``skills/`` directories (e.g. ``merlin-bot/skills/``),
-   gated by the extension's enabled state
-2. Installed extensions' ``~/.merlin/extensions/<ext>/skills/``
-3. The user-skill home ``<merlin-home>/skills-user/`` (personal skills,
-   always active, per-environment / unsynced)
-4. The core repo ``skills/`` directory (shipped operational skills, always
+1. The core repo ``skills/`` directory (shipped operational skills, always
    active regardless of the bot)
+2. Built-in extensions' ``skills/`` directories (e.g. ``merlin-bot/skills/``),
+   gated by the extension's enabled state
+3. Installed extensions' ``~/.merlin/extensions/<ext>/skills/``
+4. The user-skill home ``<merlin-home>/skills-user/`` (personal skills,
+   always active, per-environment / unsynced)
 
-On a name conflict the first source wins, so personal skills override core
-ones (personal > core).
+On a name conflict the first source wins (core > extension > user), so a core
+skill can never be shadowed: a user or extension skill that collides with a
+core skill's name is dropped with a warning. This is deliberate — core skills
+are founder-authored and trusted, so nothing may silently override them.
 
 Aggregation: every registered skill directory is symlinked into
 ``~/.merlin/skills/`` (the canonical dir), rebuilt at startup so disabled
@@ -124,21 +126,22 @@ def list_source_skills(source_id: str, skills_dir: Path) -> list[SkillSpec]:
 
 
 def build_registry(extension_dirs: dict[str, Path]) -> dict[str, SkillSpec]:
-    """Build {name -> SkillSpec} from extension dirs, the user-skill home, and
-    the always-active core repo ``skills/`` source.
+    """Build {name -> SkillSpec} from the always-active core repo ``skills/``
+    source, the extension dirs, and the user-skill home.
 
     ``extension_dirs`` maps extension id -> extension root (its ``skills/``
-    subdirectory is the source). The user home and core source are appended
-    unconditionally. Iteration order sets precedence; on a name conflict the
-    first wins with a warning, so personal skills override core ones.
+    subdirectory is the source). The core source is prepended and the user
+    home appended unconditionally. Iteration order sets precedence; on a name
+    conflict the first wins with a warning (core > extension > user), so a
+    core skill is never shadowed.
     """
     registry: dict[str, SkillSpec] = {}
 
-    sources: list[tuple[str, Path]] = [
+    sources: list[tuple[str, Path]] = [("core", core_skills_dir())]
+    sources += [
         (ext_id, ext_dir / "skills") for ext_id, ext_dir in extension_dirs.items()
     ]
     sources.append(("user", user_skills_dir()))
-    sources.append(("core", core_skills_dir()))
 
     for source_id, skills_dir in sources:
         for spec in list_source_skills(source_id, skills_dir):
