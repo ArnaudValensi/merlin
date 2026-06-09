@@ -1,0 +1,111 @@
+"""Persona/context composition — single owner of contextual system-prompt content.
+
+Sits above the channel-agnostic engine (lib/engine.py): the engine receives
+a finished system prompt and knows nothing about brain, personality, or who
+is calling. Each layer is defined exactly once here, and every consumer (the
+Discord bot, the cron agent runner, `merlin agent`) obtains it through this
+module, so the CLI flags and the managed channels cannot disagree on what a
+layer contains.
+
+Layers:
+    brain         agent/MERLIN.md, read from the app dir so `merlin update`
+                  refreshes it via the `current` symlink
+    personality   ~/.merlin/personality.md (legacy fallback:
+                  ~/.merlin/merlin-bot/personality.md)
+    user memory   ~/.merlin/user.md (fallback: <notes-dir>/user.md),
+                  framed under a "# User Memory" heading
+    overlay       per-surface style overlay; Discord's is
+                  merlin-bot/discord_directives.md
+
+Recipes (which layers per kind of invocation):
+    managed-assistant   brain + personality + user + Discord overlay
+                        (the Discord bot)
+    headless-worker     brain + user, no personality by design — operational
+                        jobs shouldn't sound like the bot (cron agent jobs)
+
+`merlin agent` is the interactive face: brain by default, --personality /
+--user append those same layers.
+
+Skills are not a layer: they are always-on, surfaced by the engine itself
+(native adapters or the text fallback appended after this composed prompt,
+so the brain always precedes the skill table by construction).
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+import paths
+
+logger = logging.getLogger("merlin.agent_context")
+
+
+def _load(path: Path) -> str | None:
+    """Load text content from a file, or None if missing/empty."""
+    if not path.exists():
+        return None
+    try:
+        content = path.read_text().strip()
+        return content if content else None
+    except OSError as e:
+        logger.warning("Could not read %s: %s", path, e)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Layers — each reads from exactly one place
+# ---------------------------------------------------------------------------
+
+
+def brain() -> str | None:
+    """The agent brain doc: what Merlin is and how to operate it."""
+    return _load(paths.app_dir() / "agent" / "MERLIN.md")
+
+
+def personality() -> str | None:
+    """The user-customizable voice/style layer."""
+    content = _load(paths.merlin_home() / "personality.md")
+    if content:
+        return content
+    return _load(paths.merlin_home() / "merlin-bot" / "personality.md")
+
+
+def user_memory() -> str | None:
+    """Durable facts about the user, framed under a heading."""
+    content = _load(paths.merlin_home() / "user.md")
+    if not content:
+        content = _load(paths.notes_dir() / "user.md")
+    if not content:
+        return None
+    return f"# User Memory\n\n{content}"
+
+
+def discord_overlay() -> str | None:
+    """Discord channel style overlay (brevity rules, message context format)."""
+    return _load(paths.app_dir() / "merlin-bot" / "discord_directives.md")
+
+
+# ---------------------------------------------------------------------------
+# Recipes — which layers per kind of invocation
+# ---------------------------------------------------------------------------
+
+RECIPES: dict[str, tuple] = {
+    "managed-assistant": (brain, personality, user_memory, discord_overlay),
+    "headless-worker": (brain, user_memory),
+}
+
+
+def compose(recipe: str) -> str | None:
+    """Compose the contextual system prompt for a named recipe.
+
+    Returns None when every layer is missing (the engine treats an absent
+    system prompt as "none", same as a missing personality did before).
+    """
+    try:
+        layer_fns = RECIPES[recipe]
+    except KeyError:
+        known = ", ".join(sorted(RECIPES))
+        raise ValueError(f"Unknown recipe {recipe!r}. Known recipes: {known}")
+    parts = [text for fn in layer_fns if (text := fn())]
+    return "\n\n".join(parts) if parts else None
