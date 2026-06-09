@@ -175,6 +175,9 @@ cli.py (merlin start)
         │           ├── tmux missing → TMUX_AVAILABLE=False, disable nav item
         │           └── cloudflared missing → TUNNEL_ENABLED=False
         │
+        ├── _rebuild_skill_registry()  (aggregate ~/.merlin/skills, refresh
+        │     the ~/.claude & ~/.agents shims — see skill-system.md)
+        │
         └── asyncio.run()
               ├── uvicorn.Server (FastAPI app)
               ├── start_tunnel() (if enabled)
@@ -186,10 +189,11 @@ cli.py (merlin start)
 | File | Purpose |
 |------|---------|
 | `main.py` | FastAPI app, startup, extension loader, settings API |
-| `cli.py` | CLI entry point (`merlin start/version/setup/update/config`) |
+| `cli.py` | CLI entry point and subcommands (`start`, `version`, `setup`, `update`, `config`, `skills`, `agent`, `cron`, `chat`, `dashboard-url`) |
 | `paths.py` | Path resolution (dev mode vs installed) |
 | `lib/engine.py` | AgentEngine abstraction, `invoke()` entry point, engine registry |
 | `lib/session.py` | JSONL session manager (create, load, append, compact) |
+| `lib/skills.py` | Skill registry, canonical aggregation, engine adapters, shims (see [`skill-system.md`](skill-system.md)) |
 | `lib/engines/claude_code.py` | Claude Code CLI engine (default) |
 | `lib/engines/opencode.py` | OpenCode CLI engine |
 | `merlin-bot/merlin_bot.py` | Discord handler, session resolution, prompt building |
