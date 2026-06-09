@@ -45,11 +45,12 @@ merlin/
 │   └── commands/              # merlin notes search / kb / remember commands
 ├── skills/                    # Core operational skills (cron/, notes/, dashboard/, self-awareness/) — always active, aggregated regardless of the bot
 ├── tests/                     # Tests for core modules
+├── agent/
+│   └── MERLIN.md              # Agent brain doc (printed by `merlin agent`)
 ├── merlin-bot/                # Merlin Bot extension (optional, built-in, Discord-only)
-│   ├── CLAUDE.md              # Bot personality and directives
 │   ├── merlin_bot.py          # Discord bot + extension interface (EXTENSION_META)
 │   ├── merlin_app.py          # App interface (bot monitoring page with tabs)
-│   ├── discord_directives.md  # Bot-specific personality overlay
+│   ├── discord_directives.md  # Canonical Discord style overlay
 │   ├── discord_send.py        # Discord REST API transport (used by bot + merlin chat)
 │   ├── cron-jobs/             # Job files (*.json)
 │   ├── templates/             # Bot-specific templates (bot.html with tabs, session.html)
@@ -84,10 +85,10 @@ Read these docs when working on the corresponding systems:
 | [`docs/standalone-cli.md`](docs/standalone-cli.md) | Standalone CLI design: paths, install, update, dev mode |
 | [`docs/logging-system.md`](docs/logging-system.md) | Logging architecture, log files, rotation, engine log events |
 
-### Two CLAUDE.md Files
+### Doc Audiences
 
-1. **`merlin/CLAUDE.md`** (this file) — For **developing** Merlin
-2. **`merlin-bot/CLAUDE.md`** — Agent brain (personality, notes system, writing style). Channel-agnostic — no Discord delivery instructions. The bot handler captures engine output and delivers it.
+1. **`merlin/CLAUDE.md`** (this file) — For **developing** Merlin. No operational agent guidance lives here.
+2. **`agent/MERLIN.md`** — The agent brain doc: what Merlin is and how to operate it, channel-neutral. Printed by `merlin agent`. Discord style lives in `merlin-bot/discord_directives.md`.
 
 ## Script Documentation Convention
 
@@ -167,7 +168,7 @@ When creating new scripts:
 |--------|---------|------|
 | `merlin_bot.py` | Discord bot + extension interface (router, start, validate, EXTENSION_META) | [`discord-bot`](docs/discord-bot.md) |
 | `merlin_app.py` | Bot monitoring page with tabs (Overview, Performance, Logs) | [`dashboard-architecture`](docs/dashboard-architecture.md) |
-| `discord_directives.md` | Discord writing style reference (not injected into engine) | [`discord-bot`](docs/discord-bot.md) |
+| `discord_directives.md` | Canonical Discord style overlay | [`discord-bot`](docs/discord-bot.md) |
 | `discord_send.py` | Discord REST transport (CLI: `merlin chat`) | [`discord-bot`](docs/discord-bot.md) |
 
 ### CWD (Current Working Directory)
@@ -279,25 +280,6 @@ Web-based dashboard served by FastAPI on port 3123, started by `main.py`.
 ## Project Management
 
 Epics and project planning are managed in the private `merlin-saas` repo under `epics/cli/`.
-
-## Notes & Knowledge Base
-
-The notes directory is **configurable** — never hardcode paths like `~/.merlin/notes/` or `~/.merlin/memory/`. Always discover it dynamically:
-
-```bash
-merlin config notes-dir    # prints the resolved notes directory
-```
-
-The notes directory contains:
-
-| Path | Content |
-|------|---------|
-| `<notes-dir>/kb/` | Knowledge base (Zettelkasten notes, `_index.md`) |
-| `<notes-dir>/logs/` | Daily conversation logs |
-| `<notes-dir>/user.md` | User profile and facts |
-| `<notes-dir>/media/` | Uploaded media files |
-
-**For cron jobs and skills**: do not put absolute paths in prompts. The agent reads this CLAUDE.md and knows how to find the notes directory. Just refer to "the knowledge base" or "the user profile" — the agent will resolve the path.
 
 ## Key Patterns and Conventions
 
