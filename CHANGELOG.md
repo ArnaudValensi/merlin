@@ -2,6 +2,20 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.21.0 (2026-06-09)
+
+### Added
+- **`merlin skills`** — List every skill and where it comes from (core, an extension, or your personal skills), in precedence order. Shadowed skills and skills from disabled extensions are shown dimmed.
+- **`merlin config skills-user-dir`** — Print the personal-skills home (`~/.merlin/skills-user/`).
+
+### Changed
+- **Operational skills always available** — The cron, notes, dashboard, and self-awareness skills now load whether or not the Discord bot is enabled. Previously they only activated with the bot on, so managed and bot-off environments had no operational skills.
+- **Personal skills home** — Personal skills now live in `~/.merlin/skills-user/` (a dedicated home, separate from your notes). Per-environment.
+- **Core skills can't be overridden** — A personal or extension skill that reuses a built-in skill's name is ignored, so a trusted core skill can never be silently shadowed (logged as a blocked override).
+
+### Fixed
+- **`merlin cron` shows help** — Running `merlin cron` with no subcommand now prints usage instead of an error.
+
 ## v0.20.1 (2026-06-08)
 
 ### Fixed
