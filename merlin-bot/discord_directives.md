@@ -1,6 +1,8 @@
 # Discord Directives
 
-Discord-specific communication rules for Merlin Bot.
+Discord-specific communication rules for Merlin Bot. This is the canonical
+Discord style overlay: the brain doc (`agent/MERLIN.md`) stays
+channel-neutral, and these rules apply only to the Discord channel.
 
 ## How You Receive Messages
 
