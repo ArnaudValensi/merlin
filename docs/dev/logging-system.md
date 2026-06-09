@@ -56,7 +56,7 @@ merlin                      → merlin.log (RotatingFileHandler, 10 MB × 5)
 ├── merlin.claude           (legacy claude wrapper)
 ├── merlin.notes            (notes git operations)
 ├── merlin.structured_log   (log cleanup events)
-└── merlin.ext.*            (extensions — see docs/extension-system.md)
+└── merlin.ext.*            (extensions — see docs/dev/extension-system.md)
     ├── merlin.ext.video_scenes
     ├── merlin.ext.video_scenes.renderer
     └── ...

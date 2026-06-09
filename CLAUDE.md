@@ -60,7 +60,8 @@ merlin/
 │   ├── tests/                 # Bot-specific tests
 │   └── logs/                  # Invocation logs (gitignored)
 ├── (epics managed in merlin-saas repo)
-├── docs/                      # Reference documentation (see list below)
+├── docs/                      # User/platform docs (for people using or extending Merlin)
+│   └── dev/                   # Contributor docs (for changing Merlin's code; see list below)
 ```
 
 ### Reference Documentation
@@ -69,22 +70,22 @@ Read these docs when working on the corresponding systems:
 
 | Doc | Covers |
 |-----|--------|
-| [`docs/architecture.md`](docs/architecture.md) | High-level system overview, data flow |
-| [`docs/cron-system.md`](docs/cron-system.md) | Job format, dispatcher, state/locks, scheduler, staleness guard |
-| [`docs/notes-system.md`](docs/notes-system.md) | 3-layer notes system (user, logs, KB), frontmatter format, search tools |
-| [`docs/session-management.md`](docs/session-management.md) | Session registry, UUID5 strategy, resume-first, MERLIN_SESSION_ID |
-| [`docs/discord-bot.md`](docs/discord-bot.md) | Message flow, filtering, threading, prompt building, discord skill |
-| [`docs/auth-and-tunnel.md`](docs/auth-and-tunnel.md) | Cookie auth, HMAC signing, Cloudflare Tunnel modes, login flow |
+| [`docs/dev/architecture.md`](docs/dev/architecture.md) | High-level system overview, data flow |
+| [`docs/dev/cron-system.md`](docs/dev/cron-system.md) | Job format, dispatcher, state/locks, scheduler, staleness guard |
+| [`docs/dev/notes-system.md`](docs/dev/notes-system.md) | 3-layer notes system (user, logs, KB), frontmatter format, search tools |
+| [`docs/dev/session-management.md`](docs/dev/session-management.md) | Session registry, UUID5 strategy, resume-first, MERLIN_SESSION_ID |
+| [`docs/dev/discord-bot.md`](docs/dev/discord-bot.md) | Message flow, filtering, threading, prompt building, discord skill |
+| [`docs/dev/auth-and-tunnel.md`](docs/dev/auth-and-tunnel.md) | Cookie auth, HMAC signing, Cloudflare Tunnel modes, login flow |
 | [`docs/web-terminal.md`](docs/web-terminal.md) | xterm.js, WebSocket, PTY/tmux, mobile toolbar, voice input |
-| [`docs/session-viewer.md`](docs/session-viewer.md) | Session transcripts, stream-json format, timeline rendering |
-| [`docs/notes-editor.md`](docs/notes-editor.md) | Notes routes, command palette, git ops, media upload, content search |
-| [`docs/extension-system.md`](docs/extension-system.md) | Extension tiers, interface, state, registry, Extensions/Settings pages |
-| [`docs/skill-system.md`](docs/skill-system.md) | Skill registry: sources, precedence (core > extension > user), canonical aggregation, engine adapters, shims, `merlin skills` |
-| [`docs/dashboard-architecture.md`](docs/dashboard-architecture.md) | Dashboard theme, CSS variables, JS patterns, API endpoints |
-| [`docs/claude-code-reference.md`](docs/claude-code-reference.md) | Claude Code CLI flags and options |
-| [`docs/releasing.md`](docs/releasing.md) | Tagging, GitHub Releases, install/update flow, rollback |
-| [`docs/standalone-cli.md`](docs/standalone-cli.md) | Standalone CLI design: paths, install, update, dev mode |
-| [`docs/logging-system.md`](docs/logging-system.md) | Logging architecture, log files, rotation, engine log events |
+| [`docs/dev/session-viewer.md`](docs/dev/session-viewer.md) | Session transcripts, stream-json format, timeline rendering |
+| [`docs/dev/notes-editor.md`](docs/dev/notes-editor.md) | Notes routes, command palette, git ops, media upload, content search |
+| [`docs/dev/extension-system.md`](docs/dev/extension-system.md) | Extension tiers, interface, state, registry, Extensions/Settings pages |
+| [`docs/dev/skill-system.md`](docs/dev/skill-system.md) | Skill registry: sources, precedence (core > extension > user), canonical aggregation, engine adapters, shims, `merlin skills` |
+| [`docs/dev/dashboard-architecture.md`](docs/dev/dashboard-architecture.md) | Dashboard theme, CSS variables, JS patterns, API endpoints |
+| [`docs/dev/claude-code-reference.md`](docs/dev/claude-code-reference.md) | Claude Code CLI flags and options |
+| [`docs/dev/releasing.md`](docs/dev/releasing.md) | Tagging, GitHub Releases, install/update flow, rollback |
+| [`docs/dev/standalone-cli.md`](docs/dev/standalone-cli.md) | Standalone CLI design: paths, install, update, dev mode |
+| [`docs/dev/logging-system.md`](docs/dev/logging-system.md) | Logging architecture, log files, rotation, engine log events |
 
 ### Doc Audiences
 
@@ -149,29 +150,29 @@ When creating new scripts:
 | File | Purpose | Docs |
 |------|---------|------|
 | `main.py` | FastAPI app — starts dashboard + tunnel + bot + cron (one process) | `--help` |
-| `cli.py` | CLI entry point — `merlin start/version/setup/update/config` | `--help`, [`standalone-cli`](docs/standalone-cli.md) |
-| `paths.py` | Path resolution — dev mode vs installed mode (`~/.merlin/`) | [`standalone-cli`](docs/standalone-cli.md) |
-| `install.sh` | `curl \| bash` installer | [`releasing`](docs/releasing.md) |
-| `auth.py` | Cookie-based HMAC auth | [`auth-and-tunnel`](docs/auth-and-tunnel.md) |
-| `tunnel.py` | Cloudflare Tunnel manager | [`auth-and-tunnel`](docs/auth-and-tunnel.md) |
-| `lib/engine.py` | AgentEngine abstraction — provider-agnostic invocation (`invoke()`) | [`session-management`](docs/session-management.md) |
-| `lib/agent_context.py` | Persona/context composition — layers (brain, personality, user, overlays) and per-caller recipes | [`architecture`](docs/architecture.md) |
-| `lib/session.py` | Session manager — JSONL transcripts, history, compaction | [`session-management`](docs/session-management.md) |
-| `lib/engines/` | Engine implementations (claude_code.py, opencode.py) | [`session-management`](docs/session-management.md) |
-| `cron/` | Cron core module — scheduler, runner, state, REST API, logs, notifications | [`cron-system`](docs/cron-system.md) |
-| `files/` | File browser module | [`dashboard-architecture`](docs/dashboard-architecture.md) |
+| `cli.py` | CLI entry point — `merlin start/version/setup/update/config` | `--help`, [`standalone-cli`](docs/dev/standalone-cli.md) |
+| `paths.py` | Path resolution — dev mode vs installed mode (`~/.merlin/`) | [`standalone-cli`](docs/dev/standalone-cli.md) |
+| `install.sh` | `curl \| bash` installer | [`releasing`](docs/dev/releasing.md) |
+| `auth.py` | Cookie-based HMAC auth | [`auth-and-tunnel`](docs/dev/auth-and-tunnel.md) |
+| `tunnel.py` | Cloudflare Tunnel manager | [`auth-and-tunnel`](docs/dev/auth-and-tunnel.md) |
+| `lib/engine.py` | AgentEngine abstraction — provider-agnostic invocation (`invoke()`) | [`session-management`](docs/dev/session-management.md) |
+| `lib/agent_context.py` | Persona/context composition — layers (brain, personality, user, overlays) and per-caller recipes | [`architecture`](docs/dev/architecture.md) |
+| `lib/session.py` | Session manager — JSONL transcripts, history, compaction | [`session-management`](docs/dev/session-management.md) |
+| `lib/engines/` | Engine implementations (claude_code.py, opencode.py) | [`session-management`](docs/dev/session-management.md) |
+| `cron/` | Cron core module — scheduler, runner, state, REST API, logs, notifications | [`cron-system`](docs/dev/cron-system.md) |
+| `files/` | File browser module | [`dashboard-architecture`](docs/dev/dashboard-architecture.md) |
 | `terminal/` | Web terminal module | [`web-terminal`](docs/web-terminal.md) |
-| `commits/` | Commit browser module | [`dashboard-architecture`](docs/dashboard-architecture.md) |
-| `notes/` | Notes editor module | [`notes-editor`](docs/notes-editor.md) |
+| `commits/` | Commit browser module | [`dashboard-architecture`](docs/dev/dashboard-architecture.md) |
+| `notes/` | Notes editor module | [`notes-editor`](docs/dev/notes-editor.md) |
 
 **Merlin Bot extension (merlin-bot/) — Discord-only scope:**
 
 | Script | Purpose | Docs |
 |--------|---------|------|
-| `merlin_bot.py` | Discord bot + extension interface (router, start, validate, EXTENSION_META) | [`discord-bot`](docs/discord-bot.md) |
-| `merlin_app.py` | Bot monitoring page with tabs (Overview, Performance, Logs) | [`dashboard-architecture`](docs/dashboard-architecture.md) |
-| `discord_directives.md` | Canonical Discord style overlay | [`discord-bot`](docs/discord-bot.md) |
-| `discord_send.py` | Discord REST transport (CLI: `merlin chat`) | [`discord-bot`](docs/discord-bot.md) |
+| `merlin_bot.py` | Discord bot + extension interface (router, start, validate, EXTENSION_META) | [`discord-bot`](docs/dev/discord-bot.md) |
+| `merlin_app.py` | Bot monitoring page with tabs (Overview, Performance, Logs) | [`dashboard-architecture`](docs/dev/dashboard-architecture.md) |
+| `discord_directives.md` | Canonical Discord style overlay | [`discord-bot`](docs/dev/discord-bot.md) |
+| `discord_send.py` | Discord REST transport (CLI: `merlin chat`) | [`discord-bot`](docs/dev/discord-bot.md) |
 
 ### CWD (Current Working Directory)
 
@@ -183,7 +184,7 @@ The CWD is determined by where you launch `main.py`:
 
 ### Session Management
 
-> Full reference: [`docs/session-management.md`](docs/session-management.md)
+> Full reference: [`docs/dev/session-management.md`](docs/dev/session-management.md)
 
 Every conversation lives in a **Discord thread**, mapped 1:1 to a Claude Code session.
 
@@ -204,7 +205,7 @@ Strategy: **resume-first** — try `--resume` first, fall back to `--session-id`
 
 ## Discord
 
-> Full reference: [`docs/discord-bot.md`](docs/discord-bot.md)
+> Full reference: [`docs/dev/discord-bot.md`](docs/dev/discord-bot.md)
 
 - **Bot token**: `merlin-bot/.env` (see `.env.example`)
 - **Default channel**: Set via `DISCORD_CHANNEL_IDS` in config
@@ -212,7 +213,7 @@ Strategy: **resume-first** — try `--resume` first, fall back to `--session-id`
 
 ## Cron Jobs
 
-> Full reference: [`docs/cron-system.md`](docs/cron-system.md)
+> Full reference: [`docs/dev/cron-system.md`](docs/dev/cron-system.md)
 
 - **Core module**: `cron/` — scheduler, runner, state, REST API, logs, notifications
 - **Job files**: `cron-jobs/*.json`
@@ -254,7 +255,7 @@ uv run scripts.py test-e2e
 
 ## Logging
 
-> Full reference: [`docs/logging-system.md`](docs/logging-system.md)
+> Full reference: [`docs/dev/logging-system.md`](docs/dev/logging-system.md)
 
 Three log types under `~/.merlin/`:
 
@@ -264,15 +265,15 @@ Three log types under `~/.merlin/`:
 
 Rotation: `merlin.log` rotates by size, `engine-log.jsonl` keeps 180 days, `raw-sessions/` keeps 90 days. Cleanup runs at startup.
 
-Extension loggers: use `from merlin_ext import get_logger` — see [`docs/extension-system.md`](docs/extension-system.md#logging).
+Extension loggers: use `from merlin_ext import get_logger` — see [`docs/dev/extension-system.md`](docs/dev/extension-system.md#logging).
 
 ## Monitoring Dashboard
 
-> Full reference: [`docs/dashboard-architecture.md`](docs/dashboard-architecture.md) | Auth & tunnel: [`docs/auth-and-tunnel.md`](docs/auth-and-tunnel.md)
+> Full reference: [`docs/dev/dashboard-architecture.md`](docs/dev/dashboard-architecture.md) | Auth & tunnel: [`docs/dev/auth-and-tunnel.md`](docs/dev/auth-and-tunnel.md)
 
 Web-based dashboard served by FastAPI on port 3123, started by `main.py`.
 
-- **Auth:** Cookie-based auth (`DASHBOARD_USER` / `DASHBOARD_PASS` in `.env`) — see [`docs/auth-and-tunnel.md`](docs/auth-and-tunnel.md)
+- **Auth:** Cookie-based auth (`DASHBOARD_USER` / `DASHBOARD_PASS` in `.env`) — see [`docs/dev/auth-and-tunnel.md`](docs/dev/auth-and-tunnel.md)
 - **Core pages:** Files, Terminal, Commits (always available)
 - **Built-in extensions:** Notes (enabled by default), Bot with tabs at `/bot` (disabled by default, requires Discord token)
 - **Management pages:** Extensions (`/extensions`), Settings (gear dropdown → Settings)
@@ -294,4 +295,4 @@ Epics and project planning are managed in the private `merlin-saas` repo under `
 - **Path resolution (paths.py)**: All modules use `paths.py` for file/directory resolution. Only `app_dir()` differs between modes (repo root vs `~/.merlin/current/`). User data (notes, cron-jobs, logs, config) always lives under `~/.merlin/` regardless of mode. Dev mode detection: explicit `set_dev_mode()` > `MERLIN_DEV` env var > `.git/` directory presence. Custom install location via `MERLIN_HOME` env var.
 - **Graceful degradation**: At startup, `_check_optional_deps()` checks for tmux and cloudflared. Missing deps result in boot warnings, disabled nav items (grayed out with tooltip), and 503 responses on affected routes — not crashes.
 - **Fail-fast configuration**: All entry points (`merlin_bot.py`, `cron/runner.py`) validate required config at startup and exit immediately with descriptive error messages and step-by-step setup instructions if anything is missing or invalid. A first-time user should see exactly what to do — never a cryptic crash later at runtime. When adding new required config, always add validation to the entry point's `_validate_config()` function.
-- **Web UI development**: Before making any dashboard or UI changes, read `docs/dashboard-architecture.md` for theme variables, CSS conventions, JS patterns, API endpoints, and how to add new pages. Always self-validate UI changes by taking screenshots with the screenshot skill and reviewing them before marking work as done. Run `uv run .claude/skills/screenshot/screenshot.py --all <url> --user <user> --pass <pass>` from the project root, then read the PNGs to verify layout, responsiveness, and correctness across viewports.
+- **Web UI development**: Before making any dashboard or UI changes, read `docs/dev/dashboard-architecture.md` for theme variables, CSS conventions, JS patterns, API endpoints, and how to add new pages. Always self-validate UI changes by taking screenshots with the screenshot skill and reviewing them before marking work as done. Run `uv run .claude/skills/screenshot/screenshot.py --all <url> --user <user> --pass <pass>` from the project root, then read the PNGs to verify layout, responsiveness, and correctness across viewports.

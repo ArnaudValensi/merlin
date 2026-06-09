@@ -51,7 +51,7 @@ class BaseEvent(BaseModel):
 
 
 class InvocationEvent(BaseEvent):
-    """An engine call (the actual AI invocation). Fields per docs/logging-system.md.
+    """An engine call (the actual AI invocation). Fields per docs/dev/logging-system.md.
 
     ``num_turns``, ``prompt`` and any other writer fields are preserved via
     ``extra="allow"`` even though they are not declared here.

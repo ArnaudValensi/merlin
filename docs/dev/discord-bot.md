@@ -10,7 +10,7 @@ The engine is a black box — it has no notion of Discord. It receives a prompt 
 
 Contextual system-prompt content arrives by recipe: the bot selects the **managed-assistant** recipe from `lib/agent_context.py` (brain doc + personality + user memory + the Discord overlay `discord_directives.md`) and passes the composed text into `invoke()`.
 
-> **Note**: Cron scheduling is a separate core module (`cron/`), not part of merlin-bot. See [`docs/cron-system.md`](cron-system.md).
+> **Note**: Cron scheduling is a separate core module (`cron/`), not part of merlin-bot. See [`docs/dev/cron-system.md`](cron-system.md).
 
 ```
 User sends message in Discord
@@ -40,7 +40,7 @@ In `merlin_bot.py.on_message()`, messages are filtered in order:
 - Created via REST API (`discord_send.py`) rather than discord.py
 - Per-channel asyncio lock prevents race conditions on simultaneous messages
 
-**Thread messages** look up the existing session from the registry (see `docs/session-management.md`).
+**Thread messages** look up the existing session from the registry (see `docs/dev/session-management.md`).
 
 ## Rich Prompt Format
 
