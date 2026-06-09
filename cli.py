@@ -533,14 +533,25 @@ def build_parser(include_extension_help: bool = True) -> argparse.ArgumentParser
     )
 
     # agent
-    subparsers.add_parser(
+    agent_parser = subparsers.add_parser(
         "agent",
         help="Print the agent-facing brain doc",
         description=(
             "Print the Merlin brain doc: what Merlin is and how to operate "
             "it. Intended for AI agents; pipe it into a prompt or read it "
-            "on demand."
+            "on demand. The optional layers are the same texts Merlin "
+            "injects into its own managed channels."
         ),
+    )
+    agent_parser.add_argument(
+        "--personality",
+        action="store_true",
+        help="Append the personality layer (~/.merlin/personality.md)",
+    )
+    agent_parser.add_argument(
+        "--user",
+        action="store_true",
+        help="Append the user memory layer (user.md)",
     )
 
     # Delegated commands — routed before argparse in cli_main so all args
@@ -638,21 +649,32 @@ def _get_config_values() -> dict[str, str]:
     }
 
 
-def run_agent() -> None:
-    """Print the agent-facing brain doc.
+def run_agent(personality: bool = False, user: bool = False) -> None:
+    """Print the agent-facing brain doc, optionally with personal layers.
 
-    The --personality / --user layer flags land with the composition module
-    (agent-documentation epic Phase 2; names reserved).
-    Read from the app dir so 'merlin update' refreshes it via the 'current'
-    symlink.
+    All layers come from lib/agent_context.py, the same module the managed
+    channels inject from, so this output cannot diverge from what the bot
+    or cron jobs receive. The brain is read from the app dir, so 'merlin
+    update' refreshes it via the 'current' symlink.
     """
-    brain = paths.app_dir() / "agent" / "MERLIN.md"
-    try:
-        content = brain.read_text()
-    except OSError:
-        print(f"Brain doc not found at {brain}", file=sys.stderr)
+    from lib import agent_context
+
+    brain = agent_context.brain()
+    if brain is None:
+        brain_path = paths.app_dir() / "agent" / "MERLIN.md"
+        print(f"Brain doc not found at {brain_path}", file=sys.stderr)
         sys.exit(1)
-    print(content.rstrip())
+
+    parts = [brain]
+    if personality:
+        text = agent_context.personality()
+        if text:
+            parts.append(text)
+    if user:
+        text = agent_context.user_memory()
+        if text:
+            parts.append(text)
+    print("\n\n".join(parts).rstrip())
 
 
 def run_dashboard_url() -> None:
@@ -905,7 +927,10 @@ def cli_main(argv: list[str] | None = None) -> None:
         print(get_version())
 
     elif command == "agent":
-        run_agent()
+        run_agent(
+            personality=getattr(args, "personality", False),
+            user=getattr(args, "user", False),
+        )
 
     elif command == "dashboard-url":
         run_dashboard_url()

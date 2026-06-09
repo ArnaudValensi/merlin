@@ -480,6 +480,71 @@ class TestAgentCommand:
         assert exc_info.value.code == 1
         assert "Brain doc not found" in capsys.readouterr().err
 
+    def test_default_is_brain_only(self, tmp_path, monkeypatch, capsys):
+        """Personal layers are opt-in; no flags means brain only."""
+        paths.set_dev_mode(True)
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        (tmp_path / "personality.md").write_text("PERSONALITY-TEXT")
+        (tmp_path / "user.md").write_text("USER-FACTS")
+        cli_main(["agent"])
+        out = capsys.readouterr().out
+        assert "PERSONALITY-TEXT" not in out
+        assert "USER-FACTS" not in out
+
+    def test_personality_flag_appends_layer(self, tmp_path, monkeypatch, capsys):
+        paths.set_dev_mode(True)
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        (tmp_path / "personality.md").write_text("PERSONALITY-TEXT")
+        cli_main(["agent", "--personality"])
+        out = capsys.readouterr().out
+        assert "PERSONALITY-TEXT" in out
+        assert out.index("# Merlin") < out.index("PERSONALITY-TEXT")
+
+    def test_user_flag_appends_layer(self, tmp_path, monkeypatch, capsys):
+        paths.set_dev_mode(True)
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        (tmp_path / "user.md").write_text("USER-FACTS")
+        cli_main(["agent", "--user"])
+        out = capsys.readouterr().out
+        assert "# User Memory" in out
+        assert "USER-FACTS" in out
+
+    def test_missing_layer_files_degrade_to_brain(self, tmp_path, monkeypatch, capsys):
+        paths.set_dev_mode(True)
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        cli_main(["agent", "--personality", "--user"])
+        out = capsys.readouterr().out
+        assert "# Merlin" in out
+
+    def test_flags_emit_same_layers_as_managed_recipe(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Single-source check: the personality/user text from
+        'merlin agent --personality --user' is byte-for-byte what the
+        managed-assistant recipe injects (which appends the Discord
+        overlay after the same three layers)."""
+        from lib import agent_context
+
+        paths.set_dev_mode(True)
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        (tmp_path / "personality.md").write_text("PERSONALITY-TEXT")
+        (tmp_path / "user.md").write_text("USER-FACTS")
+
+        cli_main(["agent", "--personality", "--user"])
+        out = capsys.readouterr().out.rstrip()
+
+        expected = "\n\n".join(
+            [
+                agent_context.brain(),
+                agent_context.personality(),
+                agent_context.user_memory(),
+            ]
+        ).rstrip()
+        assert out == expected
+
+        composed = agent_context.compose("managed-assistant")
+        assert composed.startswith(expected)
+
 
 # ---------------------------------------------------------------------------
 # kb / remember top-level aliases
