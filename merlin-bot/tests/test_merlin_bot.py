@@ -288,6 +288,23 @@ class TestOnMessage:
 
     @patch("merlin_bot.create_thread_from_message")
     @patch("merlin_bot.load_token", return_value="fake-token")
+    @patch("merlin_bot.compose", return_value="COMPOSED")
+    @patch("merlin_bot.invoke")
+    def test_bot_selects_managed_assistant_recipe(
+        self, mock_invoke, mock_compose, mock_token, mock_create_thread
+    ):
+        """The bot injects the managed-assistant composition (brain +
+        personality + user memory + Discord overlay)."""
+        mock_create_thread.return_value = {"id": "77777"}
+        mock_invoke.return_value = MagicMock(exit_code=0, session_id="s1", stderr="")
+        msg = make_message(channel_id=DEFAULT_CHANNEL_ID)
+        asyncio.run(merlin.on_message(msg))
+
+        mock_compose.assert_called_once_with("managed-assistant")
+        assert mock_invoke.call_args[1]["append_system_prompt"] == "COMPOSED"
+
+    @patch("merlin_bot.create_thread_from_message")
+    @patch("merlin_bot.load_token", return_value="fake-token")
     @patch("merlin_bot.invoke")
     def test_channel_message_prompt_has_thread_id(
         self, mock_invoke, mock_token, mock_create_thread

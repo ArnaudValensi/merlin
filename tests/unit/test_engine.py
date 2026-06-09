@@ -8,8 +8,6 @@ from lib.engine import (
     AgentEngine,
     AgentResult,
     _build_system_prompt,
-    _load_personality,
-    _load_user_context,
     _registry,
     get_engine,
     invoke,
@@ -149,56 +147,15 @@ class TestEngineRegistry:
 
 
 # ---------------------------------------------------------------------------
-# Personality / user context loading
+# System prompt assembly (caller-provided parts only)
 # ---------------------------------------------------------------------------
 
 
-class TestPersonalityLoading:
-    """Personality and user context load from new paths with legacy fallback."""
-
-    def test_personality_from_new_path(self, tmp_path, monkeypatch):
-        import lib.engine as eng
-
-        monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
-        (tmp_path / "personality.md").write_text("Be awesome")
-        assert _load_personality() == "Be awesome"
-
-    def test_personality_fallback_to_legacy(self, tmp_path, monkeypatch):
-        import lib.engine as eng
-
-        monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
-        (tmp_path / "merlin-bot").mkdir()
-        (tmp_path / "merlin-bot" / "personality.md").write_text("Legacy")
-        assert _load_personality() == "Legacy"
-
-    def test_personality_missing_returns_none(self, tmp_path, monkeypatch):
-        import lib.engine as eng
-
-        monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
-        assert _load_personality() is None
-
-    def test_user_context_from_new_path(self, tmp_path, monkeypatch):
-        import lib.engine as eng
-
-        monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
-        monkeypatch.setattr(eng.paths, "notes_dir", lambda: tmp_path / "notes")
-        (tmp_path / "user.md").write_text("User is a dev")
-        result = _load_user_context()
-        assert "User is a dev" in result
-        assert "# User Memory" in result
-
-    def test_user_context_missing_returns_none(self, tmp_path, monkeypatch):
-        import lib.engine as eng
-
-        monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
-        monkeypatch.setattr(eng.paths, "notes_dir", lambda: tmp_path / "notes")
-        assert _load_user_context() is None
-
-
 class TestBuildSystemPrompt:
-    """_build_system_prompt combines personality, user context, and extras."""
+    """_build_system_prompt joins caller-provided parts and loads nothing itself."""
 
-    def test_with_personality_and_context(self, tmp_path, monkeypatch):
+    def test_does_not_autoload_personality_or_user(self, tmp_path, monkeypatch):
+        """Contextual layers arrive via lib/agent_context, never engine-loaded."""
         import lib.engine as eng
 
         monkeypatch.setattr(eng.paths, "merlin_home", lambda: tmp_path)
@@ -206,9 +163,7 @@ class TestBuildSystemPrompt:
         (tmp_path / "personality.md").write_text("Be cool")
         (tmp_path / "user.md").write_text("User is a dev")
 
-        result = _build_system_prompt()
-        assert "Be cool" in result
-        assert "User is a dev" in result
+        assert _build_system_prompt() is None
 
     def test_with_extra_file(self, tmp_path, monkeypatch):
         import lib.engine as eng
@@ -304,6 +259,17 @@ class TestInvoke:
         mock_log.assert_not_called()
 
     def test_invoke_passes_system_prompt(self, tmp_path):
+        with mock.patch(
+            "subprocess.run",
+            return_value=mock.Mock(stdout="{}", stderr="", returncode=0),
+        ) as mock_run:
+            invoke("hello", caller="test", append_system_prompt="Be nice")
+        cmd = mock_run.call_args[0][0]
+        idx = cmd.index("--append-system-prompt")
+        assert "Be nice" in cmd[idx + 1]
+
+    def test_invoke_does_not_autoload_personality(self, tmp_path):
+        """The engine injects nothing on its own; composition is caller-selected."""
         (tmp_path / "personality.md").write_text("Be nice")
         with mock.patch(
             "subprocess.run",
@@ -311,8 +277,7 @@ class TestInvoke:
         ) as mock_run:
             invoke("hello", caller="test")
         cmd = mock_run.call_args[0][0]
-        idx = cmd.index("--append-system-prompt")
-        assert "Be nice" in cmd[idx + 1]
+        assert "--append-system-prompt" not in cmd
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +328,20 @@ class TestSkillsFallback:
         assert "# Available Skills" in system_prompt
         assert "cron: Cron skill." in system_prompt
         assert "SKILL.md" in system_prompt
+
+    def test_composed_prompt_precedes_skill_table(self, tmp_path, monkeypatch):
+        """The caller-composed prompt (brain first) lands before the engine's
+        appended skill fallback, so the brain precedes the skill table by
+        construction."""
+        from lib.engine import invoke
+
+        self._make_canonical_skill(tmp_path)
+        captured = self._register_capture_engine(native_skills=False)
+        monkeypatch.setenv("AGENT_ENGINE", "capture")
+
+        invoke("hello", caller="test", append_system_prompt="# Merlin\n\nBRAIN")
+        system_prompt = captured["system_prompt"]
+        assert system_prompt.index("BRAIN") < system_prompt.index("# Available Skills")
 
     def test_no_fallback_for_native_engine(self, tmp_path, monkeypatch):
         from lib.engine import invoke

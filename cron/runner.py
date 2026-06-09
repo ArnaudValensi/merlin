@@ -33,6 +33,7 @@ from croniter import croniter
 from dotenv import load_dotenv
 
 import paths
+from lib import agent_context
 from lib.engine import invoke
 from cron.state import (
     acquire_job_lock,
@@ -360,6 +361,8 @@ def _run_agent(job_id: str, job: dict, request_id: str):
     # Build prompt — engine returns text, notification system handles delivery
     full_prompt = f"[Cron job: {job_id}]\n\n{prompt}"
 
+    # Headless-worker recipe: brain + user memory, no personality by design
+    # (operational jobs shouldn't sound like the bot).
     return invoke(
         full_prompt,
         caller=f"cron-{job_id}",
@@ -367,6 +370,7 @@ def _run_agent(job_id: str, job: dict, request_id: str):
         max_turns=max_turns,
         request_id=request_id,
         cwd=Path(resolve_working_dir(job)),
+        append_system_prompt=agent_context.compose("headless-worker"),
     )
 
 

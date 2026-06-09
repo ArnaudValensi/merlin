@@ -113,7 +113,8 @@ User sends message in thread
 When `lib/engine.invoke()` is called with a session_id:
 
 1. Load session history from `~/.merlin/sessions/<session_id>.jsonl`
-2. Build system prompt (personality + user context)
+2. Assemble the system prompt from caller-provided parts (callers compose
+   brain/personality/user via `lib/agent_context.py` recipes)
 3. Call `engine.invoke(prompt, history=history, system_prompt=...)`
 4. Engine receives full conversation history and produces a response
 5. Append user turn + assistant turn to session JSONL

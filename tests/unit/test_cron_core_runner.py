@@ -379,6 +379,30 @@ class TestRunJob:
             assert call_args[1]["caller"] == "cron-test-job"
             assert call_args[1]["max_turns"] == 10
 
+    def test_agent_job_selects_headless_worker_recipe(self, temp_cron_dir):
+        """Agent jobs inject the headless-worker composition (brain + user)."""
+        from cron.runner import run_job
+
+        job = {
+            "description": "Test job",
+            "schedule": "0 9 * * *",
+            "prompt": "Do something",
+            "channel": "123456789",
+            "enabled": True,
+            "report_mode": "always",
+        }
+
+        with (
+            patch("cron.runner.invoke", return_value=make_mock_result()) as mock_invoke,
+            patch(
+                "cron.runner.agent_context.compose", return_value="COMPOSED"
+            ) as mock_compose,
+        ):
+            run_job("test-job", job)
+
+        mock_compose.assert_called_once_with("headless-worker")
+        assert mock_invoke.call_args[1]["append_system_prompt"] == "COMPOSED"
+
     def test_run_job_updates_state_and_history(self, temp_cron_dir):
         """run_job updates state and history after execution."""
         from cron.runner import run_job

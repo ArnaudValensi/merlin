@@ -45,15 +45,15 @@ Merlin is a personal AI assistant with a web dashboard. It uses an **AgentEngine
 ║                        lib/engine.py                                    ║
 ║             (Provider-agnostic entry point — ALL calls go here)         ║
 ║                                                                         ║
-║  1. Load personality (~/.merlin/personality.md)                          ║
-║  2. Load user context (~/.merlin/user.md)                                ║
-║  3. Load session history (~/.merlin/sessions/<session_id>.jsonl)         ║
-║  4. Get configured engine (AGENT_ENGINE env var, default: claude-code)   ║
-║  5. engine.invoke(prompt, history, system_prompt)                        ║
-║  6. Record turns to session JSONL                                        ║
-║  7. Save raw session → logs/raw-sessions/<timestamp>.jsonl               ║
-║  8. Log structured event → logs/engine-log.jsonl                         ║
-║  9. Return AgentResult                                                   ║
+║  1. Assemble system prompt from caller-provided parts                    ║
+║     (callers compose brain/personality/user via lib/agent_context.py)    ║
+║  2. Load session history (~/.merlin/sessions/<session_id>.jsonl)         ║
+║  3. Get configured engine (AGENT_ENGINE env var, default: claude-code)   ║
+║  4. engine.invoke(prompt, history, system_prompt)                        ║
+║  5. Record turns to session JSONL                                        ║
+║  6. Save raw session → logs/raw-sessions/<timestamp>.jsonl               ║
+║  7. Log structured event → logs/engine-log.jsonl                         ║
+║  8. Return AgentResult                                                   ║
 ║                                                                         ║
 ╚════════════════════════════════╤═════════════════════════════════════════╝
                                  │
@@ -130,7 +130,7 @@ notes/
 | **Discord** | User sends message | Discord Gateway → `merlin_bot.py` → `lib/engine.py` → engine → `AgentResult` → bot sends to Discord |
 | **Cron** | `cron/` scheduler (every min) | `main.py` → `cron/runner.py` (subprocess) → `lib/engine.py` → engine → `AgentResult` → `notify.py` sends to Discord |
 
-Both loops converge at `lib/engine.py` — the single chokepoint where every invocation is logged, sessions are managed, and personality/user context is injected. The engine is a black box — it has no notion of Discord or delivery.
+Both loops converge at `lib/engine.py` — the single chokepoint where every invocation is logged and sessions are managed. The engine is a black box — it has no notion of Discord, delivery, or persona. Contextual system-prompt content (brain doc, personality, user memory, channel overlays) is composed by `lib/agent_context.py`: each managed caller selects a recipe (the bot: managed-assistant; cron agent jobs: headless-worker) and passes the result into `invoke()`.
 
 The cron system is a **core module** started from `main.py`, independent of merlin-bot. The bot extension only provides Discord connectivity; cron works standalone (notifications are silently skipped if the bot is not loaded).
 

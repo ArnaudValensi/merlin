@@ -24,6 +24,7 @@ merlin/
 ├── lib/                       # Shared libraries
 │   ├── claude.py              # Legacy Claude wrapper (backward compat)
 │   ├── engine.py              # AgentEngine abstraction + invoke() entry point
+│   ├── agent_context.py       # Persona/context composition (layers + recipes)
 │   ├── session.py             # JSONL session manager (history, compaction)
 │   └── engines/               # Engine implementations
 │       ├── claude_code.py     # Claude Code CLI engine (default)
@@ -154,6 +155,7 @@ When creating new scripts:
 | `auth.py` | Cookie-based HMAC auth | [`auth-and-tunnel`](docs/auth-and-tunnel.md) |
 | `tunnel.py` | Cloudflare Tunnel manager | [`auth-and-tunnel`](docs/auth-and-tunnel.md) |
 | `lib/engine.py` | AgentEngine abstraction — provider-agnostic invocation (`invoke()`) | [`session-management`](docs/session-management.md) |
+| `lib/agent_context.py` | Persona/context composition — layers (brain, personality, user, overlays) and per-caller recipes | [`architecture`](docs/architecture.md) |
 | `lib/session.py` | Session manager — JSONL transcripts, history, compaction | [`session-management`](docs/session-management.md) |
 | `lib/engines/` | Engine implementations (claude_code.py, opencode.py) | [`session-management`](docs/session-management.md) |
 | `cron/` | Cron core module — scheduler, runner, state, REST API, logs, notifications | [`cron-system`](docs/cron-system.md) |

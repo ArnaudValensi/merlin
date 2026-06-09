@@ -8,6 +8,8 @@ Merlin Bot is a **Discord handler**: it listens for messages via `discord.py`, c
 
 The engine is a black box — it has no notion of Discord. It receives a prompt with conversation history and returns text. The bot handler captures the output and sends it to the appropriate Discord thread via `discord_send.py`.
 
+Contextual system-prompt content arrives by recipe: the bot selects the **managed-assistant** recipe from `lib/agent_context.py` (brain doc + personality + user memory + the Discord overlay `discord_directives.md`) and passes the composed text into `invoke()`.
+
 > **Note**: Cron scheduling is a separate core module (`cron/`), not part of merlin-bot. See [`docs/cron-system.md`](cron-system.md).
 
 ```

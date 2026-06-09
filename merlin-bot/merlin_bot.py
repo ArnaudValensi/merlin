@@ -22,13 +22,16 @@ from pathlib import Path
 import discord
 from dotenv import load_dotenv
 
+from lib.agent_context import compose
 from lib.engine import invoke
 from discord_send import create_thread_from_message, load_token, send_message
 from structured_log import log_event
 from transcribe import transcribe
 
-# discord_directives.md is no longer injected — the engine has no notion of Discord.
-# The bot handler captures engine output and delivers it to Discord.
+# The engine has no notion of Discord. The bot selects the managed-assistant
+# recipe (brain + personality + user memory + Discord overlay, composed by
+# lib/agent_context.py) and passes the result through invoke(); the bot
+# handler captures engine output and delivers it to Discord.
 from session_registry import (
     get_message_session,
     get_thread_session,
@@ -399,6 +402,7 @@ async def on_message(message: discord.Message) -> None:
             session_id=session,
             request_id=request_id,
             cwd=paths.launch_cwd(),
+            append_system_prompt=compose("managed-assistant"),
         )
 
         duration = time.monotonic() - start

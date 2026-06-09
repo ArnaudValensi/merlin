@@ -154,5 +154,10 @@ class TestCompose:
     def test_layer_text_identical_to_accessors(self, all_layers):
         """Single-source check: recipes emit byte-for-byte the accessor text."""
         composed = ac.compose("managed-assistant")
-        for layer in (ac.brain(), ac.personality(), ac.user_memory(), ac.discord_overlay()):
+        for layer in (
+            ac.brain(),
+            ac.personality(),
+            ac.user_memory(),
+            ac.discord_overlay(),
+        ):
             assert layer in composed

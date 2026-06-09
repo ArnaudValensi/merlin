@@ -155,7 +155,7 @@ def get_engine(name: str | None = None) -> AgentEngine:
 
 
 # ---------------------------------------------------------------------------
-# Personality / user context loading (shared across all engines)
+# System prompt assembly (caller-provided parts only)
 # ---------------------------------------------------------------------------
 
 
@@ -171,42 +171,17 @@ def _load_file_content(path: Path) -> str | None:
         return None
 
 
-def _load_user_context() -> str | None:
-    """Load user context from ~/.merlin/user.md (or notes/user.md fallback)."""
-    content = _load_file_content(paths.merlin_home() / "user.md")
-    if content:
-        return f"# User Memory\n\n{content}"
-
-    content = _load_file_content(paths.notes_dir() / "user.md")
-    if content:
-        return f"# User Memory\n\n{content}"
-
-    return None
-
-
-def _load_personality() -> str | None:
-    """Load bot personality from ~/.merlin/personality.md (or legacy path)."""
-    content = _load_file_content(paths.merlin_home() / "personality.md")
-    if content:
-        return content
-
-    return _load_file_content(paths.merlin_home() / "merlin-bot" / "personality.md")
-
-
 def _build_system_prompt(
     append_system_prompt: str | None = None,
     extra_system_prompts: list[str | Path] | None = None,
 ) -> str | None:
-    """Build the full system prompt from personality, user context, and extras."""
+    """Join the caller-provided system prompt parts.
+
+    Contextual content (brain, personality, user memory, channel overlays)
+    is composed by lib/agent_context.py and arrives through these
+    parameters; the engine stays channel-agnostic and loads nothing itself.
+    """
     parts: list[str] = []
-
-    personality = _load_personality()
-    if personality:
-        parts.append(personality)
-
-    user_context = _load_user_context()
-    if user_context:
-        parts.append(user_context)
 
     if append_system_prompt:
         parts.append(append_system_prompt)
@@ -298,7 +273,8 @@ def invoke(
 
     This is the main entry point for all engine invocations. It:
     1. Gets the configured engine
-    2. Builds the system prompt (personality + user context + extras)
+    2. Assembles the system prompt from caller-provided parts (contextual
+       composition lives in lib/agent_context.py, selected by the caller)
     3. Calls the engine
     4. Writes invocation logs and structured events
     5. Returns AgentResult
