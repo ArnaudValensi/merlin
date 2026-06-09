@@ -45,6 +45,14 @@ merlin chat reply --channel <channel_id> --message <message_id> --content "Here 
 merlin chat react --channel <channel_id> --message <message_id> --emoji "✅"
 ```
 
+### `--channel` must contain the message (reply & react)
+
+For `reply` and `react`, `--channel` is **the channel that contains the target message**, not necessarily the channel you received context from.
+
+Discord scopes a message ID to its channel. A thread is its own channel, so a message posted in a thread lives in the **thread's ID**, not the parent channel's. If you target the parent channel while the message is in a thread, the API returns `MESSAGE_REFERENCE_UNKNOWN_MESSAGE` (reply) or `Unknown Message` (react).
+
+**Rule of thumb:** when you're operating inside a thread, pass the **thread ID** as `--channel`. The incoming context gives you both `channel` (the thread) and the parent channel — use the one the message actually lives in.
+
 ### Rename a thread
 
 ```bash
