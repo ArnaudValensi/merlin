@@ -469,7 +469,7 @@ Output:
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    subparsers = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     # add
     p_add = subparsers.add_parser("add", help="Add a new cron job")
@@ -554,6 +554,9 @@ Output:
     p_history.set_defaults(func=cmd_history)
 
     args = parser.parse_args(argv)
+    if not args.command:
+        parser.print_help()
+        return
     result = args.func(args)
 
     # Output result

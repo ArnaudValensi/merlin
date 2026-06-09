@@ -537,3 +537,12 @@ class TestMainArgv:
         assert exc_info.value.code == 0
         out = capsys.readouterr().out
         assert "merlin cron" in out
+
+    def test_main_no_subcommand_prints_help(self, temp_cron_dir, capsys):
+        from cron.manage import main
+
+        # Bare `merlin cron`: print help and return, not an argparse error.
+        result = main([])
+        assert result is None
+        out = capsys.readouterr().out
+        assert "usage:" in out.lower()
