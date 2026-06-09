@@ -19,6 +19,12 @@ merlin          # Start the dashboard
 
 Open **http://localhost:3123** to access the dashboard.
 
+## Documentation
+
+- [Web terminal](docs/web-terminal.md) — terminal usage, mobile toolbar, voice input, clipboard
+- [Creating extensions](docs/creating-extensions.md) — add your own `merlin` commands and agent skills
+- [Contributor docs](docs/dev/architecture.md) — architecture and internals, for changing Merlin's code (index in [`CLAUDE.md`](CLAUDE.md))
+
 ### Update
 
 ```bash

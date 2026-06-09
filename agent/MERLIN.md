@@ -77,6 +77,9 @@ Skills extend you with task-specific instructions, loaded on demand.
 `~/.merlin/skills-user/` (per-environment; resolve it with
 `merlin config skills-user-dir`).
 
+To build a new capability as an extension (commands plus a skill), follow
+the authoring guide at `$(merlin config app-dir)/docs/creating-extensions.md`.
+
 ## Git discipline
 
 When you edit files that live in a git repository (KB entries, notes,
