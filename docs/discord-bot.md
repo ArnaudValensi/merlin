@@ -172,7 +172,7 @@ The bot never crashes from a single message failure.
 |------|---------|
 | `merlin_bot.py` | `on_message()` handler, session resolution, prompt building, response delivery, EXTENSION_META |
 | `discord_send.py` | REST transport (send/reply/react/rename) — used by bot handler, notify.py, and `merlin chat` |
-| `discord_directives.md` | Discord writing style reference (not injected into engine) |
+| `discord_directives.md` | Canonical Discord style overlay (injected via the managed-assistant recipe) |
 | `session_registry.py` | Thread/message → session mapping |
 | `transcribe.py` | Voice message transcription |
 | `lib/engine.py` | AgentEngine abstraction — invoked by the bot handler |

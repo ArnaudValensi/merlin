@@ -115,7 +115,7 @@ Merlin is a personal AI assistant with a web dashboard. It uses an **AgentEngine
 
 ```
 notes/
-├── user.md           ← Auto-loaded into every engine call (via system prompt)
+├── user.md           ← User memory layer (injected by the managed recipes)
 ├── logs/
 │   └── YYYY-MM-DD.md ← Daily notes, decisions, discoveries
 └── kb/               ← Zettelkasten knowledge base
