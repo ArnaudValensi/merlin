@@ -641,8 +641,8 @@ def _get_config_values() -> dict[str, str]:
 def run_agent() -> None:
     """Print the agent-facing brain doc.
 
-    Stub content for now; the agent-documentation epic writes the real doc
-    and adds the --personality / --user layer flags (names reserved there).
+    The --personality / --user layer flags land with the composition module
+    (agent-documentation epic Phase 2; names reserved).
     Read from the app dir so 'merlin update' refreshes it via the 'current'
     symlink.
     """
