@@ -546,3 +546,15 @@ class TestMainArgv:
         assert result is None
         out = capsys.readouterr().out
         assert "usage:" in out.lower()
+
+    def test_main_leaf_missing_required_shows_help(self, temp_cron_dir, capsys):
+        from cron.manage import main
+
+        # `merlin cron add` with no args prints the leaf's full help plus the
+        # error (HelpfulParser), not just a one-line usage.
+        with pytest.raises(SystemExit) as exc_info:
+            main(["add"])
+        assert exc_info.value.code == 2
+        err = capsys.readouterr().err
+        assert "--schedule" in err and "--prompt" in err
+        assert "the following arguments are required" in err

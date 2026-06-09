@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root for paths
 import paths
+from argparse_help import HelpfulParser
 
 paths.load_config_env()  # Honor config.env (e.g. NOTES_DIR) from any cwd
 
@@ -345,7 +346,7 @@ def cmd_tags(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(
+    parser = HelpfulParser(
         prog="merlin notes search",
         description="Search Merlin's notes (knowledge base and daily logs).",
         epilog="""

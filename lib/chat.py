@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import paths
+from argparse_help import HelpfulParser
 
 
 def _transport():
@@ -82,7 +83,7 @@ def cmd_rename_thread(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(
+    parser = HelpfulParser(
         prog="merlin chat",
         description="Send messages, replies, and reactions to the chat channel (Discord).",
         epilog="""

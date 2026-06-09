@@ -22,6 +22,7 @@ if _LIB_DIR not in sys.path:
 from croniter import croniter
 
 import paths
+from argparse_help import HelpfulParser
 from cron.state import get_all_history, get_history
 
 CRON_JOBS_DIR = paths.cron_jobs_dir()
@@ -418,7 +419,7 @@ def cmd_history(args) -> dict | str:
 
 
 def main(argv: list[str] | None = None, prog: str | None = None):
-    parser = argparse.ArgumentParser(
+    parser = HelpfulParser(
         prog=prog,
         description="Manage Merlin cron jobs — add, list, enable/disable, remove, and view history.",
         epilog="""

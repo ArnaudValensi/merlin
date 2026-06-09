@@ -109,6 +109,17 @@ class TestChatCli:
         assert exc_info.value.code == 0
         assert "merlin chat" in capsys.readouterr().out
 
+    def test_leaf_missing_required_shows_help(self, transport, capsys):
+        # `merlin chat reply` with no args prints the leaf's full help (all
+        # options) plus the error, not just a one-line usage.
+        with pytest.raises(SystemExit) as exc_info:
+            chat.main(["reply"])
+        assert exc_info.value.code == 2
+        err = capsys.readouterr().err
+        assert "usage: merlin chat reply" in err
+        assert "--channel" in err and "--message" in err
+        assert "the following arguments are required" in err
+
 
 # ---------------------------------------------------------------------------
 # HTTP layer (real transport, httpx mocked)
