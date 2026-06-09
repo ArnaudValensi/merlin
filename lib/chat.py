@@ -147,7 +147,11 @@ Notes:
         help="Reply to a message",
         description="Reply to a specific message (creates a threaded reply indicator).",
     )
-    reply_parser.add_argument("--channel", required=True, help="Channel ID")
+    reply_parser.add_argument(
+        "--channel",
+        required=True,
+        help="Channel ID containing the message (for a message in a thread, the thread ID)",
+    )
     reply_parser.add_argument("--message", required=True, help="Message ID to reply to")
     reply_parser.add_argument("--content", help="Reply content")
     reply_parser.add_argument(
@@ -163,7 +167,11 @@ Notes:
         help="React to a message",
         description="Add an emoji reaction to a message.",
     )
-    react_parser.add_argument("--channel", required=True, help="Channel ID")
+    react_parser.add_argument(
+        "--channel",
+        required=True,
+        help="Channel ID containing the message (for a message in a thread, the thread ID)",
+    )
     react_parser.add_argument("--message", required=True, help="Message ID to react to")
     react_parser.add_argument(
         "--emoji", required=True, help="Emoji to react with (e.g. ✅ or 👍)"
