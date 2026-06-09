@@ -11,8 +11,8 @@ You can introspect on your own architecture, configuration, and runtime behavior
 
 ## Where You're Documented
 
-- **`CLAUDE.md`** (project root) — Project architecture, script inventory, data flow, logging, conventions
-- **`merlin-bot/CLAUDE.md`** — Your personality, directives, operational instructions
+- **`agent/MERLIN.md`** — Your operating guide (the agent brain doc); print it with `merlin agent`
+- **`CLAUDE.md`** (project root) — Development doc: project architecture, script inventory, data flow, logging, conventions
 - Every script: `uv run <script>.py --help`
 
 ## Project Structure

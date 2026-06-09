@@ -176,7 +176,7 @@ merlin remember add "User prefers dark mode"
 
 Memory is available to Claude through two mechanisms:
 
-1. **CLAUDE.md directives**: `merlin-bot/CLAUDE.md` instructs Claude to read notes files when relevant.
+1. **Brain doc directives**: `agent/MERLIN.md` (printed by `merlin agent`) instructs the agent to read notes files when relevant.
 2. **Session persistence**: Deterministic session IDs (UUID5 from thread/job ID) ensure Claude retains conversation context across interactions.
 
 Memory is **not** injected into prompts directly — Claude reads the files on disk as needed via its tools.
