@@ -1,26 +1,28 @@
 # Merlin
 
-A personal AI assistant that runs as one process on your machine and
-compounds over time. Web terminal, files, git, and notes in a dashboard you
-reach from anywhere (phone included) via Cloudflare tunnel.
+A suite of dev tools built around your favorite AI agent (Claude Code,
+OpenCode, pluggable engines). One process on your machine: web terminal,
+files, git, and notes in a dashboard you can reach from anywhere, phone
+included, plus chat and scheduled channels that run your agent with shared
+memory.
 
 ## How the pieces fit
 
-Merlin is not a terminal plus a chat bot plus a scheduler. It is one
-assistant with shared memory:
+Merlin doesn't ship its own AI; it gives your agent a body: tools,
+channels, and one shared memory.
 
 - You code in the **web terminal** from anywhere. Phone included; coding
   from everywhere is why Merlin exists.
 - Work and conversations land in the **notes / knowledge base**
-  (Zettelkasten-style, plain markdown). That is what the assistant
-  remembers.
-- The **Discord bot** is the same assistant on another channel: it reads
-  and writes that knowledge base and acts for you.
-- **Cron** runs agents on a schedule that feed the knowledge base and
+  (Zettelkasten-style, plain markdown). That is what your agent remembers.
+- The **Discord bot** puts the same agent in your chat: it reads and
+  writes that knowledge base and acts for you.
+- **Cron** runs the agent on a schedule to feed the knowledge base and
   report back.
 - **Extensions and skills** bolt new commands and know-how onto the loop.
 
-Each piece feeds the others. The longer it runs, the more it knows.
+Each piece feeds the others. The longer it runs, the more your agent
+knows.
 
 ## Install
 
@@ -38,10 +40,13 @@ merlin setup    # Configure password, tunnel, and the optional Discord bot
 merlin          # Start the dashboard
 ```
 
-With the tunnel enabled, the startup log prints your public https URL
-(`merlin dashboard-url` prints it any time). Open it on your phone, log in
-with the password you set, and you are coding from anywhere. Without a
-tunnel, open **http://localhost:3123**.
+Open **http://localhost:3123**. To reach it from your phone, expose the
+dashboard with your own tunnel or reverse proxy (Tailscale, Cloudflare,
+nginx, whatever you trust), or use [Merlin Cloud](https://merlincloud.dev),
+which handles remote access for you. A bundled cloudflared integration
+still works today (`merlin setup` offers it; the startup log and
+`merlin dashboard-url` print the public URL) but it is deprecated and will
+be removed.
 
 ### Update
 

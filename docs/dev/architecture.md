@@ -1,6 +1,6 @@
 # Merlin — System Architecture
 
-Merlin is a personal AI assistant with a web dashboard. It uses an **AgentEngine** abstraction to invoke any AI coding tool (Claude Code, OpenCode, etc.) and manages its own conversation history as JSONL transcripts. The bot and cron handlers capture engine output and deliver it to the appropriate channel (Discord, etc.).
+Merlin is a suite of dev tools built around the user's preferred AI agent. An **AgentEngine** abstraction invokes any AI coding tool (Claude Code, OpenCode, etc.), and Merlin manages its own conversation history as JSONL transcripts. The bot and cron handlers capture engine output and deliver it to the appropriate channel (Discord, etc.).
 
 ## System at a glance
 

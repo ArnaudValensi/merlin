@@ -1,8 +1,8 @@
 # Merlin — Project
 
-Merlin is a personal AI assistant platform packaged as a portable mobile dev environment: a web dashboard (terminal, files, commits, notes), a cron scheduler, and chat integrations running as one process, accessible from anywhere via Cloudflare tunnel. Install via `curl | bash` or run from a git checkout with `uv run main.py`.
+Merlin is a suite of dev tools built around the user's preferred AI agent CLI (Claude Code, OpenCode, via the AgentEngine abstraction): a web dashboard (terminal, files, commits, notes), a cron scheduler, and chat integrations running as one process, accessible from anywhere. Install via `curl | bash` or run from a git checkout with `uv run main.py`.
 
-The Discord bot (`merlin-bot/`, a built-in extension) is one delivery channel for the same assistant; the web terminal and cron are the others. The notes / knowledge base is the shared memory they all read and feed, which is why the system compounds (see [`docs/dev/architecture.md`](docs/dev/architecture.md)).
+The Discord bot (`merlin-bot/`, a built-in extension) is one channel where that agent acts; the web terminal and cron are the others. The notes / knowledge base is the shared memory they all read and feed, which is why the system compounds (see [`docs/dev/architecture.md`](docs/dev/architecture.md)). Remote access via the bundled Cloudflare tunnel is deprecated: future setups bring their own tunnel or use Merlin Cloud.
 
 ## Project Structure
 

@@ -9,8 +9,9 @@ This guide is written for humans and agents alike. The most frequent
 extension author is an agent asked to "build me an extension that does X";
 everything below works from a shell with no prior context.
 
-Merlin ships an agent: run `merlin agent` to see its operating doc; the
-Discord bot and cron jobs are that same agent on other channels, and
+Merlin runs the user's AI agent (Claude Code, OpenCode, pluggable
+engines): run `merlin agent` to see the operating doc that agent gets;
+the Discord bot and cron jobs are that same agent on other channels, and
 skills are how it learns to use your extension. An extension is how you
 grow Merlin's loop: commands the agent can call from any surface
 (terminal, Discord, cron), a skill that tells it when, and optionally a
