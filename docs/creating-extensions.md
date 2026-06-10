@@ -101,14 +101,14 @@ JSON-when-piped output.
 A skill is progressive-disclosure knowledge for agents: a folder with a
 `SKILL.md` whose frontmatter carries a `name` and a `description`. The
 agent sees the one-line description in its catalog and reads the body on
-demand when the task matches.
+demand when the task matches. Keep each frontmatter field on a single
+line; the parser reads one-line values and drops wrapped continuations.
 
 ```
 skills/tasks/SKILL.md
 ---
 name: tasks
-description: Manage the task list. Use when the user asks to add,
-  list, or complete tasks.
+description: Manage the task list. Use when the user asks to add, list, or complete tasks.
 ---
 
 # Tasks skill
@@ -148,7 +148,7 @@ underscores):
   Extensions page listing and declares config fields (key, label, type,
   secret, required) that the Settings page renders and persists.
 - Hooks (optional): async `start()` at boot, async `on_tunnel_url(url)`
-  when the public URL is known, `validate()` for fail-fast config checks.
+  when the public URL is known.
 
 Enable, disable, and audit extensions on the `/extensions` dashboard
 page; state persists in `~/.merlin/extensions.json`. The page also lists
@@ -266,8 +266,7 @@ chmod +x "$EXT/commands/"*.py
 cat > "$EXT/skills/quotes/SKILL.md" <<'EOF'
 ---
 name: quotes
-description: Store and recall the user's favorite quotes. Use when the
-  user shares a quote worth keeping or asks for one back.
+description: Store and recall the user's favorite quotes. Use when the user shares a quote worth keeping or asks for one back.
 ---
 
 # Quotes skill
