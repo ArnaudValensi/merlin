@@ -85,8 +85,8 @@ Audio is transcribed using one of three backends (in priority order):
 
 | Backend | Setup | Speed | Requirements |
 |---------|-------|-------|-------------|
-| **SaaS proxy** (Groq Whisper) | Merlin Cloud account | ~1s | None (portal handles it) |
-| **OpenAI Whisper API** | Set `OPENAI_API_KEY` | ~1s | API key (~$0.006/min) |
+| **SaaS proxy** (Groq Whisper) | Merlin Cloud account | near-instant (<1s) | None (portal handles it) |
+| **OpenAI Whisper API** | Set `OPENAI_API_KEY` | ~1-2s | API key (~$0.006/min) |
 | **Local (faster-whisper)** | None (default) | 2-5s | ~1.5GB model download, ffmpeg |
 
 Merlin runs self-hosted; there is also a hosted offering, Merlin Cloud
