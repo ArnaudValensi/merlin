@@ -6,7 +6,7 @@ Merlin is a suite of dev tools built around the user's preferred AI agent. An **
 
 Four planes, one process:
 
-- **Dashboard surface**: files, terminal, commits, notes pages served by FastAPI (see [`dashboard-architecture.md`](dashboard-architecture.md), [`web-terminal.md`](../web-terminal.md))
+- **Dashboard surface**: files, terminal, commits, notes pages served by FastAPI (see [`dashboard-architecture.md`](dashboard-architecture.md), [`web-terminal.md`](web-terminal.md))
 - **Agent loop**: chat and cron invocations through `lib/engine.py`, with persona composition in `lib/agent_context.py` (this doc, below)
 - **Scheduling**: the cron core module dispatching agent jobs (see [`cron-system.md`](cron-system.md))
 - **Extensibility**: extensions contribute commands, skills, and pages (see [`extension-system.md`](extension-system.md), [`skill-system.md`](skill-system.md))

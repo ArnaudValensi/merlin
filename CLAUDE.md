@@ -76,7 +76,7 @@ New to the codebase? Read `architecture.md` first, then `extension-system.md` an
 | [`docs/dev/session-management.md`](docs/dev/session-management.md) | Session registry, UUID5 strategy, resume-first, MERLIN_SESSION_ID |
 | [`docs/dev/discord-bot.md`](docs/dev/discord-bot.md) | Message flow, filtering, threading, prompt building, discord skill |
 | [`docs/dev/auth-and-tunnel.md`](docs/dev/auth-and-tunnel.md) | Cookie auth, HMAC signing, Cloudflare Tunnel modes, login flow |
-| [`docs/web-terminal.md`](docs/web-terminal.md) | xterm.js, WebSocket, PTY/tmux, mobile toolbar, voice input |
+| [`docs/dev/web-terminal.md`](docs/dev/web-terminal.md) | Web terminal internals: xterm.js, WebSocket, PTY/tmux, touch gesture implementation, transcription API |
 | [`docs/dev/session-viewer.md`](docs/dev/session-viewer.md) | Session transcripts, stream-json format, timeline rendering |
 | [`docs/dev/notes-editor.md`](docs/dev/notes-editor.md) | Notes routes, command palette, git ops, media upload, content search |
 | [`docs/dev/extension-system.md`](docs/dev/extension-system.md) | Extension tiers, interface, state, registry, Extensions/Settings pages |
@@ -162,7 +162,7 @@ When creating new scripts:
 | `lib/engines/` | Engine implementations (claude_code.py, opencode.py) | [`session-management`](docs/dev/session-management.md) |
 | `cron/` | Cron core module — scheduler, runner, state, REST API, logs, notifications | [`cron-system`](docs/dev/cron-system.md) |
 | `files/` | File browser module | [`dashboard-architecture`](docs/dev/dashboard-architecture.md) |
-| `terminal/` | Web terminal module | [`web-terminal`](docs/web-terminal.md) |
+| `terminal/` | Web terminal module | [`web-terminal`](docs/dev/web-terminal.md) |
 | `commits/` | Commit browser module | [`dashboard-architecture`](docs/dev/dashboard-architecture.md) |
 | `notes/` | Notes editor module | [`notes-editor`](docs/dev/notes-editor.md) |
 

@@ -69,7 +69,9 @@ sequence tables do not (they go to `docs/dev/`).
   `[SCREENSHOT PLACEHOLDER (...)]` with a precise description of the shot
   to take.
 - Images live in a per-doc asset folder named after the doc
-  (`docs/<doc-name>/*.png|jpg`).
+  (`docs/<doc-name>/*.png|jpg`). When the same shot fits several docs,
+  embed the existing file from its home folder instead of duplicating
+  the binary.
 
 ## Voice and tone
 
