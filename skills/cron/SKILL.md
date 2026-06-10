@@ -62,10 +62,10 @@ merlin cron add \
 **Options:**
 - `--schedule` — Cron expression (required)
 - `--prompt` — Task for the engine to execute (required)
-- `--description` — Human-readable summary (used to generate job ID)
-- `--id` — Explicit job ID (optional, auto-generated from description)
-- `--report-mode` — `always` (default: always notify) or `silent` (only notify on errors)
-- `--max-turns` — Max agentic turns, 0 = unlimited (default: 0)
+
+For all other flags (report mode, max turns, description, explicit id,
+channel routing) run `merlin cron add --help`; never restate them from
+memory.
 
 ### Enable/Disable Job
 
@@ -136,6 +136,6 @@ merlin cron history
 ## Tips
 
 - Use `--dry-run` to preview job creation before confirming
-- `report_mode: silent` — only notifies on errors (good for monitoring jobs)
-- `report_mode: always` — always sends the result (good for digests, reports)
+- Report modes: `always` (digests, reports), `silent` (errors only, good
+  for monitoring jobs), `off` (no notifications); see `merlin cron add --help`
 - The command validates cron expressions — invalid ones will error

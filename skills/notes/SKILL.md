@@ -155,4 +155,4 @@ cat "$NOTES/logs/2026-02-05.md"
 - **Atomic notes** — one concept per file, well-linked to related notes
 - **Use --dry-run** before adding to see what would be linked
 - **Start broad** (keyword search), then narrow down by reading specific files
-- Use `--discord` flag when sending results to Discord
+- `merlin notes search` accepts `--discord` for chat-friendly formatting when a chat channel will render the output

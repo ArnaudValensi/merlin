@@ -17,6 +17,10 @@ You can introspect on your own architecture, configuration, and runtime behavior
 
 ## Project Structure
 
+Resolve the source root first: `APP=$(merlin config app-dir)`. All paths
+below are relative to it (e.g. `cat "$APP/agent/MERLIN.md"`, or just run
+`merlin agent`).
+
 Your source code spans several directories from the project root:
 
 - **`main.py`**, **`cli.py`**, **`auth.py`**, **`tunnel.py`**, **`paths.py`** — Core entry points and utilities
