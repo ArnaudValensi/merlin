@@ -10,6 +10,7 @@ import pytest
 
 import paths
 from cli import (
+    _check_for_update,
     atomic_symlink,
     download_and_extract,
     fetch_latest_tag,
@@ -371,6 +372,103 @@ class TestDownloadAndExtract:
                 download_and_extract("0.1.0", target)
 
         assert not target.exists()
+
+
+# ---------------------------------------------------------------------------
+# Startup update check: re-exec after update
+# ---------------------------------------------------------------------------
+
+
+class TestStartupUpdateReexec:
+    """After an interactive startup update, the process must re-exec.
+
+    The running process has sys.path pinned to the old version dir and a
+    venv reached through the swapped 'current' symlink. Continuing into
+    `import main` crashes (old code, missing site-packages).
+    """
+
+    def _setup_install(self, tmp_path, monkeypatch, with_wrapper=True):
+        paths.set_dev_mode(False)
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+
+        old_dir = tmp_path / "versions" / "0.19.0"
+        old_dir.mkdir(parents=True)
+        current = tmp_path / "current"
+        current.symlink_to(old_dir)
+
+        if with_wrapper:
+            bin_dir = old_dir / "bin"
+            bin_dir.mkdir()
+            wrapper = bin_dir / "merlin"
+            wrapper.write_text("#!/bin/sh\n")
+            wrapper.chmod(0o755)
+        return current
+
+    def test_reexecs_wrapper_after_update(self, tmp_path, monkeypatch):
+        self._setup_install(tmp_path, monkeypatch)
+
+        with (
+            mock.patch("cli.fetch_latest_tag", return_value="0.21.0"),
+            mock.patch("builtins.input", return_value="y"),
+            mock.patch("cli.run_update") as m_update,
+            mock.patch("os.execv") as m_execv,
+        ):
+            # Mocked execv returns (real one never does), so the code falls
+            # through to the exit fallback.
+            with pytest.raises(SystemExit) as exc_info:
+                _check_for_update()
+
+        assert exc_info.value.code == 0
+        m_update.assert_called_once()
+        m_execv.assert_called_once()
+        wrapper = str(tmp_path / "current" / "bin" / "merlin")
+        called_path, called_argv = m_execv.call_args.args
+        assert called_path == wrapper
+        assert called_argv[0] == wrapper
+
+    def test_exits_when_wrapper_missing(self, tmp_path, monkeypatch, capsys):
+        """Defensive fallback: no executable wrapper means exit cleanly."""
+        self._setup_install(tmp_path, monkeypatch, with_wrapper=False)
+
+        with (
+            mock.patch("cli.fetch_latest_tag", return_value="0.21.0"),
+            mock.patch("builtins.input", return_value="y"),
+            mock.patch("cli.run_update"),
+            mock.patch("os.execv") as m_execv,
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                _check_for_update()
+
+        assert exc_info.value.code == 0
+        m_execv.assert_not_called()
+        assert "Run merlin again" in capsys.readouterr().out
+
+    def test_no_reexec_when_update_declined(self, tmp_path, monkeypatch):
+        self._setup_install(tmp_path, monkeypatch)
+
+        with (
+            mock.patch("cli.fetch_latest_tag", return_value="0.21.0"),
+            mock.patch("builtins.input", return_value="n"),
+            mock.patch("cli.run_update") as m_update,
+            mock.patch("os.execv") as m_execv,
+        ):
+            _check_for_update()
+
+        m_update.assert_not_called()
+        m_execv.assert_not_called()
+
+    def test_no_reexec_when_already_up_to_date(self, tmp_path, monkeypatch):
+        self._setup_install(tmp_path, monkeypatch)
+
+        with (
+            mock.patch("cli.fetch_latest_tag", return_value="0.19.0"),
+            mock.patch("builtins.input") as m_input,
+            mock.patch("os.execv") as m_execv,
+        ):
+            _check_for_update()
+
+        m_input.assert_not_called()
+        m_execv.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

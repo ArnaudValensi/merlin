@@ -259,7 +259,26 @@ def _check_for_update() -> None:
 
     if answer in ("y", "yes"):
         run_update()
+        _reexec_after_update()
+
+
+def _reexec_after_update() -> None:
+    """Replace this process with the freshly installed version.
+
+    After the 'current' symlink swap, this process must not continue:
+    sys.path is pinned to the old version directory (Python resolved the
+    script symlink at startup) and the venv it runs from is reached through
+    'current', which now points at the new version where no .venv exists
+    yet. Importing anything new from here crashes with a mix of old code
+    and a missing environment.
+    """
+    wrapper = paths.merlin_home() / "current" / "bin" / "merlin"
+    if wrapper.is_file() and os.access(wrapper, os.X_OK):
         print()
+        sys.stdout.flush()
+        os.execv(str(wrapper), [str(wrapper), *sys.argv[1:]])
+    print("\nUpdate complete. Run merlin again to start the new version.")
+    sys.exit(0)
 
 
 # ---------------------------------------------------------------------------
