@@ -2,6 +2,15 @@
 
 Merlin is a personal AI assistant with a web dashboard. It uses an **AgentEngine** abstraction to invoke any AI coding tool (Claude Code, OpenCode, etc.) and manages its own conversation history as JSONL transcripts. The bot and cron handlers capture engine output and deliver it to the appropriate channel (Discord, etc.).
 
+## System at a glance
+
+Four planes, one process:
+
+- **Dashboard surface**: files, terminal, commits, notes pages served by FastAPI (see [`dashboard-architecture.md`](dashboard-architecture.md), [`web-terminal.md`](../web-terminal.md))
+- **Agent loop**: chat and cron invocations through `lib/engine.py`, with persona composition in `lib/agent_context.py` (this doc, below)
+- **Scheduling**: the cron core module dispatching agent jobs (see [`cron-system.md`](cron-system.md))
+- **Extensibility**: extensions contribute commands, skills, and pages (see [`extension-system.md`](extension-system.md), [`skill-system.md`](skill-system.md))
+
 ## Entry Points
 
 ```
@@ -123,16 +132,40 @@ notes/
     └── *.md            (atomic, interlinked notes)
 ```
 
-## The Two Loops
+Both loops, and the user in the web terminal, read and write this tree through the notes CLI (`merlin notes`, `merlin kb`, `merlin remember`). Cron jobs write findings into `kb/` and `logs/`; the bot reads `user.md` and the KB through its agent_context recipe. One assistant, several entry points, one accumulating memory: the shared state is what makes invocations compound instead of starting cold.
+
+## The Three Loops
 
 | Loop | Trigger | Path |
 |------|---------|------|
 | **Discord** | User sends message | Discord Gateway → `merlin_bot.py` → `lib/engine.py` → engine → `AgentResult` → bot sends to Discord |
 | **Cron** | `cron/` scheduler (every min) | `main.py` → `cron/runner.py` (subprocess) → `lib/engine.py` → engine → `AgentResult` → `notify.py` sends to Discord |
+| **Terminal** | You, in the web terminal | interactive agent CLIs (Claude Code, etc.) get the same skills via the shims and the same notes/KB; `merlin agent` prints the brain doc on demand |
 
 Both loops converge at `lib/engine.py` — the single chokepoint where every invocation is logged and sessions are managed. The engine is a black box — it has no notion of Discord, delivery, or persona. Contextual system-prompt content (brain doc, personality, user memory, channel overlays) is composed by `lib/agent_context.py`: each managed caller selects a recipe (the bot: managed-assistant; cron agent jobs: headless-worker) and passes the result into `invoke()`.
 
 The cron system is a **core module** started from `main.py`, independent of merlin-bot. The bot extension only provides Discord connectivity; cron works standalone (notifications are silently skipped if the bot is not loaded).
+
+## Agent context composition (`lib/agent_context.py`)
+
+Contextual system-prompt content is composed above the engine, in `lib/agent_context.py`. Layers, each read from exactly one place:
+
+| Layer | Source |
+|-------|--------|
+| brain | `agent/MERLIN.md` (app dir, refreshed by `merlin update`) |
+| personality | `~/.merlin/personality.md` |
+| user memory | `~/.merlin/user.md` (fallback: `<notes-dir>/user.md`) |
+| channel overlay | e.g. `merlin-bot/discord_directives.md` |
+
+Recipes select layer sets per caller:
+
+| Recipe | Caller | Layers |
+|--------|--------|--------|
+| managed-assistant | Discord bot | brain + personality + user + Discord overlay |
+| headless-worker | cron agent jobs | brain + user (no personality by design) |
+| interactive | `merlin agent` | brain printed; `--personality` / `--user` append the same layers |
+
+The composed prompt reaches the engine through `invoke(append_system_prompt=...)`; the engine stays channel-agnostic and appends its own skill fallback (non-native engines) after it, so the brain always precedes the skill table. Skills are not a layer; they are always-on and owned by the engine adapters (see [`skill-system.md`](skill-system.md)).
 
 ## Path Resolution
 

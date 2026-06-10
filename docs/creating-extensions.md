@@ -9,6 +9,14 @@ This guide is written for humans and agents alike. The most frequent
 extension author is an agent asked to "build me an extension that does X";
 everything below works from a shell with no prior context.
 
+Merlin ships an agent: run `merlin agent` to see its operating doc; the
+Discord bot and cron jobs are that same agent on other channels, and
+skills are how it learns to use your extension. An extension is how you
+grow Merlin's loop: commands the agent can call from any surface
+(terminal, Discord, cron), a skill that tells it when, and optionally a
+scheduled job that runs it for you. Ship one directory and the whole
+assistant learns the capability.
+
 ## The model in one minute
 
 An extension is a directory under `~/.merlin/extensions/`. Its name is the

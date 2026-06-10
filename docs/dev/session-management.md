@@ -10,13 +10,13 @@ Merlin manages its own conversation history — no reliance on any engine's buil
 
 ## Session ID Generation
 
-Three UUID5 patterns, all using `uuid.NAMESPACE_DNS`:
+UUID5 patterns, all using `uuid.NAMESPACE_DNS`:
 
 | Context | Pattern | Example Input |
 |---------|---------|---------------|
-| Channel message | `uuid5(DNS, f"discord-channel-{channel_id}")` | `discord-channel-1234567890123456789` |
 | Thread message | `uuid5(DNS, f"discord-thread-{thread_id}")` | `discord-thread-1469102037017952367` |
 | Cron job | `uuid5(DNS, f"cron-job-{job_id}")` | `cron-job-daily-digest` |
+| Channel message (legacy, unused) | `uuid5(DNS, f"discord-channel-{channel_id}")` | channel messages create a thread and use the thread pattern; `session_id_for_channel` has no production caller |
 
 Ephemeral cron jobs use `uuid4()` instead (fresh session each run).
 

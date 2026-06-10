@@ -4,7 +4,9 @@ Reference documentation for the browser-based terminal that provides shell acces
 
 ## Overview
 
-The web terminal provides a full terminal emulator in the browser using xterm.js, connected to a server-side PTY via WebSocket. It attaches to a persistent `tmux` session, so terminal state survives page reloads and reconnections.
+The web terminal provides a full terminal emulator in the browser using xterm.js, connected to a server-side PTY via WebSocket. It attaches to a persistent `tmux` session, so terminal state survives page reloads and reconnections: closing the tab or losing signal never kills your shell; reopen the page and you are exactly where you left off. The F2-F5 toolbar keys manage tmux windows.
+
+The terminal is Merlin's front door: the work you and your agents do here feeds the rest of the system (notes, knowledge base, cron reports).
 
 ## Architecture
 
@@ -168,7 +170,7 @@ When `merlin-clip` is installed, all yanks go to the browser clipboard. Outside 
 - HTTPS required (Clipboard API unavailable over HTTP)
 - Mobile: clipboard access needs a user gesture (the pills provide this)
 
-**Troubleshooting:** See `docs/merlin-cli/clipboard.md` for detailed technical decisions, debugging methodology, and the `/clipboard-test` diagnostic page.
+**Troubleshooting:** clipboard requires HTTPS (use the tunnel URL, not plain http), and mobile browsers only grant clipboard access after a user gesture. `/clipboard-test` is the built-in diagnostic page.
 
 ### Voice Input
 
