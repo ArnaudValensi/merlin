@@ -90,6 +90,12 @@ A toolbar with virtual keys shown on touch devices:
 
 Modifiers are cleared after a keypress. The toolbar is hidden by default on desktop, shown on touch devices.
 
+[SCREENSHOT PLACEHOLDER (mobile, ~390px, portrait): the /terminal page on
+a phone with a neutral shell session (a fresh prompt, e.g. after `clear`),
+showing the bottom toolbar row with Esc, Tab, STab, Ctrl, Alt, Shift and
+the arrow keys, plus the mic and connection-status indicators in the
+bottom bar.]
+
 ### Clipboard (Copy & Paste)
 
 Full clipboard interop between browser and container, on mobile and desktop. All copy operations go through `merlin-clip` which writes OSC 52 directly to the tmux client TTY.
@@ -175,6 +181,11 @@ Microphone button records audio and sends to `/api/transcribe`:
 - Language selector (saved in localStorage)
 - Requires HTTPS (mic API unavailable over HTTP)
 - Visual states: idle → recording (red pulse) → uploading (blue fill) → done (green flash)
+
+[SCREENSHOT PLACEHOLDER (mobile, ~390px): close-up of the terminal bottom
+bar during voice input, mic button in the recording state (red pulse)
+next to the auto-enter toggle and language selector; ideally a second
+frame showing the uploading state (blue fill with progress).]
 
 ## Backend
 

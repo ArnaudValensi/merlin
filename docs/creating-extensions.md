@@ -155,10 +155,11 @@ page; state persists in `~/.merlin/extensions.json`. The page also lists
 each extension's skills and commands read-only: that listing is the
 security surface, since both are code.
 
-[SCREENSHOT PLACEHOLDER (mobile, ~390px): the /extensions dashboard page
-showing an installed extension card with its enable toggle and the
-read-only audit section listing the extension's commands and skills,
-each with name + one-line description.]
+![Extensions page on mobile: core and built-in extension cards with enable toggles and per-extension "Skills & commands" audit links](creating-extensions/extensions-page-mobile.png)
+
+Installed extensions appear in their own group on the same page, with the
+same card pattern (toggle, Configure when `config_fields` are declared,
+and the Skills & commands audit link).
 
 **Dependency rule for in-process code**: the router module runs inside
 Merlin's server process and is restricted to Merlin's own dependencies
