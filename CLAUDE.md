@@ -1,8 +1,8 @@
 # Merlin — Project
 
-Merlin is a portable mobile dev environment. Install via `curl | bash` or run from a git checkout with `uv run main.py`. Provides a web-based development environment (file browser, terminal, git viewer, notes editor) accessible from anywhere via Cloudflare tunnel.
+Merlin is a personal AI assistant platform packaged as a portable mobile dev environment: a web dashboard (terminal, files, commits, notes), a cron scheduler, and chat integrations running as one process, accessible from anywhere via Cloudflare tunnel. Install via `curl | bash` or run from a git checkout with `uv run main.py`.
 
-Merlin Bot (Discord AI assistant) is an optional extension that plugs into the system.
+The Discord bot (`merlin-bot/`, a built-in extension) is one delivery channel for the same assistant; the web terminal and cron are the others. The notes / knowledge base is the shared memory they all read and feed, which is why the system compounds (see [`docs/dev/architecture.md`](docs/dev/architecture.md)).
 
 ## Project Structure
 
@@ -66,7 +66,7 @@ merlin/
 
 ### Reference Documentation
 
-Read these docs when working on the corresponding systems:
+New to the codebase? Read `architecture.md` first, then `extension-system.md` and `skill-system.md` to see how everything plugs in. The rest are per-system references; read them when working on the corresponding system.
 
 | Doc | Covers |
 |-----|--------|
@@ -86,6 +86,7 @@ Read these docs when working on the corresponding systems:
 | [`docs/dev/releasing.md`](docs/dev/releasing.md) | Tagging, GitHub Releases, install/update flow, rollback |
 | [`docs/dev/standalone-cli.md`](docs/dev/standalone-cli.md) | Standalone CLI design: paths, install, update, dev mode |
 | [`docs/dev/logging-system.md`](docs/dev/logging-system.md) | Logging architecture, log files, rotation, engine log events |
+| [`docs/dev/openclaw-architecture.md`](docs/dev/openclaw-architecture.md) | Design-reference analysis of OpenClaw (not Merlin internals) |
 
 ### Doc Audiences
 
@@ -224,6 +225,8 @@ Strategy: **resume-first** — try `--resume` first, fall back to `--session-id`
 - **Notifications**: Graceful fallback — Discord via merlin-bot if loaded, otherwise silent
 
 ## Environment
+
+Reference dev environment (the maintainer's setup, not a requirement). Merlin itself needs Python + uv, optionally tmux and cloudflared.
 
 - **OS**: Arch Linux (Docker)
 - **Package Manager**: pacman
