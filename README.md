@@ -4,7 +4,8 @@ A suite of dev tools built around your favorite AI agent (Claude Code,
 OpenCode, pluggable engines). One process on your machine: web terminal,
 files, git, and notes in a dashboard you can reach from anywhere, phone
 included, plus chat and scheduled channels that run your agent with shared
-memory.
+memory. Talk instead of typing: voice input with built-in transcription
+works in the terminal and the chat.
 
 ## How the pieces fit
 
