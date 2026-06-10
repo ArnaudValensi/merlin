@@ -133,7 +133,7 @@ itself with `merlin <command> --help`. The families:
 ## Documentation
 
 - [Web terminal](docs/web-terminal.md): terminal usage, mobile toolbar, voice input, clipboard
-- [Creating extensions](docs/creating-extensions.md): add your own `merlin` commands and agent skills
+- [Creating extensions](docs/creating-extensions.md): add your own dashboard pages, `merlin` commands, and agent skills
 - [Contributor docs](docs/dev/architecture.md): architecture and internals, for changing Merlin's code (index in [`CLAUDE.md`](CLAUDE.md))
 
 For the agent, notes/KB, and cron, the CLI is the documentation:
