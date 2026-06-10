@@ -6,8 +6,8 @@ reach from anywhere (phone included) via Cloudflare tunnel.
 
 ## How the pieces fit
 
-Merlin is not a terminal plus a bot plus cron. It is one assistant with
-shared memory:
+Merlin is not a terminal plus a chat bot plus a scheduler. It is one
+assistant with shared memory:
 
 - You code in the **web terminal** from anywhere. Phone included; coding
   from everywhere is why Merlin exists.
@@ -106,8 +106,9 @@ base as everything else. To set it up:
 1. Create a Discord bot at the [Developer Portal](https://discord.com/developers/applications)
 2. Enable **Message Content Intent** under Privileged Gateway Intents
 3. Invite it with the `bot` scope + `Send Messages`, `Add Reactions` permissions
-4. Run `merlin setup` and paste the bot token and channel ID (you can rerun
-   setup any time to add the bot later)
+4. Run `merlin setup` and paste the bot token (you can rerun setup any time
+   to add the bot later)
+5. Allow your channel: `echo 'DISCORD_CHANNEL_IDS=<channel-id>' >> ~/.merlin/config.env`
 
 ## The merlin CLI
 
@@ -120,7 +121,8 @@ itself with `merlin <command> --help`. The families:
 - `merlin notes` / `merlin kb` / `merlin remember`: the knowledge base
 - `merlin chat`: send messages to the chat channel
 - `merlin skills`: list agent skills and their sources
-- `merlin setup` / `merlin update` / `merlin config`: install and config
+- `merlin dashboard-url`: print the dashboard URL
+- `merlin setup` / `merlin update` / `merlin config` / `merlin version`: install and config
 
 ## Documentation
 
