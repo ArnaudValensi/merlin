@@ -570,6 +570,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // items, preserving the user gesture (critical on iOS Safari).
     // Falls back to readText() if read() isn't supported.
     const isTouchDevice = ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+    // On macOS, paste is Cmd+V; Ctrl+V is "quoted insert" in native terminals.
+    // Used to skip the Ctrl+V→paste interception on Mac so it doesn't trigger
+    // the async-clipboard prompt for a key Mac users don't paste with.
+    const isMac = /Mac/.test(navigator.platform) || /Mac/.test(navigator.userAgent);
 
     async function handlePaste() {
         try {
@@ -1043,7 +1047,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // calls stopPropagation() in its paste handler, so our document-
         // level listener never fires. handlePaste() uses the async
         // Clipboard API instead.
-        if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyV') {
+        //
+        // Skipped on macOS: there Ctrl+V is "quoted insert" in native
+        // terminals and users paste with Cmd+V (handled by the capture-phase
+        // native paste listener below). Intercepting Ctrl+V on Mac would only
+        // pop Firefox's async-clipboard prompt for a key Mac users don't paste
+        // with, which reads as a confusing glitch. Let it fall through to
+        // xterm's default ^V instead.
+        if (!isMac && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyV') {
             e.preventDefault();
             handlePaste();
             return false;
@@ -1165,6 +1176,36 @@ document.addEventListener('DOMContentLoaded', () => {
             term.focus();
         }
     }
+
+    // Native paste event (capture phase) — catches Cmd+V and any other
+    // browser-native paste before xterm.js's own paste handler runs. We act
+    // only on images: read the file synchronously from clipboardData (no
+    // async-clipboard permission prompt), upload it, and stop the event so
+    // xterm doesn't also process it. Text-only pastes are left untouched so
+    // xterm's built-in paste inserts them natively and instantly — the path
+    // macOS Cmd+V used before image paste existed. The async handlePaste()
+    // path still covers Ctrl+V, the paste button, right-click, and the mobile
+    // pill, where no native paste event is available.
+    //
+    // Capture phase + stopPropagation is required because xterm.js binds its
+    // paste listener on the helper textarea (the event target); a bubble-phase
+    // listener would fire too late.
+    container.addEventListener('paste', (e) => {
+        const items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        for (const item of items) {
+            if (item.kind === 'file' && item.type.startsWith('image/')) {
+                const file = item.getAsFile();
+                if (file) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    uploadAndInjectFile(file, file.name || 'clipboard.png');
+                    return;
+                }
+            }
+        }
+        // No image: let xterm.js paste the text natively (instant, no prompt).
+    }, true);
 
     // Right-click paste (desktop): prevent context menu, paste clipboard
     container.addEventListener('contextmenu', (e) => {
