@@ -570,9 +570,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // items, preserving the user gesture (critical on iOS Safari).
     // Falls back to readText() if read() isn't supported.
     const isTouchDevice = ('ontouchstart' in window || navigator.maxTouchPoints > 0);
-    // On macOS, paste is Cmd+V; Ctrl+V is "quoted insert" in native terminals.
-    // Used to skip the Ctrl+V→paste interception on Mac so it doesn't trigger
-    // the async-clipboard prompt for a key Mac users don't paste with.
+    // On macOS, paste is Cmd+V. We swallow Ctrl+V there so it neither pops the
+    // async-clipboard prompt (via handlePaste) nor sends ^V to the app - Claude
+    // Code and other TUIs treat a bare Ctrl+V as "paste image from clipboard"
+    // and print a confusing "No image found" since they can't see the Mac's
+    // local clipboard. See the key handler below.
     const isMac = /Mac/.test(navigator.platform) || /Mac/.test(navigator.userAgent);
 
     async function handlePaste() {
@@ -1048,15 +1050,17 @@ document.addEventListener('DOMContentLoaded', () => {
         // level listener never fires. handlePaste() uses the async
         // Clipboard API instead.
         //
-        // Skipped on macOS: there Ctrl+V is "quoted insert" in native
-        // terminals and users paste with Cmd+V (handled by the capture-phase
-        // native paste listener below). Intercepting Ctrl+V on Mac would only
-        // pop Firefox's async-clipboard prompt for a key Mac users don't paste
-        // with, which reads as a confusing glitch. Let it fall through to
-        // xterm's default ^V instead.
-        if (!isMac && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyV') {
+        // macOS: we still intercept Ctrl+V but swallow it (no paste, no ^V).
+        // Mac users paste with Cmd+V (handled by the capture-phase native paste
+        // listener below). We can't route Ctrl+V to handlePaste() there because
+        // it pops Firefox's async-clipboard prompt; and we can't let ^V through
+        // either, because Claude Code and other TUIs treat Ctrl+V as their own
+        // "paste image from clipboard" command and print a confusing "No image
+        // found" (they can't see the Mac's local clipboard - that is exactly
+        // what Merlin's upload bridge is for). So on Mac, Ctrl+V does nothing.
+        if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyV') {
             e.preventDefault();
-            handlePaste();
+            if (!isMac) handlePaste(); // macOS: swallow; Cmd+V is the paste key
             return false;
         }
 
