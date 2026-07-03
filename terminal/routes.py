@@ -333,9 +333,10 @@ async def terminal_ws(websocket: WebSocket):
     await websocket.accept()
     logger.info("Terminal WebSocket connected")
 
-    # Fork a PTY running tmux
+    # Fork a PTY running tmux. Nothing but exec-prep may run in the child:
+    # its stdio IS the pty, so e.g. logging would leak into the terminal
+    # stream (and write to merlin.log from a second process).
     pid, master_fd = pty.fork()
-    logger.info("pty.fork() returned: pid=%d, fd=%d", pid, master_fd)
 
     if pid == 0:
         # Child process — start in CWD (or project root)
@@ -360,6 +361,7 @@ async def terminal_ws(websocket: WebSocket):
     # Parent process — bridge WebSocket <-> PTY. All PTY I/O goes through
     # the event loop (see terminal/pty_bridge.py for why no thread may
     # ever block inside a PTY syscall).
+    logger.info("pty.fork() returned: pid=%d, fd=%d", pid, master_fd)
     try:
         bridge = PtyBridge(master_fd)
     except OSError:
