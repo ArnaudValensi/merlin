@@ -50,6 +50,11 @@ Paste, five ways: Ctrl+V, Ctrl+Shift+V, right-click on the terminal, the
 clipboard toolbar button, or the mobile Paste pill (see mobile notes).
 A "Pasted!" flash confirms; pastes are capped at 1 MB.
 
+On macOS, paste is Cmd+V: it pastes text and images natively, with no
+browser clipboard prompt. Ctrl+V is deliberately not intercepted there;
+it reaches the terminal as quoted-insert (`^V`), the way native Mac
+terminals treat it.
+
 Paste an image: with an image in the clipboard, any paste path uploads it
 to `/tmp/merlin-clipboard/` and types the file path into the terminal,
 ready to hand to your agent. Drag-and-drop a file does the same, and the
@@ -93,8 +98,9 @@ in the browser. Recordings are capped at 25 MB.
 
 ![Voice transcription with the microphone button](terminal/phone-speak.jpg)
 
-Transcription needs a backend, picked in priority order: Merlin Cloud
-(`MERLIN_SAAS_TOKEN`, nothing to configure), the OpenAI Whisper API
+Transcription needs a backend, picked in priority order:
+[Merlin Cloud](getting-started.md#merlin-cloud) (`MERLIN_SAAS_TOKEN`,
+nothing to configure), the OpenAI Whisper API
 (`OPENAI_API_KEY`), or local faster-whisper (a one-time ~1.5GB model
 download, works offline). `merlin setup` prompts for the OpenAI key, or append
 `OPENAI_API_KEY=sk-...` to `~/.merlin/config.env`.
