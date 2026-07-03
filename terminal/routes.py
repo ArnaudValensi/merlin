@@ -1,13 +1,14 @@
 """Web terminal — WebSocket PTY bridge with tmux persistence."""
 
 import asyncio
+import codecs
+import contextlib
 import fcntl
 import json
 import logging
 import os
 import pty
 import secrets
-import signal
 import struct
 import tempfile
 import termios
@@ -27,6 +28,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from auth import require_auth, verify_ws_cookie
 from merlin_ext import make_templates
+from terminal.pty_bridge import PtyBridge, terminate_client
 
 logger = logging.getLogger("merlin.terminal")
 
@@ -66,21 +68,21 @@ def _voice_available() -> bool:
 # PTY registry — allows transcribe endpoint to write directly to the terminal
 # ---------------------------------------------------------------------------
 
-_pty_registry: dict[str, int] = {}
+_pty_registry: dict[str, PtyBridge] = {}
 
 
-def register_pty(session_key: str, fd: int) -> None:
-    """Register a PTY file descriptor for server-side text injection."""
-    _pty_registry[session_key] = fd
+def register_pty(session_key: str, bridge: PtyBridge) -> None:
+    """Register a PTY bridge for server-side text injection."""
+    _pty_registry[session_key] = bridge
 
 
 def unregister_pty(session_key: str) -> None:
-    """Unregister a PTY file descriptor."""
+    """Unregister a PTY bridge."""
     _pty_registry.pop(session_key, None)
 
 
-def get_pty_fd(session_key: str) -> int | None:
-    """Get the PTY file descriptor for a session, or None if not registered."""
+def get_pty_bridge(session_key: str) -> PtyBridge | None:
+    """Get the PTY bridge for a session, or None if not registered."""
     return _pty_registry.get(session_key)
 
 
@@ -99,17 +101,6 @@ def _set_winsize(fd: int, cols: int, rows: int) -> None:
     """Set the window size of a PTY."""
     winsize = struct.pack("HHHH", rows, cols, 0, 0)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
-
-
-def _read_pty(fd: int) -> str | None:
-    """Blocking read from PTY fd. Returns decoded string or None on EOF."""
-    try:
-        data = os.read(fd, 4096)
-        if not data:
-            return None
-        return data.decode("utf-8", errors="replace")
-    except OSError:
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +156,7 @@ def _unlink_safe(path: str) -> None:
 
 
 async def _transcribe_and_inject(
-    tmp_path: str, language: str, pty_fd: int, auto_enter: bool
+    tmp_path: str, language: str, bridge: PtyBridge, auto_enter: bool
 ) -> None:
     """Transcribe audio and write result directly to the PTY."""
     from transcribe import transcribe
@@ -175,11 +166,9 @@ async def _transcribe_and_inject(
             None, transcribe, tmp_path, language
         )
         if text:
-            os.write(pty_fd, text.encode("utf-8"))
-            if auto_enter:
-                os.write(pty_fd, b"\r")
-    except OSError:
-        logger.warning("PTY write failed (fd may be closed)")
+            payload = text.encode("utf-8") + (b"\r" if auto_enter else b"")
+            if not await bridge.write(payload):
+                logger.warning("PTY write failed (terminal may be closed)")
     except Exception:
         logger.exception("Background transcription failed")
     finally:
@@ -215,13 +204,13 @@ async def transcribe_audio(
     tmp.write(content)
     tmp.close()
 
-    pty_fd = get_pty_fd("terminal")
+    bridge = get_pty_bridge("terminal")
 
-    if pty_fd is not None:
+    if bridge is not None:
         # Server-side injection: return immediately, transcribe in background
         should_enter = auto_enter.lower() in ("true", "1")
         asyncio.create_task(
-            _transcribe_and_inject(tmp.name, lang, pty_fd, should_enter)
+            _transcribe_and_inject(tmp.name, lang, bridge, should_enter)
         )
         return JSONResponse({"status": "accepted"}, status_code=202)
 
@@ -368,9 +357,19 @@ async def terminal_ws(websocket: WebSocket):
         os.execvp("tmux", tmux_args)
         os._exit(1)
 
-    # Parent process — bridge WebSocket <-> PTY
-    register_pty("terminal", master_fd)
-    loop = asyncio.get_event_loop()
+    # Parent process — bridge WebSocket <-> PTY. All PTY I/O goes through
+    # the event loop (see terminal/pty_bridge.py for why no thread may
+    # ever block inside a PTY syscall).
+    try:
+        bridge = PtyBridge(master_fd)
+    except OSError:
+        logger.exception("PTY bridge setup failed")
+        with contextlib.suppress(OSError):
+            os.close(master_fd)
+        await terminate_client(pid)
+        await websocket.close(code=1011, reason="PTY setup failed")
+        return
+    register_pty("terminal", bridge)
 
     # Check if child is still alive
     try:
@@ -386,13 +385,17 @@ async def terminal_ws(websocket: WebSocket):
 
     async def pty_to_ws():
         """Read from PTY and send to WebSocket."""
+        # Incremental decoder: UTF-8 sequences can split across reads.
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
         try:
             while True:
-                data = await loop.run_in_executor(None, _read_pty, master_fd)
-                if data is None:
+                data = await bridge.read()
+                if not data:
                     logger.info("pty_to_ws: got EOF from PTY")
                     break
-                await websocket.send_text(data)
+                text = decoder.decode(data)
+                if text:
+                    await websocket.send_text(text)
         except (WebSocketDisconnect, asyncio.CancelledError):
             logger.info("pty_to_ws: WebSocket disconnected or cancelled")
         except Exception:
@@ -411,7 +414,7 @@ async def terminal_ws(websocket: WebSocket):
                         if msg_type == "resize":
                             cols = min(max(int(parsed.get("cols", 120)), 1), 500)
                             rows = min(max(int(parsed.get("rows", 40)), 1), 500)
-                            _set_winsize(master_fd, cols, rows)
+                            _set_winsize(bridge.fd, cols, rows)
                             continue
                         if msg_type == "clipboard_sync":
                             _sync_clipboard(parsed.get("text", ""))
@@ -419,7 +422,9 @@ async def terminal_ws(websocket: WebSocket):
                     except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                         pass
                 # Regular input — write to PTY
-                os.write(master_fd, msg.encode("utf-8"))
+                if not await bridge.write(msg.encode("utf-8")):
+                    logger.warning("ws_to_pty: PTY gone or stalled, closing")
+                    break
         except (WebSocketDisconnect, asyncio.CancelledError):
             logger.info("ws_to_pty: WebSocket disconnected or cancelled")
         except Exception:
@@ -437,19 +442,17 @@ async def terminal_ws(websocket: WebSocket):
             [t.get_name() for t in done],
             [t.get_name() for t in pending],
         )
-        for task in pending:
-            task.cancel()
     finally:
+        # Sync teardown first, so hooks and fds are gone even if this
+        # handler is itself cancelled (server shutdown).
         unregister_pty("terminal")
-        logger.info("Cleanup: closing fd=%d, killing pid=%d", master_fd, pid)
-        # Close PTY fd and kill the tmux client process (NOT the session)
-        try:
-            os.close(master_fd)
-        except OSError:
-            pass
-        try:
-            os.kill(pid, signal.SIGHUP)
-            os.waitpid(pid, os.WNOHANG)
-        except (OSError, ChildProcessError):
-            pass
+        bridge.close()
+        for task in (pty_reader, ws_reader):
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.gather(pty_reader, ws_reader, return_exceptions=True)
+        logger.info("Cleanup: PTY closed fd=%d, terminating pid=%d", master_fd, pid)
+        # Terminate the tmux client process (NOT the session) and reap it,
+        # escalating to SIGKILL if it lingers.
+        await terminate_client(pid)
         logger.info("Terminal WebSocket disconnected")

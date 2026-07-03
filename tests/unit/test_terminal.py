@@ -52,33 +52,8 @@ class TestSetWinsize:
             assert cols == 120
 
 
-class TestReadPty:
-    """_read_pty reads from fd and decodes."""
-
-    def test_reads_and_decodes(self):
-        with mock.patch("os.read", return_value=b"hello world"):
-            result = tr._read_pty(5)
-        assert result == "hello world"
-
-    def test_returns_none_on_empty(self):
-        with mock.patch("os.read", return_value=b""):
-            result = tr._read_pty(5)
-        assert result is None
-
-    def test_returns_none_on_oserror(self):
-        with mock.patch("os.read", side_effect=OSError("fd closed")):
-            result = tr._read_pty(5)
-        assert result is None
-
-    def test_replaces_invalid_utf8(self):
-        with mock.patch("os.read", return_value=b"hello \xff world"):
-            result = tr._read_pty(5)
-        assert "hello" in result
-        assert "world" in result
-
-
 # ---------------------------------------------------------------------------
-# WebSocket lifecycle (mocked PTY)
+# WebSocket lifecycle (real PTY, mocked fork/child)
 # ---------------------------------------------------------------------------
 
 
@@ -115,50 +90,127 @@ class TestTerminalWebSocket:
 
     def test_accepts_cookie_auth(self, mock_websocket_with_cookie):
         """WebSocket auth via session cookie."""
+        import pty as _pty
+
         ws = mock_websocket_with_cookie
+        master, slave = _pty.openpty()
 
-        with (
-            mock.patch("pty.fork", return_value=(999, 5)),
-            mock.patch("os.read", return_value=b""),
-            mock.patch("os.close"),
-            mock.patch("os.kill"),
-            mock.patch("os.waitpid"),
-        ):
-            from starlette.websockets import WebSocketDisconnect
+        try:
+            with (
+                mock.patch("pty.fork", return_value=(999, master)),
+                mock.patch("os.waitpid", return_value=(0, 0)),
+                mock.patch(
+                    "terminal.routes.terminate_client", new_callable=mock.AsyncMock
+                ),
+            ):
+                from starlette.websockets import WebSocketDisconnect
 
-            ws.receive_text.side_effect = WebSocketDisconnect()
-            asyncio.run(tr.terminal_ws(ws))
+                ws.receive_text.side_effect = WebSocketDisconnect()
+                asyncio.run(tr.terminal_ws(ws))
 
-        ws.accept.assert_called_once()
+            ws.accept.assert_called_once()
+        finally:
+            os.close(slave)
 
     def test_cleanup_on_disconnect(self, mock_websocket_with_cookie):
-        """PTY fd is closed and child process killed on disconnect."""
+        """PTY bridge is closed, registry cleared, tmux client terminated."""
+        import pty as _pty
+
         ws = mock_websocket_with_cookie
-
         child_pid = 12345
-        master_fd = 7
+        master, slave = _pty.openpty()
 
-        with (
-            mock.patch("pty.fork", return_value=(child_pid, master_fd)),
-            mock.patch("os.read", return_value=b""),
-            mock.patch("os.close") as mock_close,
-            mock.patch("os.kill") as mock_kill,
-            mock.patch("os.waitpid") as mock_waitpid,
-        ):
+        captured = {}
+        orig_register = tr.register_pty
+
+        def capture_register(key, bridge):
+            captured["bridge"] = bridge
+            orig_register(key, bridge)
+
+        try:
+            with (
+                mock.patch("pty.fork", return_value=(child_pid, master)),
+                mock.patch("os.waitpid", return_value=(0, 0)),
+                mock.patch("terminal.routes.register_pty", capture_register),
+                mock.patch(
+                    "terminal.routes.terminate_client", new_callable=mock.AsyncMock
+                ) as mock_terminate,
+            ):
+                from starlette.websockets import WebSocketDisconnect
+
+                ws.receive_text.side_effect = WebSocketDisconnect()
+                asyncio.run(tr.terminal_ws(ws))
+
+            # Verify cleanup: bridge closed, registry empty, client terminated
+            assert captured["bridge"].closed is True
+            assert tr.get_pty_bridge("terminal") is None
+            mock_terminate.assert_awaited_once_with(child_pid)
+        finally:
+            os.close(slave)
+
+    def test_pty_output_reaches_websocket(self, mock_websocket_with_cookie):
+        """Bytes written on the PTY slave side arrive as websocket text."""
+        import pty as _pty
+        import tty as _tty
+
+        ws = mock_websocket_with_cookie
+        master, slave = _pty.openpty()
+        _tty.setraw(slave)
+
+        sent: list[str] = []
+        got_output = asyncio.Event()
+
+        async def fake_send_text(text):
+            sent.append(text)
+            got_output.set()
+
+        async def fake_receive_text():
+            # Hold the connection open until output arrived, then disconnect
             from starlette.websockets import WebSocketDisconnect
 
-            ws.receive_text.side_effect = WebSocketDisconnect()
-            asyncio.run(tr.terminal_ws(ws))
+            await asyncio.wait_for(got_output.wait(), timeout=5)
+            raise WebSocketDisconnect()
 
-        # Verify cleanup
-        mock_close.assert_called_with(master_fd)
-        mock_kill.assert_called_with(child_pid, mock.ANY)
-        mock_waitpid.assert_called_with(child_pid, mock.ANY)
+        ws.send_text = fake_send_text
+        ws.receive_text = fake_receive_text
+
+        async def run():
+            with (
+                mock.patch("pty.fork", return_value=(999, master)),
+                mock.patch("os.waitpid", return_value=(0, 0)),
+                mock.patch(
+                    "terminal.routes.terminate_client", new_callable=mock.AsyncMock
+                ),
+            ):
+                handler = asyncio.create_task(tr.terminal_ws(ws))
+                await asyncio.sleep(0.05)
+                os.write(slave, b"hello from pty")
+                await asyncio.wait_for(handler, timeout=5)
+
+        try:
+            asyncio.run(run())
+            assert "hello from pty" in "".join(sent)
+        finally:
+            os.close(slave)
 
 
 # ---------------------------------------------------------------------------
 # PTY Registry
 # ---------------------------------------------------------------------------
+
+
+class _StubBridge:
+    """Minimal PtyBridge stand-in that writes to a plain fd."""
+
+    def __init__(self, fd):
+        self.fd = fd
+
+    async def write(self, data: bytes) -> bool:
+        try:
+            os.write(self.fd, data)
+            return True
+        except OSError:
+            return False
 
 
 class TestPtyRegistry:
@@ -168,25 +220,27 @@ class TestPtyRegistry:
         """Clear registry before each test."""
         tr._pty_registry.clear()
 
-    def test_register_pty_stores_fd(self):
-        tr.register_pty("terminal", 42)
-        assert tr.get_pty_fd("terminal") == 42
+    def test_register_pty_stores_bridge(self):
+        bridge = _StubBridge(42)
+        tr.register_pty("terminal", bridge)
+        assert tr.get_pty_bridge("terminal") is bridge
 
-    def test_get_pty_fd_returns_none_when_empty(self):
-        assert tr.get_pty_fd("terminal") is None
+    def test_get_pty_bridge_returns_none_when_empty(self):
+        assert tr.get_pty_bridge("terminal") is None
 
     def test_unregister_pty_removes_entry(self):
-        tr.register_pty("terminal", 42)
+        tr.register_pty("terminal", _StubBridge(42))
         tr.unregister_pty("terminal")
-        assert tr.get_pty_fd("terminal") is None
+        assert tr.get_pty_bridge("terminal") is None
 
     def test_unregister_pty_noop_when_missing(self):
         tr.unregister_pty("nonexistent")  # should not raise
 
     def test_register_pty_overwrites(self):
-        tr.register_pty("terminal", 42)
-        tr.register_pty("terminal", 99)
-        assert tr.get_pty_fd("terminal") == 99
+        second = _StubBridge(99)
+        tr.register_pty("terminal", _StubBridge(42))
+        tr.register_pty("terminal", second)
+        assert tr.get_pty_bridge("terminal") is second
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +436,7 @@ class TestTranscribeServerSideInjection:
     def test_returns_202_when_pty_registered(self):
         """With PTY registered, returns 202 and schedules background task."""
         r_fd, w_fd = os.pipe()
-        tr.register_pty("terminal", w_fd)
+        tr.register_pty("terminal", _StubBridge(w_fd))
         try:
             with mock.patch("transcribe.transcribe", return_value="hello from server"):
                 result = asyncio.run(
@@ -411,7 +465,7 @@ class TestTranscribeServerSideInjection:
     def test_auto_enter_appends_newline(self):
         """auto_enter=true writes text + newline to PTY."""
         r_fd, w_fd = os.pipe()
-        tr.register_pty("terminal", w_fd)
+        tr.register_pty("terminal", _StubBridge(w_fd))
         try:
             with mock.patch("transcribe.transcribe", return_value="git status"):
                 result = asyncio.run(
@@ -436,7 +490,7 @@ class TestTranscribeServerSideInjection:
     def test_no_enter_by_default(self):
         """auto_enter=false writes text without newline."""
         r_fd, w_fd = os.pipe()
-        tr.register_pty("terminal", w_fd)
+        tr.register_pty("terminal", _StubBridge(w_fd))
         try:
             with mock.patch("transcribe.transcribe", return_value="hello"):
                 result = asyncio.run(
@@ -463,7 +517,7 @@ class TestTranscribeServerSideInjection:
         r_fd, w_fd = os.pipe()
         os.close(w_fd)
         os.close(r_fd)
-        tr.register_pty("terminal", w_fd)
+        tr.register_pty("terminal", _StubBridge(w_fd))
         try:
             with mock.patch("transcribe.transcribe", return_value="hello"):
                 # Should not raise
@@ -481,7 +535,7 @@ class TestTranscribeServerSideInjection:
     def test_temp_file_cleanup(self):
         """Temp file is cleaned up after background transcription."""
         r_fd, w_fd = os.pipe()
-        tr.register_pty("terminal", w_fd)
+        tr.register_pty("terminal", _StubBridge(w_fd))
         created_files = []
         orig_named_temp = tempfile.NamedTemporaryFile
 
@@ -521,7 +575,7 @@ class TestTranscribeServerSideInjection:
     def test_transcription_exception_cleanup(self):
         """Temp file is cleaned up even when transcription raises."""
         r_fd, w_fd = os.pipe()
-        tr.register_pty("terminal", w_fd)
+        tr.register_pty("terminal", _StubBridge(w_fd))
         created_files = []
         orig_named_temp = tempfile.NamedTemporaryFile
 
@@ -579,7 +633,7 @@ class TestTranscribeServerSideInjection:
     def test_concurrent_requests_no_corruption(self):
         """Two concurrent transcriptions don't corrupt each other."""
         r_fd, w_fd = os.pipe()
-        tr.register_pty("terminal", w_fd)
+        tr.register_pty("terminal", _StubBridge(w_fd))
 
         call_count = 0
 
@@ -634,7 +688,7 @@ class TestTranscribeServerSideInjection:
     def test_empty_transcription_no_write(self):
         """Empty transcription result doesn't write to PTY."""
         r_fd, w_fd = os.pipe()
-        tr.register_pty("terminal", w_fd)
+        tr.register_pty("terminal", _StubBridge(w_fd))
         try:
             with mock.patch("transcribe.transcribe", return_value=""):
                 result = asyncio.run(

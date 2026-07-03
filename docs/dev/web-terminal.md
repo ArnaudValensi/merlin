@@ -88,13 +88,38 @@ User-facing copy/paste recipes (shortcuts, pills, NeoVim config, `/clipboard-tes
 In `terminal/routes.py`:
 
 1. Verify auth via session cookie
-2. Create PTY pair (`os.openpty()`)
-3. Spawn process: `tmux new-session -A -s merlin` (attach or create)
+2. Fork a PTY (`pty.fork()`) running `tmux new-session -A -s merlin-dev`
+3. Wrap the master fd in a `PtyBridge` (`terminal/pty_bridge.py`)
 4. Bidirectional relay:
-   - WebSocket → PTY: forward input
-   - PTY → WebSocket: forward output
+   - WebSocket → PTY: forward input via `bridge.write()`
+   - PTY → WebSocket: forward output via `bridge.read()` through an
+     incremental UTF-8 decoder (multibyte sequences can split across reads)
 5. Handle resize messages (JSON with `type: "resize"`)
-6. Clean up on disconnect
+6. Clean up on disconnect: close the bridge, then `terminate_client()`
+   SIGHUPs the tmux client, waits for it to exit, and escalates to SIGKILL
+
+### PTY Bridge (`terminal/pty_bridge.py`)
+
+All PTY I/O goes through the event loop on a **non-blocking** master fd
+(`loop.add_reader` / `add_writer`). This is a hard constraint, not a style
+choice: a blocking `os.read()` in an executor thread deadlocks in the macOS
+kernel if `os.close()` runs concurrently on the same PTY fd. Both threads
+enter uninterruptible sleep, the process survives SIGKILL, and the frozen
+event loop takes the SaaS tunnel down with it (2026-07-02 outage). With the
+bridge, no thread is ever inside a PTY syscall, so teardown cannot deadlock.
+
+Properties the tests pin down (`tests/unit/test_pty_bridge.py`):
+
+- **Backpressure**: reading pauses at a high-water mark when the WebSocket
+  consumer falls behind; the kernel PTY buffer then throttles the child.
+- **Write stalls**: a write that can't progress (child stopped draining)
+  gives up after a timeout instead of waiting forever.
+- **Teardown**: `close()` is synchronous, idempotent, wakes any waiting
+  reader/writer, and can never block.
+
+`add_reader`/`add_writer` are used instead of asyncio pipe transports
+deliberately: they are loop-agnostic (uvloop supports them on any fd,
+while its pipe transports reject TTYs).
 
 ### tmux Session
 
@@ -108,9 +133,9 @@ In `terminal/routes.py`:
 `POST /api/transcribe`:
 - Accepts multipart form: `file` (audio), `language`, `auto_enter` (`true`/`false`)
 - Transcribes via `transcribe.py` (SaaS proxy → OpenAI Whisper → local faster-whisper)
-- **With PTY registered**: returns `202 Accepted`, transcribes in background, writes text directly to PTY fd via `_transcribe_and_inject()`
+- **With PTY registered**: returns `202 Accepted`, transcribes in background, writes text to the PTY through `bridge.write()` via `_transcribe_and_inject()`
 - **Without PTY**: returns `200` with `{"text": "..."}` for client-side injection (fallback)
-- PTY registry: `register_pty()` / `unregister_pty()` / `get_pty_fd()` in `routes.py`
+- PTY registry: `register_pty()` / `unregister_pty()` / `get_pty_bridge()` in `routes.py`
 
 ## Authentication
 
@@ -120,7 +145,8 @@ Terminal access requires the same cookie auth as the rest of the dashboard. WebS
 
 | File | Purpose |
 |------|---------|
-| `terminal/routes.py` | WebSocket endpoint, PTY management |
+| `terminal/routes.py` | WebSocket endpoint, PTY registry, transcription API |
+| `terminal/pty_bridge.py` | Non-blocking PTY I/O, tmux client termination |
 | `templates/terminal.html` | xterm.js frontend, toolbar, clipboard, voice input |
 | `transcribe.py` | Audio transcription (faster-whisper) |
 | `auth.py` | `verify_ws_cookie()` for WebSocket auth |
