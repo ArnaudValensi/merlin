@@ -2,6 +2,19 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.22.0 (2026-07-03)
+
+### Added
+- **User manual** — Per-page manual under `docs/`, with the README rewritten as the front door: what Merlin is and how the pieces fit together.
+- **Extension authoring guide** — `docs/creating-extensions.md` walks through building your own dashboard extension.
+- **`merlin agent --personality` / `--user`** — Compose the agent's persona and user-context layers from the CLI.
+- **Helpful CLI errors** — Missing required arguments now print the full command help instead of a terse error.
+- **Seamless startup updates** — Accepting an update at interactive startup now re-executes the new version immediately, no manual restart.
+
+### Fixed
+- **macOS terminal freeze** — Disconnecting from the web terminal could deadlock the whole Merlin process inside the macOS kernel: unkillable process, dead dashboard, and a Merlin Cloud tunnel that stayed zombie until a hard restart. PTY I/O is now fully non-blocking, which makes the deadlock impossible; terminal cleanup also reliably reaps its tmux client.
+- **macOS clipboard paste** — Cmd+V pastes text and images into the web terminal without a permission prompt, and Ctrl+V is no longer intercepted from terminal apps.
+
 ## v0.21.0 (2026-06-09)
 
 ### Added
