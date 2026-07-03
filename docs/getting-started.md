@@ -43,15 +43,21 @@ That one process is the whole system: the cron scheduler starts with it, extensi
 
 ## Reach it from your phone
 
-Expose the dashboard with your own tunnel or reverse proxy (Tailscale, Cloudflare, nginx, whatever you trust), or use [Merlin Cloud](https://merlincloud.dev), which handles remote access for you:
+Expose the dashboard with your own tunnel or reverse proxy (Tailscale, Cloudflare, nginx, whatever you trust), or use Merlin Cloud (next section), which handles remote access for you.
+
+The bundled cloudflared tunnel still works today but is deprecated and will be removed. Enabled with no tunnel token, it starts a Quick Tunnel and prints `Quick Tunnel active: https://<random>.trycloudflare.com` at startup; that URL changes on every restart.
+
+`merlin dashboard-url` prints your dashboard address with credentials embedded when a password is set. It resolves `MERLIN_DASHBOARD_URL` first, then the configured tunnel hostname, then `http://localhost:3123`. If you front Merlin with your own proxy, set `MERLIN_DASHBOARD_URL` in `config.env` so the command (and your agent) know the stable address.
+
+## Merlin Cloud
+
+[Merlin Cloud](https://merlincloud.dev) is the hosted service that pairs with Merlin. Connect your self-hosted instance with a token and it handles the remote-access plumbing: a tunnel to a stable HTTPS URL for your dashboard, plus a voice transcription backend, with nothing else to configure:
 
 ```bash
 merlin --saas-token YOUR_TOKEN    # saved to config.env for future runs
 ```
 
-The bundled cloudflared tunnel still works today but is deprecated and will be removed. Enabled with no tunnel token, it starts a Quick Tunnel and prints `Quick Tunnel active: https://<random>.trycloudflare.com` at startup; that URL changes on every restart.
-
-`merlin dashboard-url` prints your dashboard address with credentials embedded when a password is set. It resolves `MERLIN_DASHBOARD_URL` first, then the configured tunnel hostname, then `http://localhost:3123`. If you front Merlin with your own proxy, set `MERLIN_DASHBOARD_URL` in `config.env` so the command (and your agent) know the stable address.
+Merlin Cloud can also host the whole thing: a managed environment where Merlin and your agent run on cloud hardware, reachable from any device, with no server of your own. Self-hosting stays a first-class path; everything in these docs applies to both.
 
 ## Update
 

@@ -34,7 +34,9 @@ merlin          # start the dashboard
 ```
 
 Open **http://localhost:3123**. The full walkthrough, including reaching
-it from your phone, updating, and rolling back, is in
+it from your phone (bring your own tunnel, or let
+[Merlin Cloud](docs/getting-started.md#merlin-cloud) handle remote
+access), updating, and rolling back, is in
 [Getting started](docs/getting-started.md).
 
 ## Documentation

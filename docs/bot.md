@@ -68,7 +68,8 @@ Record a voice message in Discord and send it. The bot reacts with a
 microphone emoji while transcribing, posts the transcription back to the
 thread as a quoted line so you can verify what it heard, then answers the
 transcribed prompt. Transcription uses the same backends as terminal voice
-input, in priority order: the Merlin Cloud proxy if you have a SaaS token,
+input, in priority order: the [Merlin Cloud](getting-started.md#merlin-cloud)
+proxy if you have a SaaS token,
 the OpenAI Whisper API if `OPENAI_API_KEY` is set (`merlin setup` prompts
 for it, roughly $0.006/min), otherwise local faster-whisper (offline, ~1.5GB
 model download, needs ffmpeg).
