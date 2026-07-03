@@ -2,6 +2,11 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.22.1 (2026-07-03)
+
+### Fixed
+- **Changelog link in settings** — The update card's Changelog link opened an empty GitHub tag page; it now opens the changelog itself at the target version.
+
 ## v0.22.0 (2026-07-03)
 
 ### Added
