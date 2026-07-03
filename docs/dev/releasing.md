@@ -11,6 +11,8 @@ git push --tags
 
 No GitHub Release needed. GitHub auto-serves source tarballs for any tag. No build step — the tarball is the source code, run via `uv run`.
 
+`CHANGELOG.md` at the tag is the user-facing changelog: the settings page links to `blob/v<tag>/CHANGELOG.md`, so commit the changelog entry before tagging (the release flow already does this).
+
 ## How Installs Work
 
 The install script (`install.sh`) and update command (`merlin update`) both:

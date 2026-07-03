@@ -110,7 +110,10 @@ const Settings = {
         if (latestEl) latestEl.textContent = '\u2192 v' + data.latest + ' available';
 
         const changelog = document.createElement('a');
-        changelog.href = 'https://github.com/ArnaudValensi/merlin/releases/tag/v' + data.latest;
+        // CHANGELOG.md at the target tag: the release flow commits the
+        // changelog before tagging, so this always exists and the new
+        // version's section is at the top. No GitHub Release objects.
+        changelog.href = 'https://github.com/ArnaudValensi/merlin/blob/v' + data.latest + '/CHANGELOG.md';
         changelog.target = '_blank';
         changelog.rel = 'noopener';
         changelog.textContent = 'Changelog';
