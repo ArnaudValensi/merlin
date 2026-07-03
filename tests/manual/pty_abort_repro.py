@@ -13,11 +13,17 @@ connection with no close handshake, and verifies after every cycle that
 the server still answers HTTP. Run it against a locally running Merlin,
 primarily on macOS (Linux never deadlocked).
 
+Auth depends on how the instance runs:
+- SaaS mode (MERLIN_SAAS_TOKEN set): pass --token, sent as X-Portal-Auth.
+  With no dashboard password this is the ONLY accepted auth.
+- Local mode with a dashboard password: pass --password (cookie login).
+- Local mode without a password: no auth needed.
+
 Not collected by pytest (manual test). Usage:
 
     uv run tests/manual/pty_abort_repro.py --password <dashboard-pass>
     uv run tests/manual/pty_abort_repro.py --url http://localhost:3201 \\
-        --password <pass> --cycles 20
+        --token <mrl_...> --cycles 20
 
 Exit code 0 = server survived all cycles; 1 = server stopped responding
 (pre-fix behavior on macOS, usually within the first few cycles).
@@ -25,7 +31,6 @@ Exit code 0 = server survived all cycles; 1 = server stopped responding
 
 import argparse
 import asyncio
-import os
 import sys
 
 import httpx
@@ -54,11 +59,11 @@ def server_alive(base_url: str, timeout: float) -> bool:
         return False
 
 
-async def abort_cycle(ws_url: str, cookie: str) -> None:
+async def abort_cycle(ws_url: str, headers: dict[str, str]) -> None:
     """Connect, put a PTY read in flight, then abort without a close frame."""
     conn = await websockets.connect(
         ws_url,
-        additional_headers={"Cookie": f"session={cookie}"},
+        additional_headers=headers,
         open_timeout=10,
     )
     try:
@@ -83,18 +88,41 @@ async def main() -> int:
     )
     parser.add_argument(
         "--password",
-        default=os.getenv("DASHBOARD_PASS", ""),
-        help="Dashboard password (default: $DASHBOARD_PASS)",
+        default="",
+        help="Dashboard password for cookie login (local instances)",
+    )
+    parser.add_argument(
+        "--token",
+        default="",
+        help="Environment token, sent as X-Portal-Auth; required for SaaS-mode "
+        "instances with no dashboard password. No env-var default on purpose: "
+        "a token silently inherited from the shell can belong to a different "
+        "instance and break auth confusingly.",
     )
     parser.add_argument("--cycles", type=int, default=12, help="Abort cycles to run")
     args = parser.parse_args()
 
     base_url = args.url.rstrip("/")
     ws_url = base_url.replace("http", "ws", 1) + "/ws/terminal"
-    cookie = login(base_url, args.password)
+
+    # X-Portal-Auth is checked before any cookie, so the token works in every
+    # mode; cookie login only exists for password-protected local instances.
+    headers: dict[str, str] = {}
+    if args.token:
+        headers["X-Portal-Auth"] = args.token
+    elif args.password:
+        headers["Cookie"] = f"session={login(base_url, args.password)}"
 
     for i in range(1, args.cycles + 1):
-        await abort_cycle(ws_url, cookie)
+        try:
+            await abort_cycle(ws_url, headers)
+        except websockets.exceptions.InvalidStatus as e:
+            print(f"WebSocket rejected ({e.response.status_code}): auth failed.")
+            print(
+                "SaaS-mode instances need --token <MERLIN_SAAS_TOKEN from the "
+                "instance's config.env>; local instances need --password."
+            )
+            return 2
         # Give the server a moment to run its cleanup path
         await asyncio.sleep(0.3)
         if not server_alive(base_url, timeout=5):
