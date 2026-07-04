@@ -33,7 +33,9 @@ Consequences:
 The dashboard is the product surface, so user docs mirror it: one doc per
 Merlin page (`terminal.md`, `files.md`, `commits.md`, `notes.md`,
 `cron.md`, `bot.md`, `extensions.md`), plus the non-page guides
-(`getting-started.md`, `agents.md`, `creating-extensions.md`).
+(`getting-started.md`, `agents.md`, `creating-extensions.md`, `cli.md`).
+`cli.md` is the command map: what each command family is for, syntax
+deferred to `--help` per the single-source rule.
 
 Voice input is folded into the docs of the surfaces that have it
 (`terminal.md`, `bot.md`), not a doc of its own.

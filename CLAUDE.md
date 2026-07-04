@@ -70,6 +70,7 @@ New to the codebase? Read `architecture.md` first, then `extension-system.md` an
 
 | Doc | Covers |
 |-----|--------|
+| [`docs/dev/development-setup.md`](docs/dev/development-setup.md) | Contributor setup: run from a checkout, validate/test commands, bot from a checkout |
 | [`docs/dev/architecture.md`](docs/dev/architecture.md) | High-level system overview, data flow |
 | [`docs/dev/cron-system.md`](docs/dev/cron-system.md) | Job format, dispatcher, state/locks, scheduler, staleness guard |
 | [`docs/dev/notes-system.md`](docs/dev/notes-system.md) | 3-layer notes system (user, logs, KB), frontmatter format, search tools |
@@ -235,26 +236,13 @@ Reference dev environment (the maintainer's setup, not a requirement). Merlin it
 ## Development Commands
 
 ```bash
-# Start everything (dashboard + bot + cron, no tunnel)
-uv run main.py --no-tunnel       # Direct (dev mode)
-uv run cli.py start --no-tunnel  # Via CLI entry point
-merlin start --no-tunnel          # If installed
-
-# Restart everything (single process, background)
-restart.sh   # or just `merlin` (shell alias)
-
-# Full validation: lint + format + typecheck + tests
-uv run scripts.py validate
-
-# Lint only (no tests)
-uv run scripts.py lint
-
-# Unit + integration tests (~4s)
-uv run scripts.py test
-
-# E2E tests with Playwright (~2min)
-uv run scripts.py test-e2e
+uv run main.py --no-tunnel    # start everything (dashboard + bot + cron, dev mode)
+restart.sh                    # restart everything in background (single process)
+uv run scripts.py validate    # full validation: lint + format + typecheck + tests
 ```
+
+Full setup, test variants, bot-from-checkout, and E2E first-time setup:
+[`docs/dev/development-setup.md`](docs/dev/development-setup.md).
 
 ## Logging
 
