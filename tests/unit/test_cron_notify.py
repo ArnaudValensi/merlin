@@ -32,7 +32,6 @@ class FakeExtensionInfo:
     module: object | None = None
     start: object | None = None
     validate: object | None = None
-    on_tunnel_url: object | None = None
     notify: object | None = None
 
     def __post_init__(self) -> None:

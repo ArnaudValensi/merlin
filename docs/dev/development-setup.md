@@ -17,7 +17,7 @@ boot: a warning, a grayed-out nav item, never a crash.
 ```bash
 git clone https://github.com/ArnaudValensi/merlin.git
 cd merlin
-uv run main.py --no-tunnel
+uv run main.py
 ```
 
 Dev mode is detected from the `.git/` directory: the app runs from the
@@ -27,8 +27,7 @@ split is documented in [standalone-cli.md](standalone-cli.md).
 Variants:
 
 ```bash
-uv run main.py                   # dashboard (tunnel per config)
-uv run main.py --no-tunnel       # dashboard without tunnel
+uv run main.py                   # dashboard
 ./restart.sh                     # restart everything in background (single process)
 ```
 

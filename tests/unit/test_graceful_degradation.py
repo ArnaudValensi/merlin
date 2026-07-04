@@ -89,7 +89,7 @@ class TestNavItemDisabling:
 
             with mock.patch("shutil.which") as m:
                 m.side_effect = lambda cmd: None if cmd == "tmux" else f"/usr/bin/{cmd}"
-                main._check_optional_deps(tunnel_enabled=False)
+                main._check_optional_deps()
 
             terminal_item = next(
                 i for i in main.nav_items if i.get("url") == "/terminal"
@@ -113,44 +113,13 @@ class TestNavItemDisabling:
                     item.pop("disabled", None)
 
             with mock.patch("shutil.which", return_value="/usr/bin/tmux"):
-                main._check_optional_deps(tunnel_enabled=False)
+                main._check_optional_deps()
 
             terminal_item = next(
                 i for i in main.nav_items if i.get("url") == "/terminal"
             )
             assert terminal_item.get("disabled") is not True
         finally:
-            main.TMUX_AVAILABLE = orig_tmux
-            main.nav_items[:] = orig_items
-
-
-# ---------------------------------------------------------------------------
-# Cloudflared missing disables tunnel
-# ---------------------------------------------------------------------------
-
-
-class TestCloudflaredMissing:
-    def test_cloudflared_missing_disables_tunnel(self):
-        import main
-
-        orig_tunnel = main.TUNNEL_ENABLED
-        orig_tmux = main.TMUX_AVAILABLE
-        orig_items = [dict(item) for item in main.nav_items]
-
-        try:
-            main.TUNNEL_ENABLED = True
-            with mock.patch("shutil.which") as m:
-                # tmux present, cloudflared missing
-                m.side_effect = lambda cmd: (
-                    "/usr/bin/tmux"
-                    if cmd == "tmux"
-                    else ("/usr/bin/apt" if cmd == "apt" else None)
-                )
-                main._check_optional_deps(tunnel_enabled=True)
-
-            assert main.TUNNEL_ENABLED is False
-        finally:
-            main.TUNNEL_ENABLED = orig_tunnel
             main.TMUX_AVAILABLE = orig_tmux
             main.nav_items[:] = orig_items
 
@@ -172,7 +141,7 @@ class TestTerminalRouteTmuxMissing:
             main.TMUX_AVAILABLE = True
             with mock.patch("shutil.which") as m:
                 m.side_effect = lambda cmd: None if cmd == "tmux" else f"/usr/bin/{cmd}"
-                main._check_optional_deps(tunnel_enabled=False)
+                main._check_optional_deps()
             assert main.TMUX_AVAILABLE is False
         finally:
             main.TMUX_AVAILABLE = orig
@@ -201,8 +170,8 @@ class TestTerminalRouteTmuxMissing:
 
 
 class TestValidateConfigOrdering:
-    def test_missing_config_exits_before_password_generation(self):
-        """When config file is missing, exit immediately without auto-generating a password."""
+    def test_missing_config_exits_immediately(self):
+        """When config file is missing, exit immediately with a setup hint."""
         import main
 
         orig_pass = main.DASHBOARD_PASS
@@ -214,11 +183,8 @@ class TestValidateConfigOrdering:
                 "main.paths.config_path", return_value=Path("/nonexistent/config.env")
             ):
                 with pytest.raises(SystemExit) as exc_info:
-                    main._validate_config(tunnel_enabled=True)
+                    main._validate_config()
                 assert exc_info.value.code == 1
-
-            # Password should NOT have been auto-generated
-            assert main.DASHBOARD_PASS == ""
         finally:
             main.DASHBOARD_PASS = orig_pass
             main.MERLIN_SAAS_TOKEN = orig_token

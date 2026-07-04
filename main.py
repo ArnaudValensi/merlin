@@ -1,8 +1,9 @@
 """
 Merlin — Portable mobile dev environment.
 
-Launch on any Linux machine to get a web-based development environment
-accessible from anywhere via Cloudflare tunnel.
+Launch on any Linux machine to get a web-based development environment.
+Served locally; remote access comes from Merlin Cloud (SaaS mode) or a
+tunnel/reverse proxy you bring yourself.
 
 Core modules: File browser, Terminal, Commit browser, Notes editor.
 Apps: Optional plugins (e.g., merlin-bot) that add pages to the sidebar.
@@ -10,7 +11,6 @@ Apps: Optional plugins (e.g., merlin-bot) that add pages to the sidebar.
 Usage:
     uv run main.py                    # Start on port 3123, CWD = current dir
     uv run main.py --port 8080        # Custom port
-    uv run main.py --no-tunnel        # Local access only (no Cloudflare tunnel)
     uv run main.py --host 127.0.0.1   # Bind to localhost only
 """
 
@@ -61,9 +61,6 @@ load_dotenv(paths.bot_config_path())  # Bot-specific vars (Discord token, etc.)
 
 DASHBOARD_USER = os.getenv("DASHBOARD_USER", "admin")
 DASHBOARD_PASS = os.getenv("DASHBOARD_PASS", "")
-TUNNEL_ENABLED = os.getenv("TUNNEL_ENABLED", "true").lower() in ("true", "1", "yes")
-TUNNEL_TOKEN = os.getenv("TUNNEL_TOKEN", "")
-TUNNEL_HOSTNAME = os.getenv("TUNNEL_HOSTNAME", "")
 MERLIN_SAAS_TOKEN = os.getenv("MERLIN_SAAS_TOKEN", "")
 MERLIN_SAAS_API = os.getenv("MERLIN_SAAS_API", "https://merlincloud.dev")
 
@@ -185,7 +182,6 @@ class ExtensionInfo:
     # Async hooks return `Coroutine` (not `Awaitable`) so asyncio.create_task accepts them.
     start: Callable[[], Coroutine[Any, Any, None]] | None = None
     validate: Callable[[], None] | None = None
-    on_tunnel_url: Callable[[str], Coroutine[Any, Any, None]] | None = None
     notify: Callable[..., Any] | None = None
 
 
@@ -870,7 +866,6 @@ def _load_extension(
         module=mod,
         start=getattr(mod, "start", None),
         validate=getattr(mod, "validate", None),
-        on_tunnel_url=getattr(mod, "on_tunnel_url", None),
         notify=getattr(mod, "notify", None),
     )
     extension_registry[ext_id] = info
@@ -1044,9 +1039,9 @@ def _check_fd() -> None:
     FD_BINARY = Path(fd).name
 
 
-def _check_optional_deps(tunnel_enabled: bool) -> None:
+def _check_optional_deps() -> None:
     """Check optional dependencies and set up graceful degradation."""
-    global TMUX_AVAILABLE, TUNNEL_ENABLED
+    global TMUX_AVAILABLE
 
     if not shutil.which("tmux"):
         TMUX_AVAILABLE = False
@@ -1057,11 +1052,6 @@ def _check_optional_deps(tunnel_enabled: bool) -> None:
             if item.get("url") == "/terminal":
                 item["disabled"] = True
                 item["tooltip"] = f"tmux required — install: {cmd}"
-
-    if tunnel_enabled and not shutil.which("cloudflared"):
-        cmd = _install_cmd("cloudflared")
-        logger.warning("cloudflared not found — tunnel disabled (install: %s)", cmd)
-        TUNNEL_ENABLED = False
 
 
 def _disable_bot_extension() -> None:
@@ -1080,13 +1070,11 @@ def _disable_bot_extension() -> None:
         bot_info.module = None
         bot_info.start = None
         bot_info.validate = None
-        bot_info.on_tunnel_url = None
         bot_info.notify = None
 
 
-def _validate_config(tunnel_enabled: bool) -> None:
+def _validate_config() -> None:
     """Validate required configuration. Fails fast with a helpful message."""
-    global DASHBOARD_PASS
     env_path = paths.config_path()
     errors: list[str] = []
 
@@ -1105,16 +1093,7 @@ def _validate_config(tunnel_enabled: bool) -> None:
         print(msg, file=sys.stderr)
         raise SystemExit(1)
 
-    if not DASHBOARD_PASS and tunnel_enabled and not MERLIN_SAAS_TOKEN:
-        generated = secrets.token_urlsafe(12)
-        logger.warning(
-            "DASHBOARD_PASS not set — auto-generating password for tunnel security"
-        )
-        DASHBOARD_PASS = generated
-        os.environ["DASHBOARD_PASS"] = generated
-        configure_auth(DASHBOARD_PASS)
-        print(f"  Auto-generated login: {DASHBOARD_USER} / {generated}")
-    elif not DASHBOARD_PASS:
+    if not DASHBOARD_PASS:
         logger.warning(
             "DASHBOARD_PASS not set — running without auth (local-only is fine)"
         )
@@ -1123,7 +1102,7 @@ def _validate_config(tunnel_enabled: bool) -> None:
     _check_fd()
 
     # Check optional deps (warns, doesn't fail)
-    _check_optional_deps(tunnel_enabled)
+    _check_optional_deps()
 
     # Validate bot config if extension is loaded — degrade gracefully if missing
     bot_info = extension_registry.get("merlin-bot")
@@ -1137,9 +1116,7 @@ def _validate_config(tunnel_enabled: bool) -> None:
             )
 
 
-def start_server(
-    port: int = 3123, host: str = "0.0.0.0", no_tunnel: bool = False
-) -> None:
+def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
     """Start the Merlin dashboard server. Called by cli.py or main()."""
     import uvicorn
 
@@ -1153,11 +1130,7 @@ def start_server(
     except Exception:
         logger.warning("Failed to clean up old logs", exc_info=True)
 
-    if no_tunnel:
-        global TUNNEL_ENABLED
-        TUNNEL_ENABLED = False
-
-    _validate_config(TUNNEL_ENABLED)
+    _validate_config()
 
     # Aggregate skills from enabled extensions (rebuilt every startup so
     # disabled extensions' skills disappear)
@@ -1175,20 +1148,6 @@ def start_server(
     bot_info = extension_registry.get("merlin-bot")
     if bot_info and bot_info.loaded:
         print("Merlin Bot extension: loaded")
-
-    async def _notify_tunnel_url(url: str) -> None:
-        """Send the tunnel URL to extensions with on_tunnel_url() hooks."""
-        notified = False
-        for info in extension_registry.values():
-            if info.on_tunnel_url is not None:
-                try:
-                    await info.on_tunnel_url(url)
-                    logger.info("Tunnel URL sent to %s: %s", info.id, url)
-                    notified = True
-                except Exception:
-                    logger.exception("Could not send tunnel URL to %s", info.id)
-        if not notified:
-            logger.info("Tunnel URL: %s (no extensions to notify)", url)
 
     async def _run():
         config = uvicorn.Config(app, host=host, port=port, log_level="info")
@@ -1212,20 +1171,6 @@ def start_server(
             from ssh_server import start_ssh_server, stop_ssh_server
 
             await start_ssh_server()
-
-        elif TUNNEL_ENABLED:
-            from tunnel import start_tunnel
-
-            tasks.append(
-                asyncio.create_task(
-                    start_tunnel(
-                        port=port,
-                        tunnel_token=TUNNEL_TOKEN,
-                        tunnel_hostname=TUNNEL_HOSTNAME,
-                        on_url=_notify_tunnel_url,
-                    )
-                )
-            )
 
         # Start the cron scheduler (core feature, always runs)
         import cron
@@ -1255,15 +1200,11 @@ def main():
 Examples:
   uv run main.py                    # Start with defaults
   uv run main.py --port 8080        # Custom port
-  uv run main.py --no-tunnel        # Local only
   uv run main.py --host 127.0.0.1   # Localhost only
 
 Environment variables (from .env or shell):
   DASHBOARD_USER    Auth username (default: admin)
   DASHBOARD_PASS    Auth password (required for security)
-  TUNNEL_ENABLED    Enable Cloudflare tunnel (default: true)
-  TUNNEL_TOKEN      Named tunnel token (optional)
-  TUNNEL_HOSTNAME   Named tunnel hostname (optional)
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1273,12 +1214,9 @@ Environment variables (from .env or shell):
     parser.add_argument(
         "--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
     )
-    parser.add_argument(
-        "--no-tunnel", action="store_true", help="Disable Cloudflare tunnel"
-    )
     args = parser.parse_args()
 
-    start_server(port=args.port, host=args.host, no_tunnel=args.no_tunnel)
+    start_server(port=args.port, host=args.host)
 
 
 if __name__ == "__main__":

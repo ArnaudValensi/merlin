@@ -666,10 +666,5 @@ class TestPluginInterface:
 
         assert inspect.iscoroutinefunction(merlin.start)
 
-    def test_on_tunnel_url_is_coroutine_function(self):
-        import inspect
-
-        assert inspect.iscoroutinefunction(merlin.on_tunnel_url)
-
     def test_validate_is_callable(self):
         assert callable(merlin.validate)

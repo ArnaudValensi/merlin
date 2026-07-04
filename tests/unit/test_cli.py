@@ -56,11 +56,6 @@ class TestArgumentParsing:
         args = parser.parse_args(["start", "--host", "127.0.0.1"])
         assert args.host == "127.0.0.1"
 
-    def test_start_with_no_tunnel(self):
-        parser = build_parser()
-        args = parser.parse_args(["start", "--no-tunnel"])
-        assert args.no_tunnel is True
-
     def test_start_with_dev(self):
         parser = build_parser()
         args = parser.parse_args(["start", "--dev"])
@@ -71,7 +66,6 @@ class TestArgumentParsing:
         args = parser.parse_args(["start"])
         assert args.port == 3123
         assert args.host == "0.0.0.0"
-        assert args.no_tunnel is False
         assert args.dev is False
 
     def test_version_subcommand(self):
@@ -309,27 +303,34 @@ class TestGetVersion:
 class TestRunSetup:
     def test_creates_config_file(self, tmp_path):
         config = tmp_path / "config.env"
-        with mock.patch("builtins.input", side_effect=["mypass", "n", "", ""]):
+        with mock.patch("builtins.input", side_effect=["mypass", "", ""]):
             run_setup(config_path=config)
 
         assert config.exists()
         content = config.read_text()
         assert "DASHBOARD_PASS=mypass" in content
-        assert "TUNNEL_ENABLED=false" in content
 
-    def test_tunnel_enabled(self, tmp_path):
+    def test_scrubs_legacy_tunnel_keys(self, tmp_path):
+        """Rewriting config drops keys from the removed cloudflared tunnel."""
         config = tmp_path / "config.env"
-        with mock.patch("builtins.input", side_effect=["pass", "y", "", ""]):
+        config.write_text(
+            "DASHBOARD_PASS=old\n"
+            "TUNNEL_ENABLED=true\n"
+            "TUNNEL_TOKEN=eyJ0\n"
+            "TUNNEL_HOSTNAME=merlin.example.com\n"
+        )
+
+        with mock.patch("builtins.input", side_effect=["y", "newpass", "", ""]):
             run_setup(config_path=config)
 
         content = config.read_text()
-        assert "TUNNEL_ENABLED=true" in content
+        assert "TUNNEL_ENABLED" not in content
+        assert "TUNNEL_TOKEN" not in content
+        assert "TUNNEL_HOSTNAME" not in content
 
     def test_discord_token_saved(self, tmp_path):
         config = tmp_path / "config.env"
-        with mock.patch(
-            "builtins.input", side_effect=["pass", "n", "my-bot-token-123", ""]
-        ):
+        with mock.patch("builtins.input", side_effect=["pass", "my-bot-token-123", ""]):
             run_setup(config_path=config)
 
         content = config.read_text()
@@ -337,7 +338,7 @@ class TestRunSetup:
 
     def test_empty_password_allowed(self, tmp_path):
         config = tmp_path / "config.env"
-        with mock.patch("builtins.input", side_effect=["", "n", "", ""]):
+        with mock.patch("builtins.input", side_effect=["", "", ""]):
             run_setup(config_path=config)
 
         content = config.read_text()
@@ -358,7 +359,7 @@ class TestRunSetup:
         config = tmp_path / "config.env"
         config.write_text("DASHBOARD_PASS=old\n")
 
-        with mock.patch("builtins.input", side_effect=["y", "newpass", "n", "", ""]):
+        with mock.patch("builtins.input", side_effect=["y", "newpass", "", ""]):
             run_setup(config_path=config)
 
         content = config.read_text()
@@ -368,7 +369,7 @@ class TestRunSetup:
         config = tmp_path / "config.env"
         config.write_text("DASHBOARD_PASS=old\nCUSTOM_KEY=custom_value\n")
 
-        with mock.patch("builtins.input", side_effect=["y", "newpass", "n", "", ""]):
+        with mock.patch("builtins.input", side_effect=["y", "newpass", "", ""]):
             run_setup(config_path=config)
 
         content = config.read_text()
@@ -377,7 +378,7 @@ class TestRunSetup:
 
     def test_creates_parent_dirs(self, tmp_path):
         config = tmp_path / "deep" / "nested" / "config.env"
-        with mock.patch("builtins.input", side_effect=["pass", "n", "", ""]):
+        with mock.patch("builtins.input", side_effect=["pass", "", ""]):
             run_setup(config_path=config)
 
         assert config.exists()
@@ -385,7 +386,7 @@ class TestRunSetup:
     def test_config_file_permissions(self, tmp_path):
         """Config file should be created with 0o600 (owner-only) permissions."""
         config = tmp_path / "config.env"
-        with mock.patch("builtins.input", side_effect=["secret", "n", "token123", ""]):
+        with mock.patch("builtins.input", side_effect=["secret", "token123", ""]):
             run_setup(config_path=config)
 
         mode = config.stat().st_mode
@@ -420,14 +421,14 @@ class TestCliRouting:
         with mock.patch("cli.paths") as mock_paths, mock.patch("main.start_server"):
             mock_paths.is_dev_mode.return_value = True
             mock_paths.config_path.return_value = Path("/tmp/exists")
-            cli_main(["start", "--dev", "--no-tunnel"])
+            cli_main(["start", "--dev"])
         mock_paths.set_dev_mode.assert_called_with(True)
 
     def test_start_passes_args_to_server(self):
         with mock.patch("main.start_server") as m:
             paths.set_dev_mode(True)  # Skip first-run check
-            cli_main(["start", "--port", "9999", "--host", "127.0.0.1", "--no-tunnel"])
-        m.assert_called_once_with(port=9999, host="127.0.0.1", no_tunnel=True)
+            cli_main(["start", "--port", "9999", "--host", "127.0.0.1"])
+        m.assert_called_once_with(port=9999, host="127.0.0.1")
 
 
 # ---------------------------------------------------------------------------
@@ -600,7 +601,6 @@ class TestDashboardUrl:
     def _clean_env(self, monkeypatch):
         for key in (
             "MERLIN_DASHBOARD_URL",
-            "TUNNEL_HOSTNAME",
             "DASHBOARD_USER",
             "DASHBOARD_PASS",
         ):
@@ -610,13 +610,7 @@ class TestDashboardUrl:
         cli_main(["dashboard-url"])
         assert capsys.readouterr().out.strip() == "http://localhost:3123"
 
-    def test_tunnel_hostname(self, monkeypatch, capsys):
-        monkeypatch.setenv("TUNNEL_HOSTNAME", "merlin.example.com")
-        cli_main(["dashboard-url"])
-        assert capsys.readouterr().out.strip() == "https://merlin.example.com"
-
     def test_explicit_override_wins(self, monkeypatch, capsys):
-        monkeypatch.setenv("TUNNEL_HOSTNAME", "merlin.example.com")
         monkeypatch.setenv("MERLIN_DASHBOARD_URL", "http://box.example.org:3123")
         cli_main(["dashboard-url"])
         assert capsys.readouterr().out.strip() == "http://box.example.org:3123"

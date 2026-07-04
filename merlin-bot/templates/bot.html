@@ -38,11 +38,6 @@
         <div class="card-value" id="card-errors">—</div>
         <div class="card-detail" id="card-cron-failures"></div>
     </div>
-    <div class="card" id="tunnel-card" style="display:none">
-        <div class="card-label">Tunnel</div>
-        <div class="card-value" id="card-tunnel-status">—</div>
-        <div class="card-detail" id="card-tunnel-url"></div>
-    </div>
 </div>
 <div id="error-card-container"></div>
 <div class="feed" id="activity-feed">
@@ -171,19 +166,6 @@ async function loadOverview() {
     errEl.className = 'card-value ' + (health.errors_24h > 0 ? 'red' : 'green');
     document.getElementById('card-cron-failures').textContent = 'all clear';
 
-    if (health.tunnel_status && health.tunnel_status !== 'stopped') {
-        const tunnelCard = document.getElementById('tunnel-card');
-        tunnelCard.style.display = '';
-        const tunnelStatus = document.getElementById('card-tunnel-status');
-        const tunnelUrl = document.getElementById('card-tunnel-url');
-        tunnelStatus.textContent = health.tunnel_status === 'running' ? 'Active' : health.tunnel_status;
-        tunnelStatus.className = 'card-value ' + (health.tunnel_status === 'running' ? 'green' : 'orange');
-        if (health.tunnel_url) {
-            const short = escapeHtml(health.tunnel_url.replace('https://', ''));
-            tunnelUrl.innerHTML = `<a href="${escapeHtml(health.tunnel_url)}" target="_blank" style="color:var(--accent-blue);text-decoration:none">${short}</a> <button onclick="copyTunnelUrl(event, '${escapeHtml(health.tunnel_url)}')" class="copy-btn" title="Copy URL">&#128203;</button>`;
-        }
-    }
-
     const errContainer = document.getElementById('error-card-container');
     if (health.last_error) {
         const e = health.last_error;
@@ -219,16 +201,6 @@ async function loadOverview() {
             <span class="feed-summary">${escapeHtml(eventSummary(e))}</span>
         </div>
     `).join('');
-}
-
-function copyTunnelUrl(e, url) {
-    e.preventDefault();
-    e.stopPropagation();
-    navigator.clipboard.writeText(url).then(() => {
-        const btn = e.target;
-        btn.textContent = '\u2713';
-        setTimeout(() => btn.textContent = '\uD83D\uDCCB', 1500);
-    });
 }
 
 // ── Performance ──

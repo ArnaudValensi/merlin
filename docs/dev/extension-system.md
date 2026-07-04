@@ -68,10 +68,6 @@ def validate():
 async def start():
     """Async startup (e.g., Discord client)."""
     ...
-
-async def on_tunnel_url(url: str):
-    """Called when tunnel URL is available."""
-    ...
 ```
 
 **Defaults when fields are missing:**
@@ -80,7 +76,6 @@ async def on_tunnel_url(url: str):
 - No `STATIC_DIR` → no static files mounted
 - No `validate()` → always considered valid
 - No `start()` → no async startup
-- No `on_tunnel_url()` → not notified
 - No `logger` → Merlin injects one automatically (see Logging below)
 
 ## Logging
@@ -189,12 +184,11 @@ class ExtensionInfo:
     error: str | None     # Import/validate error message
     meta: dict            # EXTENSION_META (or generated defaults)
     has_start: bool       # Has async start() hook
-    has_tunnel_hook: bool # Has on_tunnel_url() hook
     module: object | None # The imported module (if loaded)
 ```
 
 The registry is used by:
-- `start_server()` — iterates for `start()` and `on_tunnel_url()` hooks
+- `start_server()` — iterates for `start()` hooks
 - `_validate_config()` — validates bot config if loaded
 - Extensions page — lists all extensions with status
 - `register_template_globals()` — publishes `extensions_error_count` to all template instances for the sidebar badge
@@ -324,4 +318,4 @@ Note: merlin-bot is **Discord-only** in scope. It handles message listening, thr
 | `static/settings.css` + `.js` | Settings page UI |
 | `templates/base.html` | Sidebar nav rendering, error badge, Settings link |
 | `notes/__init__.py` | Built-in extension example (exports router, NAV_ITEMS, STATIC_DIR) |
-| `merlin-bot/merlin_bot.py` | Built-in extension example (exports router, NAV_ITEMS, EXTENSION_META, start, validate, on_tunnel_url) |
+| `merlin-bot/merlin_bot.py` | Built-in extension example (exports router, NAV_ITEMS, EXTENSION_META, start, validate) |

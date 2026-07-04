@@ -6,7 +6,7 @@ import pytest
 # Add merlin-bot/ to sys.path so tests can import merlin_app, structured_log, etc.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Add project root so merlin_app can import tunnel, auth, etc.
+# Add project root so merlin_app can import auth, paths, etc.
 _project_root = str(Path(__file__).parent.parent.parent)
 sys.path.insert(0, _project_root)
 

@@ -87,9 +87,6 @@ today, errors, recent activity), a Performance tab (execution time, success
 rate, and cost charts), and a Logs tab with status and date filters and a
 "View session" link per invocation that opens the full transcript.
 
-When the tunnel comes up, the bot posts "Dashboard is live at <url>" to the
-first allowed channel.
-
 ## Send messages from the CLI
 
 `merlin chat` sends messages, replies, and reactions to the chat channel

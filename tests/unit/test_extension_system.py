@@ -130,7 +130,6 @@ class TestExtensionInfo:
         assert info.error is None
         assert info.meta == {"name": "Test"}
         assert info.start is _start
-        assert info.on_tunnel_url is None
         assert info.validate is None
         assert info.notify is None
         assert info.module is None

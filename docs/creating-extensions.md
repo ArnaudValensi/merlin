@@ -156,8 +156,7 @@ underscores):
   "config_fields"}`. This is the server-side identity card: it feeds the
   Extensions page listing and declares config fields (key, label, type,
   secret, required) that the Settings page renders and persists.
-- Hooks (optional): async `start()` at boot, async `on_tunnel_url(url)`
-  when the public URL is known.
+- Hooks (optional): async `start()` at boot.
 
 Enable, disable, and audit extensions on the `/extensions` dashboard
 page; state persists in `~/.merlin/extensions.json`. The page also lists

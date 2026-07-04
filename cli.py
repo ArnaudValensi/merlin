@@ -345,7 +345,7 @@ def _refresh_skills() -> None:
 def run_setup(config_path: Path | None = None) -> None:
     """Interactive first-run setup wizard.
 
-    Prompts for dashboard password, tunnel config, and Discord bot token.
+    Prompts for dashboard password and Discord bot token.
     Writes results to config.env.
     """
     target = config_path or paths.config_path()
@@ -375,15 +375,6 @@ def run_setup(config_path: Path | None = None) -> None:
     password = input(prompt).strip()
     if not password and current_pass:
         password = current_pass
-
-    # Tunnel
-    current_tunnel = existing.get("TUNNEL_ENABLED", "false")
-    default_yn = "Y/n" if current_tunnel.lower() in ("true", "1", "yes") else "y/N"
-    tunnel_input = input(f"Enable Cloudflare tunnel? [{default_yn}] ").strip().lower()
-    if not tunnel_input:
-        tunnel_enabled = current_tunnel.lower() in ("true", "1", "yes")
-    else:
-        tunnel_enabled = tunnel_input in ("y", "yes")
 
     # Discord bot token
     current_token = existing.get("DISCORD_BOT_TOKEN", "")
@@ -433,17 +424,20 @@ def run_setup(config_path: Path | None = None) -> None:
     lines = [
         "# Merlin configuration",
         f"DASHBOARD_PASS={password}",
-        f"TUNNEL_ENABLED={'true' if tunnel_enabled else 'false'}",
     ]
     if token:
         lines.append(f"DISCORD_BOT_TOKEN={token}")
     if openai_key:
         lines.append(f"OPENAI_API_KEY={openai_key}")
 
-    # Preserve any extra keys from existing config
+    # Preserve any extra keys from existing config. TUNNEL_* are legacy
+    # keys from the removed cloudflared tunnel: listing them here means a
+    # rewrite drops them instead of carrying them forward.
     known_keys = {
         "DASHBOARD_PASS",
         "TUNNEL_ENABLED",
+        "TUNNEL_TOKEN",
+        "TUNNEL_HOSTNAME",
         "DISCORD_BOT_TOKEN",
         "OPENAI_API_KEY",
     }
@@ -540,9 +534,6 @@ def build_parser(include_extension_help: bool = True) -> argparse.ArgumentParser
         "--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
     )
     start_parser.add_argument(
-        "--no-tunnel", action="store_true", help="Disable Cloudflare tunnel"
-    )
-    start_parser.add_argument(
         "--dev", action="store_true", help="Run from git checkout (dev mode)"
     )
     start_parser.add_argument(
@@ -586,7 +577,7 @@ def build_parser(include_extension_help: bool = True) -> argparse.ArgumentParser
         description=(
             "Print the dashboard URL with login credentials embedded when "
             "DASHBOARD_PASS is set. Resolution: MERLIN_DASHBOARD_URL > "
-            "https://TUNNEL_HOSTNAME > http://localhost:3123."
+            "http://localhost:3123."
         ),
     )
 
@@ -700,10 +691,10 @@ def run_dashboard_url() -> None:
     """Print the dashboard URL, with login credentials embedded if set.
 
     Resolution: MERLIN_DASHBOARD_URL (explicit override, e.g. a DNS name
-    pointing at the box) > https://TUNNEL_HOSTNAME (named tunnel) >
-    http://localhost:3123. Quick-tunnel URLs are ephemeral and unknown
-    here; set MERLIN_DASHBOARD_URL for a stable address. A scheme-less
-    override (bare host or host:port) is normalized to http://.
+    pointing at the box) > http://localhost:3123. Set MERLIN_DASHBOARD_URL
+    when the dashboard is reachable through your own tunnel or reverse
+    proxy. A scheme-less override (bare host or host:port) is normalized
+    to http://.
     """
     from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -716,8 +707,7 @@ def run_dashboard_url() -> None:
         # attached to an empty host.
         base = f"http://{base}"
     if not base:
-        hostname = os.getenv("TUNNEL_HOSTNAME", "").strip()
-        base = f"https://{hostname}" if hostname else "http://localhost:3123"
+        base = "http://localhost:3123"
 
     user = os.getenv("DASHBOARD_USER", "admin")
     password = os.getenv("DASHBOARD_PASS", "")
@@ -973,7 +963,6 @@ def cli_main(argv: list[str] | None = None) -> None:
 
         port = getattr(args, "port", 3123)
         host = getattr(args, "host", "0.0.0.0")
-        no_tunnel = getattr(args, "no_tunnel", False)
         saas_token = getattr(args, "saas_token", None)
 
         # Save SaaS token to config and set in environment
@@ -995,7 +984,7 @@ def cli_main(argv: list[str] | None = None) -> None:
 
         import main
 
-        main.start_server(port=port, host=host, no_tunnel=no_tunnel)
+        main.start_server(port=port, host=host)
 
 
 if __name__ == "__main__":

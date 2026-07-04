@@ -182,16 +182,6 @@ def api_health():
     if errors_24h:
         last_error = errors_24h[-1]
 
-    # Tunnel status
-    try:
-        from tunnel import get_public_url, get_status
-
-        tunnel_url = get_public_url()
-        tunnel_status = get_status()
-    except ImportError:
-        tunnel_url = None
-        tunnel_status = "unavailable"
-
     return {
         "bot_start_time": BOT_START_TIME.isoformat() if BOT_START_TIME else last_ready,
         "invocations_today": len(today_invocations),
@@ -200,8 +190,6 @@ def api_health():
         "errors_24h": len(errors_24h),
         "last_error": last_error,
         "total_events": len(events),
-        "tunnel_url": tunnel_url,
-        "tunnel_status": tunnel_status,
     }
 
 

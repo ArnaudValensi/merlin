@@ -4,14 +4,13 @@ flowchart TB
         CJ["Cron\njob"]
         HTTP["HTTP\nrequest"]
         WS["WebSocket\n(terminal)"]
-        TUN["Tunnel\nlifecycle"]
+        TUN["SaaS tunnel\nlifecycle"]
     end
 
     subgraph Loggers["Unified merlin.* Logger Hierarchy → merlin.log"]
         direction TB
         ML_BOT["merlin.bot\n(message, transcription,\nengine result, errors)"]
         ML_TERM["merlin.terminal\n(WS connect/disconnect,\nPTY errors)"]
-        ML_TUN["merlin.tunnel\n(Cloudflare lifecycle,\nURL, restarts)"]
         ML_SAAS["merlin.saas_tunnel\n(portal tunnel,\nport forwarding)"]
         ML_SSH["merlin.ssh\n(host key, sessions)"]
         ML_ENG["merlin.engine\n(invocation warnings)"]
@@ -44,7 +43,7 @@ flowchart TB
     CJ --> ML_CRON
     HTTP --> ML_MAIN
     WS --> ML_TERM
-    TUN --> ML_TUN & ML_SAAS
+    TUN --> ML_SAAS
 
     DM --> SE_BOT
     CJ --> SE_CRON

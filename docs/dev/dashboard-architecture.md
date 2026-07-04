@@ -17,9 +17,8 @@ Reference for maintaining and extending the Merlin monitoring dashboard.
 
 ```
 merlin/
-├── main.py                    # Entry point: FastAPI app, auth, module registration, tunnel
+├── main.py                    # Entry point: FastAPI app, auth, module registration
 ├── auth.py                    # Cookie-based auth (HMAC-signed session cookies)
-├── tunnel.py                  # Cloudflare Tunnel manager
 ├── templates/
 │   ├── base.html              # Shared layout: dynamic sidebar, nav, CDN scripts
 │   └── login.html             # Password login page
@@ -63,7 +62,7 @@ Refresh.start(5000);               // start polling
 
 ### Dashboard is the entry point
 
-`main.py` starts uvicorn + optional Cloudflare tunnel + Discord bot + cron scheduler in a single process. Port 3123 by default.
+`main.py` starts uvicorn + Discord bot + cron scheduler in a single process. Port 3123 by default.
 
 Start command: `uv run main.py` (or `restart.sh` to restart in background).
 

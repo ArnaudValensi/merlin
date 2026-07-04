@@ -45,7 +45,6 @@ merlin                      → merlin.log (RotatingFileHandler, 10 MB × 5)
 ├── merlin.bot              (Discord bot events)
 ├── merlin.bot.registry     (session registry)
 ├── merlin.terminal         (WebSocket connect/disconnect, PTY errors)
-├── merlin.tunnel           (Cloudflare tunnel lifecycle)
 ├── merlin.saas_tunnel      (SaaS portal tunnel)
 ├── merlin.ssh              (SSH server events)
 ├── merlin.engine           (engine invocation warnings)
@@ -217,7 +216,6 @@ These parts of the app produce no structured events (though app-level errors go 
 | `cron/logs.py` | Cron execution log CRUD — reads/writes `cron-logs/`, has `cleanup_logs()` |
 | `cron/routes.py` | Cron dashboard API — reads `engine-log.jsonl` via `lib/event_log.py` (crash banner + `/api/cron/performance`), `cron-logs/` for history |
 | `terminal/routes.py` | Terminal WebSocket — logs connect/disconnect, PTY errors |
-| `tunnel.py` | Cloudflare tunnel — logs lifecycle, restarts, URL |
 | `saas_tunnel.py` | SaaS tunnel — logs connect/disconnect, port forwarding, auth |
 | `ssh_server.py` | SSH server — logs host key, sessions, PTY operations |
 | `notes/git_ops.py` | Notes — logs git operation failures |

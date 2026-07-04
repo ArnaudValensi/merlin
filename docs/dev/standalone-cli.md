@@ -65,7 +65,6 @@ See [`skill-system.md`](skill-system.md) for how `skills/`, `skills-user/`, and 
 |---------|-------------|
 | `merlin` / `merlin start` | Start the dashboard (default subcommand) |
 | `merlin start --port 8080` | Custom port |
-| `merlin start --no-tunnel` | Disable Cloudflare tunnel |
 | `merlin start --dev` | Force dev mode (resolve paths from repo) |
 | `merlin version` | Print version |
 | `merlin setup` | Interactive first-run wizard |
@@ -82,7 +81,6 @@ See [`skill-system.md`](skill-system.md) for how `skills/`, `skills-user/`, and 
 
 When `merlin start` runs and no `config.env` exists, it automatically triggers `merlin setup` which prompts for:
 - Dashboard password
-- Cloudflare tunnel (yes/no)
 - Discord bot token (optional)
 
 Results are written to `~/.merlin/config.env`.
@@ -108,14 +106,13 @@ Installer steps:
 1. Print banner
 2. Check/install uv (required)
 3. Check/install tmux (optional)
-4. Check/install cloudflared (optional)
-5. Fetch latest release tag from GitHub API
-6. Download and extract tarball to `~/.merlin/versions/<tag>/`
-7. Create `~/.merlin/current` symlink (atomic: `ln -sfn` + `mv -Tf`)
-8. Launcher: none generated — `bin/merlin` (and `bin/merlin-clip`) ship in
+4. Fetch latest release tag from GitHub API
+5. Download and extract tarball to `~/.merlin/versions/<tag>/`
+6. Create `~/.merlin/current` symlink (atomic: `ln -sfn` + `mv -Tf`)
+7. Launcher: none generated — `bin/merlin` (and `bin/merlin-clip`) ship in
    the release and are reached through `~/.merlin/current/bin`
-9. Offer to add `~/.merlin/current/bin` to PATH
-10. Create data directories
+8. Offer to add `~/.merlin/current/bin` to PATH
+9. Create data directories
 
 Supports `--dry-run` (preview) and `--non-interactive` / `-y` (no prompts;
 required deps auto-install, optional deps are skipped, PATH added without
@@ -146,6 +143,5 @@ At startup, `main.py` checks for optional dependencies:
 | Dependency | If Missing |
 |------------|------------|
 | tmux | Terminal nav grayed out, `/terminal` returns 503, boot warning |
-| cloudflared | Tunnel disabled, boot warning |
 
 Package manager detection (apt/pacman/brew) provides correct install commands in warnings and UI tooltips.

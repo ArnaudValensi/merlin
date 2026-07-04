@@ -232,31 +232,14 @@ class TestStructuredLogFields:
 
 
 # ---------------------------------------------------------------------------
-# Health API: tunnel fields
+# Health API: no tunnel fields
 # ---------------------------------------------------------------------------
 
 
-class TestHealthTunnelFields:
-    """api_health includes tunnel_url and tunnel_status."""
+class TestHealthNoTunnelFields:
+    """The bundled tunnel is gone; api_health must not report tunnel state."""
 
-    def test_health_includes_tunnel_fields(self, monkeypatch):
-        """Health endpoint returns tunnel status from tunnel module."""
-        import tunnel
-
-        monkeypatch.setattr(tunnel, "_public_url", "https://test.trycloudflare.com")
-        monkeypatch.setattr(tunnel, "_status", "running")
-
+    def test_health_has_no_tunnel_fields(self):
         result = db.api_health()
-        assert result["tunnel_url"] == "https://test.trycloudflare.com"
-        assert result["tunnel_status"] == "running"
-
-    def test_health_tunnel_stopped(self, monkeypatch):
-        """When tunnel is stopped, fields reflect that."""
-        import tunnel
-
-        monkeypatch.setattr(tunnel, "_public_url", None)
-        monkeypatch.setattr(tunnel, "_status", "stopped")
-
-        result = db.api_health()
-        assert result["tunnel_url"] is None
-        assert result["tunnel_status"] == "stopped"
+        assert "tunnel_url" not in result
+        assert "tunnel_status" not in result

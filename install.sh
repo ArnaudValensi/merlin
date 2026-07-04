@@ -171,34 +171,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 3: Check for cloudflared (optional)
-# ---------------------------------------------------------------------------
-
-step "Checking for cloudflared..."
-if command -v cloudflared >/dev/null 2>&1; then
-    info "cloudflared found"
-else
-    warn "cloudflared not found (optional — needed for tunnel access)"
-    cmd=$(install_cmd cloudflared)
-    if $NON_INTERACTIVE; then
-        info "Skipped (non-interactive). Install later: ${cmd:-via your package manager}"
-    elif [[ -n "$cmd" ]]; then
-        if confirm "Install cloudflared? ($cmd)"; then
-            if install_pkg cloudflared; then
-                info "cloudflared installed"
-            else
-                warn "cloudflared installation failed. Install later: $cmd"
-            fi
-        else
-            info "Skipped. Install later: $cmd"
-        fi
-    else
-        info "No supported package manager found. Install cloudflared manually."
-    fi
-fi
-
-# ---------------------------------------------------------------------------
-# Step 4: Fetch latest tag
+# Step 3: Fetch latest tag
 # ---------------------------------------------------------------------------
 
 step "Fetching latest tag..."
@@ -224,7 +197,7 @@ fi
 info "Latest version: $TAG"
 
 # ---------------------------------------------------------------------------
-# Step 5: Download and extract
+# Step 4: Download and extract
 # ---------------------------------------------------------------------------
 
 VERSION_DIR="$VERSIONS_DIR/$TAG"
@@ -277,7 +250,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 6: Create current symlink
+# Step 5: Create current symlink
 # ---------------------------------------------------------------------------
 
 step "Setting active version..."
@@ -296,7 +269,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 7: Launcher
+# Step 6: Launcher
 # ---------------------------------------------------------------------------
 # No generation: bin/merlin (and bin/merlin-clip) ship in the release and
 # are exposed on PATH via current/bin below. This is what keeps the
@@ -304,7 +277,7 @@ fi
 info "Launcher: $BIN_DIR/merlin (shipped in the release)"
 
 # ---------------------------------------------------------------------------
-# Step 8: Add to PATH
+# Step 7: Add to PATH
 # ---------------------------------------------------------------------------
 
 step "Checking PATH..."
@@ -353,7 +326,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 9: Create data directories
+# Step 8: Create data directories
 # ---------------------------------------------------------------------------
 
 step "Creating data directories..."

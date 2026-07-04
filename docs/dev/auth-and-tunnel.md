@@ -1,10 +1,12 @@
-# Authentication & Cloudflare Tunnel
+# Authentication
 
-Reference documentation for the cookie-based auth system and Cloudflare Tunnel integration.
+Reference documentation for the cookie-based auth system.
 
 ## Overview
 
-The dashboard is protected by cookie-based authentication (replacing HTTP Basic Auth). When exposed publicly via Cloudflare Tunnel, the system provides HTTPS with a login page and signed session cookies.
+The dashboard is protected by cookie-based authentication (replacing HTTP Basic Auth): a login page and signed session cookies.
+
+Merlin serves plain HTTP and does not manage remote exposure itself. HTTPS comes from whatever sits in front: a tunnel or reverse proxy the user brings, or the Merlin Cloud SSH tunnel in SaaS mode (`saas_tunnel.py`). The bundled cloudflared tunnel was removed; `TUNNEL_*` keys in old configs are ignored and scrubbed by `merlin setup`.
 
 ## Authentication
 
@@ -17,7 +19,7 @@ The dashboard is protected by cookie-based authentication (replacing HTTP Basic 
 - **Cookie name**: `session`
 - **Signature**: `HMAC-SHA256(DASHBOARD_PASS, "{username}:{expiry}")`
 - **Expiry**: 30 days from login
-- **Flags**: `httponly`, `secure` (when tunnel active), `samesite=lax`
+- **Flags**: `httponly`, `samesite=lax`, and `secure` when the login request arrived over HTTPS (direct scheme or `x-forwarded-proto: https` from a fronting proxy)
 
 No server-side session storage — cookies are self-contained and verified via HMAC.
 
@@ -40,7 +42,7 @@ Request arrives
 
 ### No-Auth Mode
 
-When `DASHBOARD_PASS` is empty and tunnel is disabled, all routes are accessible without auth (local-only mode).
+When `DASHBOARD_PASS` is empty, all routes are accessible without auth. Boot logs a warning that this is only fine local-only; anyone exposing the dashboard is expected to set a password.
 
 ### WebSocket Auth
 
@@ -74,95 +76,20 @@ Key functions:
 - Changing password invalidates all existing cookies
 - HMAC prevents cookie forgery
 - `httponly` prevents JS access
-- `secure` flag set when tunnel active (HTTPS)
+- `secure` flag set when the request came over HTTPS
 - Constant-time comparison (`hmac.compare_digest`)
-
-## Cloudflare Tunnel
-
-### Two Modes
-
-**Quick Tunnel** (default, no config needed):
-```bash
-cloudflared tunnel --url http://localhost:3123
-```
-- Generates random `https://<random>.trycloudflare.com` URL
-- URL changes on each restart
-- URL parsed from cloudflared's stderr output
-
-**Named Tunnel** (stable domain):
-```bash
-cloudflared tunnel run --token $TUNNEL_TOKEN
-```
-- Requires `TUNNEL_TOKEN` from Cloudflare dashboard
-- Optional `TUNNEL_HOSTNAME` for custom domain
-- Stable URL across restarts
-
-### Tunnel Module (`tunnel.py`)
-
-Module-level state:
-- `_public_url` — current tunnel URL (or `None`)
-- `_status` — `stopped | starting | running | error`
-- `_process` — `asyncio.subprocess.Process`
-
-Key functions:
-
-| Function | Purpose |
-|----------|---------|
-| `start_tunnel(port, token, hostname, ...)` | Start and monitor tunnel |
-| `stop_tunnel()` | Graceful shutdown (terminate, then kill) |
-| `get_public_url()` | Get current URL |
-| `get_status()` | Get current status |
-
-### Crash Recovery
-
-- Exponential backoff: `delay * 2^(restarts-1)` starting at 5s
-- Max 5 consecutive restarts before giving up
-- On give-up: logs error, continues without tunnel
-- Clean shutdown: `terminate()` with 5s timeout, then `kill()`
-
-### URL Detection (Quick Tunnel)
-
-Cloudflared prints the URL to stderr:
-```
-+-----------------------------------------------------------+
-|  Your quick Tunnel has been created! Visit it at ...      |
-|  https://random-thing.trycloudflare.com                   |
-+-----------------------------------------------------------+
-```
-
-Parsed via regex: `https://[a-zA-Z0-9._-]+\.trycloudflare\.com`
-
-After URL found, stderr is drained in background to prevent pipe blocking.
-
-### Auto-Generated Password
-
-When tunnel is active and `DASHBOARD_PASS` is empty:
-1. Generate random password: `secrets.token_urlsafe(12)`
-2. Set as active `DASHBOARD_PASS`
-3. Log credentials: `[bot] Login: admin / <password>`
-4. Optionally send to Discord
-
-### Dashboard Integration
-
-Tunnel status shown on the overview page:
-- `/api/health` returns `tunnel_url` and `tunnel_status`
-- Overview card shows URL with copy-to-clipboard button
 
 ## Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DASHBOARD_USER` | No | `admin` | Login username |
-| `DASHBOARD_PASS` | No | auto-gen | Login password |
-| `TUNNEL_ENABLED` | No | `true` | Enable/disable tunnel |
-| `TUNNEL_TOKEN` | No | — | Named Tunnel auth token |
-| `TUNNEL_HOSTNAME` | No | — | Custom tunnel hostname |
+| `DASHBOARD_PASS` | No | empty (no auth) | Login password |
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | `auth.py` | Cookie signing/verification, auth middleware |
-| `tunnel.py` | Cloudflare Tunnel lifecycle management |
-| `main.py` | Login/logout routes, auth redirect handler, tunnel startup, password auto-gen |
+| `main.py` | Login/logout routes, auth redirect handler |
 | `templates/login.html` | Login page template |

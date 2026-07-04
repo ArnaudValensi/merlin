@@ -201,20 +201,19 @@ cli.py (merlin start)
   ├── set_dev_mode() if --dev
   ├── Check for config.env → run_setup() if missing
   │
-  └── main.start_server(port, host, no_tunnel)
+  └── main.start_server(port, host)
         │
         ├── _validate_config()
-        │     ├── Check DASHBOARD_PASS (auto-generate if tunnel enabled)
+        │     ├── Check DASHBOARD_PASS (warn if empty)
         │     └── _check_optional_deps()
-        │           ├── tmux missing → TMUX_AVAILABLE=False, disable nav item
-        │           └── cloudflared missing → TUNNEL_ENABLED=False
+        │           └── tmux missing → TMUX_AVAILABLE=False, disable nav item
         │
         ├── _rebuild_skill_registry()  (aggregate ~/.merlin/skills, refresh
         │     the ~/.claude & ~/.agents shims — see skill-system.md)
         │
         └── asyncio.run()
               ├── uvicorn.Server (FastAPI app)
-              ├── start_tunnel() (if enabled)
+              ├── start_saas_tunnel() + SSH server (SaaS mode only)
               └── extension.start() for each extension with start() hook
 ```
 

@@ -64,7 +64,7 @@ def server(test_files):
     env.pop("MERLIN_HOME", None)
 
     proc = subprocess.Popen(
-        ["uv", "run", "main.py", "--no-tunnel", "--port", str(port)],
+        ["uv", "run", "main.py", "--port", str(port)],
         cwd=merlin_root,
         env=env,
         stdout=subprocess.DEVNULL,

@@ -56,9 +56,11 @@ class TestDryRun:
         result = run_installer()
         assert "Checking for tmux" in result.stdout
 
-    def test_checks_cloudflared(self):
+    def test_does_not_check_cloudflared(self):
+        """cloudflared was removed with the bundled tunnel; the installer
+        must not prompt for it anymore."""
         result = run_installer()
-        assert "Checking for cloudflared" in result.stdout
+        assert "cloudflared" not in result.stdout
 
     def test_fetches_tag(self):
         result = run_installer()
@@ -121,7 +123,7 @@ class TestNonInteractive:
         assert result.returncode == 0
         assert "Merlin installed" in result.stdout
         # Optional deps that are absent must be skipped, never sudo-installed.
-        if "cloudflared not found" in result.stdout:
+        if "tmux not found" in result.stdout:
             assert "Skipped (non-interactive)" in result.stdout
 
     def test_flag_accepted_in_any_order(self):
@@ -151,6 +153,6 @@ class TestPackageManagerDetection:
     def test_detects_some_package_manager(self):
         """In our environment, at least one package manager should be found."""
         result = run_installer()
-        # If tmux/cloudflared are already installed, there's no install prompt
+        # If tmux is already installed, there's no install prompt
         # Either way, the script should complete successfully
         assert result.returncode == 0

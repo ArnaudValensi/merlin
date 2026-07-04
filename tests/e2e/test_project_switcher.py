@@ -85,7 +85,7 @@ def _start_server(saas_token=""):
         os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     )
     proc = subprocess.Popen(
-        ["uv", "run", "main.py", "--no-tunnel", "--port", str(port)],
+        ["uv", "run", "main.py", "--port", str(port)],
         cwd=merlin_root,
         env=env,
         stdout=subprocess.DEVNULL,

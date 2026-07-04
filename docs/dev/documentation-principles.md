@@ -82,9 +82,9 @@ sequence tables do not (they go to `docs/dev/`).
 - Address the reader as "you". Say "your agent" for the AI (Merlin is the
   tool suite around the user's agent, not an AI itself).
 - Public-facing terms only: say "Merlin Cloud", never "the portal".
-- The bundled Cloudflare tunnel is deprecated: docs describe remote
-  access as bring-your-own tunnel/reverse proxy or Merlin Cloud, and mark
-  the bundled path as deprecated where it still appears.
+- The bundled Cloudflare tunnel is removed: docs describe remote access
+  as bring-your-own tunnel/reverse proxy or Merlin Cloud, and never
+  present a bundled tunnel as a current feature.
 
 ## Verification
 

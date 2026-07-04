@@ -10,7 +10,7 @@ Merlin runs as one process on your machine: a web dashboard on port 3123 with a 
 curl -fsSL https://raw.githubusercontent.com/ArnaudValensi/merlin/master/install.sh | bash
 ```
 
-The installer needs `uv` (it offers to install it if missing) and prompts for two optional dependencies: tmux (needed for the web terminal) and cloudflared (only needed for the deprecated bundled tunnel). It downloads the latest release into `~/.merlin/versions/<tag>/`, points the `~/.merlin/current` symlink at it, and offers to add `~/.merlin/current/bin` to your PATH in your shell rc.
+The installer needs `uv` (it offers to install it if missing) and prompts for one optional dependency: tmux (needed for the web terminal). It downloads the latest release into `~/.merlin/versions/<tag>/`, points the `~/.merlin/current` symlink at it, and offers to add `~/.merlin/current/bin` to your PATH in your shell rc.
 
 When it finishes: run `merlin` to start (you may need to restart your shell first).
 
@@ -25,7 +25,6 @@ merlin setup
 It asks, in order:
 
 - **Dashboard password**: empty means no auth, fine for local-only use.
-- **Enable Cloudflare tunnel?**: the bundled tunnel is deprecated; say no unless you already rely on it (see "Reach it from your phone" below).
 - **Discord bot token**: Enter to skip; you can add it later (see [bot.md](bot.md)).
 - **OpenAI API key for voice transcription**: Enter to skip. Without it, transcription falls back to a local model (~1.5GB download, works offline); with it, the Whisper API costs about $0.006/min.
 
@@ -43,11 +42,11 @@ That one process is the whole system: the cron scheduler starts with it, extensi
 
 ## Reach it from your phone
 
-Expose the dashboard with your own tunnel or reverse proxy (Tailscale, Cloudflare, nginx, whatever you trust), or use Merlin Cloud (next section), which handles remote access for you.
+Expose the dashboard with your own tunnel or reverse proxy (Tailscale, Cloudflare, nginx, whatever you trust), or use Merlin Cloud (next section), which handles remote access for you. Merlin serves plain HTTP on port 3123 and does not ship a tunnel of its own: whatever fronts it terminates HTTPS. If you set a dashboard password, exposure is safe; without one, keep it local.
 
-The bundled cloudflared tunnel still works today but is deprecated and will be removed. Enabled with no tunnel token, it starts a Quick Tunnel and prints `Quick Tunnel active: https://<random>.trycloudflare.com` at startup; that URL changes on every restart.
+Earlier versions bundled a cloudflared Quick Tunnel; it has been removed. If your `config.env` still has `TUNNEL_ENABLED`, `TUNNEL_TOKEN`, or `TUNNEL_HOSTNAME`, they are ignored, and re-running `merlin setup` cleans them out. To keep using Cloudflare, run cloudflared yourself pointing at `http://localhost:3123`.
 
-`merlin dashboard-url` prints your dashboard address with credentials embedded when a password is set. It resolves `MERLIN_DASHBOARD_URL` first, then the configured tunnel hostname, then `http://localhost:3123`. If you front Merlin with your own proxy, set `MERLIN_DASHBOARD_URL` in `config.env` so the command (and your agent) know the stable address.
+`merlin dashboard-url` prints your dashboard address with credentials embedded when a password is set. It resolves `MERLIN_DASHBOARD_URL` first, then `http://localhost:3123`. If you front Merlin with your own tunnel or proxy, set `MERLIN_DASHBOARD_URL` in `config.env` so the command (and your agent) know the stable address.
 
 ## Merlin Cloud
 
@@ -99,10 +98,8 @@ Inside `~/.merlin`:
 - **`merlin: command not found` right after install**: the PATH line went into your shell rc but your current shell predates it. `source` the rc or restart your shell.
 - **`Error: fd is not installed`**: fd is a hard requirement; the error message tells you how to install it.
 - **tmux missing**: boot prints a warning, the Terminal nav item is grayed out with an install tooltip, everything else still works.
-- **cloudflared missing with tunnel enabled**: warning at boot, tunnel silently disabled, dashboard still runs locally.
-- **Tunnel enabled but no password set**: Merlin auto-generates one and prints `Auto-generated login: admin / <password>` at startup so the public URL is never unprotected.
 - **Wrong password at login**: the form says so and returns 401. The password is whatever you set in `merlin setup`.
-- **Quick Tunnel URL keeps changing**: that is how Quick Tunnels work, and `merlin dashboard-url` cannot know the ephemeral URL. Set `MERLIN_DASHBOARD_URL` in `config.env` for a stable address, or move to your own tunnel or Merlin Cloud.
+- **`merlin dashboard-url` prints localhost but you reach Merlin through a tunnel**: the command cannot know your tunnel's address. Set `MERLIN_DASHBOARD_URL` in `config.env` to the public URL.
 - **Bad update**: revert with `ln -sfn ~/.merlin/versions/<old> ~/.merlin/current`; old versions are never deleted.
 
 ## Where to next

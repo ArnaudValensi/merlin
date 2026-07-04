@@ -595,21 +595,6 @@ EXTENSION_META = {
 }
 
 
-async def on_tunnel_url(url: str) -> None:
-    """Send the tunnel URL to Discord via REST API (no subprocess)."""
-    channel = os.getenv("DISCORD_CHANNEL_IDS", "").split(",")[0].strip()
-    if not channel:
-        return
-    dashboard_pass = os.getenv("DASHBOARD_PASS", "")
-    msg = (
-        f"Dashboard is live at {url}"
-        if dashboard_pass
-        else f"Dashboard is live at {url} (no password)"
-    )
-    token = load_token()
-    await asyncio.to_thread(send_message, channel, msg, token)
-
-
 def validate():
     """Validate bot configuration. Raises SystemExit on errors."""
     _validate_config()

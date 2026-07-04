@@ -2,19 +2,19 @@
 
 Merlin is a suite of dev tools built around the user's preferred AI agent CLI (Claude Code, OpenCode, via the AgentEngine abstraction): a web dashboard (terminal, files, commits, notes), a cron scheduler, and chat integrations running as one process, accessible from anywhere. Install via `curl | bash` or run from a git checkout with `uv run main.py`.
 
-The Discord bot (`merlin-bot/`, a built-in extension) is one channel where that agent acts; the web terminal and cron are the others. The notes / knowledge base is the shared memory they all read and feed, which is why the system compounds (see [`docs/dev/architecture.md`](docs/dev/architecture.md)). Remote access via the bundled Cloudflare tunnel is deprecated: future setups bring their own tunnel or use Merlin Cloud.
+The Discord bot (`merlin-bot/`, a built-in extension) is one channel where that agent acts; the web terminal and cron are the others. The notes / knowledge base is the shared memory they all read and feed, which is why the system compounds (see [`docs/dev/architecture.md`](docs/dev/architecture.md)). Merlin ships no tunnel of its own: remote access is bring-your-own tunnel/reverse proxy or Merlin Cloud (SaaS mode, `saas_tunnel.py`).
 
 ## Project Structure
 
 ```
 merlin/
 ├── CLAUDE.md                  # This file — development instructions
-├── main.py                    # FastAPI app — dashboard + tunnel + bot + cron
+├── main.py                    # FastAPI app — dashboard + bot + cron
 ├── cli.py                     # CLI entry point (merlin start/version/setup/update/config)
 ├── paths.py                   # Path resolution (dev mode vs installed mode)
 ├── install.sh                 # curl|bash installer
 ├── auth.py                    # Cookie-based auth (HMAC-signed)
-├── tunnel.py                  # Cloudflare Tunnel manager
+├── saas_tunnel.py             # Merlin Cloud SSH tunnel (SaaS mode)
 ├── static/
 │   ├── dashboard.css          # Design system (dark theme, CSS variables)
 │   └── dashboard.js           # Shared JS (API, refresh, formatting)
@@ -76,7 +76,7 @@ New to the codebase? Read `architecture.md` first, then `extension-system.md` an
 | [`docs/dev/notes-system.md`](docs/dev/notes-system.md) | 3-layer notes system (user, logs, KB), frontmatter format, search tools |
 | [`docs/dev/session-management.md`](docs/dev/session-management.md) | Session registry, UUID5 strategy, resume-first, MERLIN_SESSION_ID |
 | [`docs/dev/discord-bot.md`](docs/dev/discord-bot.md) | Message flow, filtering, threading, prompt building, discord skill |
-| [`docs/dev/auth-and-tunnel.md`](docs/dev/auth-and-tunnel.md) | Cookie auth, HMAC signing, Cloudflare Tunnel modes, login flow |
+| [`docs/dev/auth-and-tunnel.md`](docs/dev/auth-and-tunnel.md) | Cookie auth, HMAC signing, login flow |
 | [`docs/dev/web-terminal.md`](docs/dev/web-terminal.md) | Web terminal internals: xterm.js, WebSocket, PTY/tmux, touch gesture implementation, transcription API |
 | [`docs/dev/session-viewer.md`](docs/dev/session-viewer.md) | Session transcripts, stream-json format, timeline rendering |
 | [`docs/dev/notes-editor.md`](docs/dev/notes-editor.md) | Notes routes, command palette, git ops, media upload, content search |
@@ -114,7 +114,7 @@ When creating new scripts:
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                        main.py                            │
-│    (FastAPI + auth + tunnel + extensions — one process)    │
+│      (FastAPI + auth + extensions — one process)          │
 │                                                           │
 │  Core Modules:                                            │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐   │
@@ -140,9 +140,9 @@ When creating new scripts:
                ┌──────────┼──────────┐
                │          │          │
                ▼          ▼          ▼
-          Cloudflare   Browser    Discord
-           Tunnel    (mobile/      API
-                     desktop)
+            Merlin     Browser    Discord
+            Cloud     (mobile/      API
+          (SaaS mode)  desktop)
 ```
 
 ### Components
@@ -151,12 +151,11 @@ When creating new scripts:
 
 | File | Purpose | Docs |
 |------|---------|------|
-| `main.py` | FastAPI app — starts dashboard + tunnel + bot + cron (one process) | `--help` |
+| `main.py` | FastAPI app — starts dashboard + bot + cron (one process) | `--help` |
 | `cli.py` | CLI entry point — `merlin start/version/setup/update/config` | `--help`, [`standalone-cli`](docs/dev/standalone-cli.md) |
 | `paths.py` | Path resolution — dev mode vs installed mode (`~/.merlin/`) | [`standalone-cli`](docs/dev/standalone-cli.md) |
 | `install.sh` | `curl \| bash` installer | [`releasing`](docs/dev/releasing.md) |
 | `auth.py` | Cookie-based HMAC auth | [`auth-and-tunnel`](docs/dev/auth-and-tunnel.md) |
-| `tunnel.py` | Cloudflare Tunnel manager | [`auth-and-tunnel`](docs/dev/auth-and-tunnel.md) |
 | `lib/engine.py` | AgentEngine abstraction — provider-agnostic invocation (`invoke()`) | [`session-management`](docs/dev/session-management.md) |
 | `lib/agent_context.py` | Persona/context composition — layers (brain, personality, user, overlays) and per-caller recipes | [`architecture`](docs/dev/architecture.md) |
 | `lib/session.py` | Session manager — JSONL transcripts, history, compaction | [`session-management`](docs/dev/session-management.md) |
@@ -227,7 +226,7 @@ Strategy: **resume-first** — try `--resume` first, fall back to `--session-id`
 
 ## Environment
 
-Reference dev environment (the maintainer's setup, not a requirement). Merlin itself needs Python + uv, optionally tmux and cloudflared.
+Reference dev environment (the maintainer's setup, not a requirement). Merlin itself needs Python + uv, optionally tmux.
 
 - **OS**: Arch Linux (Docker)
 - **Package Manager**: pacman
@@ -236,7 +235,7 @@ Reference dev environment (the maintainer's setup, not a requirement). Merlin it
 ## Development Commands
 
 ```bash
-uv run main.py --no-tunnel    # start everything (dashboard + bot + cron, dev mode)
+uv run main.py                # start everything (dashboard + bot + cron, dev mode)
 restart.sh                    # restart everything in background (single process)
 uv run scripts.py validate    # full validation: lint + format + typecheck + tests
 ```
@@ -260,7 +259,7 @@ Extension loggers: use `from merlin_ext import get_logger` — see [`docs/dev/ex
 
 ## Monitoring Dashboard
 
-> Full reference: [`docs/dev/dashboard-architecture.md`](docs/dev/dashboard-architecture.md) | Auth & tunnel: [`docs/dev/auth-and-tunnel.md`](docs/dev/auth-and-tunnel.md)
+> Full reference: [`docs/dev/dashboard-architecture.md`](docs/dev/dashboard-architecture.md) | Auth: [`docs/dev/auth-and-tunnel.md`](docs/dev/auth-and-tunnel.md)
 
 Web-based dashboard served by FastAPI on port 3123, started by `main.py`.
 
@@ -281,9 +280,9 @@ Epics and project planning are managed in the private `merlin-saas` repo under `
 - **Self-documenting scripts**: Comprehensive `--help` with examples
 - **Provider-agnostic execution**: Always use `lib/engine.py` (`invoke()`), never call `claude` or `opencode` directly. Engine configured via `AGENT_ENGINE` env var (default: `claude-code`). Available engines: `claude-code`, `opencode`. Merlin manages conversation history as JSONL files in `~/.merlin/sessions/`.
 - **Deterministic sessions**: UUID5 from channel/job ID for session persistence
-- **Extension system**: Three tiers — core (files, terminal, commits: always active), built-in (notes, merlin-bot: toggleable), installed (`~/.merlin/extensions/`: user-installed). Extensions export `router`, `NAV_ITEMS`, `STATIC_DIR`, plus optional `start()`, `on_tunnel_url()`, `validate()`. `main.py` builds an `extension_registry` at startup. State persisted in `~/.merlin/extensions.json`. Extensions page at `/extensions` for management.
+- **Extension system**: Three tiers — core (files, terminal, commits: always active), built-in (notes, merlin-bot: toggleable), installed (`~/.merlin/extensions/`: user-installed). Extensions export `router`, `NAV_ITEMS`, `STATIC_DIR`, plus optional `start()`, `validate()`. `main.py` builds an `extension_registry` at startup. State persisted in `~/.merlin/extensions.json`. Extensions page at `/extensions` for management.
 - **Dynamic sidebar**: Nav items built from enabled extensions. Core items always shown, extension items added when loaded, Extensions nav item always last.
 - **Path resolution (paths.py)**: All modules use `paths.py` for file/directory resolution. Only `app_dir()` differs between modes (repo root vs `~/.merlin/current/`). User data (notes, cron-jobs, logs, config) always lives under `~/.merlin/` regardless of mode. Dev mode detection: explicit `set_dev_mode()` > `MERLIN_DEV` env var > `.git/` directory presence. Custom install location via `MERLIN_HOME` env var.
-- **Graceful degradation**: At startup, `_check_optional_deps()` checks for tmux and cloudflared. Missing deps result in boot warnings, disabled nav items (grayed out with tooltip), and 503 responses on affected routes — not crashes.
+- **Graceful degradation**: At startup, `_check_optional_deps()` checks for tmux. Missing deps result in boot warnings, disabled nav items (grayed out with tooltip), and 503 responses on affected routes — not crashes.
 - **Fail-fast configuration**: All entry points (`merlin_bot.py`, `cron/runner.py`) validate required config at startup and exit immediately with descriptive error messages and step-by-step setup instructions if anything is missing or invalid. A first-time user should see exactly what to do — never a cryptic crash later at runtime. When adding new required config, always add validation to the entry point's `_validate_config()` function.
 - **Web UI development**: Before making any dashboard or UI changes, read `docs/dev/dashboard-architecture.md` for theme variables, CSS conventions, JS patterns, API endpoints, and how to add new pages. Always self-validate UI changes by taking screenshots with the screenshot skill and reviewing them before marking work as done. Run `uv run .claude/skills/screenshot/screenshot.py --all <url> --user <user> --pass <pass>` from the project root, then read the PNGs to verify layout, responsiveness, and correctness across viewports.
