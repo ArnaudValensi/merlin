@@ -269,7 +269,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 | Endpoint | Returns |
 |----------|---------|
-| `GET /api/health` | `{ status, bot_start_time, tunnel_url, ... }` |
+| `GET /api/health` | `{ bot_start_time, invocations_today, errors_24h, ... }` |
 | `GET /api/events?type=&since=&until=&status=` | Array of all events, filtered |
 | `GET /api/invocations?since=&until=&caller=` | Invocation events only |
 | `GET /api/jobs` | Per-job stats with recent run history |

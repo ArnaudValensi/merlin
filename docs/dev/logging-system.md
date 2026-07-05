@@ -33,7 +33,7 @@ Three distinct concepts, each with its own storage:
 | **Cron job** | Scheduler fires → runner calls `invoke()` → writes execution log → notifies | `cron/__init__.py`, `cron/runner.py`, `lib/engine.py` |
 | **HTTP request** | FastAPI handles request → file browse, auth, API, static files | `main.py`, `files/`, `notes/`, `commits/`, `auth.py` |
 | **WebSocket** | Terminal session → PTY bridge → tmux | `terminal/routes.py` |
-| **Tunnel lifecycle** | Cloudflare tunnel or SaaS tunnel → connect, reconnect, fail | `tunnel.py`, `saas_tunnel.py` |
+| **Tunnel lifecycle** | SaaS tunnel (Merlin Cloud) → connect, reconnect, fail | `saas_tunnel.py` |
 | **App lifecycle** | Startup and shutdown | `main.py` |
 
 ### Unified logger hierarchy
