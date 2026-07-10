@@ -21,8 +21,9 @@ a machine, a scheduler, and a memory.
   whatever screen is in your hand. Talk instead of typing: voice input
   with built-in transcription works in the terminal and the chat. The
   **Discord bot** puts the same agent in your pocket.
-- **Agent orchestration**: jobs that run without you, on a schedule. A
-  job is a script or an agent, and reports land back in your chat.
+- **Agent orchestration**: jobs that run without you, fired by a
+  schedule or a webhook. A job is a script or an agent, and reports land
+  back in your chat.
 - **A living knowledge base**: markdown notes you and your agents both
   read, write, and curate. Every channel feeds the same memory, so the
   longer Merlin runs, the more your agents know.
