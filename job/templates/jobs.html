@@ -17,7 +17,8 @@
     color: var(--text-primary);
 }
 
-.job-page .btn {
+.job-page .btn,
+.job-modal .btn {
     padding: 7px 16px;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -29,12 +30,14 @@
     transition: background 0.15s, color 0.15s;
 }
 
-.job-page .btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.job-page .btn:hover,
+.job-modal .btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .job-page .btn-primary { background: var(--accent-blue); color: white; border-color: var(--accent-blue); }
 .job-page .btn-primary:hover { opacity: 0.9; }
 .job-page .btn-danger { background: var(--accent-red); color: white; border-color: var(--accent-red); }
 .job-page .btn-danger:hover { opacity: 0.9; }
-.job-page .btn-sm { padding: 4px 10px; font-size: 12px; }
+.job-page .btn-sm,
+.job-modal .btn-sm { padding: 4px 10px; font-size: 12px; }
 
 /* Job cards */
 .job-job-list {
@@ -641,6 +644,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    min-height: 44px; /* touch target: the label is the tap area */
     font-size: 13px;
     color: var(--text-primary);
     cursor: pointer;
@@ -655,17 +659,23 @@
     background: var(--bg-primary);
 }
 .job-modal .webhook-row { display: flex; gap: 6px; align-items: center; }
+/* Size (16px mobile / 13px desktop) comes from .form-input — anything under
+   16px on a focusable input makes iOS zoom on focus. */
 .job-modal .webhook-row .form-input {
     flex: 1;
     min-width: 0;
-    font-family: 'Geist Mono', monospace;
-    font-size: 12px;
+}
+.job-modal .webhook-row .btn,
+.job-modal .webhook-actions .btn { min-height: 44px; }
+@media (min-width: 769px) {
+    .job-modal .webhook-row .btn,
+    .job-modal .webhook-actions .btn { min-height: 0; }
 }
 .job-modal .webhook-actions { display: flex; gap: 8px; margin-top: 10px; }
 .job-modal .webhook-last-fired {
     margin-top: 10px;
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     font-family: 'Geist Mono', monospace;
 }
 
@@ -675,6 +685,8 @@
     font-weight: 600;
     color: var(--text-secondary);
 }
+/* Timestamps stay on one line; the .log-table-wrap scrolls horizontally */
+.job-page .log-table td:first-child { white-space: nowrap; }
 .job-page .feed-badge.badge-coalesced {
     background: rgba(251, 146, 60, 0.15);
     color: var(--accent-orange);
@@ -1103,7 +1115,7 @@
                     <input type="checkbox" id="field-webhook-enabled" onchange="Jobs.onWebhookToggle()">
                     <span>Allow firing this job via HTTP webhook</span>
                 </label>
-                <div class="form-help">A POST to the public URL with the secret launches the job. One run at a time: extra fires while a run is active coalesce into it.</div>
+                <div class="form-help">A POST to the public URL with the secret launches a real run of this job (Send test included). One run at a time: extra fires while a run is active coalesce into it.</div>
                 <div class="form-help" id="webhook-pending-note" style="display:none">URL and secret are generated when you save.</div>
                 <div class="webhook-details" id="webhook-details" style="display:none">
                     <label class="form-label" for="field-webhook-url">Public URL</label>
@@ -1122,7 +1134,7 @@
                         <button type="button" class="btn btn-sm" onclick="Jobs.rotateWebhookSecret()">Rotate secret</button>
                         <button type="button" class="btn btn-sm" onclick="Jobs.sendWebhookTest()">Send test</button>
                     </div>
-                    <div class="webhook-last-fired" id="webhook-last-fired"></div>
+                    <div class="webhook-last-fired" id="webhook-last-fired" aria-live="polite"></div>
                 </div>
             </div>
             <div class="form-group">
@@ -1290,7 +1302,7 @@ const Jobs = {
         if (filterJobId) url += '&job_id=' + encodeURIComponent(filterJobId);
         const events = await API.get(url);
         if (!events || events.length === 0) { container.innerHTML = ''; return; }
-        let html = '<div class="webhook-activity-title">Webhook activity</div>';
+        let html = '<h2 class="webhook-activity-title">Webhook activity</h2>';
         html += '<table class="log-table"><thead><tr><th>Time</th><th>Job</th><th>Outcome</th><th>From</th></tr></thead><tbody>';
         events.forEach(e => {
             const ok = e.outcome === 'launched';
@@ -1629,7 +1641,11 @@ const Jobs = {
             try { await this._syncWebhook(savedId); } catch (e) { /* job saved; hook sync is best-effort */ }
             if (opts.silent) return savedId;
             this.closeModal();
-            this.toast(wasEditing ? 'Job updated' : 'Job created', 'success');
+            let msg = wasEditing ? 'Job updated' : 'Job created';
+            if (!wasEditing && document.getElementById('field-webhook-enabled').checked) {
+                msg = 'Job created. Webhook URL and secret are in the editor.';
+            }
+            this.toast(msg, 'success');
             setTimeout(() => location.reload(), 300);
             return savedId;
         } else {
