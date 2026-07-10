@@ -584,7 +584,10 @@ def settings_page(request: Request, _auth=Depends(require_auth)):
     return templates.TemplateResponse(
         request,
         "settings.html",
-        {"openai_key_set": bool(cfg.get("OPENAI_API_KEY"))},
+        {
+            "openai_key_set": bool(cfg.get("OPENAI_API_KEY")),
+            "default_public_url": job_webhook.discovered_public_base()[0],
+        },
     )
 
 
@@ -615,6 +618,7 @@ def api_get_settings(_auth=Depends(require_auth)):
         "public_url": cfg.get("MERLIN_DASHBOARD_URL", ""),
         "effective_public_url": public_base,
         "public_url_source": public_source,
+        "default_public_url": job_webhook.discovered_public_base()[0],
     }
 
 
@@ -688,6 +692,7 @@ async def api_save_settings(request: Request, _auth=Depends(require_auth)):
         "public_url": cfg.get("MERLIN_DASHBOARD_URL", ""),
         "effective_public_url": public_base,
         "public_url_source": public_source,
+        "default_public_url": job_webhook.discovered_public_base()[0],
     }
 
 

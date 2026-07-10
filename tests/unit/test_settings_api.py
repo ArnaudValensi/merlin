@@ -164,3 +164,22 @@ class TestPublicUrlSetting:
         html = client.get("/settings").text
         assert "public-url-input" in html
         assert "Public URL" in html
+
+    def test_placeholder_is_discovered_default(self, client, tmp_path):
+        """The field's placeholder shows what applies when left empty — the
+        discovered URL, not the override (which sits in the value)."""
+        (tmp_path / "config.env").write_text(
+            "MERLIN_DASHBOARD_URL=https://override.example.com\n"
+        )
+        html = client.get("/settings").text
+        import re
+
+        m = re.search(r'id="public-url-input"[^>]*placeholder="([^"]+)"', html)
+        assert m, "placeholder missing"
+        assert m.group(1).startswith("http")
+        assert "override.example.com" not in m.group(1)
+
+    def test_api_includes_default_public_url(self, client, tmp_path):
+        (tmp_path / "config.env").write_text("")
+        data = client.get("/api/settings").json()
+        assert data["default_public_url"].startswith("http")

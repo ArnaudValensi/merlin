@@ -221,6 +221,19 @@ def resolve_public_base() -> tuple[str, str]:
             base = f"http://{base}"
         return base.rstrip("/"), "override"
 
+    return discovered_public_base()
+
+
+def discovered_public_base() -> tuple[str, str]:
+    """The base URL the instance can work out on its own (no override).
+
+    What applies when ``MERLIN_DASHBOARD_URL`` is unset — the Settings form
+    shows it as the field's placeholder.
+    """
+    import paths
+
+    paths.load_config_env()
+
     saas_host = _saas_public_host()
     if saas_host:
         return f"https://{saas_host}", "saas"

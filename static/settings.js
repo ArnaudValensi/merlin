@@ -70,6 +70,7 @@ const Settings = {
         const data = await API.get('/api/settings');
         if (!data) return;
         input.value = data.public_url || '';
+        if (data.default_public_url) input.placeholder = data.default_public_url;
         const checkbox = document.getElementById('public-url-override');
         if (checkbox) {
             checkbox.checked = !!data.public_url;

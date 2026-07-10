@@ -59,7 +59,7 @@
             <label class="settings-label" for="public-url-input">Base URL</label>
             <div class="settings-input-row">
                 <input class="settings-input" id="public-url-input" name="MERLIN_DASHBOARD_URL"
-                    type="text" placeholder="https://merlin.example.com" autocomplete="off"
+                    type="text" placeholder="{{ default_public_url }}" autocomplete="off"
                     {% if saas_mode %}disabled{% endif %}>
             </div>
             <div class="settings-help" id="public-url-effective" aria-live="polite"></div>
