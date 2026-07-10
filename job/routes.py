@@ -366,6 +366,29 @@ def get_all_logs(job_id: str | None = None, limit: int = 100):
     return all_entries
 
 
+@job_router.get("/webhook-events")
+def webhook_events(job_id: str | None = None, limit: int = 50):
+    """Recent webhook_request events for the job source, newest first.
+
+    Includes rejected attempts (bad secret, throttled): failed hits on a
+    public endpoint are a security signal the dashboard should surface.
+    """
+    from lib.event_log import WebhookRequestEvent, read_events
+
+    limit = max(1, min(limit, 500))
+    events = read_events(event_type="webhook_request")
+    out: list[dict] = []
+    for e in reversed(events):
+        if not isinstance(e, WebhookRequestEvent) or e.source != "job":
+            continue
+        if job_id and e.target != job_id:
+            continue
+        out.append(e.model_dump(exclude_unset=True))
+        if len(out) >= limit:
+            break
+    return out
+
+
 @job_router.post("/validate-schedule")
 def validate_schedule(request_body: dict):
     """Validate a cron expression and return next 3 run times.

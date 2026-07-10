@@ -637,6 +637,49 @@
 .job-modal .advanced-body { display: none; margin-top: 8px; }
 .job-modal .advanced-body.open { display: block; }
 
+.job-modal .webhook-enable {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+    margin: 4px 0;
+}
+.job-modal .webhook-enable input { accent-color: var(--accent-orange); }
+.job-modal .webhook-details {
+    margin-top: 10px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-primary);
+}
+.job-modal .webhook-row { display: flex; gap: 6px; align-items: center; }
+.job-modal .webhook-row .form-input {
+    flex: 1;
+    min-width: 0;
+    font-family: 'Geist Mono', monospace;
+    font-size: 12px;
+}
+.job-modal .webhook-actions { display: flex; gap: 8px; margin-top: 10px; }
+.job-modal .webhook-last-fired {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: 'Geist Mono', monospace;
+}
+
+.job-page .webhook-activity-title {
+    margin: 20px 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.job-page .feed-badge.badge-coalesced {
+    background: rgba(251, 146, 60, 0.15);
+    color: var(--accent-orange);
+}
+
 /* ── Type badge on cards ── */
 .job-job-card .type-badge {
     display: inline-flex;
@@ -654,6 +697,11 @@
 .job-job-card .type-badge.command {
     background: rgba(52, 211, 153, 0.12);
     color: var(--accent-green);
+    font-family: 'Geist Mono', monospace;
+}
+.job-job-card .type-badge.webhook {
+    background: rgba(251, 146, 60, 0.14);
+    color: var(--accent-orange);
     font-family: 'Geist Mono', monospace;
 }
 .job-job-card .job-command {
@@ -773,8 +821,8 @@
 
 <div class="job-page">
     <div class="page-header">
-        <h1>Cron Jobs</h1>
-        <button class="btn btn-primary" onclick="Cron.openCreateModal()">+ New Job</button>
+        <h1>Jobs</h1>
+        <button class="btn btn-primary" onclick="Jobs.openCreateModal()">+ New Job</button>
     </div>
 
     <div class="tabs" id="job-tabs">
@@ -814,6 +862,9 @@
                         {% else %}
                         <span class="type-badge agent" title="Agent prompt job">&#129302; agent</span>
                         {% endif %}
+                        {% if job.get('webhook') %}
+                        <span class="type-badge webhook" title="Webhook trigger enabled">&#8623; webhook</span>
+                        {% endif %}
                         {% if not job.get('enabled', true) %}
                         <span class="paused-tag">paused</span>
                         {% endif %}
@@ -832,7 +883,7 @@
                     <div class="job-meta">
                         <div class="job-meta-item">
                             <span class="meta-label">Schedule</span>
-                            <span class="meta-value" title="{{ job.get('schedule', '') }}">{{ job.schedule_human }}</span>
+                            <span class="meta-value" title="{{ job.get('schedule', '') }}">{{ job.schedule_human or 'none' }}</span>
                         </div>
                         {% if job.get('timezone') %}
                         <div class="job-meta-item">
@@ -868,16 +919,16 @@
                 </div>
                 <div class="job-actions">
                     <label class="toggle-switch" title="{% if job.get('enabled', true) %}Disable{% else %}Enable{% endif %} job">
-                        <input type="checkbox" {% if job.get('enabled', true) %}checked{% endif %} onchange="Cron.toggleJob('{{ job.id }}')">
+                        <input type="checkbox" {% if job.get('enabled', true) %}checked{% endif %} onchange="Jobs.toggleJob('{{ job.id }}')">
                         <span class="toggle-slider"></span>
                     </label>
                     <div class="action-menu">
-                        <button class="action-menu-btn" onclick="Cron.toggleMenu(this)" title="Actions" aria-label="Job actions" aria-haspopup="true" aria-expanded="false">&#8942;</button>
+                        <button class="action-menu-btn" onclick="Jobs.toggleMenu(this)" title="Actions" aria-label="Job actions" aria-haspopup="true" aria-expanded="false">&#8942;</button>
                         <div class="action-menu-dropdown">
-                            <button class="action-menu-item" onclick="Cron.openEditModal('{{ job.id }}')">Edit</button>
-                            <button class="action-menu-item" onclick="Cron.runJob('{{ job.id }}')">Run Now</button>
-                            <button class="action-menu-item" onclick="Cron.showJobLogs('{{ job.id }}')">View Logs</button>
-                            <button class="action-menu-item danger" onclick="Cron.deleteJob('{{ job.id }}')">Delete</button>
+                            <button class="action-menu-item" onclick="Jobs.openEditModal('{{ job.id }}')">Edit</button>
+                            <button class="action-menu-item" onclick="Jobs.runJob('{{ job.id }}')">Run Now</button>
+                            <button class="action-menu-item" onclick="Jobs.showJobLogs('{{ job.id }}')">View Logs</button>
+                            <button class="action-menu-item danger" onclick="Jobs.deleteJob('{{ job.id }}')">Delete</button>
                         </div>
                     </div>
                 </div>
@@ -898,7 +949,7 @@
         <div class="empty-icon">&#9201;</div>
         <div class="empty-text">No jobs configured</div>
         <div style="margin-top: 16px;">
-            <button class="btn btn-primary" onclick="Cron.openCreateModal()">+ New Job</button>
+            <button class="btn btn-primary" onclick="Jobs.openCreateModal()">+ New Job</button>
         </div>
     </div>
     {% endif %}
@@ -907,7 +958,7 @@
     <!-- ── Logs tab ── -->
     <div class="job-tab-content" id="job-tab-logs" style="display:none">
         <div style="margin-bottom: 12px;">
-            <select class="btn" id="job-log-filter" onchange="Cron.loadAllLogs()" style="font-family: 'Geist Mono', monospace; font-size: 13px;">
+            <select class="btn" id="job-log-filter" onchange="Jobs.loadAllLogs()" style="font-family: 'Geist Mono', monospace; font-size: 13px;">
                 <option value="">All jobs</option>
                 {% for job in jobs %}
                 <option value="{{ job.id }}">{{ job.id }}</option>
@@ -920,6 +971,7 @@
                 <div class="empty-text">Loading logs...</div>
             </div>
         </div>
+        <div id="job-webhook-activity" class="log-table-wrap"></div>
     </div><!-- /job-tab-logs -->
 
     <!-- ── Performance tab ── -->
@@ -957,13 +1009,13 @@
 
 <!-- Create/Edit Modal -->
 <div class="job-modal-overlay" id="job-modal-overlay">
-    <div class="job-modal-backdrop" onclick="Cron.closeModal()"></div>
+    <div class="job-modal-backdrop" onclick="Jobs.closeModal()"></div>
     <div class="job-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <div class="job-modal-header">
-            <h2 id="modal-title">New Cron Job</h2>
-            <button class="job-modal-close" aria-label="Close" onclick="Cron.closeModal()">&times;</button>
+            <h2 id="modal-title">New Job</h2>
+            <button class="job-modal-close" aria-label="Close" onclick="Jobs.closeModal()">&times;</button>
         </div>
-        <form onsubmit="event.preventDefault(); Cron.submitJob();">
+        <form onsubmit="event.preventDefault(); Jobs.submitJob();">
         <div class="job-modal-body">
             <div class="form-group">
                 <label class="form-label" for="field-id">Job ID</label>
@@ -977,76 +1029,107 @@
             </div>
             <div class="form-group">
                 <label class="form-label" for="field-repeat">Schedule</label>
-                <select class="form-input" id="field-repeat" onchange="Cron.onRepeatChange()">
+                <select class="form-input" id="field-repeat" onchange="Jobs.onRepeatChange()">
                     <option value="minutes">Every N minutes</option>
                     <option value="hourly">Hourly</option>
                     <option value="daily">Daily</option>
                     <option value="weekly">Weekly</option>
                     <option value="monthly">Monthly</option>
                     <option value="custom">Custom (cron)</option>
+                    <option value="none">No schedule (webhook or manual only)</option>
                 </select>
 
                 <div class="builder-group" id="builder-minutes" style="display:none">
                     <label class="form-label" for="field-minutes-n">Every</label>
-                    <input class="form-input" id="field-minutes-n" type="number" min="1" max="59" value="5" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
+                    <input class="form-input" id="field-minutes-n" type="number" min="1" max="59" value="5" style="font-family: 'Geist Mono', monospace;" oninput="Jobs.onBuilderChange()">
                     <div class="form-help">minutes (1-59)</div>
                 </div>
 
                 <div class="builder-group" id="builder-hourly" style="display:none">
                     <label class="form-label" for="field-hourly-minute">At minute</label>
-                    <input class="form-input" id="field-hourly-minute" type="number" min="0" max="59" value="0" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
+                    <input class="form-input" id="field-hourly-minute" type="number" min="0" max="59" value="0" style="font-family: 'Geist Mono', monospace;" oninput="Jobs.onBuilderChange()">
                     <div class="form-help">minute past each hour (0-59)</div>
                 </div>
 
                 <div class="builder-group" id="builder-daily" style="display:none">
                     <label class="form-label" for="field-daily-time">At time</label>
-                    <input class="form-input" id="field-daily-time" type="time" value="09:00" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
+                    <input class="form-input" id="field-daily-time" type="time" value="09:00" style="font-family: 'Geist Mono', monospace;" oninput="Jobs.onBuilderChange()">
                 </div>
 
                 <div class="builder-group" id="builder-weekly" style="display:none">
                     <label class="form-label" id="ondays-label">On days</label>
                     <div class="weekday-chips" id="weekday-chips" role="group" aria-labelledby="ondays-label">
-                        <button type="button" class="weekday-chip" data-dow="1" title="Monday" aria-label="Monday" aria-pressed="false" onclick="Cron.toggleWeekday(this)">M</button>
-                        <button type="button" class="weekday-chip" data-dow="2" title="Tuesday" aria-label="Tuesday" aria-pressed="false" onclick="Cron.toggleWeekday(this)">T</button>
-                        <button type="button" class="weekday-chip" data-dow="3" title="Wednesday" aria-label="Wednesday" aria-pressed="false" onclick="Cron.toggleWeekday(this)">W</button>
-                        <button type="button" class="weekday-chip" data-dow="4" title="Thursday" aria-label="Thursday" aria-pressed="false" onclick="Cron.toggleWeekday(this)">T</button>
-                        <button type="button" class="weekday-chip" data-dow="5" title="Friday" aria-label="Friday" aria-pressed="false" onclick="Cron.toggleWeekday(this)">F</button>
-                        <button type="button" class="weekday-chip" data-dow="6" title="Saturday" aria-label="Saturday" aria-pressed="false" onclick="Cron.toggleWeekday(this)">S</button>
-                        <button type="button" class="weekday-chip" data-dow="0" title="Sunday" aria-label="Sunday" aria-pressed="false" onclick="Cron.toggleWeekday(this)">S</button>
+                        <button type="button" class="weekday-chip" data-dow="1" title="Monday" aria-label="Monday" aria-pressed="false" onclick="Jobs.toggleWeekday(this)">M</button>
+                        <button type="button" class="weekday-chip" data-dow="2" title="Tuesday" aria-label="Tuesday" aria-pressed="false" onclick="Jobs.toggleWeekday(this)">T</button>
+                        <button type="button" class="weekday-chip" data-dow="3" title="Wednesday" aria-label="Wednesday" aria-pressed="false" onclick="Jobs.toggleWeekday(this)">W</button>
+                        <button type="button" class="weekday-chip" data-dow="4" title="Thursday" aria-label="Thursday" aria-pressed="false" onclick="Jobs.toggleWeekday(this)">T</button>
+                        <button type="button" class="weekday-chip" data-dow="5" title="Friday" aria-label="Friday" aria-pressed="false" onclick="Jobs.toggleWeekday(this)">F</button>
+                        <button type="button" class="weekday-chip" data-dow="6" title="Saturday" aria-label="Saturday" aria-pressed="false" onclick="Jobs.toggleWeekday(this)">S</button>
+                        <button type="button" class="weekday-chip" data-dow="0" title="Sunday" aria-label="Sunday" aria-pressed="false" onclick="Jobs.toggleWeekday(this)">S</button>
                     </div>
                     <div class="weekday-quick">
-                        <button type="button" onclick="Cron.setWeekdays('weekdays')">Weekdays</button>
-                        <button type="button" onclick="Cron.setWeekdays('weekends')">Weekends</button>
-                        <button type="button" onclick="Cron.setWeekdays('all')">Every day</button>
+                        <button type="button" onclick="Jobs.setWeekdays('weekdays')">Weekdays</button>
+                        <button type="button" onclick="Jobs.setWeekdays('weekends')">Weekends</button>
+                        <button type="button" onclick="Jobs.setWeekdays('all')">Every day</button>
                     </div>
                     <label class="form-label" for="field-weekly-time">At time</label>
-                    <input class="form-input" id="field-weekly-time" type="time" value="09:00" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
+                    <input class="form-input" id="field-weekly-time" type="time" value="09:00" style="font-family: 'Geist Mono', monospace;" oninput="Jobs.onBuilderChange()">
                 </div>
 
                 <div class="builder-group" id="builder-monthly" style="display:none">
                     <label class="form-label" for="field-monthly-day">Day of month</label>
-                    <input class="form-input" id="field-monthly-day" type="number" min="1" max="31" value="1" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
+                    <input class="form-input" id="field-monthly-day" type="number" min="1" max="31" value="1" style="font-family: 'Geist Mono', monospace;" oninput="Jobs.onBuilderChange()">
                     <label class="form-label" for="field-monthly-time">At time</label>
-                    <input class="form-input" id="field-monthly-time" type="time" value="09:00" style="font-family: 'Geist Mono', monospace;" oninput="Cron.onBuilderChange()">
+                    <input class="form-input" id="field-monthly-time" type="time" value="09:00" style="font-family: 'Geist Mono', monospace;" oninput="Jobs.onBuilderChange()">
                 </div>
 
                 <div class="builder-group" id="builder-custom" style="display:none">
-                    <input class="form-input" id="field-schedule-raw" placeholder="0 9 * * *" aria-label="Cron expression" oninput="Cron.onBuilderChange()">
+                    <input class="form-input" id="field-schedule-raw" placeholder="0 9 * * *" aria-label="Cron expression" oninput="Jobs.onBuilderChange()">
                     <div class="form-help">minute hour day-of-month month day-of-week</div>
                 </div>
 
-                <label class="form-label" for="field-timezone" style="margin-top: 12px;">Timezone</label>
-                <select class="form-input" id="field-timezone" onchange="Cron.onBuilderChange()" style="font-family: 'Geist', -apple-system, system-ui, sans-serif;"></select>
-                <div class="form-help">Fires at this wall-clock time. DST-aware: e.g. 17:00 stays 17:00 across the time change.</div>
+                <div id="timezone-group">
+                    <label class="form-label" for="field-timezone" style="margin-top: 12px;">Timezone</label>
+                    <select class="form-input" id="field-timezone" onchange="Jobs.onBuilderChange()" style="font-family: 'Geist', -apple-system, system-ui, sans-serif;"></select>
+                    <div class="form-help">Fires at this wall-clock time. DST-aware: e.g. 17:00 stays 17:00 across the time change.</div>
+                </div>
 
                 <input type="hidden" id="field-schedule">
                 <div class="schedule-preview" id="schedule-preview" aria-live="polite" style="display:none"></div>
             </div>
+            <div class="form-group" id="webhook-group">
+                <label class="form-label">Webhook trigger</label>
+                <label class="webhook-enable">
+                    <input type="checkbox" id="field-webhook-enabled" onchange="Jobs.onWebhookToggle()">
+                    <span>Allow firing this job via HTTP webhook</span>
+                </label>
+                <div class="form-help">A POST to the public URL with the secret launches the job. One run at a time: extra fires while a run is active coalesce into it.</div>
+                <div class="form-help" id="webhook-pending-note" style="display:none">URL and secret are generated when you save.</div>
+                <div class="webhook-details" id="webhook-details" style="display:none">
+                    <label class="form-label" for="field-webhook-url">Public URL</label>
+                    <div class="webhook-row">
+                        <input class="form-input" id="field-webhook-url" readonly>
+                        <button type="button" class="btn btn-sm" onclick="Jobs.copyWebhookField('field-webhook-url', 'URL')">Copy</button>
+                    </div>
+                    <label class="form-label" for="field-webhook-secret">Secret</label>
+                    <div class="webhook-row">
+                        <input class="form-input" id="field-webhook-secret" type="password" readonly>
+                        <button type="button" class="btn btn-sm" id="webhook-reveal-btn" onclick="Jobs.toggleSecretReveal()">Show</button>
+                        <button type="button" class="btn btn-sm" onclick="Jobs.copyWebhookField('field-webhook-secret', 'Secret')">Copy</button>
+                    </div>
+                    <div class="form-help">Send it as the <code>X-Merlin-Webhook-Secret</code> header, or <code>?token=...</code> if the sender cannot set headers.</div>
+                    <div class="webhook-actions">
+                        <button type="button" class="btn btn-sm" onclick="Jobs.rotateWebhookSecret()">Rotate secret</button>
+                        <button type="button" class="btn btn-sm" onclick="Jobs.sendWebhookTest()">Send test</button>
+                    </div>
+                    <div class="webhook-last-fired" id="webhook-last-fired"></div>
+                </div>
+            </div>
             <div class="form-group">
                 <label class="form-label" id="action-label">Action</label>
                 <div class="segmented" id="field-type" role="group" aria-labelledby="action-label">
-                    <button type="button" data-type="prompt" class="active" aria-pressed="true" onclick="Cron.setJobType('prompt')">&#129302; Agent prompt</button>
-                    <button type="button" data-type="command" aria-pressed="false" onclick="Cron.setJobType('command')">&gt;_ Shell command</button>
+                    <button type="button" data-type="prompt" class="active" aria-pressed="true" onclick="Jobs.setJobType('prompt')">&#129302; Agent prompt</button>
+                    <button type="button" data-type="command" aria-pressed="false" onclick="Jobs.setJobType('command')">&gt;_ Shell command</button>
                 </div>
             </div>
             <div class="form-group" id="prompt-group">
@@ -1065,7 +1148,7 @@
             </div>
             <div class="form-group">
                 <label class="form-label" for="field-report-mode">Notify</label>
-                <select class="form-input" id="field-report-mode" onchange="Cron.onNotifyChange()">
+                <select class="form-input" id="field-report-mode" onchange="Jobs.onNotifyChange()">
                     <option value="always">Always</option>
                     <option value="silent">Errors only</option>
                     <option value="off">Never</option>
@@ -1080,7 +1163,7 @@
             </div>
             {% endif %}
             <div class="form-group" id="advanced-group">
-                <button type="button" class="advanced-toggle" id="advanced-toggle" aria-expanded="false" aria-controls="advanced-body" onclick="Cron.toggleAdvanced()">&#9656; Advanced (agent options)</button>
+                <button type="button" class="advanced-toggle" id="advanced-toggle" aria-expanded="false" aria-controls="advanced-body" onclick="Jobs.toggleAdvanced()">&#9656; Advanced (agent options)</button>
                 <div class="advanced-body" id="advanced-body">
                     <div class="form-row">
                         <div class="form-group">
@@ -1101,8 +1184,8 @@
             </div>
         </div><!-- /.job-modal-body -->
             <div class="modal-actions">
-                <button type="button" class="modal-cancel-btn" onclick="Cron.closeModal()">Cancel</button>
-                <button type="button" class="modal-secondary-btn" id="modal-save-run-btn" onclick="Cron.saveAndRun()">Save &amp; run now</button>
+                <button type="button" class="modal-cancel-btn" onclick="Jobs.closeModal()">Cancel</button>
+                <button type="button" class="modal-secondary-btn" id="modal-save-run-btn" onclick="Jobs.saveAndRun()">Save &amp; run now</button>
                 <button type="submit" class="modal-submit-btn" id="modal-submit-btn">Create Job</button>
             </div>
         </form>
@@ -1125,18 +1208,18 @@ function escapeHtml(s) {
 }
 
 // ── Tab switching ──
-function switchCronTab(tab) {
+function switchJobsTab(tab) {
     document.querySelectorAll('#job-tabs .tab').forEach(t => t.classList.remove('active'));
     document.querySelector(`#job-tabs .tab[data-tab="${tab}"]`).classList.add('active');
     document.querySelectorAll('.job-tab-content').forEach(c => c.style.display = 'none');
     document.getElementById('job-tab-' + tab).style.display = '';
-    if (tab === 'logs') Cron.loadAllLogs();
-    if (tab === 'performance') Cron.loadPerformance();
+    if (tab === 'logs') Jobs.loadAllLogs();
+    if (tab === 'performance') Jobs.loadPerformance();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('#job-tabs .tab').forEach(t => {
-        t.addEventListener('click', () => switchCronTab(t.dataset.tab));
+        t.addEventListener('click', () => switchJobsTab(t.dataset.tab));
     });
 
     // Performance time-range buttons (re-fetch + re-render on change)
@@ -1144,12 +1227,12 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('#job-perf-range button').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            Cron.setPerfRange(parseInt(btn.dataset.range));
+            Jobs.setPerfRange(parseInt(btn.dataset.range));
         });
     });
 });
 
-const Cron = {
+const Jobs = {
     _editingJobId: null,
     _validateTimer: null,
     _returnFocus: null,
@@ -1170,27 +1253,55 @@ const Cron = {
             return;
         }
 
-        let html = '<table class="log-table"><thead><tr><th>Time</th><th>Job</th><th>Status</th><th>Duration</th><th>Cost</th><th></th></tr></thead><tbody>';
+        let html = '<table class="log-table"><thead><tr><th>Time</th><th>Job</th><th>Status</th><th>Trigger</th><th>Duration</th><th>Cost</th><th></th></tr></thead><tbody>';
         entries.forEach((e, i) => {
             const isError = e.exit_code != null && e.exit_code !== 0;
             const ts = e.timestamp || '';
             const time = ts ? formatDateTime(ts) : '—';
             const duration = e.duration_seconds != null ? formatDuration(e.duration_seconds) : '—';
             const cost = e.cost_usd != null ? '$' + e.cost_usd.toFixed(4) : '—';
+            const trigger = e.trigger ? escapeHtml(e.trigger) : '—';
             const status = isError
                 ? '<span class="feed-badge badge-error">Error</span>'
                 : '<span class="feed-badge badge-success">OK</span>';
             const sessionLink = e.session_file
                 ? `<a class="session-link" href="/session/${encodeURIComponent(e.session_file)}?back=jobs" onclick="event.stopPropagation()">View session</a>`
                 : '';
-            html += `<tr class="clickable ${isError ? 'error' : ''}" onclick="Cron.toggleLogRow(${i}, '${e.job_id || ''}', '${ts}')" title="${utcString(ts)}">
+            html += `<tr class="clickable ${isError ? 'error' : ''}" onclick="Jobs.toggleLogRow(${i}, '${e.job_id || ''}', '${ts}')" title="${utcString(ts)}">
                 <td>${time}</td>
                 <td class="duration">${(e.job_id || '—')}</td>
                 <td>${status}</td>
+                <td class="duration">${trigger}</td>
                 <td class="duration">${duration}</td>
                 <td class="duration">${cost}</td>
                 <td>${sessionLink}</td>
-            </tr><tr class="row-detail" id="job-logdetail-${i}"><td colspan="6"><pre></pre></td></tr>`;
+            </tr><tr class="row-detail" id="job-logdetail-${i}"><td colspan="7"><pre></pre></td></tr>`;
+        });
+        container.innerHTML = html + '</tbody></table>';
+        this._loadWebhookActivity(filter);
+    },
+
+    // Webhook fires AND rejected attempts (a public endpoint's failed-secret
+    // hits are a security signal, so they are shown, not hidden).
+    async _loadWebhookActivity(filterJobId) {
+        const container = document.getElementById('job-webhook-activity');
+        if (!container) return;
+        let url = '/api/job/webhook-events?limit=50';
+        if (filterJobId) url += '&job_id=' + encodeURIComponent(filterJobId);
+        const events = await API.get(url);
+        if (!events || events.length === 0) { container.innerHTML = ''; return; }
+        let html = '<div class="webhook-activity-title">Webhook activity</div>';
+        html += '<table class="log-table"><thead><tr><th>Time</th><th>Job</th><th>Outcome</th><th>From</th></tr></thead><tbody>';
+        events.forEach(e => {
+            const ok = e.outcome === 'launched';
+            const soft = e.outcome === 'coalesced';
+            const badge = ok ? 'badge-success' : (soft ? 'badge-coalesced' : 'badge-error');
+            html += `<tr title="${utcString(e.timestamp)}">
+                <td>${formatDateTime(e.timestamp)}</td>
+                <td class="duration">${escapeHtml(e.target || '—')}</td>
+                <td><span class="feed-badge ${badge}">${escapeHtml(e.outcome || '?')}</span></td>
+                <td class="duration">${escapeHtml(e.ip || '—')}</td>
+            </tr>`;
         });
         container.innerHTML = html + '</tbody></table>';
     },
@@ -1223,7 +1334,7 @@ const Cron = {
         // Switch to Logs tab and filter by job
         const select = document.getElementById('job-log-filter');
         if (select) select.value = jobId;
-        switchCronTab('logs');
+        switchJobsTab('logs');
     },
 
     // ── Performance tab ──
@@ -1288,7 +1399,7 @@ const Cron = {
     // ── Modal ──
     openCreateModal() {
         this._editingJobId = null;
-        document.getElementById('modal-title').textContent = 'New Cron Job';
+        document.getElementById('modal-title').textContent = 'New Job';
         document.getElementById('modal-submit-btn').textContent = 'Create Job';
         document.getElementById('field-id').value = '';
         document.getElementById('field-id').disabled = false;
@@ -1313,6 +1424,9 @@ const Cron = {
         const channelOverride = document.getElementById('field-discord-channel');
         if (channelOverride) channelOverride.value = '';
         this.onNotifyChange();
+        this._setWebhookState(null);
+        document.getElementById('field-webhook-enabled').checked = false;
+        this.onWebhookToggle();
         this._openOverlay('field-id');
     },
 
@@ -1359,6 +1473,12 @@ const Cron = {
             channelOverride.value = specific && specific !== 'default' ? specific : '';
         }
         this.onNotifyChange();
+        this._setWebhookState(
+            job.webhook ? { secret: job.webhook.secret, url: job.webhook_url || '' } : null
+        );
+        document.getElementById('field-webhook-enabled').checked = !!job.webhook;
+        this.onWebhookToggle();
+        if (job.webhook) this._loadWebhookLastFired(jobId);
         this._openOverlay('field-description');
     },
 
@@ -1442,10 +1562,6 @@ const Cron = {
         const prompt = document.getElementById('field-prompt').value.trim();
         const command = document.getElementById('field-command').value.trim();
 
-        if (!schedule) {
-            this.toast('A schedule is required', 'error');
-            return null;
-        }
         if (type === 'command' ? !command : !prompt) {
             this.toast(type === 'command' ? 'A command is required' : 'A prompt is required', 'error');
             return null;
@@ -1509,6 +1625,8 @@ const Cron = {
 
         if (resp.ok) {
             const wasEditing = !!this._editingJobId;
+            // Reconcile the webhook trigger with the checkbox (create/remove).
+            try { await this._syncWebhook(savedId); } catch (e) { /* job saved; hook sync is best-effort */ }
             if (opts.silent) return savedId;
             this.closeModal();
             this.toast(wasEditing ? 'Job updated' : 'Job created', 'success');
@@ -1551,6 +1669,101 @@ const Cron = {
         // to this job's logs via the hash handler on load.
         location.href = '/jobs#logs=' + encodeURIComponent(savedId);
         location.reload();
+    },
+
+    // ── Webhook trigger ──
+    _webhook: null, // {secret, url} when the saved job has one
+
+    _setWebhookState(hook) {
+        this._webhook = hook;
+        const url = document.getElementById('field-webhook-url');
+        const secret = document.getElementById('field-webhook-secret');
+        if (url) url.value = hook ? (hook.url || '') : '';
+        if (secret) { secret.value = hook ? hook.secret : ''; secret.type = 'password'; }
+        const reveal = document.getElementById('webhook-reveal-btn');
+        if (reveal) reveal.textContent = 'Show';
+        const lastFired = document.getElementById('webhook-last-fired');
+        if (lastFired) lastFired.textContent = '';
+    },
+
+    onWebhookToggle() {
+        const on = document.getElementById('field-webhook-enabled').checked;
+        document.getElementById('webhook-details').style.display = (on && this._webhook) ? 'block' : 'none';
+        document.getElementById('webhook-pending-note').style.display = (on && !this._webhook) ? 'block' : 'none';
+    },
+
+    // Align the saved job's webhook trigger with the checkbox after save.
+    async _syncWebhook(jobId) {
+        const want = document.getElementById('field-webhook-enabled').checked;
+        const have = !!this._webhook;
+        if (want === have) return;
+        const resp = await fetch(`/api/job/jobs/${encodeURIComponent(jobId)}/webhook`, {
+            method: want ? 'POST' : 'DELETE',
+        });
+        if (!resp.ok && resp.status !== 204) this.toast('Webhook change failed', 'error');
+    },
+
+    toggleSecretReveal() {
+        const secret = document.getElementById('field-webhook-secret');
+        const btn = document.getElementById('webhook-reveal-btn');
+        const hidden = secret.type === 'password';
+        secret.type = hidden ? 'text' : 'password';
+        btn.textContent = hidden ? 'Hide' : 'Show';
+    },
+
+    async copyWebhookField(fieldId, label) {
+        const el = document.getElementById(fieldId);
+        if (!el || !el.value) return;
+        try {
+            await navigator.clipboard.writeText(el.value);
+            this.toast(label + ' copied', 'success');
+        } catch (e) {
+            this.toast('Copy failed', 'error');
+        }
+    },
+
+    async rotateWebhookSecret() {
+        if (!this._editingJobId) return;
+        if (!confirm('Rotate the webhook secret? The current secret stops working immediately.')) return;
+        const resp = await fetch(`/api/job/jobs/${encodeURIComponent(this._editingJobId)}/webhook/rotate`, { method: 'POST' });
+        if (!resp.ok) { this.toast('Failed to rotate secret', 'error'); return; }
+        const data = await resp.json();
+        this._setWebhookState({ secret: data.webhook.secret, url: data.webhook_url });
+        this.onWebhookToggle();
+        this.toast('Secret rotated', 'success');
+    },
+
+    // Fire the real public endpoint with the real secret: exercises the
+    // whole path (front desk, secret check, single-flight) and runs the job.
+    async sendWebhookTest() {
+        if (!this._editingJobId || !this._webhook) return;
+        let resp;
+        try {
+            resp = await fetch(`/webhooks/job/${encodeURIComponent(this._editingJobId)}`, {
+                method: 'POST',
+                headers: { 'X-Merlin-Webhook-Secret': this._webhook.secret },
+            });
+        } catch (e) { this.toast('Test failed: network error', 'error'); return; }
+        if (resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            this.toast(data.status === 'coalesced'
+                ? 'Test accepted: a run is already active (coalesced)'
+                : 'Test fired: run launched', 'success');
+            this._loadWebhookLastFired(this._editingJobId);
+        } else {
+            this.toast('Test failed: HTTP ' + resp.status, 'error');
+        }
+    },
+
+    async _loadWebhookLastFired(jobId) {
+        const el = document.getElementById('webhook-last-fired');
+        if (!el) return;
+        const events = await API.get(`/api/job/webhook-events?job_id=${encodeURIComponent(jobId)}&limit=1`);
+        if (!events || !events.length) { el.textContent = 'Never fired.'; return; }
+        const e = events[0];
+        const fired = (e.outcome === 'launched' || e.outcome === 'coalesced');
+        const label = fired ? 'Last fired' : 'Last rejected attempt';
+        el.textContent = `${label}: ${timeAgo(e.timestamp)} · ${e.outcome}` + (e.ip ? ` · from ${e.ip}` : '');
     },
 
     // ── Actions ──
@@ -1640,7 +1853,7 @@ const Cron = {
             const cost = entry.cost_usd != null ? formatCost(entry.cost_usd) : '—';
             const icon = isError ? '<span style="color:var(--accent-red)">&#10007;</span>' : '<span style="color:var(--accent-green)">&#10003;</span>';
 
-            return `<div class="log-entry" onclick="Cron.loadLogDetail('${jobId}', '${entry.timestamp || ''}')">
+            return `<div class="log-entry" onclick="Jobs.loadLogDetail('${jobId}', '${entry.timestamp || ''}')">
                 <span class="log-time">${ts}</span>
                 <span class="log-duration">${dur}</span>
                 <span class="log-cost">${cost}</span>
@@ -1679,7 +1892,7 @@ const Cron = {
     // writes the generated cron into the hidden #field-schedule. cronToBuilder()
     // round-trips a stored expression back into the builder for edit mode.
 
-    _REPEAT_MODES: ['minutes', 'hourly', 'daily', 'weekly', 'monthly', 'custom'],
+    _REPEAT_MODES: ['minutes', 'hourly', 'daily', 'weekly', 'monthly', 'custom', 'none'],
     _tzPopulated: false,
 
     // ── Timezone ──
@@ -1728,6 +1941,9 @@ const Cron = {
             const el = document.getElementById('builder-' + m);
             if (el) el.style.display = (m === mode) ? 'block' : 'none';
         });
+        // No schedule = no wall-clock time to interpret; hide the timezone.
+        const tzGroup = document.getElementById('timezone-group');
+        if (tzGroup) tzGroup.style.display = (mode === 'none') ? 'none' : '';
     },
 
     onRepeatChange() {
@@ -1773,6 +1989,7 @@ const Cron = {
 
     builderToCron() {
         const mode = document.getElementById('field-repeat').value;
+        if (mode === 'none') return '';
         const intIn = (id, def) => {
             const v = parseInt(document.getElementById(id).value);
             return Number.isFinite(v) ? v : def;
@@ -1812,6 +2029,12 @@ const Cron = {
     },
 
     cronToBuilder(expr) {
+        if (!(expr || '').trim()) {
+            // No stored schedule: webhook- or manual-only job.
+            this.setRepeat('none');
+            this.onBuilderChange();
+            return 'none';
+        }
         const pad = (s) => String(parseInt(s)).padStart(2, '0');
         const parts = (expr || '').trim().split(/\s+/);
         let mode = 'custom';
@@ -1941,7 +2164,7 @@ const Cron = {
 // Close menus on outside click
 document.addEventListener('click', (e) => {
     if (!e.target.closest('.action-menu')) {
-        Cron.closeAllMenus();
+        Jobs.closeAllMenus();
     }
 });
 
@@ -1950,9 +2173,9 @@ document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     const overlay = document.getElementById('job-modal-overlay');
     if (overlay && overlay.classList.contains('open')) {
-        Cron.closeModal();
+        Jobs.closeModal();
     } else {
-        Cron.closeAllMenus();
+        Jobs.closeAllMenus();
     }
 });
 
@@ -1970,7 +2193,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Deep-link from "Save & run now": #logs=<jobId> opens that job's logs.
     if (location.hash.startsWith('#logs=')) {
         const jobId = decodeURIComponent(location.hash.slice('#logs='.length));
-        if (jobId) Cron.showJobLogs(jobId);
+        if (jobId) Jobs.showJobLogs(jobId);
     }
 });
 </script>

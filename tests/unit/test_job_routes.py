@@ -97,9 +97,9 @@ def test_job_modal_has_schedule_builder(client):
 
 
 def test_weekday_chips_are_clickable(client):
-    """Each individual weekday chip toggles via Cron.toggleWeekday."""
+    """Each individual weekday chip toggles via Jobs.toggleWeekday."""
     html = client.get("/jobs").text
-    assert html.count('onclick="Cron.toggleWeekday(this)"') == 7
+    assert html.count('onclick="Jobs.toggleWeekday(this)"') == 7
     assert "toggleWeekday(chip)" in html
 
 
@@ -202,3 +202,100 @@ def test_job_modal_working_dir_placeholder(client):
     html = client.get("/jobs").text
     expected = os.environ.get("MERLIN_LAUNCH_CWD") or os.path.expanduser("~")
     assert f'placeholder="{expected}"' in html
+
+
+# ---------------------------------------------------------------------------
+# Webhook UI markup + webhook-events endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_job_modal_has_webhook_block(client):
+    """The modal exposes the webhook trigger block."""
+    html = client.get("/jobs").text
+    for field_id in (
+        "field-webhook-enabled",
+        "webhook-details",
+        "field-webhook-url",
+        "field-webhook-secret",
+        "webhook-reveal-btn",
+    ):
+        assert field_id in html
+    assert "Rotate secret" in html
+    assert "Send test" in html
+
+
+def test_job_modal_has_no_schedule_option(client):
+    html = client.get("/jobs").text
+    assert 'value="none"' in html
+    assert "No schedule (webhook or manual only)" in html
+
+
+def test_logs_tab_has_trigger_column_and_activity(client):
+    html = client.get("/jobs").text
+    assert "job-webhook-activity" in html
+    assert "_loadWebhookActivity" in html
+
+
+def test_webhook_events_endpoint_filters_job_source(client, tmp_path, monkeypatch):
+    """/api/job/webhook-events returns job-source events newest first,
+    including rejected attempts, filterable by job id."""
+    import json as json_mod
+
+    from lib import event_log
+
+    lines = [
+        {
+            "type": "webhook_request",
+            "timestamp": "2026-07-10T10:00:00+00:00",
+            "source": "job",
+            "target": "triage",
+            "ip": "1.2.3.4",
+            "outcome": "launched",
+            "run_id": "r1",
+        },
+        {
+            "type": "webhook_request",
+            "timestamp": "2026-07-10T11:00:00+00:00",
+            "source": "job",
+            "target": "triage",
+            "ip": "6.6.6.6",
+            "outcome": "rejected_secret",
+        },
+        {
+            "type": "webhook_request",
+            "timestamp": "2026-07-10T12:00:00+00:00",
+            "source": "other",
+            "target": "triage",
+            "ip": "1.2.3.4",
+            "outcome": "launched",
+        },
+        {
+            "type": "webhook_request",
+            "timestamp": "2026-07-10T13:00:00+00:00",
+            "source": "job",
+            "target": "another",
+            "ip": "1.2.3.4",
+            "outcome": "coalesced",
+        },
+    ]
+    path = tmp_path / "engine-log.jsonl"
+    path.write_text("".join(json_mod.dumps(e) + "\n" for e in lines))
+    monkeypatch.setattr(event_log, "ENGINE_LOG_PATH", path)
+
+    resp = client.get("/api/job/webhook-events")
+    assert resp.status_code == 200
+    events = resp.json()
+    # Only source=job, newest first
+    assert [e["outcome"] for e in events] == [
+        "coalesced",
+        "rejected_secret",
+        "launched",
+    ]
+
+    resp = client.get("/api/job/webhook-events?job_id=triage")
+    events = resp.json()
+    assert len(events) == 2
+    assert all(e["target"] == "triage" for e in events)
+
+    resp = client.get("/api/job/webhook-events?job_id=triage&limit=1")
+    assert len(resp.json()) == 1

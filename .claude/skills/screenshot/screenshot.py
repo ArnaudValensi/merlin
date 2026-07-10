@@ -45,6 +45,7 @@ PAGES = [
     "/files",
     "/commits",
     "/terminal",
+    "/jobs",
     "/notes",
     "/overview",
     "/performance",
@@ -153,16 +154,15 @@ Examples:
         {args.viewport: VIEWPORTS[args.viewport]} if args.viewport else VIEWPORTS
     )
 
-    base_url = args.url.rstrip("/")
+    # The login form lives at the site root regardless of which page was
+    # requested, so base_url must never keep the page path.
+    parsed = urlparse(args.url.rstrip("/"))
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
 
     # Build list of URLs to capture
     if args.all:
-        # Strip path from base URL for --all mode
-        parsed = urlparse(base_url)
-        base = f"{parsed.scheme}://{parsed.netloc}"
-        urls = [(f"{base}{page}", page.strip("/")) for page in PAGES]
+        urls = [(f"{base_url}{page}", page.strip("/")) for page in PAGES]
     else:
-        parsed = urlparse(args.url)
         page_name = parsed.path.strip("/") or "index"
         urls = [(args.url, page_name)]
 
