@@ -299,3 +299,10 @@ def test_webhook_events_endpoint_filters_job_source(client, tmp_path, monkeypatc
 
     resp = client.get("/api/job/webhook-events?job_id=triage&limit=1")
     assert len(resp.json()) == 1
+
+
+def test_job_modal_has_public_url_hint(client):
+    """The reachability hint (shown only for ip-derived URLs) is present."""
+    html = client.get("/jobs").text
+    assert 'id="webhook-url-hint"' in html
+    assert "Set a public URL in Settings" in html

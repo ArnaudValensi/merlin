@@ -49,6 +49,24 @@ class TestCmdUrl:
         assert result["secret"] == "whk_s3cret"
         assert "whk_s3cret" in result["curl"]
 
+    def test_url_ip_fallback_carries_reachability_note(self, monkeypatch):
+        from job import webhook
+
+        _save(webhook={"secret": "whk_s3cret"})
+        monkeypatch.delenv("MERLIN_DASHBOARD_URL", raising=False)
+        monkeypatch.delenv("MERLIN_ENVIRONMENT_SLUG", raising=False)
+        monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
+        monkeypatch.setattr(webhook, "_local_ip", lambda: "192.168.1.50")
+        result = job_manage.cmd_url(_ns(job_id="hook-job"))
+        assert result["ok"] is True
+        assert "may not be reachable" in result["note"]
+
+    def test_url_override_has_no_note(self, monkeypatch):
+        _save(webhook={"secret": "whk_s3cret"})
+        monkeypatch.setenv("MERLIN_DASHBOARD_URL", "https://me.example.com")
+        result = job_manage.cmd_url(_ns(job_id="hook-job"))
+        assert "note" not in result
+
     def test_url_without_webhook_errors_with_hint(self):
         _save()
         result = job_manage.cmd_url(_ns(job_id="hook-job"))

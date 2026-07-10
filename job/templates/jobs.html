@@ -1123,6 +1123,7 @@
                         <input class="form-input" id="field-webhook-url" readonly>
                         <button type="button" class="btn btn-sm" onclick="Jobs.copyWebhookField('field-webhook-url', 'URL')">Copy</button>
                     </div>
+                    <div class="form-help" id="webhook-url-hint" style="display:none">Detected local address. It may not be reachable from the internet. <a href="/settings">Set a public URL in Settings</a>.</div>
                     <label class="form-label" for="field-webhook-secret">Secret</label>
                     <div class="webhook-row">
                         <input class="form-input" id="field-webhook-secret" type="password" readonly>
@@ -1486,7 +1487,9 @@ const Jobs = {
         }
         this.onNotifyChange();
         this._setWebhookState(
-            job.webhook ? { secret: job.webhook.secret, url: job.webhook_url || '' } : null
+            job.webhook
+                ? { secret: job.webhook.secret, url: job.webhook_url || '', source: job.webhook_url_source }
+                : null
         );
         document.getElementById('field-webhook-enabled').checked = !!job.webhook;
         this.onWebhookToggle();
@@ -1696,6 +1699,10 @@ const Jobs = {
         const secret = document.getElementById('field-webhook-secret');
         if (url) url.value = hook ? (hook.url || '') : '';
         if (secret) { secret.value = hook ? hook.secret : ''; secret.type = 'password'; }
+        // Only a detected local address warrants the reachability hint;
+        // SaaS-resolved and operator-set URLs are presumed reachable.
+        const hint = document.getElementById('webhook-url-hint');
+        if (hint) hint.style.display = (hook && hook.source === 'ip') ? 'block' : 'none';
         const reveal = document.getElementById('webhook-reveal-btn');
         if (reveal) reveal.textContent = 'Show';
         const lastFired = document.getElementById('webhook-last-fired');
@@ -1744,7 +1751,11 @@ const Jobs = {
         const resp = await fetch(`/api/job/jobs/${encodeURIComponent(this._editingJobId)}/webhook/rotate`, { method: 'POST' });
         if (!resp.ok) { this.toast('Failed to rotate secret', 'error'); return; }
         const data = await resp.json();
-        this._setWebhookState({ secret: data.webhook.secret, url: data.webhook_url });
+        this._setWebhookState({
+            secret: data.webhook.secret,
+            url: data.webhook_url,
+            source: this._webhook && this._webhook.source,
+        });
         this.onWebhookToggle();
         this.toast('Secret rotated', 'success');
     },

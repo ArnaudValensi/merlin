@@ -400,7 +400,7 @@ def cmd_trigger(args) -> dict:
 
 def cmd_url(args) -> dict:
     """Print a job's public webhook URL and secret."""
-    from job.webhook import public_url
+    from job.webhook import resolve_public_base
 
     job = load_job(args.job_id)
     if job is None:
@@ -416,8 +416,9 @@ def cmd_url(args) -> dict:
             ),
         }
 
-    url = public_url(args.job_id)
-    return {
+    base, source = resolve_public_base()
+    url = f"{base}/webhooks/job/{args.job_id}"
+    result = {
         "ok": True,
         "job_id": args.job_id,
         "url": url,
@@ -425,6 +426,14 @@ def cmd_url(args) -> dict:
         "header": "X-Merlin-Webhook-Secret",
         "curl": f"curl -X POST -H 'X-Merlin-Webhook-Secret: {secret}' {url}",
     }
+    if source == "ip":
+        result["note"] = (
+            "This is a detected local address and may not be reachable from "
+            "the internet. Set a public URL in Settings (or "
+            "MERLIN_DASHBOARD_URL in config.env) if you front Merlin with "
+            "your own tunnel or proxy."
+        )
+    return result
 
 
 def cmd_webhook(args) -> dict:

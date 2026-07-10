@@ -70,9 +70,12 @@ def _enrich_job(job: dict) -> dict:
     else:
         job["next_run"] = None
 
-    # The URL an external sender calls, shown on the job detail/editor
+    # The URL an external sender calls, shown on the job detail/editor.
+    # The source lets the editor hint when only a local address is known.
     if (job.get("webhook") or {}).get("secret"):
-        job["webhook_url"] = webhook.public_url(job_id)
+        base, source = webhook.resolve_public_base()
+        job["webhook_url"] = f"{base}/webhooks/job/{job_id}"
+        job["webhook_url_source"] = source
 
     return job
 

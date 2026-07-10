@@ -305,6 +305,7 @@ class TestWhoamiResolution:
             == "https://wizard.merlincloud.dev/webhooks/job/my-job"
         )
         assert calls == ["https://merlincloud.dev/api/instance/whoami"]
+        assert webhook.resolve_public_base()[1] == "saas"
 
     def test_memo_makes_one_call_per_ttl_window(self, monkeypatch):
         monkeypatch.delenv("MERLIN_DASHBOARD_URL", raising=False)
@@ -387,6 +388,10 @@ class TestPublicUrl:
             webhook.public_url("my-job")
             == "https://merlin.merlincloud.dev/webhooks/job/my-job"
         )
+        assert webhook.resolve_public_base() == (
+            "https://merlin.merlincloud.dev",
+            "override",
+        )
 
     def test_dashboard_url_schemeless_normalized(self, monkeypatch):
         monkeypatch.setenv("MERLIN_DASHBOARD_URL", "example.com:8443")
@@ -394,19 +399,23 @@ class TestPublicUrl:
 
     def test_slug_builds_saas_subdomain(self, monkeypatch):
         monkeypatch.delenv("MERLIN_DASHBOARD_URL", raising=False)
+        monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
         monkeypatch.setenv("MERLIN_ENVIRONMENT_SLUG", "wizard")
         monkeypatch.delenv("MERLIN_SAAS_API", raising=False)
         assert (
             webhook.public_url("my-job")
             == "https://wizard.merlincloud.dev/webhooks/job/my-job"
         )
+        assert webhook.resolve_public_base()[1] == "slug"
 
     def test_ip_fallback_uses_port(self, monkeypatch):
         monkeypatch.delenv("MERLIN_DASHBOARD_URL", raising=False)
         monkeypatch.delenv("MERLIN_ENVIRONMENT_SLUG", raising=False)
+        monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
         monkeypatch.setenv("MERLIN_PORT", "3199")
         monkeypatch.setattr(webhook, "_local_ip", lambda: "192.168.1.50")
         assert webhook.public_url("j") == "http://192.168.1.50:3199/webhooks/job/j"
+        assert webhook.resolve_public_base()[1] == "ip"
 
 
 class TestWebhookManagementApi:
@@ -453,7 +462,18 @@ class TestWebhookManagementApi:
         _write_job(_isolated_job_dirs)
         resp = client.get("/api/job/jobs/hook-job")
         assert resp.status_code == 200
-        assert resp.json()["webhook_url"].endswith("/webhooks/job/hook-job")
+        data = resp.json()
+        assert data["webhook_url"].endswith("/webhooks/job/hook-job")
+        assert data["webhook_url_source"] in ("override", "saas", "slug", "ip")
+
+    def test_get_job_source_reflects_override(
+        self, client, _isolated_job_dirs, monkeypatch
+    ):
+        monkeypatch.setenv("MERLIN_DASHBOARD_URL", "https://me.example.com")
+        _write_job(_isolated_job_dirs)
+        data = client.get("/api/job/jobs/hook-job").json()
+        assert data["webhook_url_source"] == "override"
+        assert data["webhook_url"] == "https://me.example.com/webhooks/job/hook-job"
 
     def test_get_job_without_webhook_has_no_url(self, client, _isolated_job_dirs):
         _write_job(_isolated_job_dirs, webhook=None)

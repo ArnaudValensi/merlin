@@ -87,3 +87,80 @@ class TestSettingsAPI:
         client.post("/api/settings", json={"UNKNOWN_KEY": "value"})
         content = (tmp_path / "config.env").read_text()
         assert "UNKNOWN_KEY" not in content
+
+
+class TestPublicUrlSetting:
+    @pytest.fixture(autouse=True)
+    def _clean_public_url_env(self):
+        """The save handler mutates the real process env; keep tests isolated."""
+        import os
+
+        os.environ.pop("MERLIN_DASHBOARD_URL", None)
+        yield
+        os.environ.pop("MERLIN_DASHBOARD_URL", None)
+
+    def test_get_settings_includes_public_url_state(
+        self, client, tmp_path, monkeypatch
+    ):
+        # The module global is read at import; the dev shell may carry a token.
+        monkeypatch.setattr(app_mod, "MERLIN_SAAS_TOKEN", "")
+        (tmp_path / "config.env").write_text("")
+        data = client.get("/api/settings").json()
+        assert data["public_url"] == ""
+        assert data["public_url_source"] in ("override", "saas", "slug", "ip")
+        assert data["effective_public_url"].startswith("http")
+        assert data["saas_mode"] is False
+
+    def test_get_settings_reports_saas_mode(self, client, tmp_path, monkeypatch):
+        monkeypatch.setattr(app_mod, "MERLIN_SAAS_TOKEN", "mrl_x")
+        (tmp_path / "config.env").write_text("")
+        assert client.get("/api/settings").json()["saas_mode"] is True
+
+    def test_save_public_url_writes_config_and_env(self, client, tmp_path):
+        import os
+
+        (tmp_path / "config.env").write_text("")
+        resp = client.post(
+            "/api/settings", json={"MERLIN_DASHBOARD_URL": "https://me.example.com"}
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["public_url"] == "https://me.example.com"
+        assert data["effective_public_url"] == "https://me.example.com"
+        assert data["public_url_source"] == "override"
+        content = (tmp_path / "config.env").read_text()
+        assert "MERLIN_DASHBOARD_URL=https://me.example.com" in content
+        # Live effect: the running process resolves the new value immediately
+        # (config.env is loaded with setdefault semantics).
+        assert os.environ["MERLIN_DASHBOARD_URL"] == "https://me.example.com"
+
+    def test_save_public_url_normalizes_schemeless_and_slash(self, client, tmp_path):
+        (tmp_path / "config.env").write_text("")
+        resp = client.post(
+            "/api/settings", json={"MERLIN_DASHBOARD_URL": "me.example.com:8443/"}
+        )
+        assert resp.json()["public_url"] == "http://me.example.com:8443"
+
+    def test_clear_public_url_removes_config_and_env(self, client, tmp_path):
+        import os
+
+        (tmp_path / "config.env").write_text(
+            "MERLIN_DASHBOARD_URL=https://old.example.com\nOTHER=keep\n"
+        )
+        os.environ["MERLIN_DASHBOARD_URL"] = "https://old.example.com"
+        resp = client.post("/api/settings", json={"MERLIN_DASHBOARD_URL": ""})
+        assert resp.status_code == 200
+        content = (tmp_path / "config.env").read_text()
+        assert "MERLIN_DASHBOARD_URL" not in content
+        assert "OTHER=keep" in content
+        assert "MERLIN_DASHBOARD_URL" not in os.environ
+
+    def test_invalid_public_url_rejected(self, client, tmp_path):
+        (tmp_path / "config.env").write_text("")
+        resp = client.post("/api/settings", json={"MERLIN_DASHBOARD_URL": "http://"})
+        assert resp.status_code == 422
+
+    def test_settings_page_has_public_url_section(self, client):
+        html = client.get("/settings").text
+        assert "public-url-input" in html
+        assert "Public URL" in html

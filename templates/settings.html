@@ -47,6 +47,34 @@
 </div>
 
 <div class="settings-section">
+    <div class="settings-section-title">Public URL</div>
+    <div class="settings-card">
+        <div class="settings-field">
+            {% if saas_mode %}
+            <label class="settings-checkbox">
+                <input type="checkbox" id="public-url-override" onchange="Settings.onPublicUrlToggle()">
+                <span>Override public URL</span>
+            </label>
+            {% endif %}
+            <label class="settings-label" for="public-url-input">Base URL</label>
+            <div class="settings-input-row">
+                <input class="settings-input" id="public-url-input" name="MERLIN_DASHBOARD_URL"
+                    type="text" placeholder="https://merlin.example.com" autocomplete="off"
+                    {% if saas_mode %}disabled{% endif %}>
+            </div>
+            <div class="settings-help" id="public-url-effective" aria-live="polite"></div>
+            {% if saas_mode %}
+            <div class="settings-help">Your instance address is provided by Merlin Cloud. Override it only if you also front this box with your own tunnel or reverse proxy. Webhooks work on any front; logging into the dashboard on your own domain needs a dashboard password.</div>
+            {% else %}
+            <div class="settings-help">Where this box is reachable from outside. Used for webhook URLs and <code>merlin dashboard-url</code>. Leave empty to use the detected local address.</div>
+            {% endif %}
+        </div>
+        <button class="settings-save" id="public-url-save" onclick="Settings.savePublicUrl()">Save</button>
+        <span class="settings-toast" id="toast-public-url"></span>
+    </div>
+</div>
+
+<div class="settings-section">
     <div class="settings-section-title">Voice Transcription</div>
     <div class="settings-card">
         {% if saas_mode %}

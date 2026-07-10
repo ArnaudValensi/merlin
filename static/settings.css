@@ -264,3 +264,16 @@
         padding: 10px;
     }
 }
+
+.settings-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+    margin-bottom: 4px;
+}
+.settings-checkbox input { accent-color: var(--accent-blue); }
+.settings-input:disabled { opacity: 0.5; cursor: not-allowed; }

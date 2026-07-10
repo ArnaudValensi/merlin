@@ -15,7 +15,8 @@ const Settings = {
                 body: JSON.stringify(body),
             });
             if (!resp.ok) {
-                alert('Save failed');
+                const data = await resp.json().catch(() => ({}));
+                alert('Save failed' + (data.detail ? ': ' + data.detail : ''));
                 return;
             }
             const data = await resp.json();
@@ -39,6 +40,52 @@ const Settings = {
     saveOpenAIKey() {
         const val = document.getElementById('openai-input').value;
         this._save({ OPENAI_API_KEY: val }, 'toast-openai');
+    },
+
+    // ── Public URL ──
+    async savePublicUrl() {
+        const val = document.getElementById('public-url-input').value.trim();
+        await this._save({ MERLIN_DASHBOARD_URL: val }, 'toast-public-url');
+        this.loadPublicUrl();
+    },
+
+    // In SaaS mode the field sits behind an override checkbox: unchecking
+    // clears the setting immediately (back to the Merlin Cloud address).
+    async onPublicUrlToggle() {
+        const on = document.getElementById('public-url-override').checked;
+        const input = document.getElementById('public-url-input');
+        input.disabled = !on;
+        if (on) {
+            input.focus();
+        } else if (input.value.trim()) {
+            input.value = '';
+            await this._save({ MERLIN_DASHBOARD_URL: '' }, 'toast-public-url');
+            this.loadPublicUrl();
+        }
+    },
+
+    async loadPublicUrl() {
+        const input = document.getElementById('public-url-input');
+        if (!input) return;
+        const data = await API.get('/api/settings');
+        if (!data) return;
+        input.value = data.public_url || '';
+        const checkbox = document.getElementById('public-url-override');
+        if (checkbox) {
+            checkbox.checked = !!data.public_url;
+            input.disabled = !data.public_url;
+        }
+        const eff = document.getElementById('public-url-effective');
+        if (eff) {
+            const labels = {
+                override: 'custom override',
+                saas: 'via Merlin Cloud',
+                slug: 'via Merlin Cloud',
+                ip: 'detected local address',
+            };
+            const label = labels[data.public_url_source] || data.public_url_source;
+            eff.textContent = 'Effective: ' + data.effective_public_url + ' (' + label + ')';
+        }
     },
 
 
@@ -135,3 +182,7 @@ const Settings = {
         if (latestEl) latestEl.textContent = '(up to date)';
     }
 })();
+
+document.addEventListener('DOMContentLoaded', () => {
+    Settings.loadPublicUrl();
+});

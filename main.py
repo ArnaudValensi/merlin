@@ -30,7 +30,7 @@ from typing import Any
 from urllib.parse import quote
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Form, Request
+from fastapi import Depends, FastAPI, Form, Request, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -603,13 +603,39 @@ def api_get_settings(_auth=Depends(require_auth)):
     except ValueError:
         engine_valid = False
 
+    public_base, public_source = job_webhook.resolve_public_base()
+
     return {
         "password_set": bool(cfg.get("DASHBOARD_PASS")),
         "openai_key_set": bool(cfg.get("OPENAI_API_KEY")),
         "agent_engine": engine_name,
         "agent_engine_valid": engine_valid,
         "available_engines": sorted(_registry.keys()),
+        "saas_mode": bool(MERLIN_SAAS_TOKEN),
+        "public_url": cfg.get("MERLIN_DASHBOARD_URL", ""),
+        "effective_public_url": public_base,
+        "public_url_source": public_source,
     }
+
+
+def _normalize_public_url(value: str) -> str:
+    """Normalize an operator-entered public base URL.
+
+    Scheme-less input (a bare host or host:port) gets http://, matching how
+    dashboard-url reads the value; a trailing slash is stripped. Raises 422
+    on input that normalizes to no host at all.
+    """
+    from urllib.parse import urlsplit
+
+    value = value.strip()
+    if not value:
+        return ""
+    if "://" not in value:
+        value = f"http://{value}"
+    value = value.rstrip("/")
+    if not urlsplit(value).netloc:
+        raise HTTPException(status_code=422, detail="Invalid public URL")
+    return value
 
 
 @app.post("/api/settings")
@@ -620,8 +646,15 @@ async def api_save_settings(request: Request, _auth=Depends(require_auth)):
 
     password_changed = False
     for key, value in body.items():
-        if key not in ("DASHBOARD_PASS", "OPENAI_API_KEY", "AGENT_ENGINE"):
+        if key not in (
+            "DASHBOARD_PASS",
+            "OPENAI_API_KEY",
+            "AGENT_ENGINE",
+            "MERLIN_DASHBOARD_URL",
+        ):
             continue
+        if key == "MERLIN_DASHBOARD_URL":
+            value = _normalize_public_url(value or "")
         if value:
             if key == "DASHBOARD_PASS" and cfg.get(key) != value:
                 password_changed = True
@@ -636,11 +669,25 @@ async def api_save_settings(request: Request, _auth=Depends(require_auth)):
     if password_changed:
         configure_auth(cfg.get("DASHBOARD_PASS", ""))
 
+    # Apply the public URL to the running process: config.env is loaded with
+    # setdefault semantics (existing env wins), so without this the change
+    # would look inert until the next restart.
+    if "MERLIN_DASHBOARD_URL" in body:
+        if cfg.get("MERLIN_DASHBOARD_URL"):
+            os.environ["MERLIN_DASHBOARD_URL"] = cfg["MERLIN_DASHBOARD_URL"]
+        else:
+            os.environ.pop("MERLIN_DASHBOARD_URL", None)
+
+    public_base, public_source = job_webhook.resolve_public_base()
+
     return {
         "ok": True,
         "password_set": bool(cfg.get("DASHBOARD_PASS")),
         "openai_key_set": bool(cfg.get("OPENAI_API_KEY")),
         "restart_required": password_changed,
+        "public_url": cfg.get("MERLIN_DASHBOARD_URL", ""),
+        "effective_public_url": public_base,
+        "public_url_source": public_source,
     }
 
 

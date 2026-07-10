@@ -193,18 +193,20 @@ def _saas_public_host() -> str | None:
     return _whoami_host
 
 
-def public_url(job_id: str) -> str:
-    """The URL an external sender should call to fire this job's webhook.
+def resolve_public_base() -> tuple[str, str]:
+    """The instance's public base URL and how it was derived.
 
-    Resolution order:
-      1. ``MERLIN_DASHBOARD_URL`` — explicit operator override (own tunnel or
-         reverse proxy; the one case that cannot be discovered).
-      2. The portal's whoami answer (SaaS mode, BYOI and managed alike) —
-         resolved at read time so a slug rename is picked up automatically.
-      3. ``MERLIN_ENVIRONMENT_SLUG`` — managed-container fallback if the
-         portal is unreachable before whoami ever succeeded.
-      4. Detected local IP + server port. May be private behind NAT — making
-         it reachable is the operator's job.
+    Returns ``(base_url, source)`` where source is one of:
+      - ``override`` — ``MERLIN_DASHBOARD_URL``, the explicit operator setting
+        (own tunnel or reverse proxy; the one case that cannot be discovered).
+      - ``saas`` — the portal's whoami answer (SaaS mode, BYOI and managed
+        alike), resolved at read time so a slug rename is picked up
+        automatically.
+      - ``slug`` — ``MERLIN_ENVIRONMENT_SLUG``, the managed-container fallback
+        when the portal is unreachable before whoami ever succeeded.
+      - ``ip`` — detected local IP + server port. May be private behind NAT;
+        making it reachable is the operator's job (the UI and CLI surface a
+        hint on this tier).
     """
     # CLI entry points don't load config.env the way the server does; pull
     # it in here (existing environment values win) so every process derives
@@ -217,20 +219,26 @@ def public_url(job_id: str) -> str:
     if base:
         if "://" not in base:
             base = f"http://{base}"
-        return f"{base.rstrip('/')}/webhooks/job/{job_id}"
+        return base.rstrip("/"), "override"
 
     saas_host = _saas_public_host()
     if saas_host:
-        return f"https://{saas_host}/webhooks/job/{job_id}"
+        return f"https://{saas_host}", "saas"
 
     slug = os.getenv("MERLIN_ENVIRONMENT_SLUG", "").strip()
     if slug:
         api = os.getenv("MERLIN_SAAS_API", "https://merlincloud.dev")
         host = urlparse(api).hostname or "merlincloud.dev"
-        return f"https://{slug}.{host}/webhooks/job/{job_id}"
+        return f"https://{slug}.{host}", "slug"
 
     port = os.getenv("MERLIN_PORT", "3123")
-    return f"http://{_local_ip()}:{port}/webhooks/job/{job_id}"
+    return f"http://{_local_ip()}:{port}", "ip"
+
+
+def public_url(job_id: str) -> str:
+    """The URL an external sender should call to fire this job's webhook."""
+    base, _source = resolve_public_base()
+    return f"{base}/webhooks/job/{job_id}"
 
 
 def _local_ip() -> str:
