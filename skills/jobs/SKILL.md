@@ -60,8 +60,9 @@ merlin job add \
 **Important:** The prompt should describe the task, not how to deliver results. The engine returns text output and the notification system handles delivery. Never include "send to Discord" or similar in prompts.
 
 **Options:**
-- `--schedule` — Cron expression (required)
+- `--schedule` — Cron expression (optional; omit for a webhook- or manual-only job)
 - `--prompt` — Task for the engine to execute (required)
+- `--webhook` — Also enable the webhook trigger (generates a secret)
 
 For all other flags (report mode, max turns, description, explicit id,
 channel routing) run `merlin job add --help`; never restate them from
@@ -98,6 +99,23 @@ This executes the job exactly like the scheduler would — same logging, history
 - Testing a new job
 - Retrying a failed job
 - Running on demand
+
+### Webhook Trigger
+
+A job can be fired by an external HTTP call (secret-gated). Enable, inspect,
+test, and rotate:
+
+```bash
+merlin job webhook <job-id> --enable    # generate secret, turn the trigger on
+merlin job url <job-id>                 # print public URL + secret + ready curl
+merlin job test <job-id>                # fire the hook against the local server
+merlin job webhook <job-id> --rotate    # replace the secret
+merlin job webhook <job-id> --disable   # remove the trigger
+```
+
+One run at a time per job: extra fires while a run is active coalesce into
+it. **Treat the secret as a credential** — only show it when the user asks
+for it.
 
 ### Run History
 

@@ -228,8 +228,9 @@ def format_history_discord(job_id: str, runs: list[dict]) -> str:
 
 def cmd_add(args) -> dict:
     """Add a new job."""
-    # Validate cron expression
-    if not validate_cron(args.schedule):
+    # Validate cron expression when a schedule is given. A job without one
+    # has no schedule trigger (webhook- or manual-only).
+    if args.schedule and not validate_cron(args.schedule):
         return {"ok": False, "error": f"Invalid cron expression: {args.schedule}"}
 
     # Generate or validate job ID
@@ -248,9 +249,8 @@ def cmd_add(args) -> dict:
         return {"ok": False, "error": f"Job '{job_id}' already exists"}
 
     # Build job
-    job = {
+    job: dict = {
         "description": args.description or job_id,
-        "schedule": args.schedule,
         "prompt": args.prompt,
         "discord_channel": args.discord_channel,
         "enabled": True,
@@ -258,6 +258,12 @@ def cmd_add(args) -> dict:
         "max_turns": args.max_turns,
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
     }
+    if args.schedule:
+        job["schedule"] = args.schedule
+    if getattr(args, "webhook", False):
+        from job.webhook import generate_secret
+
+        job["webhook"] = {"secret": generate_secret()}
 
     if args.dry_run:
         return {
@@ -271,12 +277,18 @@ def cmd_add(args) -> dict:
     # Save job
     path = save_job(job_id, job)
 
-    return {
+    result = {
         "ok": True,
         "job_id": job_id,
         "path": str(path),
         "message": f"Created job '{job_id}'",
     }
+    if job.get("webhook"):
+        from job.webhook import public_url
+
+        result["webhook_url"] = public_url(job_id)
+        result["webhook_secret"] = job["webhook"]["secret"]
+    return result
 
 
 def cmd_list(args) -> dict | str:
@@ -386,6 +398,158 @@ def cmd_trigger(args) -> dict:
     return response
 
 
+def cmd_url(args) -> dict:
+    """Print a job's public webhook URL and secret."""
+    from job.webhook import public_url
+
+    job = load_job(args.job_id)
+    if job is None:
+        return {"ok": False, "error": f"Job not found: {args.job_id}"}
+
+    secret = (job.get("webhook") or {}).get("secret")
+    if not secret:
+        return {
+            "ok": False,
+            "error": (
+                f"Job '{args.job_id}' has no webhook trigger. "
+                f"Enable it with: merlin job webhook {args.job_id} --enable"
+            ),
+        }
+
+    url = public_url(args.job_id)
+    return {
+        "ok": True,
+        "job_id": args.job_id,
+        "url": url,
+        "secret": secret,
+        "header": "X-Merlin-Webhook-Secret",
+        "curl": f"curl -X POST -H 'X-Merlin-Webhook-Secret: {secret}' {url}",
+    }
+
+
+def cmd_webhook(args) -> dict:
+    """Manage a job's webhook trigger: show, --enable, --disable, --rotate."""
+    from job.webhook import generate_secret, public_url
+
+    job = load_job(args.job_id)
+    if job is None:
+        return {"ok": False, "error": f"Job not found: {args.job_id}"}
+
+    has_hook = bool((job.get("webhook") or {}).get("secret"))
+
+    if args.enable:
+        if has_hook:
+            return {
+                "ok": True,
+                "message": f"Job '{args.job_id}' already has a webhook trigger",
+                "url": public_url(args.job_id),
+                "secret": job["webhook"]["secret"],
+            }
+        job["webhook"] = {"secret": generate_secret()}
+        save_job(args.job_id, job)
+        return {
+            "ok": True,
+            "message": f"Webhook trigger enabled for '{args.job_id}'",
+            "url": public_url(args.job_id),
+            "secret": job["webhook"]["secret"],
+        }
+
+    if args.disable:
+        if not has_hook:
+            return {
+                "ok": True,
+                "message": f"Job '{args.job_id}' has no webhook trigger",
+            }
+        job.pop("webhook", None)
+        save_job(args.job_id, job)
+        return {
+            "ok": True,
+            "message": f"Webhook trigger removed from '{args.job_id}'",
+        }
+
+    if args.rotate:
+        if not has_hook:
+            return {
+                "ok": False,
+                "error": f"Job '{args.job_id}' has no webhook trigger to rotate",
+            }
+        job["webhook"]["secret"] = generate_secret()
+        save_job(args.job_id, job)
+        return {
+            "ok": True,
+            "message": f"Webhook secret rotated for '{args.job_id}' (the old secret stops working immediately)",
+            "url": public_url(args.job_id),
+            "secret": job["webhook"]["secret"],
+        }
+
+    # No flag: show status
+    result: dict = {"ok": True, "job_id": args.job_id, "webhook_enabled": has_hook}
+    if has_hook:
+        result["url"] = public_url(args.job_id)
+        result["secret"] = job["webhook"]["secret"]
+    return result
+
+
+def cmd_test(args) -> dict:
+    """Fire a job's webhook against the local server (the real public path).
+
+    Exercises the whole chain — front desk, secret check, single-flight,
+    launch — exactly as an external sender would, just from localhost.
+    """
+    import urllib.error
+    import urllib.request
+
+    job = load_job(args.job_id)
+    if job is None:
+        return {"ok": False, "error": f"Job not found: {args.job_id}"}
+
+    secret = (job.get("webhook") or {}).get("secret")
+    if not secret:
+        return {
+            "ok": False,
+            "error": (
+                f"Job '{args.job_id}' has no webhook trigger. "
+                f"Enable it with: merlin job webhook {args.job_id} --enable"
+            ),
+        }
+
+    url = f"http://127.0.0.1:{args.port}/webhooks/job/{args.job_id}"
+    req = urllib.request.Request(
+        url, method="POST", headers={"X-Merlin-Webhook-Secret": secret}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        return {
+            "ok": False,
+            "http_status": e.code,
+            "error": f"Webhook fire rejected with HTTP {e.code}",
+        }
+    except (urllib.error.URLError, TimeoutError) as e:
+        reason = getattr(e, "reason", e)
+        return {
+            "ok": False,
+            "error": (
+                f"Could not reach the Merlin server on port {args.port} "
+                f"({reason}). Is it running? Use --port if it serves elsewhere."
+            ),
+        }
+
+    status = data.get("status")
+    message = (
+        "Webhook fired, run launched"
+        if status == "launched"
+        else "Webhook accepted, a run is already active (coalesced)"
+    )
+    return {
+        "ok": True,
+        "status": status,
+        "run_id": data.get("run_id"),
+        "message": message,
+    }
+
+
 def cmd_history(args) -> dict | str:
     """Show run history for a job."""
     limit = args.limit or 10
@@ -437,6 +601,12 @@ Examples:
   # Run a job immediately (bypasses the schedule check)
   merlin job trigger daily-python-check
 
+  # Webhook trigger: enable, inspect, fire, rotate
+  merlin job webhook daily-python-check --enable
+  merlin job url daily-python-check
+  merlin job test daily-python-check
+  merlin job webhook daily-python-check --rotate
+
   # View run history
   merlin job history daily-python-check --discord
 
@@ -467,7 +637,8 @@ Output:
         "--id", help="Job ID (slug). Auto-generated from description if not provided"
     )
     p_add.add_argument(
-        "--schedule", required=True, help="Cron expression (e.g., '0 9 * * *')"
+        "--schedule",
+        help="Cron expression (e.g., '0 9 * * *'). Omit for a webhook- or manual-only job",
     )
     p_add.add_argument("--prompt", required=True, help="The prompt to send to Claude")
     p_add.add_argument(
@@ -487,6 +658,11 @@ Output:
         type=int,
         default=0,
         help="Max agentic turns (0 = unlimited, default: 0)",
+    )
+    p_add.add_argument(
+        "--webhook",
+        action="store_true",
+        help="Also enable the webhook trigger (generates a secret)",
     )
     p_add.add_argument(
         "--dry-run",
@@ -531,6 +707,47 @@ Output:
     )
     p_trigger.add_argument("job_id", help="Job ID")
     p_trigger.set_defaults(func=cmd_trigger)
+
+    # url
+    p_url = subparsers.add_parser(
+        "url", help="Print a job's public webhook URL and secret"
+    )
+    p_url.add_argument("job_id", help="Job ID")
+    p_url.set_defaults(func=cmd_url)
+
+    # webhook
+    p_webhook = subparsers.add_parser(
+        "webhook", help="Manage a job's webhook trigger (show/enable/disable/rotate)"
+    )
+    p_webhook.add_argument("job_id", help="Job ID")
+    hook_action = p_webhook.add_mutually_exclusive_group()
+    hook_action.add_argument(
+        "--enable",
+        action="store_true",
+        help="Enable the webhook trigger (generates a secret)",
+    )
+    hook_action.add_argument(
+        "--disable", action="store_true", help="Remove the webhook trigger"
+    )
+    hook_action.add_argument(
+        "--rotate",
+        action="store_true",
+        help="Replace the secret (the old one stops working immediately)",
+    )
+    p_webhook.set_defaults(func=cmd_webhook)
+
+    # test
+    p_test = subparsers.add_parser(
+        "test", help="Fire a job's webhook against the local server"
+    )
+    p_test.add_argument("job_id", help="Job ID")
+    p_test.add_argument(
+        "--port",
+        type=int,
+        default=3123,
+        help="Local Merlin server port (default: 3123)",
+    )
+    p_test.set_defaults(func=cmd_test)
 
     # history
     p_history = subparsers.add_parser("history", help="Show run history")
