@@ -38,7 +38,9 @@ merlin/
 │   ├── schemas.py             # Pydantic models (JobCreate, JobUpdate)
 │   ├── logs.py                # Hybrid log storage (individual files + metadata)
 │   ├── notify.py              # Notification system (graceful Discord fallback)
+│   ├── webhook.py             # Webhook trigger (single-flight launch, secret lifecycle)
 │   └── templates/jobs.html    # Dashboard page template
+├── webhooks/                  # Public webhook front desk (secret check, throttle, dispatch)
 ├── files/                     # File browser module
 ├── terminal/                  # Web terminal module (xterm.js + tmux)
 ├── commits/                   # Git commit browser module
@@ -217,6 +219,7 @@ Strategy: **resume-first** — try `--resume` first, fall back to `--session-id`
 > Full reference: [`docs/dev/job-system.md`](docs/dev/job-system.md)
 
 - **Core module**: `job/` — scheduler, runner, state, REST API, logs, notifications
+- **Triggers**: optional `schedule` (cron) and/or `webhook` (secret-gated HTTP via the `webhooks/` front desk); neither = manual-only
 - **Job files**: `jobs/*.json`
 - **Management CLI**: `merlin job --help`
 - **REST API**: `/api/job/jobs/*` — full CRUD + toggle + trigger + logs

@@ -154,6 +154,13 @@ def public_url(job_id: str) -> str:
       3. Detected local IP + server port. May be private behind NAT — making
          it reachable is the operator's job.
     """
+    # CLI entry points don't load config.env the way the server does; pull
+    # it in here (existing environment values win) so every process derives
+    # the same URL.
+    import paths
+
+    paths.load_config_env()
+
     base = os.getenv("MERLIN_DASHBOARD_URL", "").strip()
     if base:
         if "://" not in base:

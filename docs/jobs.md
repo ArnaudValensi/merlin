@@ -103,7 +103,8 @@ metrics to chart (their results still show in Jobs and Logs).
 ## Manage from the terminal
 
 `merlin job` covers the same jobs: add, list, get, enable, disable,
-remove, trigger, history. `merlin job --help` has the full reference.
+remove, trigger, history, plus the webhook trigger (webhook, url, test).
+`merlin job --help` has the full reference.
 One example:
 
 ```bash
@@ -117,6 +118,47 @@ creates agent prompt jobs; command jobs, working directories, and per-job
 timezones are set in the web UI. `merlin job trigger <id>` runs a job
 immediately, bypassing the schedule; `merlin job history` shows recent
 runs.
+
+## Fire a job from outside (webhook)
+
+Any job can be launched by an external HTTP call — an uptime monitor's
+incident alert, a CI pipeline, a shortcut on your phone. In the job editor,
+check **Allow firing this job via HTTP webhook** and save: Merlin generates
+a secret and shows the job's public URL. A `POST` to that URL with the
+secret launches the job exactly like the scheduler would:
+
+```bash
+curl -X POST -H 'X-Merlin-Webhook-Secret: whk_...' \
+  https://your-instance/webhooks/job/my-job
+```
+
+If the sender cannot set headers, append `?token=whk_...` instead.
+`merlin job url <id>` prints the URL, the secret, and that exact curl
+command; `merlin job test <id>` fires the hook against your own server as a
+dry run of the whole path.
+
+What to know:
+
+- **One run at a time.** A fire while a run is already active is accepted
+  (HTTP 200) but coalesces into the running one — a monitor that fires five
+  times during one incident launches exactly one agent.
+- **Fresh session per fire.** Each webhook-launched agent run starts with a
+  clean session, so two separate incidents never share context.
+- **Schedule optional.** A job can have a schedule, a webhook, both, or
+  neither (manual-only) — pick "No schedule" in the editor for a
+  webhook-only job.
+- **The secret is the key.** Anyone with the URL + secret can run the job
+  (and a command job runs a shell command), so treat it like a credential.
+  Rotate it anytime from the editor or `merlin job webhook <id> --rotate`;
+  the old secret stops working immediately.
+- **Watch the traffic.** The Logs tab shows every fire and every rejected
+  attempt (wrong secret, throttled) with the caller's IP. Repeated wrong
+  secrets from one IP are throttled automatically.
+
+On Merlin Cloud, the URL rides your instance's own subdomain
+(`https://{you}.merlincloud.dev/webhooks/job/{id}`). Self-hosted, set
+`MERLIN_DASHBOARD_URL` in `~/.merlin/config.env` to whatever address
+reaches your box, and the editor and CLI will print it.
 
 ## Continue a run on Discord
 

@@ -108,7 +108,7 @@ Additionally, for jobs:
 | `sessions/*.jsonl` | JSONL | Partial (content only) | No | Yes (duration, tokens, cost per turn) | No (state) |
 | `logs/engine-log.jsonl` | JSONL | **No** | **Yes** (truncated, 500 chars) | Yes (caller, duration, exit_code, tokens, cost, model, request_id) | 180-day retention |
 | `logs/merlin.log` | Text | No | Partial (error snippets) | No (free-text lifecycle events) | 10 MB × 5 backups |
-| `job-logs/job/*.json` | JSON | Partial (result.content, max 100 KB) | No | Yes (exit_code, duration, cost, session_id) | 50 per job |
+| `job-logs/{job}/*.json` | JSON | Partial (result.content, max 100 KB) | No | Yes (exit_code, duration, cost, session_id) | 50 per job |
 
 ### Where stdout lives
 
@@ -126,7 +126,7 @@ The full raw engine output (stdout) is in `logs/raw-sessions/*.jsonl` — raw st
 
 ### What `engine-log.jsonl` contains
 
-Four event types that record the engine lifecycle, plus app lifecycle:
+Five event types that record the engine lifecycle, plus app lifecycle:
 
 | Event type | When | Key fields |
 |---|---|---|
@@ -134,10 +134,11 @@ Four event types that record the engine lifecycle, plus app lifecycle:
 | `bot_event` / `transcription` | Voice message transcribed (before engine) | content, duration, author, request_id |
 | `bot_event` / `ready` | Bot connects to Discord | details |
 | `bot_event` / `error` | Something failed before/after engine | details |
-| `job_dispatch` / `started` | Cron job about to run | job_id |
-| `job_dispatch` / `completed` | Cron job finished successfully | job_id, duration, exit_code |
-| `job_dispatch` / `failed` | Cron job failed | job_id, duration, exit_code |
-| `job_runner_crash` | Cron subprocess died | exit_code, stderr |
+| `job_dispatch` / `started` | Job about to run | job_id, trigger, request_id |
+| `job_dispatch` / `completed` | Job finished successfully | job_id, duration, exit_code, trigger |
+| `job_dispatch` / `failed` | Job failed | job_id, duration, exit_code, trigger |
+| `job_runner_crash` | Job runner subprocess died | exit_code, stderr |
+| `webhook_request` | Inbound webhook handled by the front desk (every outcome, incl. rejected secrets) | source, target, ip, outcome, run_id, request_id |
 | `invocation` | Engine ran (the actual AI call) | caller, duration, tokens, cost, model, session_id, exit_code, stderr, request_id, engine |
 | `app_started` | Merlin server started | host, port, cwd, extensions |
 | `app_stopped` | Merlin server stopped | — |

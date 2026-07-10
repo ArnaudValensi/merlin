@@ -4,7 +4,7 @@ Reference documentation for the scheduled job system. Covers module structure, R
 
 ## Overview
 
-Jobs are a **core module** (`job/`) that runs independently of any extension. The scheduler starts from `main.py` at boot and fires `job/runner.py` every minute. The runner loads all enabled jobs, checks which are due, and executes them in parallel via `ThreadPoolExecutor` with per-job file locks.
+Jobs are a **core module** (`job/`) that runs independently of any extension. A job has up to two optional **triggers**, set independently: a **schedule** (cron expression) and a **webhook** (secret-gated HTTP fire). A job with neither is manual-only. The scheduler starts from `main.py` at boot and fires `job/runner.py` every minute. The runner loads all enabled jobs, checks which are due, and executes them in parallel via `ThreadPoolExecutor` with per-job file locks. Webhook fires arrive through the `webhooks/` front desk and launch in-process (see Webhook Trigger below).
 
 ```
 main.py (_run → job.start())
@@ -52,6 +52,10 @@ All endpoints require authentication. Prefix: `/api/job`.
 | `/api/job/jobs/{job_id}/run` | POST | Trigger immediate run (202 Accepted) |
 | `/api/job/jobs/{job_id}/logs` | GET | List execution logs (newest first) |
 | `/api/job/jobs/{job_id}/logs/{timestamp}` | GET | Read a specific execution log |
+| `/api/job/jobs/{job_id}/webhook` | POST | Enable the webhook trigger (generates a secret; idempotent) |
+| `/api/job/jobs/{job_id}/webhook/rotate` | POST | Replace the secret (the old one stops working immediately) |
+| `/api/job/jobs/{job_id}/webhook` | DELETE | Remove the webhook trigger |
+| `/api/job/webhook-events` | GET | Recent webhook_request events (fires + rejected attempts), filterable by `job_id` |
 | `/api/job/validate-schedule` | POST | Validate cron expression; returns `{valid, human, timezone, next_runs[3]}` preformatted in the cron timezone |
 
 **Dashboard page**: `GET /jobs` — renders the jobs management UI.
@@ -83,7 +87,7 @@ Job ID is the filename without `.json` (e.g., `daily-digest.json` -> job ID `dai
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `schedule` | string | **required** | 5-field cron expression (via `croniter`) |
+| `schedule` | string | `null` | Optional 5-field cron expression (via `croniter`). Absent = no schedule trigger (webhook- or manual-only job) |
 | `timezone` | string | `null` | IANA zone the schedule is interpreted in (e.g. `Europe/Paris`). `null` = fall back to server-wide `CRON_TIMEZONE`, then UTC. DST-aware (see below) |
 | `type` | string | `"prompt"` | Job action type: `"prompt"` (agent) or `"command"` (shell). Absent = `"prompt"` (backward compatible) |
 | `prompt` | string | required for `prompt` jobs | Prompt sent to the engine (no delivery instructions — engine is a black box) |
@@ -96,6 +100,7 @@ Job ID is the filename without `.json` (e.g., `daily-digest.json` -> job ID `dai
 | `max_turns` | integer | `0` | Prompt jobs only: max agentic turns (0 = unlimited) |
 | `ephemeral` | boolean | `true` | Prompt jobs only: fresh session each run (default). Set `false` for persistent sessions (costs grow per run) |
 | `grace_minutes` | integer | `15` | Staleness window — jobs missed by more than this are skipped. Internal/API-only: not exposed in the dashboard form |
+| `webhook` | object | `null` | Optional webhook trigger: `{"secret": "whk_..."}`. Present = the job is webhook-firable; the secret is required and generated server-side |
 | `created_at` | string | -- | ISO 8601 creation timestamp |
 
 > **Note**: The `discord_channel` field is optional. If omitted, notifications fall back to the bot's default channel (from `DISCORD_CHANNEL_IDS`). If the bot extension is not loaded, notifications are silently skipped. The legacy `channel` field has been removed and is no longer read anywhere.
@@ -146,6 +151,9 @@ bot's default channel when unset or `"default"`).
 {original_prompt}
 ```
 
+Webhook-triggered runs use `[Triggered by webhook: {job_id}]` instead, so the
+agent knows an external event (not the schedule) launched it.
+
 The prompt contains no delivery instructions. The engine returns plain text output, and the notification system handles delivery.
 
 ## Schedule Expression
@@ -172,6 +180,7 @@ Standard 5-field cron format parsed by `croniter`:
 
 - **Ephemeral jobs** (default): Fresh `UUID4()` each run — no session continuity. Cross-run context should use the notes system (KB, logs), not session history.
 - **Non-ephemeral jobs**: Deterministic session via `UUID5(NAMESPACE_DNS, f"job-{job_id}")` — session persists across runs, but costs grow with each run.
+- **Webhook fires**: ALWAYS a fresh `UUID4()` session, regardless of the `ephemeral` setting — independent incidents must not bleed into each other. Scheduled runs of the same job keep the behavior above.
 
 Session history is managed by Merlin's session manager (`lib/session.py`) as JSONL files at `~/.merlin/sessions/<session_id>.jsonl`. The engine receives the full conversation history on each invocation — no reliance on any engine's built-in resume mechanism.
 
@@ -320,10 +329,59 @@ async def _job_scheduler() -> None:
 - Multiple dispatchers can overlap (per-job locks prevent double dispatch).
 - Crash handling: non-zero exit -> logged to `engine-log.jsonl`.
 
+## Webhook Trigger
+
+An external HTTP call can launch a job exactly the way the scheduler or a
+manual run does. The flow is split between two modules:
+
+- **`webhooks/` (the front desk)** owns the shared, security-sensitive
+  plumbing: the single public route `POST /webhooks/{source}/{target_id}`
+  (mounted in `main.py` WITHOUT `require_auth` — the terminal precedent),
+  constant-time secret verification (`X-Merlin-Webhook-Secret` header or
+  `?token=` fallback), a per-IP failed-secret throttle (10 failures / 5 min
+  → 429 cooldown), target-id regex validation, and logging of every request
+  outcome as a `webhook_request` event.
+- **`job/webhook.py` (the `job` source)** owns everything job-specific:
+  resolving a job id to a target (a job without a `webhook` block is a 404,
+  same as a missing job), the secret lifecycle (`whk_` +
+  `secrets.token_urlsafe`), single-flight launching, and the public URL.
+
+**Single-flight per job**: one active run at a time. A fire while a run is
+in flight is coalesced — it returns 200/`"coalesced"` with the active run's
+id and starts nothing (BetterStack firing five times during one incident
+spawns exactly one run). An in-process in-flight map covers
+webhook-vs-webhook overlap; the per-job flock covers overlap with
+scheduled/manual runs. Launched runs execute in-process
+(`asyncio.to_thread` around `runner._execute_job`) with the flock held, and
+the accepted `run_id` doubles as the execution's `request_id` so
+`webhook_request` and `job_dispatch` events correlate.
+
+**Response codes**: `200 {ok, status, run_id}` (launched or coalesced —
+the run itself is asynchronous), `401` bad/missing secret, `403` disabled
+job, `404` unknown source/job/no-webhook, `429` throttled.
+
+**Trigger provenance**: every run records `trigger` (schedule / webhook /
+manual) in `job_dispatch` events, history entries, and run logs — unified
+but filterable.
+
+**Public URL** (`merlin job url`, shown in the editor): resolution order is
+`MERLIN_DASHBOARD_URL` (operator override, e.g. the instance's
+`{slug}.merlincloud.dev` address — the route rides the SaaS proxy with zero
+portal changes) → `MERLIN_ENVIRONMENT_SLUG` (managed containers) → detected
+local IP + bound port (may be NAT-private; reachability is the operator's
+job).
+
+Registration: `main.py` calls `webhooks.register("job", job_webhook.resolve)`
+directly. Extensions can export `WEBHOOK_HANDLERS = {source: resolver}`; the
+extension loader wires them into the same front desk (an extension cannot
+open its own unauthenticated route — the loader force-wraps extension
+routers in auth).
+
 ## CLI Management
 
 ```bash
 merlin job add --schedule "0 9 * * *" --prompt "..." --description "..."
+merlin job add --prompt "..." --webhook          # webhook-only job (no schedule)
 merlin job list
 merlin job get <job-id>
 merlin job enable <job-id>
@@ -331,6 +389,9 @@ merlin job disable <job-id>
 merlin job remove <job-id>
 merlin job trigger <job-id>
 merlin job history [<job-id>] [--limit N]
+merlin job webhook <job-id> [--enable|--disable|--rotate]
+merlin job url <job-id>                          # public URL + secret + curl
+merlin job test <job-id> [--port N]              # fire the hook locally
 ```
 
 **Manual execution** (bypasses schedule, reuses logging/history):
@@ -358,6 +419,8 @@ uv run job/runner.py --job <job-id>
 | `job/routes.py` | REST API endpoints + dashboard page |
 | `job/logs.py` | Hybrid log storage (individual files + metadata) |
 | `job/notify.py` | Notification delivery (report_mode, Discord fallback) |
+| `job/webhook.py` | Webhook trigger: resolver, single-flight launch, secret lifecycle, public URL |
+| `webhooks/__init__.py` | The front desk: public route, secret check, throttle, request logging |
 | `job/templates/jobs.html` | Dashboard page template |
 | `lib/engine.py` | AgentEngine abstraction (used by runner) |
 | `lib/session.py` | JSONL session manager |
