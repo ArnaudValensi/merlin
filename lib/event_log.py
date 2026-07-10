@@ -86,6 +86,23 @@ class JobRunnerCrashEvent(BaseEvent):
     stderr: str = ""
 
 
+class WebhookRequestEvent(BaseEvent):
+    """An inbound webhook request handled by the front desk.
+
+    ``outcome`` is one of: launched / coalesced / rejected_secret / throttled /
+    disabled / unknown_source / unknown_target / invalid_id. Rejected attempts
+    are logged on purpose — failed-secret hits on a public endpoint are a
+    security signal.
+    """
+
+    source: str | None = None
+    target: str | None = None
+    ip: str | None = None
+    outcome: str | None = None
+    run_id: str | None = None
+    request_id: str | None = None
+
+
 class BotEvent(BaseEvent):
     """A Discord bot lifecycle event.
 
@@ -115,6 +132,7 @@ _MODEL_FOR_TYPE: dict[str, type[BaseEvent]] = {
     "invocation": InvocationEvent,
     "job_dispatch": JobDispatchEvent,
     "job_runner_crash": JobRunnerCrashEvent,
+    "webhook_request": WebhookRequestEvent,
     "bot_event": BotEvent,
     "app_started": AppLifecycleEvent,
     "app_stopped": AppLifecycleEvent,

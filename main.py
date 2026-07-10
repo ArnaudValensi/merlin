@@ -748,6 +748,13 @@ from job.routes import job_page_router, job_router
 app.include_router(job_router, dependencies=[Depends(require_auth)])
 app.include_router(job_page_router, dependencies=[Depends(require_auth)])
 
+# Webhooks front desk — intentionally mounted WITHOUT require_auth (terminal
+# precedent): /webhooks/* is public and self-authenticating via per-hook
+# secrets, verified inside the module. Everything under /api stays gated.
+import webhooks
+
+app.include_router(webhooks.router)
+
 # Module statics BEFORE general static (more specific path first)
 app.mount(
     "/static/files", StaticFiles(directory=str(FILES_STATIC_DIR)), name="files-static"
@@ -846,6 +853,14 @@ def _load_extension(
     ext_nav = getattr(mod, "NAV_ITEMS", [])
     if ext_nav:
         nav_items.extend(ext_nav)
+
+    # Register webhook resolvers with the front desk. Extensions cannot open
+    # their own unauthenticated route (their routers are force-wrapped in
+    # auth above), so this export is the only way for one to have a webhook.
+    ext_hooks = getattr(mod, "WEBHOOK_HANDLERS", None)
+    if ext_hooks:
+        for hook_source, hook_resolver in ext_hooks.items():
+            webhooks.register(hook_source, hook_resolver)
 
     # Track bot status
     if ext_id == "merlin-bot":
