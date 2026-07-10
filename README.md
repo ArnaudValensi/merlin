@@ -1,29 +1,34 @@
 # Merlin
 
-A suite of dev tools built around your favorite AI agent (Claude Code,
-OpenCode, pluggable engines). One process on your machine: web terminal,
-files, git, and notes in a dashboard you can reach from anywhere, phone
-included, plus chat and scheduled channels that run your agent with shared
-memory. Talk instead of typing: voice input with built-in transcription
-works in the terminal and the chat.
+**Give your agents a machine of their own.**
 
-## How the pieces fit
+Merlin is an agent operating environment: the place where your AI agents
+work. It turns any Linux box or Mac into that place: a real shell, real
+files, real git, in your browser, for the agents you already use (Claude
+Code, OpenCode, Gemini, Codex: anything that runs in a terminal). You run
+it on one machine and control it from any other, phone included. Open
+source and self-hosted first; [Merlin Cloud](https://merlincloud.dev) is
+the hosted version.
 
-Merlin doesn't ship its own AI; it gives your agent a body: tools,
-channels, and one shared memory.
+## The three pillars
 
-- You code in the **web terminal** from anywhere. Phone included; coding
-  from everywhere is why Merlin exists.
-- Work and conversations land in the **notes / knowledge base**
-  (Zettelkasten-style, plain markdown). That is what your agent remembers.
-- The **Discord bot** puts the same agent in your chat: it reads and
-  writes that knowledge base and acts for you.
-- **Cron** runs the agent on a schedule to feed the knowledge base and
-  report back.
-- **Extensions and skills** bolt new commands and know-how onto the loop.
+Merlin doesn't ship its own AI; it gives your agents a place to operate:
+a machine, a scheduler, and a memory.
 
-Each piece feeds the others. The longer it runs, the more your agent
-knows.
+- **A coding environment**: a terminal with your agents in it, the
+  filesystem, and the git history, all in the browser, built for the way
+  you work now: the agent types, you direct, review, and decide from
+  whatever screen is in your hand. Talk instead of typing: voice input
+  with built-in transcription works in the terminal and the chat. The
+  **Discord bot** puts the same agent in your pocket.
+- **Agent orchestration**: jobs that run without you, on a schedule. A
+  job is a script or an agent, and reports land back in your chat.
+- **A living knowledge base**: markdown notes you and your agents both
+  read, write, and curate. Every channel feeds the same memory, so the
+  longer Merlin runs, the more your agents know.
+
+**Extensions and skills** bolt new pages, commands, and know-how onto all
+three.
 
 ## Quick start
 
