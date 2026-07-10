@@ -95,6 +95,53 @@ class TestJobTimezone:
             JobUpdate(timezone="Bogus/Zone")
 
 
+class TestOptionalTriggers:
+    def test_job_without_schedule_is_valid(self):
+        job = JobCreate(id="j", prompt="x")
+        assert job.schedule is None
+        assert job.webhook is None
+
+    def test_empty_schedule_normalizes_to_none(self):
+        job = JobCreate(id="j", schedule="", prompt="x")
+        assert job.schedule is None
+
+    def test_invalid_schedule_still_rejected(self):
+        with pytest.raises(ValidationError):
+            JobCreate(id="j", schedule="not a cron", prompt="x")
+
+    def test_webhook_block_accepted(self):
+        job = JobCreate(id="j", prompt="x", webhook={"secret": "whk_abc"})
+        assert job.webhook is not None
+        assert job.webhook.secret == "whk_abc"
+
+    def test_webhook_requires_secret(self):
+        with pytest.raises(ValidationError):
+            JobCreate(id="j", prompt="x", webhook={})
+
+    def test_webhook_empty_secret_rejected(self):
+        with pytest.raises(ValidationError):
+            JobCreate(id="j", prompt="x", webhook={"secret": "   "})
+
+    def test_schedule_and_webhook_together(self):
+        job = JobCreate(
+            id="j",
+            schedule="0 9 * * *",
+            prompt="x",
+            webhook={"secret": "whk_abc"},
+        )
+        assert job.schedule == "0 9 * * *"
+        assert job.webhook.secret == "whk_abc"
+
+    def test_update_empty_schedule_allowed_for_removal(self):
+        """'' means "remove the schedule trigger"; the route pops the key."""
+        body = JobUpdate(schedule="")
+        assert body.schedule == ""
+
+    def test_update_invalid_schedule_rejected(self):
+        with pytest.raises(ValidationError):
+            JobUpdate(schedule="nope")
+
+
 class TestJobUpdatePartial:
     def test_partial_command_update_validates(self):
         body = JobUpdate(type="command", command="echo hi", working_dir="/tmp")

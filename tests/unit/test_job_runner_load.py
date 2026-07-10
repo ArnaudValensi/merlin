@@ -55,6 +55,18 @@ def test_rejects_prompt_job_missing_prompt(tmp_path):
     assert load_job(path) is None
 
 
-def test_rejects_job_missing_schedule(tmp_path):
-    path = _write(tmp_path, "bad.json", {"type": "command", "command": "echo hi"})
+def test_accepts_job_without_schedule(tmp_path):
+    """A schedule-less job is valid: webhook-only or manual-only trigger."""
+    path = _write(tmp_path, "hook.json", {"type": "command", "command": "echo hi"})
+    job = load_job(path)
+    assert job is not None
+    assert "schedule" not in job
+
+
+def test_rejects_job_with_invalid_schedule(tmp_path):
+    path = _write(
+        tmp_path,
+        "bad.json",
+        {"schedule": "not a cron", "prompt": "x"},
+    )
     assert load_job(path) is None

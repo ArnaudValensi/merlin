@@ -89,7 +89,6 @@ def create_job(body: JobCreate):
 
     job = {
         "description": body.description,
-        "schedule": body.schedule,
         "timezone": body.timezone,
         "type": body.type,
         "prompt": body.prompt,
@@ -103,6 +102,12 @@ def create_job(body: JobCreate):
         "discord_channel": body.discord_channel,
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
     }
+
+    # Triggers are optional: only store the keys that are actually set.
+    if body.schedule:
+        job["schedule"] = body.schedule
+    if body.webhook is not None:
+        job["webhook"] = body.webhook.model_dump()
 
     manage.save_job(body.id, job)
 
@@ -130,10 +135,14 @@ def update_job(job_id: str, body: JobUpdate):
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
 
-    # Merge only non-None fields from the update body
+    # Merge only non-None fields from the update body. An empty-string
+    # schedule means "remove the schedule trigger" (None means "unchanged").
     update_data = body.model_dump(exclude_none=True)
     for key, value in update_data.items():
-        job[key] = value
+        if key == "schedule" and value == "":
+            job.pop("schedule", None)
+        else:
+            job[key] = value
 
     # Validate the MERGED job: switching type without supplying the matching
     # action field would otherwise persist e.g. an empty command that runs

@@ -13,6 +13,19 @@ _ID_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 VALID_REPORT_MODES = ("always", "silent", "off")
 
 
+class WebhookConfig(BaseModel):
+    """The webhook trigger block on a job. Present = the job is webhook-firable."""
+
+    secret: str
+
+    @field_validator("secret")
+    @classmethod
+    def validate_secret(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("webhook secret must be non-empty")
+        return v
+
+
 def _validate_timezone(v: str | None) -> str | None:
     """Validate an optional IANA timezone name. None/empty is allowed (means
     'use the server default')."""
@@ -30,7 +43,7 @@ def _validate_timezone(v: str | None) -> str | None:
 class JobCreate(BaseModel):
     id: str
     description: str = ""
-    schedule: str
+    schedule: str | None = None
     timezone: str | None = None
     type: Literal["prompt", "command"] = "prompt"
     prompt: str = ""
@@ -42,6 +55,7 @@ class JobCreate(BaseModel):
     ephemeral: bool = True
     grace_minutes: int = 15
     discord_channel: str | None = None
+    webhook: WebhookConfig | None = None
 
     @field_validator("id")
     @classmethod
@@ -57,7 +71,10 @@ class JobCreate(BaseModel):
 
     @field_validator("schedule")
     @classmethod
-    def validate_schedule(cls, v: str) -> str:
+    def validate_schedule(cls, v: str | None) -> str | None:
+        # None/empty = no schedule trigger (webhook-only or manual-only job).
+        if v is None or v == "":
+            return None
         from croniter import croniter
 
         if not croniter.is_valid(v):
@@ -106,7 +123,9 @@ class JobUpdate(BaseModel):
     @field_validator("schedule")
     @classmethod
     def validate_schedule(cls, v: str | None) -> str | None:
-        if v is not None:
+        # "" is allowed and means "remove the schedule trigger" (the route
+        # pops the key); None means "leave unchanged".
+        if v is not None and v != "":
             from croniter import croniter
 
             if not croniter.is_valid(v):

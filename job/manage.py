@@ -27,17 +27,6 @@ from job.state import get_all_history, get_history
 
 JOBS_DIR = paths.jobs_dir()
 
-# Required fields for a valid job (channel is optional — only needed for Discord notification)
-REQUIRED_FIELDS = ["schedule", "prompt"]
-
-# Default values for optional fields
-DEFAULTS = {
-    "enabled": True,
-    "report_mode": "always",
-    "max_turns": 0,
-}
-
-
 # ---------------------------------------------------------------------------
 # Cron expression helpers
 # ---------------------------------------------------------------------------

@@ -124,24 +124,22 @@ def load_job(path: Path) -> dict | None:
         logger.warning("Failed to load job %s: %s", path.name, e)
         return None
 
-    # Validate required fields. "schedule" is always required; the action field
-    # depends on the job type ("command" needs a command, otherwise a prompt).
-    required = ["schedule"]
-    if data.get("type") == "command":
-        required.append("command")
-    else:
-        required.append("prompt")
+    # Validate required fields. The action field depends on the job type
+    # ("command" needs a command, otherwise a prompt). "schedule" is optional:
+    # a job without one has no schedule trigger (webhook-only or manual-only).
+    required = ["command"] if data.get("type") == "command" else ["prompt"]
     missing = [f for f in required if f not in data]
     if missing:
         logger.warning("Job %s missing required fields: %s", path.name, missing)
         return None
 
-    # Validate cron expression
-    try:
-        croniter(data["schedule"])
-    except (KeyError, ValueError) as e:
-        logger.warning("Job %s has invalid schedule: %s", path.name, e)
-        return None
+    # Validate cron expression (only when a schedule is present)
+    if data.get("schedule"):
+        try:
+            croniter(data["schedule"])
+        except (KeyError, ValueError) as e:
+            logger.warning("Job %s has invalid schedule: %s", path.name, e)
+            return None
 
     return data
 
@@ -571,7 +569,12 @@ def run_dispatcher() -> None:
             logger.debug("Skipping disabled job %s", job_id)
             continue
 
-        schedule = job["schedule"]
+        # Skip jobs without a schedule trigger (webhook-only or manual-only)
+        schedule = job.get("schedule")
+        if not schedule:
+            logger.debug("Job %s has no schedule, skipping", job_id)
+            continue
+
         grace = job.get("grace_minutes", DEFAULT_GRACE_MINUTES)
 
         # Check if due (interpret the schedule in the job's timezone)

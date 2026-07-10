@@ -117,6 +117,33 @@ class TestCreateJob:
         resp = client.post("/api/job/jobs", json=_sample_job(id="MyJob"))
         assert resp.status_code == 422
 
+    def test_create_without_schedule(self, client, _isolated_job_dirs):
+        """POST without a schedule creates a job with no schedule trigger."""
+        data = _sample_job()
+        del data["schedule"]
+        resp = client.post("/api/job/jobs", json=data)
+        assert resp.status_code == 201
+        assert resp.json()["next_run"] is None
+        import json as json_mod
+
+        stored = json_mod.loads((_isolated_job_dirs / "test-job.json").read_text())
+        assert "schedule" not in stored
+
+    def test_create_with_webhook_block(self, client, _isolated_job_dirs):
+        """POST with a webhook block persists it in the job file."""
+        resp = client.post(
+            "/api/job/jobs", json=_sample_job(webhook={"secret": "whk_test"})
+        )
+        assert resp.status_code == 201
+        import json as json_mod
+
+        stored = json_mod.loads((_isolated_job_dirs / "test-job.json").read_text())
+        assert stored["webhook"] == {"secret": "whk_test"}
+
+    def test_create_webhook_without_secret_returns_422(self, client):
+        resp = client.post("/api/job/jobs", json=_sample_job(webhook={}))
+        assert resp.status_code == 422
+
     def test_create_invalid_id_double_hyphen(self, client):
         """POST with -- in id returns 422."""
         resp = client.post("/api/job/jobs", json=_sample_job(id="my--job"))
@@ -303,6 +330,17 @@ class TestUpdateJob:
         """PUT nonexistent job returns 404."""
         resp = client.put("/api/job/jobs/missing", json={"description": "test"})
         assert resp.status_code == 404
+
+    def test_update_empty_schedule_removes_trigger(self, client, _isolated_job_dirs):
+        """PUT with schedule='' removes the schedule trigger from the job."""
+        client.post("/api/job/jobs", json=_sample_job())
+        resp = client.put("/api/job/jobs/test-job", json={"schedule": ""})
+        assert resp.status_code == 200
+        assert resp.json()["next_run"] is None
+        import json as json_mod
+
+        stored = json_mod.loads((_isolated_job_dirs / "test-job.json").read_text())
+        assert "schedule" not in stored
 
     def test_update_invalid_schedule(self, client):
         """PUT with invalid schedule returns 422."""
