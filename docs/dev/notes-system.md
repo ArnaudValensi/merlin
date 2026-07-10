@@ -185,11 +185,11 @@ Memory is **not** injected into prompts directly — Claude reads the files on d
 
 ### `app-ideas-history.md`
 
-Cumulative list of generated app ideas, organized by date and batch. Used by the `app-ideas` cron job to avoid duplicates.
+Cumulative list of generated app ideas, organized by date and batch. Used by the `app-ideas` job to avoid duplicates.
 
 ### `self-reflection-history.md`
 
-Daily proposals from the self-reflection cron job. Format:
+Daily proposals from the self-reflection job. Format:
 
 ```markdown
 ## YYYY-MM-DD

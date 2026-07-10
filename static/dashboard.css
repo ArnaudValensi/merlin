@@ -24,7 +24,7 @@
 /* Respect declared font sizes on mobile. Without this, Safari/Chrome "font
    boosting" (text auto-inflation) enlarges text once a block relayouts. It
    showed up as expanded log-row <pre> blocks ballooning when a second row was
-   opened in the /bot and /cron Logs tabs. */
+   opened in the /bot and /jobs Logs tabs. */
 html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
@@ -639,10 +639,10 @@ html.sc .main {
 
 .badge-invocation { background: rgba(74, 158, 255, 0.15); color: var(--accent-blue); }
 .badge-bot_event { background: rgba(167, 139, 250, 0.15); color: var(--accent-purple); }
-.badge-cron_dispatch { background: rgba(251, 146, 60, 0.15); color: var(--accent-orange); }
+.badge-job_dispatch { background: rgba(251, 146, 60, 0.15); color: var(--accent-orange); }
 .badge-success { background: rgba(74, 222, 128, 0.15); color: var(--accent-green); }
 .badge-error { background: rgba(248, 113, 113, 0.15); color: var(--accent-red); }
-.badge-cron_runner_crash { background: rgba(248, 113, 113, 0.15); color: var(--accent-red); }
+.badge-job_runner_crash { background: rgba(248, 113, 113, 0.15); color: var(--accent-red); }
 
 .feed-item .feed-summary {
     color: var(--text-secondary);

@@ -87,8 +87,8 @@ function typeBadge(type) {
     const labels = {
         invocation: 'Invocation',
         bot_event: 'Bot',
-        cron_dispatch: 'Cron',
-        cron_runner_crash: 'Crash'
+        job_dispatch: 'Job',
+        job_runner_crash: 'Crash'
     };
     return `<span class="feed-badge badge-${type}">${labels[type] || type}</span>`;
 }
@@ -114,7 +114,7 @@ function eventSummary(event) {
                 return `🎤 ${text}${event.content && event.content.length > 80 ? '...' : ''} (${formatDuration(event.duration || 0)})`;
             }
             return event.details || event.event || '';
-        case 'cron_dispatch':
+        case 'job_dispatch':
             return `${event.job_id || '?'} — ${event.event || ''} ${event.duration ? '— ' + formatDuration(event.duration) : ''}`;
         default:
             return JSON.stringify(event).slice(0, 80);

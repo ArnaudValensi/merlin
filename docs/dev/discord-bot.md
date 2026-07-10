@@ -10,7 +10,7 @@ The engine is a black box — it has no notion of Discord. It receives a prompt 
 
 Contextual system-prompt content arrives by recipe: the bot selects the **managed-assistant** recipe from `lib/agent_context.py` (brain doc + personality + user memory + the Discord overlay `discord_directives.md`) and passes the composed text into `invoke()`.
 
-> **Note**: Cron scheduling is a separate core module (`cron/`), not part of merlin-bot. See [`docs/dev/cron-system.md`](cron-system.md).
+> **Note**: Job scheduling is a separate core module (`job/`), not part of merlin-bot. See [`docs/dev/job-system.md`](job-system.md).
 
 ```
 User sends message in Discord
@@ -55,7 +55,7 @@ What's the best way to optimize this shader?
 
 ```
 [Discord voice message from "Bob" in thread 14691..., channel 14686..., message ID 14691...]
-[Transcribed audio]: Can you explain how the cron job system works?
+[Transcribed audio]: Can you explain how the job system works?
 ```
 
 ### New Thread (first message)
@@ -112,7 +112,7 @@ Reaction updates are wrapped in try/except to handle Discord API failures gracef
 
 ## discord_send.py — REST Transport (CLI: merlin chat)
 
-Standalone script for sending messages via Discord REST API. Used by the bot handler to deliver engine responses, and by `notify.py` for cron notifications.
+Standalone script for sending messages via Discord REST API. Used by the bot handler to deliver engine responses, and by `notify.py` for job notifications.
 
 ### Commands
 

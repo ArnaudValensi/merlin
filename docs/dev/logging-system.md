@@ -1,6 +1,6 @@
 # Logging System
 
-Merlin produces logs from multiple sources: Discord bot, cron scheduler, HTTP requests, WebSocket terminal, and tunnel lifecycle. This document explains the three logging concepts, how data flows through the system, and how rotation keeps disk usage bounded.
+Merlin produces logs from multiple sources: Discord bot, job scheduler, HTTP requests, WebSocket terminal, and tunnel lifecycle. This document explains the three logging concepts, how data flows through the system, and how rotation keeps disk usage bounded.
 
 ## Architecture
 
@@ -13,12 +13,12 @@ Three distinct concepts, each with its own storage:
 │   ├── engine-log.jsonl        # Engine lifecycle events
 │   └── raw-sessions/           # Raw session recordings (session viewer)
 ├── sessions/                   # Session state — conversation continuity
-└── cron-logs/                  # Cron execution logs
+└── job-logs/                  # Cron execution logs
 ```
 
 - **`logs/`** — observability. Everything here can be rotated or deleted without breaking the app.
 - **`sessions/`** — conversation state. Persists for engine resume (not logs).
-- **`cron-logs/`** — cron-specific execution records with inline output.
+- **`job-logs/`** — job-specific execution records with inline output.
 
 ## Who Writes Where
 
@@ -30,7 +30,7 @@ Three distinct concepts, each with its own storage:
 | Trigger | What happens | Modules involved |
 |---|---|---|
 | **Discord message** | Bot receives message → transcribes if voice → calls `invoke()` → sends response | `merlin_bot.py`, `lib/engine.py` |
-| **Cron job** | Scheduler fires → runner calls `invoke()` → writes execution log → notifies | `cron/__init__.py`, `cron/runner.py`, `lib/engine.py` |
+| **Job** | Scheduler fires → runner calls `invoke()` → writes execution log → notifies | `job/__init__.py`, `job/runner.py`, `lib/engine.py` |
 | **HTTP request** | FastAPI handles request → file browse, auth, API, static files | `main.py`, `files/`, `notes/`, `commits/`, `auth.py` |
 | **WebSocket** | Terminal session → PTY bridge → tmux | `terminal/routes.py` |
 | **Tunnel lifecycle** | SaaS tunnel (Merlin Cloud) → connect, reconnect, fail | `saas_tunnel.py` |
@@ -50,7 +50,7 @@ merlin                      → merlin.log (RotatingFileHandler, 10 MB × 5)
 ├── merlin.engine           (engine invocation warnings)
 ├── merlin.engine.claude_code
 ├── merlin.engine.opencode
-├── merlin.cron             (cron dispatch, job execution)
+├── merlin.job             (job dispatch, job execution)
 ├── merlin.session          (session manager)
 ├── merlin.claude           (legacy claude wrapper)
 ├── merlin.notes            (notes git operations)
@@ -65,7 +65,7 @@ The `RotatingFileHandler` is configured in `main.py _setup_logging()`, called at
 
 Extensions get a logger injected automatically at load time (`merlin.ext.<ext_id>`), or can create sub-loggers via `from merlin_ext import get_logger`. See [extension-system.md](extension-system.md#logging) for details.
 
-The cron runner (`cron/runner.py`) runs as a separate subprocess. When running standalone (`__main__`), it configures its own `FileHandler` to the same `merlin.log` at INFO level. When imported from the main process or tests, it inherits the parent's handler.
+The job runner (`job/runner.py`) runs as a separate subprocess. When running standalone (`__main__`), it configures its own `FileHandler` to the same `merlin.log` at INFO level. When imported from the main process or tests, it inherits the parent's handler.
 
 ### Log format
 
@@ -73,7 +73,7 @@ The cron runner (`cron/runner.py`) runs as a separate subprocess. When running s
 ```
 2026-03-29 10:30:45 INFO     [merlin.bot] Message from Arnaud in 1468668170599534655: hello
 2026-03-29 10:30:50 INFO     [merlin.engine] Engine returned exit_code=0 duration=4.2s
-2026-03-29 10:31:00 INFO     [merlin.cron] Running job weather (channel=none, max_turns=3)
+2026-03-29 10:31:00 INFO     [merlin.job] Running job weather (channel=none, max_turns=3)
 ```
 
 **engine-log.jsonl** (JSONL):
@@ -97,8 +97,8 @@ A single call to `invoke()` writes to 3 locations.
    - **`_save_session_file()`** → `logs/raw-sessions/{timestamp}.jsonl` — raw stream-json dump
    - **`log_event("invocation")`** → `logs/engine-log.jsonl` — metadata + stderr + request_id
 
-Additionally, for cron jobs:
-- **`write_log()`** → `cron-logs/{job_id}/{timestamp}.json` — execution result with output
+Additionally, for jobs:
+- **`write_log()`** → `job-logs/{job_id}/{timestamp}.json` — execution result with output
 
 ## What Each File Contains
 
@@ -108,7 +108,7 @@ Additionally, for cron jobs:
 | `sessions/*.jsonl` | JSONL | Partial (content only) | No | Yes (duration, tokens, cost per turn) | No (state) |
 | `logs/engine-log.jsonl` | JSONL | **No** | **Yes** (truncated, 500 chars) | Yes (caller, duration, exit_code, tokens, cost, model, request_id) | 180-day retention |
 | `logs/merlin.log` | Text | No | Partial (error snippets) | No (free-text lifecycle events) | 10 MB × 5 backups |
-| `cron-logs/job/*.json` | JSON | Partial (result.content, max 100 KB) | No | Yes (exit_code, duration, cost, session_id) | 50 per job |
+| `job-logs/job/*.json` | JSON | Partial (result.content, max 100 KB) | No | Yes (exit_code, duration, cost, session_id) | 50 per job |
 
 ### Where stdout lives
 
@@ -134,10 +134,10 @@ Four event types that record the engine lifecycle, plus app lifecycle:
 | `bot_event` / `transcription` | Voice message transcribed (before engine) | content, duration, author, request_id |
 | `bot_event` / `ready` | Bot connects to Discord | details |
 | `bot_event` / `error` | Something failed before/after engine | details |
-| `cron_dispatch` / `started` | Cron job about to run | job_id |
-| `cron_dispatch` / `completed` | Cron job finished successfully | job_id, duration, exit_code |
-| `cron_dispatch` / `failed` | Cron job failed | job_id, duration, exit_code |
-| `cron_runner_crash` | Cron subprocess died | exit_code, stderr |
+| `job_dispatch` / `started` | Cron job about to run | job_id |
+| `job_dispatch` / `completed` | Cron job finished successfully | job_id, duration, exit_code |
+| `job_dispatch` / `failed` | Cron job failed | job_id, duration, exit_code |
+| `job_runner_crash` | Cron subprocess died | exit_code, stderr |
 | `invocation` | Engine ran (the actual AI call) | caller, duration, tokens, cost, model, session_id, exit_code, stderr, request_id, engine |
 | `app_started` | Merlin server started | host, port, cwd, extensions |
 | `app_stopped` | Merlin server stopped | — |
@@ -165,11 +165,11 @@ Each file is the raw `--output-format stream-json` dump from one engine invocati
 
 1. **Bot dashboard** (`/bot`, `/bot/performance`, `/bot/logs`) → reads `engine-log.jsonl` via the shared reader `lib/event_log.py:read_events()`. Powers health cards, performance charts, and log tables.
 2. **Session viewer** (`/session/{filename}`) → reads `logs/raw-sessions/*.jsonl`. Renders the full timeline with thinking blocks, tool calls, token counts.
-3. **Cron dashboard** (`/cron`) → reads `engine-log.jsonl` via `lib/event_log.py` for two things: the **crash banner** (`cron_runner_crash` events) and the **Performance tab**, which keeps only cron callers (`caller` starts with `cron-`) and aggregates them server-side via `perf/aggregate.py` behind `GET /api/cron/performance`. Also reads `cron-logs/` for execution history and session links.
+3. **Jobs dashboard** (`/jobs`) → reads `engine-log.jsonl` via `lib/event_log.py` for two things: the **crash banner** (`job_runner_crash` events) and the **Performance tab**, which keeps only job callers (`caller` starts with `job-`) and aggregates them server-side via `perf/aggregate.py` behind `GET /api/job/performance`. Also reads `job-logs/` for execution history and session links.
 4. **Engine resume** → reads `sessions/*.jsonl` to rebuild conversation history for `--resume`.
 5. **`merlin.log`** → manual debugging only (SSH into server and read).
 
-> **Consumer-side schema.** Writers stay free-form (`log_event(**fields)`), but every reader goes through typed Pydantic models in `lib/event_log.py` (`InvocationEvent`, `CronDispatchEvent`, `CronRunnerCrashEvent`, `BotEvent`, `AppLifecycleEvent`). Each model sets `extra="allow"`, so adding a field on the writer side never breaks a reader; lines that fail JSON decoding or model validation are skipped and counted (a single `WARNING` summary), never raised.
+> **Consumer-side schema.** Writers stay free-form (`log_event(**fields)`), but every reader goes through typed Pydantic models in `lib/event_log.py` (`InvocationEvent`, `JobDispatchEvent`, `JobRunnerCrashEvent`, `BotEvent`, `AppLifecycleEvent`). Each model sets `extra="allow"`, so adding a field on the writer side never breaks a reader; lines that fail JSON decoding or model validation are skipped and counted (a single `WARNING` summary), never raised.
 
 ## Rotation
 
@@ -180,7 +180,7 @@ All log types have bounded growth:
 | `logs/merlin.log` | `RotatingFileHandler` | 10 MB × 5 backups | 50 MB |
 | `logs/engine-log.jsonl` | Age-based cleanup at startup | 180 days | Varies |
 | `logs/raw-sessions/` | Age-based cleanup at startup | 90 days | Varies |
-| `cron-logs/` | Count-based per job | 50 per job | Varies |
+| `job-logs/` | Count-based per job | 50 per job | Varies |
 | `sessions/` | No rotation (state) | Forever | Grows slowly |
 
 Cleanup runs at server startup via `structured_log.cleanup_old_logs()`, called from `main.py start_server()`.
@@ -205,16 +205,16 @@ These parts of the app produce no structured events (though app-level errors go 
 |---|---|
 | `lib/engine.py` | Main `invoke()` entry point — writes to sessions, raw-sessions, engine log |
 | `lib/structured_log.py` | `log_event()`, `cleanup_old_logs()` — engine log writer + rotation |
-| `lib/event_log.py` | Canonical **reader** for `engine-log.jsonl` — typed Pydantic event models, malformed-line resilience. Used by the bot dashboard, the cron crash banner, and cron performance. |
+| `lib/event_log.py` | Canonical **reader** for `engine-log.jsonl` — typed Pydantic event models, malformed-line resilience. Used by the bot dashboard, the job crash banner, and job performance. |
 | `perf/aggregate.py` | Pure aggregator — turns `InvocationEvent`s into chartable `PerformanceData` (no I/O; testable in isolation). |
 | `lib/session.py` | `append_turn()`, `create_session()` — conversation history in `sessions/` |
 | `main.py` | `_setup_logging()` — configures `merlin.*` RotatingFileHandler, calls cleanup at startup |
 | `merlin-bot/merlin_bot.py` | Discord handler — writes to engine log (bot_event), generates request_id |
 | `merlin-bot/merlin_app.py` | Dashboard pages — reads `engine-log.jsonl` via `lib/event_log.py`; reads `logs/raw-sessions/` directly |
-| `cron/runner.py` | Cron dispatcher — writes to engine log (cron_dispatch), `cron-logs/` |
-| `cron/__init__.py` | Cron scheduler — writes to engine log on crash (cron_runner_crash) |
-| `cron/logs.py` | Cron execution log CRUD — reads/writes `cron-logs/`, has `cleanup_logs()` |
-| `cron/routes.py` | Cron dashboard API — reads `engine-log.jsonl` via `lib/event_log.py` (crash banner + `/api/cron/performance`), `cron-logs/` for history |
+| `job/runner.py` | Job dispatcher — writes to engine log (job_dispatch), `job-logs/` |
+| `job/__init__.py` | Job scheduler — writes to engine log on crash (job_runner_crash) |
+| `job/logs.py` | Job execution log CRUD — reads/writes `job-logs/`, has `cleanup_logs()` |
+| `job/routes.py` | Jobs dashboard API — reads `engine-log.jsonl` via `lib/event_log.py` (crash banner + `/api/job/performance`), `job-logs/` for history |
 | `terminal/routes.py` | Terminal WebSocket — logs connect/disconnect, PTY errors |
 | `saas_tunnel.py` | SaaS tunnel — logs connect/disconnect, port forwarding, auth |
 | `ssh_server.py` | SSH server — logs host key, sessions, PTY operations |

@@ -15,7 +15,7 @@ NOW = datetime(2026, 5, 31, tzinfo=timezone.utc)
 
 
 def _inv(
-    caller: str = "cron-foo",
+    caller: str = "job-foo",
     duration: float = 1.0,
     cost_usd: float | None = 0.01,
     exit_code: int = 0,
@@ -49,7 +49,7 @@ def test_aggregate_empty_returns_zeroed_model():
 
 def test_aggregate_single_event_groups_correctly():
     data = aggregate_invocations(
-        [_inv(caller="cron-foo", duration=2.0, cost_usd=0.01, exit_code=0)], NOW
+        [_inv(caller="job-foo", duration=2.0, cost_usd=0.01, exit_code=0)], NOW
     )
 
     assert data.success_rate.success == 1
@@ -58,14 +58,14 @@ def test_aggregate_single_event_groups_correctly():
 
     assert len(data.by_job_duration) == 1
     d = data.by_job_duration[0]
-    assert d.caller == "cron-foo"
+    assert d.caller == "job-foo"
     assert d.count == 1
     assert d.avg_seconds == pytest.approx(2.0)
     assert d.p95_seconds == pytest.approx(2.0)
 
     assert len(data.by_job_cost) == 1
     c = data.by_job_cost[0]
-    assert c.caller == "cron-foo"
+    assert c.caller == "job-foo"
     assert c.count == 1
     assert c.total_usd == pytest.approx(0.01)
     assert c.avg_usd == pytest.approx(0.01)
@@ -109,14 +109,14 @@ def test_aggregate_p95_independent_of_input_order():
 def test_aggregate_groups_by_caller():
     data = aggregate_invocations(
         [
-            _inv(caller="cron-a"),
-            _inv(caller="cron-b"),
-            _inv(caller="cron-a"),
+            _inv(caller="job-a"),
+            _inv(caller="job-b"),
+            _inv(caller="job-a"),
         ],
         NOW,
     )
     by_caller = {d.caller: d.count for d in data.by_job_duration}
-    assert by_caller == {"cron-a": 2, "cron-b": 1}
+    assert by_caller == {"job-a": 2, "job-b": 1}
 
 
 def test_aggregate_success_rate_denominator():
@@ -132,19 +132,19 @@ def test_aggregate_success_rate_denominator():
 def test_aggregate_excludes_none_cost_from_cost_totals():
     data = aggregate_invocations(
         [
-            _inv(caller="cron-priced", duration=1.0, cost_usd=0.05),
-            _inv(caller="cron-free", duration=2.0, cost_usd=None),
+            _inv(caller="job-priced", duration=1.0, cost_usd=0.05),
+            _inv(caller="job-free", duration=2.0, cost_usd=None),
         ],
         NOW,
     )
 
     # Both contribute to duration aggregates.
     duration_callers = {d.caller for d in data.by_job_duration}
-    assert duration_callers == {"cron-priced", "cron-free"}
+    assert duration_callers == {"job-priced", "job-free"}
 
     # Only the priced one appears in cost aggregates.
     cost_callers = {c.caller for c in data.by_job_cost}
-    assert cost_callers == {"cron-priced"}
+    assert cost_callers == {"job-priced"}
     assert data.by_job_cost[0].total_usd == pytest.approx(0.05)
     assert data.by_job_cost[0].count == 1
 
@@ -153,9 +153,9 @@ def test_aggregate_excludes_none_cost_but_keeps_other_costs_for_same_caller():
     """A caller with mixed None/priced runs: cost count only counts priced runs."""
     data = aggregate_invocations(
         [
-            _inv(caller="cron-mixed", duration=1.0, cost_usd=0.10),
-            _inv(caller="cron-mixed", duration=1.0, cost_usd=None),
-            _inv(caller="cron-mixed", duration=1.0, cost_usd=0.20),
+            _inv(caller="job-mixed", duration=1.0, cost_usd=0.10),
+            _inv(caller="job-mixed", duration=1.0, cost_usd=None),
+            _inv(caller="job-mixed", duration=1.0, cost_usd=0.20),
         ],
         NOW,
     )
@@ -167,16 +167,16 @@ def test_aggregate_excludes_none_cost_but_keeps_other_costs_for_same_caller():
 
 
 def test_aggregate_preserves_deleted_job_labels():
-    data = aggregate_invocations([_inv(caller="cron-no-longer-exists")], NOW)
-    assert data.by_job_duration[0].caller == "cron-no-longer-exists"
-    assert data.by_job_cost[0].caller == "cron-no-longer-exists"
-    assert data.timeseries[0].caller == "cron-no-longer-exists"
+    data = aggregate_invocations([_inv(caller="job-no-longer-exists")], NOW)
+    assert data.by_job_duration[0].caller == "job-no-longer-exists"
+    assert data.by_job_cost[0].caller == "job-no-longer-exists"
+    assert data.timeseries[0].caller == "job-no-longer-exists"
 
 
 def test_aggregate_timeseries_preserves_raw_points():
     events = [
         _inv(
-            caller=f"cron-{i}",
+            caller=f"job-{i}",
             duration=float(i),
             timestamp=f"2026-05-{10 + i:02d}T12:00:00+00:00",
         )
@@ -191,7 +191,7 @@ def test_aggregate_timeseries_preserves_raw_points():
 
 def test_aggregate_now_parameter_is_used_not_clock():
     """Output must depend only on events, never on the wall clock or `now`."""
-    events = [_inv(caller="cron-a", duration=3.0), _inv(caller="cron-b", duration=1.0)]
+    events = [_inv(caller="job-a", duration=3.0), _inv(caller="job-b", duration=1.0)]
 
     past = aggregate_invocations(events, NOW - timedelta(days=30))
     future = aggregate_invocations(events, NOW + timedelta(days=365))
@@ -204,28 +204,28 @@ def test_aggregate_now_parameter_is_used_not_clock():
 
 def test_aggregate_by_job_sorted_descending():
     events = (
-        [_inv(caller="cron-one")] * 1
-        + [_inv(caller="cron-five")] * 5
-        + [_inv(caller="cron-two")] * 2
+        [_inv(caller="job-one")] * 1
+        + [_inv(caller="job-five")] * 5
+        + [_inv(caller="job-two")] * 2
     )
     data = aggregate_invocations(events, NOW)
     assert [d.count for d in data.by_job_duration] == [5, 2, 1]
     assert [d.caller for d in data.by_job_duration] == [
-        "cron-five",
-        "cron-two",
-        "cron-one",
+        "job-five",
+        "job-two",
+        "job-one",
     ]
 
 
 def test_aggregate_by_job_cost_sorted_by_total_descending():
     events = [
-        _inv(caller="cron-cheap", cost_usd=0.01),
-        _inv(caller="cron-pricey", cost_usd=0.50),
-        _inv(caller="cron-mid", cost_usd=0.10),
+        _inv(caller="job-cheap", cost_usd=0.01),
+        _inv(caller="job-pricey", cost_usd=0.50),
+        _inv(caller="job-mid", cost_usd=0.10),
     ]
     data = aggregate_invocations(events, NOW)
     assert [c.caller for c in data.by_job_cost] == [
-        "cron-pricey",
-        "cron-mid",
-        "cron-cheap",
+        "job-pricey",
+        "job-mid",
+        "job-cheap",
     ]

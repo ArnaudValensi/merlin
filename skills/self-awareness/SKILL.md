@@ -25,15 +25,15 @@ Your source code spans several directories from the project root:
 
 - **`main.py`**, **`cli.py`**, **`auth.py`**, **`tunnel.py`**, **`paths.py`** — Core entry points and utilities
 - **`lib/`** — Shared libraries (`engine.py`, `claude.py`, `session.py`, `structured_log.py`)
-- **`cron/`** — Cron core module (`runner.py`, `manage.py`, `state.py`, `logs.py`, `routes.py`, `notify.py`)
+- **`job/`** — Job core module (`runner.py`, `manage.py`, `state.py`, `logs.py`, `routes.py`, `notify.py`)
 - **`merlin-bot/`** — Discord bot extension (`merlin_bot.py`, `discord_send.py` transport, `merlin_app.py`)
 - **`files/`**, **`terminal/`**, **`commits/`**, **`notes/`** — Dashboard modules
 
 ## What You Can Inspect
 
-- **Your source code** — read any `.py` file in the project root, `lib/`, `cron/`, or `merlin-bot/`
+- **Your source code** — read any `.py` file in the project root, `lib/`, `job/`, or `merlin-bot/`
 - **Your skills** — core skills ship in `skills/*/SKILL.md`; bot-gated skills in `merlin-bot/skills/*/SKILL.md`; personal skills in `$(merlin config skills-user-dir)/*/SKILL.md`. All are aggregated into `~/.merlin/skills/`
-- **Your cron jobs** — `merlin cron list` and `~/.merlin/cron-jobs/*.json`
+- **Your jobs** — `merlin job list` and `~/.merlin/jobs/*.json`
 - **Your notes** — `$(merlin config notes-dir)/user.md`, `kb/`, `logs/`
 - **Your config** — `~/.merlin/config.env`
 
@@ -43,7 +43,7 @@ All logs live under `~/.merlin/logs/`.
 
 ### Engine log (`~/.merlin/logs/engine-log.jsonl`)
 
-Single JSONL file, one event per line. Event types: `invocation`, `bot_event`, `cron_dispatch`, `app_start`, `app_stop`. Source of truth for the monitoring dashboard. Includes `stderr`, `request_id` for correlation.
+Single JSONL file, one event per line. Event types: `invocation`, `bot_event`, `job_dispatch`, `app_start`, `app_stop`. Source of truth for the monitoring dashboard. Includes `stderr`, `request_id` for correlation.
 
 ```bash
 tail -20 ~/.merlin/logs/engine-log.jsonl | python3 -m json.tool --no-ensure-ascii
@@ -52,7 +52,7 @@ grep '"error"' ~/.merlin/logs/engine-log.jsonl | tail -10
 
 ### App log (`~/.merlin/logs/merlin.log`)
 
-Unified app log — all modules (bot, cron, core) use the `merlin.*` logger hierarchy. `RotatingFileHandler`, 10 MB × 5.
+Unified app log — all modules (bot, jobs, core) use the `merlin.*` logger hierarchy. `RotatingFileHandler`, 10 MB × 5.
 
 ```bash
 tail -100 ~/.merlin/logs/merlin.log

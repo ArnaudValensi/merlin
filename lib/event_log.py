@@ -13,7 +13,7 @@ Design:
 
 Consumers:
   - ``merlin-bot/merlin_app.py`` (bot dashboard: health, invocations, logs)
-  - ``cron/routes.py`` (cron crash banner + ``/api/cron/performance``)
+  - ``job/routes.py`` (job crash banner + ``/api/job/performance``)
   - ``perf/aggregate.py`` operates on the ``InvocationEvent`` models below.
 """
 
@@ -71,16 +71,16 @@ class InvocationEvent(BaseEvent):
     request_id: str | None = None
 
 
-class CronDispatchEvent(BaseEvent):
-    """A cron job execution lifecycle event (started / completed / failed)."""
+class JobDispatchEvent(BaseEvent):
+    """A job execution lifecycle event (started / completed / failed)."""
 
     job_id: str | None = None
     duration: float | None = None
     exit_code: int | None = None
 
 
-class CronRunnerCrashEvent(BaseEvent):
-    """The cron runner subprocess died unexpectedly."""
+class JobRunnerCrashEvent(BaseEvent):
+    """The job runner subprocess died unexpectedly."""
 
     exit_code: int | None = None
     stderr: str = ""
@@ -113,8 +113,8 @@ class AppLifecycleEvent(BaseEvent):
 # treated as malformed.
 _MODEL_FOR_TYPE: dict[str, type[BaseEvent]] = {
     "invocation": InvocationEvent,
-    "cron_dispatch": CronDispatchEvent,
-    "cron_runner_crash": CronRunnerCrashEvent,
+    "job_dispatch": JobDispatchEvent,
+    "job_runner_crash": JobRunnerCrashEvent,
     "bot_event": BotEvent,
     "app_started": AppLifecycleEvent,
     "app_stopped": AppLifecycleEvent,

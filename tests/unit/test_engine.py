@@ -286,7 +286,7 @@ class TestInvoke:
 
 
 class TestSkillsFallback:
-    def _make_canonical_skill(self, tmp_path, name="cron", description="Cron skill."):
+    def _make_canonical_skill(self, tmp_path, name="jobs", description="Jobs skill."):
         from lib import skills
 
         skill_dir = tmp_path / "src" / name
@@ -326,7 +326,7 @@ class TestSkillsFallback:
         invoke("hello", caller="test")
         system_prompt = captured["system_prompt"]
         assert "# Available Skills" in system_prompt
-        assert "cron: Cron skill." in system_prompt
+        assert "jobs: Jobs skill." in system_prompt
         assert "SKILL.md" in system_prompt
 
     def test_composed_prompt_precedes_skill_table(self, tmp_path, monkeypatch):

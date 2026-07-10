@@ -36,7 +36,7 @@
     <div class="card">
         <div class="card-label">Errors (24h)</div>
         <div class="card-value" id="card-errors">—</div>
-        <div class="card-detail" id="card-cron-failures"></div>
+        <div class="card-detail" id="card-job-failures"></div>
     </div>
 </div>
 <div id="error-card-container"></div>
@@ -164,7 +164,7 @@ async function loadOverview() {
     const errEl = document.getElementById('card-errors');
     errEl.textContent = health.errors_24h;
     errEl.className = 'card-value ' + (health.errors_24h > 0 ? 'red' : 'green');
-    document.getElementById('card-cron-failures').textContent = 'all clear';
+    document.getElementById('card-job-failures').textContent = 'all clear';
 
     const errContainer = document.getElementById('error-card-container');
     if (health.last_error) {
@@ -181,10 +181,10 @@ async function loadOverview() {
 
     const events = await API.get('/api/events');
     if (!events) return;
-    // Filter to Discord-only: bot_event + Discord invocations (no cron)
+    // Filter to Discord-only: bot_event + Discord invocations (no jobs)
     const discordEvents = events.filter(e =>
         e.type === 'bot_event' ||
-        (e.type === 'invocation' && (!e.caller || !e.caller.startsWith('cron-')))
+        (e.type === 'invocation' && (!e.caller || !e.caller.startsWith('job-')))
     );
     const feedEl = document.getElementById('feed-items');
     const recent = discordEvents.slice(-15).reverse();
@@ -225,7 +225,7 @@ async function loadPerformance() {
     const invocations = await API.get(url);
     if (!invocations) return;
     // Filter to Discord-only
-    const discordInvocations = invocations.filter(e => !e.caller || !e.caller.startsWith('cron-'));
+    const discordInvocations = invocations.filter(e => !e.caller || !e.caller.startsWith('job-'));
 
     renderScatterChart(discordInvocations);
     renderBarChart(discordInvocations);
@@ -360,7 +360,7 @@ function renderLogTable(events) {
 }
 
 function renderInvocationTable(events, container) {
-    events = events.filter(e => !e.caller || !e.caller.startsWith('cron-'));
+    events = events.filter(e => !e.caller || !e.caller.startsWith('job-'));
     let html = `<table class="log-table"><thead><tr><th>Time</th><th>Caller</th><th>Duration</th><th>Exit</th><th>Turns</th><th>Tokens In</th><th>Tokens Out</th><th></th></tr></thead><tbody>`;
     events.forEach((e, i) => {
         const isError = e.exit_code !== 0;

@@ -92,7 +92,7 @@ class TestDryRun:
     def test_creates_data_dirs(self):
         result = run_installer()
         assert "Creating data directories" in result.stdout
-        for d in ["notes", "cron-jobs", "data", "logs"]:
+        for d in ["notes", "jobs", "data", "logs"]:
             assert d in result.stdout
 
     def test_no_changes_message(self):

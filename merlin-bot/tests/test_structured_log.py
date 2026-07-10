@@ -1,4 +1,4 @@
-"""Tests for structured_log.py and its wiring into wrapper/merlin/cron."""
+"""Tests for structured_log.py and its wiring into wrapper/merlin/job."""
 
 import json
 import threading
@@ -72,13 +72,13 @@ class TestLogEvent:
     def test_multiple_events_appended(self, _isolated_log):
         sl.log_event("bot_event", event="ready")
         sl.log_event("invocation", caller="test")
-        sl.log_event("cron_dispatch", job_id="weather")
+        sl.log_event("job_dispatch", job_id="weather")
         events = _read_events(_isolated_log)
         assert len(events) == 3
         assert [e["type"] for e in events] == [
             "bot_event",
             "invocation",
-            "cron_dispatch",
+            "job_dispatch",
         ]
 
     def test_thread_safety(self, _isolated_log):

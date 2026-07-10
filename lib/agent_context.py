@@ -3,7 +3,7 @@
 Sits above the channel-agnostic engine (lib/engine.py): the engine receives
 a finished system prompt and knows nothing about brain, personality, or who
 is calling. Each layer is defined exactly once here, and every consumer (the
-Discord bot, the cron agent runner, `merlin agent`) obtains it through this
+Discord bot, the job agent runner, `merlin agent`) obtains it through this
 module, so the CLI flags and the managed channels cannot disagree on what a
 layer contains.
 
@@ -21,7 +21,7 @@ Recipes (which layers per kind of invocation):
     managed-assistant   brain + personality + user + Discord overlay
                         (the Discord bot)
     headless-worker     brain + user, no personality by design — operational
-                        jobs shouldn't sound like the bot (cron agent jobs)
+                        jobs shouldn't sound like the bot (job agent runs)
 
 `merlin agent` is the interactive face: brain by default, --personality /
 --user append those same layers.

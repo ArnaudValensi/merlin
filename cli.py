@@ -34,7 +34,7 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.resolve()))
-# lib/ holds shared modules (structured_log, engine) imported by cron and
+# lib/ holds shared modules (structured_log, engine) imported by the job module and
 # other delegated core commands.
 sys.path.insert(1, str(Path(__file__).parent.resolve() / "lib"))
 
@@ -460,10 +460,10 @@ def run_setup(config_path: Path | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _delegate_cron(argv: list[str]) -> None:
-    from cron.manage import main as cron_main
+def _delegate_job(argv: list[str]) -> None:
+    from job.manage import main as job_main
 
-    cron_main(argv, prog="merlin cron")
+    job_main(argv, prog="merlin job")
 
 
 def _delegate_chat(argv: list[str]) -> None:
@@ -478,9 +478,9 @@ def _delegate_chat(argv: list[str]) -> None:
 # whole job (plus listing it in ext_commands.CORE_COMMANDS, which the drift
 # test enforces).
 DELEGATED_COMMANDS: dict[str, tuple] = {
-    "cron": (
-        _delegate_cron,
-        "Manage scheduled cron jobs (list/get/add/enable/disable/remove/trigger/history)",
+    "job": (
+        _delegate_job,
+        "Manage jobs (list/get/add/enable/disable/remove/trigger/history)",
     ),
     "chat": (
         _delegate_chat,
@@ -605,7 +605,7 @@ Available keys:
   config-path     Config file path
   logs-dir        Logs directory
   sessions-dir    Session transcripts directory
-  cron-jobs-dir   Cron job definitions directory
+  jobs-dir        Job definitions directory
   extensions-dir  User extensions directory
   version         Current version
 
@@ -653,7 +653,7 @@ def _get_config_values() -> dict[str, str]:
         "config-path": str(paths.config_path()),
         "logs-dir": str(paths.logs_dir()),
         "sessions-dir": str(paths.sessions_dir()),
-        "cron-jobs-dir": str(paths.cron_jobs_dir()),
+        "jobs-dir": str(paths.jobs_dir()),
         "extensions-dir": str(paths.extensions_dir()),
         "version": get_version(),
     }
@@ -664,7 +664,7 @@ def run_agent(personality: bool = False, user: bool = False) -> None:
 
     All layers come from lib/agent_context.py, the same module the managed
     channels inject from, so this output cannot diverge from what the bot
-    or cron jobs receive. The brain is read from the app dir, so 'merlin
+    or jobs receive. The brain is read from the app dir, so 'merlin
     update' refreshes it via the 'current' symlink.
     """
     from lib import agent_context

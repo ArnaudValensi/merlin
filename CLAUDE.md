@@ -1,15 +1,15 @@
 # Merlin — Project
 
-Merlin is a suite of dev tools built around the user's preferred AI agent CLI (Claude Code, OpenCode, via the AgentEngine abstraction): a web dashboard (terminal, files, commits, notes), a cron scheduler, and chat integrations running as one process, accessible from anywhere. Install via `curl | bash` or run from a git checkout with `uv run main.py`.
+Merlin is a suite of dev tools built around the user's preferred AI agent CLI (Claude Code, OpenCode, via the AgentEngine abstraction): a web dashboard (terminal, files, commits, notes), a job scheduler, and chat integrations running as one process, accessible from anywhere. Install via `curl | bash` or run from a git checkout with `uv run main.py`.
 
-The Discord bot (`merlin-bot/`, a built-in extension) is one channel where that agent acts; the web terminal and cron are the others. The notes / knowledge base is the shared memory they all read and feed, which is why the system compounds (see [`docs/dev/architecture.md`](docs/dev/architecture.md)). Merlin ships no tunnel of its own: remote access is bring-your-own tunnel/reverse proxy or Merlin Cloud (SaaS mode, `saas_tunnel.py`).
+The Discord bot (`merlin-bot/`, a built-in extension) is one channel where that agent acts; the web terminal and jobs are the others. The notes / knowledge base is the shared memory they all read and feed, which is why the system compounds (see [`docs/dev/architecture.md`](docs/dev/architecture.md)). Merlin ships no tunnel of its own: remote access is bring-your-own tunnel/reverse proxy or Merlin Cloud (SaaS mode, `saas_tunnel.py`).
 
 ## Project Structure
 
 ```
 merlin/
 ├── CLAUDE.md                  # This file — development instructions
-├── main.py                    # FastAPI app — dashboard + bot + cron
+├── main.py                    # FastAPI app — dashboard + bot + jobs
 ├── cli.py                     # CLI entry point (merlin start/version/setup/update/config)
 ├── paths.py                   # Path resolution (dev mode vs installed mode)
 ├── install.sh                 # curl|bash installer
@@ -29,22 +29,22 @@ merlin/
 │   └── engines/               # Engine implementations
 │       ├── claude_code.py     # Claude Code CLI engine (default)
 │       └── opencode.py        # OpenCode CLI engine
-├── cron/                      # Cron core module (always active)
-│   ├── __init__.py            # Scheduler loop (start(), _cron_scheduler)
+├── job/                       # Job core module (always active)
+│   ├── __init__.py            # Scheduler loop (start(), _job_scheduler)
 │   ├── runner.py              # Job dispatcher (check due, execute via lib/engine)
 │   ├── state.py               # State/history/lock helpers
 │   ├── manage.py              # Job CRUD + CLI for management
-│   ├── routes.py              # REST API endpoints + /cron dashboard page
+│   ├── routes.py              # REST API endpoints + /jobs dashboard page
 │   ├── schemas.py             # Pydantic models (JobCreate, JobUpdate)
 │   ├── logs.py                # Hybrid log storage (individual files + metadata)
 │   ├── notify.py              # Notification system (graceful Discord fallback)
-│   └── templates/cron.html    # Dashboard page template
+│   └── templates/jobs.html    # Dashboard page template
 ├── files/                     # File browser module
 ├── terminal/                  # Web terminal module (xterm.js + tmux)
 ├── commits/                   # Git commit browser module
 ├── notes/                     # Notes editor module (markdown)
 │   └── commands/              # merlin notes search / kb / remember commands
-├── skills/                    # Core operational skills (cron/, notes/, dashboard/, self-awareness/) — always active, aggregated regardless of the bot
+├── skills/                    # Core operational skills (jobs/, notes/, dashboard/, self-awareness/) — always active, aggregated regardless of the bot
 ├── tests/                     # Tests for core modules
 ├── agent/
 │   └── MERLIN.md              # Agent brain doc (printed by `merlin agent`)
@@ -53,7 +53,7 @@ merlin/
 │   ├── merlin_app.py          # App interface (bot monitoring page with tabs)
 │   ├── discord_directives.md  # Canonical Discord style overlay
 │   ├── discord_send.py        # Discord REST API transport (used by bot + merlin chat)
-│   ├── cron-jobs/             # Job files (*.json)
+│   ├── jobs/                  # Job files (*.json)
 │   ├── templates/             # Bot-specific templates (bot.html with tabs, session.html)
 │   ├── skills/                # Bot-gated skills (discord/) — only active when the bot is enabled
 │   ├── .env                   # Bot token (gitignored)
@@ -72,7 +72,7 @@ New to the codebase? Read `architecture.md` first, then `extension-system.md` an
 |-----|--------|
 | [`docs/dev/development-setup.md`](docs/dev/development-setup.md) | Contributor setup: run from a checkout, validate/test commands, bot from a checkout |
 | [`docs/dev/architecture.md`](docs/dev/architecture.md) | High-level system overview, data flow |
-| [`docs/dev/cron-system.md`](docs/dev/cron-system.md) | Job format, dispatcher, state/locks, scheduler, staleness guard |
+| [`docs/dev/job-system.md`](docs/dev/job-system.md) | Job format, dispatcher, state/locks, scheduler, staleness guard |
 | [`docs/dev/notes-system.md`](docs/dev/notes-system.md) | 3-layer notes system (user, logs, KB), frontmatter format, search tools |
 | [`docs/dev/session-management.md`](docs/dev/session-management.md) | Session registry, UUID5 strategy, resume-first, MERLIN_SESSION_ID |
 | [`docs/dev/discord-bot.md`](docs/dev/discord-bot.md) | Message flow, filtering, threading, prompt building, discord skill |
@@ -118,7 +118,7 @@ When creating new scripts:
 │                                                           │
 │  Core Modules:                                            │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐   │
-│  │  files/   │ │terminal/ │ │ commits/ │ │  cron/     │   │
+│  │  files/   │ │terminal/ │ │ commits/ │ │  job/      │   │
 │  │  Browser  │ │ xterm.js │ │ Git log  │ │ Scheduler  │   │
 │  └──────────┘ └──────────┘ └──────────┘ └───────────┘   │
 │                                                           │
@@ -151,7 +151,7 @@ When creating new scripts:
 
 | File | Purpose | Docs |
 |------|---------|------|
-| `main.py` | FastAPI app — starts dashboard + bot + cron (one process) | `--help` |
+| `main.py` | FastAPI app — starts dashboard + bot + jobs (one process) | `--help` |
 | `cli.py` | CLI entry point — `merlin start/version/setup/update/config` | `--help`, [`standalone-cli`](docs/dev/standalone-cli.md) |
 | `paths.py` | Path resolution — dev mode vs installed mode (`~/.merlin/`) | [`standalone-cli`](docs/dev/standalone-cli.md) |
 | `install.sh` | `curl \| bash` installer | [`releasing`](docs/dev/releasing.md) |
@@ -160,7 +160,7 @@ When creating new scripts:
 | `lib/agent_context.py` | Persona/context composition — layers (brain, personality, user, overlays) and per-caller recipes | [`architecture`](docs/dev/architecture.md) |
 | `lib/session.py` | Session manager — JSONL transcripts, history, compaction | [`session-management`](docs/dev/session-management.md) |
 | `lib/engines/` | Engine implementations (claude_code.py, opencode.py) | [`session-management`](docs/dev/session-management.md) |
-| `cron/` | Cron core module — scheduler, runner, state, REST API, logs, notifications | [`cron-system`](docs/dev/cron-system.md) |
+| `job/` | Job core module — scheduler, runner, state, REST API, logs, notifications | [`job-system`](docs/dev/job-system.md) |
 | `files/` | File browser module | [`dashboard-architecture`](docs/dev/dashboard-architecture.md) |
 | `terminal/` | Web terminal module | [`web-terminal`](docs/dev/web-terminal.md) |
 | `commits/` | Commit browser module | [`dashboard-architecture`](docs/dev/dashboard-architecture.md) |
@@ -191,7 +191,7 @@ Every conversation lives in a **Discord thread**, mapped 1:1 to a Claude Code se
 
 - **Channel message** → creates a thread, generates session via `uuid5("discord-thread-{thread_id}")`
 - **Thread message** → looks up session from `data/session_registry.json`, resumes it
-- **Reply to cron/bot message** → resumes the cron's session (tracked via `MERLIN_SESSION_ID` env var)
+- **Reply to job/bot message** → resumes the job's session (tracked via `MERLIN_SESSION_ID` env var)
 
 Strategy: **resume-first** — try `--resume` first, fall back to `--session-id` to create.
 
@@ -212,16 +212,16 @@ Strategy: **resume-first** — try `--resume` first, fall back to `--session-id`
 - **Default channel**: Set via `DISCORD_CHANNEL_IDS` in config
 - **CLI**: `merlin chat --help`
 
-## Cron Jobs
+## Jobs
 
-> Full reference: [`docs/dev/cron-system.md`](docs/dev/cron-system.md)
+> Full reference: [`docs/dev/job-system.md`](docs/dev/job-system.md)
 
-- **Core module**: `cron/` — scheduler, runner, state, REST API, logs, notifications
-- **Job files**: `cron-jobs/*.json`
-- **Management CLI**: `merlin cron --help`
-- **REST API**: `/api/cron/jobs/*` — full CRUD + toggle + trigger + logs
-- **Dashboard**: `/cron` — web UI for managing jobs
-- **Scheduler**: Started from `main.py` via `cron.start()` (always runs, independent of merlin-bot)
+- **Core module**: `job/` — scheduler, runner, state, REST API, logs, notifications
+- **Job files**: `jobs/*.json`
+- **Management CLI**: `merlin job --help`
+- **REST API**: `/api/job/jobs/*` — full CRUD + toggle + trigger + logs
+- **Dashboard**: `/jobs` — web UI for managing jobs
+- **Scheduler**: Started from `main.py` via `job.start()` (always runs, independent of merlin-bot)
 - **Notifications**: Graceful fallback — Discord via merlin-bot if loaded, otherwise silent
 
 ## Environment
@@ -235,7 +235,7 @@ Reference dev environment (the maintainer's setup, not a requirement). Merlin it
 ## Development Commands
 
 ```bash
-uv run main.py                # start everything (dashboard + bot + cron, dev mode)
+uv run main.py                # start everything (dashboard + bot + jobs, dev mode)
 restart.sh                    # restart everything in background (single process)
 uv run scripts.py validate    # full validation: lint + format + typecheck + tests
 ```
@@ -250,7 +250,7 @@ Full setup, test variants, bot-from-checkout, and E2E first-time setup:
 Three log types under `~/.merlin/`:
 
 - **`logs/merlin.log`** — unified app log (`RotatingFileHandler`, 10 MB × 5). All modules use the `merlin.*` logger hierarchy.
-- **`logs/engine-log.jsonl`** — engine lifecycle events (invocations, bot events, cron dispatches, app start/stop). Source of truth for the monitoring dashboard. Includes `stderr`, `request_id` for correlation.
+- **`logs/engine-log.jsonl`** — engine lifecycle events (invocations, bot events, job dispatches, app start/stop). Source of truth for the monitoring dashboard. Includes `stderr`, `request_id` for correlation.
 - **`logs/raw-sessions/`** — raw engine output per invocation (stream-json). Powers the session viewer.
 
 Rotation: `merlin.log` rotates by size, `engine-log.jsonl` keeps 180 days, `raw-sessions/` keeps 90 days. Cleanup runs at startup.
@@ -267,7 +267,7 @@ Web-based dashboard served by FastAPI on port 3123, started by `main.py`.
 - **Core pages:** Files, Terminal, Commits (always available)
 - **Built-in extensions:** Notes (enabled by default), Bot with tabs at `/bot` (disabled by default, requires Discord token)
 - **Management pages:** Extensions (`/extensions`), Settings (gear dropdown → Settings)
-- **Start:** `uv run main.py` starts everything (dashboard + bot + cron) in one process
+- **Start:** `uv run main.py` starts everything (dashboard + bot + jobs) in one process
 - **Screenshots:** `uv run .claude/skills/screenshot/screenshot.py --all http://localhost:3123 --user admin --pass <pass>`
 
 ## Project Management
@@ -282,7 +282,7 @@ Epics and project planning are managed in the private `merlin-saas` repo under `
 - **Deterministic sessions**: UUID5 from channel/job ID for session persistence
 - **Extension system**: Three tiers — core (files, terminal, commits: always active), built-in (notes, merlin-bot: toggleable), installed (`~/.merlin/extensions/`: user-installed). Extensions export `router`, `NAV_ITEMS`, `STATIC_DIR`, plus optional `start()`, `validate()`. `main.py` builds an `extension_registry` at startup. State persisted in `~/.merlin/extensions.json`. Extensions page at `/extensions` for management.
 - **Dynamic sidebar**: Nav items built from enabled extensions. Core items always shown, extension items added when loaded, Extensions nav item always last.
-- **Path resolution (paths.py)**: All modules use `paths.py` for file/directory resolution. Only `app_dir()` differs between modes (repo root vs `~/.merlin/current/`). User data (notes, cron-jobs, logs, config) always lives under `~/.merlin/` regardless of mode. Dev mode detection: explicit `set_dev_mode()` > `MERLIN_DEV` env var > `.git/` directory presence. Custom install location via `MERLIN_HOME` env var.
+- **Path resolution (paths.py)**: All modules use `paths.py` for file/directory resolution. Only `app_dir()` differs between modes (repo root vs `~/.merlin/current/`). User data (notes, jobs, logs, config) always lives under `~/.merlin/` regardless of mode. Dev mode detection: explicit `set_dev_mode()` > `MERLIN_DEV` env var > `.git/` directory presence. Custom install location via `MERLIN_HOME` env var.
 - **Graceful degradation**: At startup, `_check_optional_deps()` checks for tmux. Missing deps result in boot warnings, disabled nav items (grayed out with tooltip), and 503 responses on affected routes — not crashes.
-- **Fail-fast configuration**: All entry points (`merlin_bot.py`, `cron/runner.py`) validate required config at startup and exit immediately with descriptive error messages and step-by-step setup instructions if anything is missing or invalid. A first-time user should see exactly what to do — never a cryptic crash later at runtime. When adding new required config, always add validation to the entry point's `_validate_config()` function.
+- **Fail-fast configuration**: All entry points (`merlin_bot.py`, `job/runner.py`) validate required config at startup and exit immediately with descriptive error messages and step-by-step setup instructions if anything is missing or invalid. A first-time user should see exactly what to do — never a cryptic crash later at runtime. When adding new required config, always add validation to the entry point's `_validate_config()` function.
 - **Web UI development**: Before making any dashboard or UI changes, read `docs/dev/dashboard-architecture.md` for theme variables, CSS conventions, JS patterns, API endpoints, and how to add new pages. Always self-validate UI changes by taking screenshots with the screenshot skill and reviewing them before marking work as done. Run `uv run .claude/skills/screenshot/screenshot.py --all <url> --user <user> --pass <pass>` from the project root, then read the PNGs to verify layout, responsiveness, and correctness across viewports.

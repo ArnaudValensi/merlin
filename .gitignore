@@ -9,6 +9,6 @@ screenshots/
 nohup.out
 merlin-bot/logs/
 merlin-bot/notes/
-cron-jobs/.history.json
-cron-jobs/.locks/
-cron-jobs/.state/
+jobs/.history.json
+jobs/.locks/
+jobs/.state/

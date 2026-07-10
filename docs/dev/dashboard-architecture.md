@@ -49,7 +49,7 @@ Pages are Jinja2 templates served by FastAPI. Data is fetched client-side via JS
 All events go to one file (`logs/engine-log.jsonl`). Each line is a JSON object with a `type` field. Types:
 - `invocation` — Claude Code call (fields: caller, prompt, duration, exit_code, num_turns, tokens_in, tokens_out, session_id, model)
 - `bot_event` — Discord bot events (fields: event, details, content for message_received)
-- `cron_dispatch` — Cron job lifecycle (fields: job_id, event, duration, exit_code)
+- `job_dispatch` — Cron job lifecycle (fields: job_id, event, duration, exit_code)
 
 ### Auto-refresh via mtime polling
 
@@ -62,7 +62,7 @@ Refresh.start(5000);               // start polling
 
 ### Dashboard is the entry point
 
-`main.py` starts uvicorn + Discord bot + cron scheduler in a single process. Port 3123 by default.
+`main.py` starts uvicorn + Discord bot + job scheduler in a single process. Port 3123 by default.
 
 Start command: `uv run main.py` (or `restart.sh` to restart in background).
 
@@ -84,7 +84,7 @@ Dark theme using CSS custom properties in `:root`:
 --accent-blue: #4a9eff      /* links, active states */
 --accent-green: #34d399     /* success, online */
 --accent-red: #f87171       /* errors */
---accent-orange: #fb923c    /* cron badge */
+--accent-orange: #fb923c    /* job badge */
 --accent-yellow: #fbbf24    /* warnings */
 --accent-purple: #a78bfa    /* invocation badge */
 ```
@@ -104,7 +104,7 @@ Single breakpoint at `768px`:
 | `.card` | Container with bg-card, border, border-radius |
 | `.card-grid` | CSS grid for status cards (auto-fill, minmax 200px) |
 | `.feed-item` | Row in activity feed |
-| `.feed-badge` | Colored label (`.badge-invocation`, `.badge-bot_event`, `.badge-cron_dispatch`, `.badge-error`, `.badge-success`) |
+| `.feed-badge` | Colored label (`.badge-invocation`, `.badge-bot_event`, `.badge-job_dispatch`, `.badge-error`, `.badge-success`) |
 | `.log-table` | Full-width table for logs |
 | `.row-detail` | Hidden expandable row (toggle `.open` to show) |
 | `.detail-section` | Styled block inside expandable row (blue left border) |
@@ -422,13 +422,13 @@ terminal/
 ### Cron Dashboard
 
 ```
-cron/
-├── routes.py             # /cron page + REST API
+job/
+├── routes.py             # /jobs page + REST API
 ├── tz.py                 # cron_timezone() — shared UTC-fallback tz resolver
-└── templates/cron.html   # Jobs/Performance/Logs tabs + create/edit modal
+└── templates/jobs.html   # Jobs/Performance/Logs tabs + create/edit modal
 ```
 
-**Pages:** `/cron` (see [`cron-system.md`](cron-system.md) for the backend).
+**Pages:** `/jobs` (see [`job-system.md`](job-system.md) for the backend).
 
 **Create/edit modal** — two coordinated pieces, both vanilla JS on the `Cron` object:
 
@@ -441,7 +441,7 @@ cron/
   round-trips a stored expression back into the builder for edit mode, falling back to
   Custom for shapes it doesn't recognize. We stay 100% on cron — storage and the
   scheduler are untouched; this is presentation only. On every change it debounces a
-  call to `POST /api/cron/validate-schedule` and renders the plain-English description
+  call to `POST /api/job/validate-schedule` and renders the plain-English description
   (via the `cron-descriptor` dependency), the timezone, the next 3 runs, and the raw
   `cron:` line. The preview is **timezone-correct**: runs are computed and preformatted
   in the job's scheduling timezone, so it matches when the job fires.
@@ -456,7 +456,7 @@ cron/
   disclosure: Max turns, Session mode) and **Shell command** (command textarea +
   optional working-dir whose placeholder is the resolved `default_working_dir`). The
   advanced disclosure is hidden entirely for command jobs. **Save & run now** saves,
-  triggers `POST /api/cron/jobs/{id}/run`, and deep-links to the Logs tab via a
+  triggers `POST /api/job/jobs/{id}/run`, and deep-links to the Logs tab via a
   `#logs=<id>` hash handler. Job cards show a type badge (`🤖 agent` purple /
   `>_ command` green-mono), command jobs render the command preview and omit cost.
 
@@ -479,7 +479,7 @@ from structured_log import log_event
 
 log_event("invocation", caller="discord", prompt="...", duration=5.2, exit_code=0, ...)
 log_event("bot_event", event="message_received", details="...", content="...")
-log_event("cron_dispatch", job_id="daily-digest", event="completed", duration=45.0, ...)
+log_event("job_dispatch", job_id="daily-digest", event="completed", duration=45.0, ...)
 ```
 
 ### Reading events

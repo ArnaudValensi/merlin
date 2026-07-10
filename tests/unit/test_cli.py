@@ -150,8 +150,8 @@ class TestRunSkills:
     def test_lists_sources_shadowing_and_disabled(self, capsys):
         from cli import run_skills
 
-        # A user skill colliding with core 'cron', plus a uniquely named one.
-        self._make_user_skill("cron", "User hijack attempt.")
+        # A user skill colliding with core 'jobs', plus a uniquely named one.
+        self._make_user_skill("jobs", "User hijack attempt.")
         self._make_user_skill("piano", "Practice coach.")
 
         run_skills()
@@ -163,7 +163,7 @@ class TestRunSkills:
         # The user's uniquely named skill is listed under the user source.
         assert "piano" in out
         assert "skills-user" in out
-        # The user 'cron' is shown blocked (core takes precedence).
+        # The user 'jobs' is shown blocked (core takes precedence).
         assert "blocked" in out.lower()
         # merlin-bot is disabled by default: shown disabled, discord inactive.
         assert "discord" in out
@@ -178,25 +178,25 @@ class TestRunSkills:
         from cli import _wrap_skill_row
 
         long_desc = "word " * 40  # ~200 chars, must wrap
-        lines = _wrap_skill_row("cron", long_desc.strip(), width=60)
+        lines = _wrap_skill_row("jobs", long_desc.strip(), width=60)
 
         assert len(lines) > 1  # actually wrapped
-        assert lines[0].startswith("  cron")
+        assert lines[0].startswith("  jobs")
         # continuation lines align under the description column (21).
         assert all(line.startswith(" " * 21) for line in lines[1:])
         # nothing dropped: line 0 carries the name, the rest is the full
         # description reflowed in order.
         words = " ".join(line.strip() for line in lines).split()
-        assert words[0] == "cron"
+        assert words[0] == "jobs"
         assert words[1:] == long_desc.split()
 
     def test_no_wrap_when_piped(self):
         from cli import _wrap_skill_row
 
         desc = "A fairly long single-line description that is not wrapped here."
-        lines = _wrap_skill_row("cron", desc, width=None)
+        lines = _wrap_skill_row("jobs", desc, width=None)
         assert len(lines) == 1
-        assert lines[0].startswith("  cron")
+        assert lines[0].startswith("  jobs")
         assert lines[0].endswith(desc)
 
     def test_sgr_styles_only_when_color_on(self, monkeypatch):
@@ -212,17 +212,17 @@ class TestRunSkills:
         import cli
 
         monkeypatch.setattr(cli, "_skills_use_color", lambda: True)
-        line = "  cron               Manage scheduled cron jobs."
-        out = cli._highlight_name(line, "cron")
+        line = "  jobs               Manage Merlin jobs."
+        out = cli._highlight_name(line, "jobs")
         # name wrapped in style codes; padding and description untouched.
-        assert out.startswith("  \033[1m\033[32mcron\033[0m")
-        assert out.endswith("Manage scheduled cron jobs.")
+        assert out.startswith("  \033[1m\033[32mjobs\033[0m")
+        assert out.endswith("Manage Merlin jobs.")
 
     def test_highlight_name_noop_when_layout_unexpected(self):
         import cli
 
         line = "  other text without the name at the expected slice"
-        assert cli._highlight_name(line, "cron") == line
+        assert cli._highlight_name(line, "jobs") == line
 
 
 # ---------------------------------------------------------------------------
@@ -432,32 +432,32 @@ class TestCliRouting:
 
 
 # ---------------------------------------------------------------------------
-# merlin cron delegation
+# merlin job delegation
 # ---------------------------------------------------------------------------
 
 
 class TestCronDelegation:
-    def test_cron_routes_to_manage(self, monkeypatch, capsys):
-        import cron.manage
+    def test_job_routes_to_manage(self, monkeypatch, capsys):
+        import job.manage
 
-        monkeypatch.setattr(cron.manage, "CRON_JOBS_DIR", paths.cron_jobs_dir())
-        cli_main(["cron", "list"])
+        monkeypatch.setattr(job.manage, "JOBS_DIR", paths.jobs_dir())
+        cli_main(["job", "list"])
         out = capsys.readouterr().out
         assert '"ok": true' in out
         assert '"jobs"' in out
 
-    def test_cron_help_passes_through(self, capsys):
+    def test_job_help_passes_through(self, capsys):
         with pytest.raises(SystemExit) as exc_info:
-            cli_main(["cron", "--help"])
+            cli_main(["job", "--help"])
         assert exc_info.value.code == 0
         out = capsys.readouterr().out
-        assert "merlin cron" in out
+        assert "merlin job" in out
         assert "trigger" in out
 
-    def test_cron_listed_in_core_help(self):
+    def test_job_listed_in_core_help(self):
         help_text = build_parser().format_help()
-        assert "cron" in help_text
-        assert "Manage scheduled cron jobs" in help_text
+        assert "job" in help_text
+        assert "Manage jobs" in help_text
 
 
 # ---------------------------------------------------------------------------
@@ -666,7 +666,7 @@ class TestSetupSkillRefresh:
         monkeypatch.setenv("MERLIN_HOME", str(tmp_path / "merlin-home"))
 
         # merlin-bot is disabled by default; enable it so its bot-gated
-        # skill (discord) participates in the refresh. (Core skills like cron
+        # skill (discord) participates in the refresh. (Core skills like jobs
         # aggregate regardless of the bot, so they cannot prove bot refresh.)
         state_path = paths.extensions_state_path()
         state_path.parent.mkdir(parents=True, exist_ok=True)

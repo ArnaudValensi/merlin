@@ -9,7 +9,7 @@ persistent agent session, and it answers in that thread.
 [SCREENSHOT PLACEHOLDER (mobile): a Discord thread showing a conversation with the bot, thinking-then-check reactions visible on the user message]
 
 This is the chat channel of the flywheel: the bot runs the same agent as the
-[terminal](terminal.md) and [cron](cron.md), and it reads and writes the
+[terminal](terminal.md) and [jobs](jobs.md), and it reads and writes the
 same [notes and knowledge base](notes.md). Scheduled
 work flows back into conversation, and conversations flow into the shared
 memory.
@@ -49,9 +49,9 @@ Send more messages in the thread: the bot resumes the same agent session,
 with full history. The thread-to-session mapping is persisted, so it survives
 restarts.
 
-## Pick up a cron report
+## Pick up a job report
 
-[Cron](cron.md) job reports are posted to one of the bot's allowed
+[Cron](jobs.md) job reports are posted to one of the bot's allowed
 channels (or the job's own channel override)
 with their run's session attached. Start a thread on the report message and
 your messages there continue that run's session. Note: a plain channel reply

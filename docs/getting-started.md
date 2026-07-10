@@ -1,6 +1,6 @@
 # Getting Started
 
-Merlin runs as one process on your machine: a web dashboard on port 3123 with a web terminal, files, commits, notes, and cron, behind a password login. This page takes you from a fresh machine to that dashboard in your pocket. It is the entry node of the flywheel: the one process you start here hosts every other piece, and the `~/.merlin` home the installer creates is the shared memory they all read and feed.
+Merlin runs as one process on your machine: a web dashboard on port 3123 with a web terminal, files, commits, notes, and jobs, behind a password login. This page takes you from a fresh machine to that dashboard in your pocket. It is the entry node of the flywheel: the one process you start here hosts every other piece, and the `~/.merlin` home the installer creates is the shared memory they all read and feed.
 
 ![Merlin running on a phone](terminal/phone-merlin.jpg)
 
@@ -38,7 +38,7 @@ merlin
 
 Bare `merlin` is `merlin start`. It prints `Merlin starting on http://0.0.0.0:3123` plus the working directory it serves. Open **http://localhost:3123**: you get a single password field, and a successful login sets a signed cookie that lasts 30 days and survives restarts. Log out at `/logout`. Port, host, and the rest are in `merlin start --help`.
 
-That one process is the whole system: the cron scheduler starts with it, extensions load, and the skill registry your agent reads is rebuilt. The terminal, the bot, and cron all share the notes under `~/.merlin`, which is why the longer it runs, the more your agent knows.
+That one process is the whole system: the job scheduler starts with it, extensions load, and the skill registry your agent reads is rebuilt. The terminal, the bot, and jobs all share the notes under `~/.merlin`, which is why the longer it runs, the more your agent knows.
 
 ## Reach it from your phone
 
@@ -76,14 +76,14 @@ Old versions are kept in `~/.merlin/versions/` and never auto-deleted, so a bad 
 
 ## Check version, config, and what landed on disk
 
-`merlin version` prints the active version. `merlin config` lists every resolved path (notes dir, logs, cron jobs, sessions, ...); `merlin config <key>` prints one value for use in shell commands.
+`merlin version` prints the active version. `merlin config` lists every resolved path (notes dir, logs, jobs, sessions, ...); `merlin config <key>` prints one value for use in shell commands.
 
 Inside `~/.merlin`:
 
 - `config.env`: the only config file (password, tokens), mode 0600
 - `versions/` and the `current` symlink: every installed release and the active one
 - `notes/`: your agent's knowledge base
-- `cron-jobs/`: scheduled job definitions
+- `jobs/`: scheduled job definitions
 - `logs/merlin.log`: the app log (rotating)
 - runtime dirs created as needed: `skills/`, `sessions/`, `data/`, `extensions/`
 

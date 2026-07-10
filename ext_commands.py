@@ -44,7 +44,7 @@ CORE_COMMANDS: tuple[str, ...] = (
     "config",
     "skills",
     "agent",
-    "cron",
+    "job",
     "chat",
     "dashboard-url",
 )
@@ -57,7 +57,7 @@ BUILTIN_IDS: tuple[str, ...] = (
     "files",
     "terminal",
     "commits",
-    "cron",
+    "job",
 )
 
 

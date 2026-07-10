@@ -3,7 +3,7 @@ Session registry — maps Discord threads and bot messages to Claude session IDs
 
 Persistent JSON-backed store that survives bot restarts. Used by:
 - merlin_bot.py: look up session for a thread, register new thread→session
-- discord_send.py: register message→session (for cron continuation)
+- discord_send.py: register message→session (for job continuation)
 
 File locking via fcntl ensures safe concurrent access.
 """

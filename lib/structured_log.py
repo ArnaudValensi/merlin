@@ -7,14 +7,14 @@ object with a "type" field and an ISO 8601 UTC timestamp.
 Event types:
   - invocation:    Claude Code call (from lib/claude.py)
   - bot_event:     Discord bot lifecycle (from merlin_bot.py)
-  - cron_dispatch: Cron job execution (from cron/runner.py)
+  - job_dispatch: Job execution (from job/runner.py)
 
 Usage:
     from structured_log import log_event
 
     log_event("invocation", caller="discord", duration=12.5, exit_code=0)
     log_event("bot_event", event="ready", details="Bot started")
-    log_event("cron_dispatch", job_id="weather", event="completed", duration=30.1)
+    log_event("job_dispatch", job_id="weather", event="completed", duration=30.1)
 """
 
 import json
@@ -39,7 +39,7 @@ def log_event(event_type: str, **fields) -> None:
     """Append a structured JSON event to the log file.
 
     Args:
-        event_type: Event type (invocation, bot_event, cron_dispatch).
+        event_type: Event type (invocation, bot_event, job_dispatch).
         **fields: Type-specific fields to include in the event.
     """
     event = {

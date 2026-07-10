@@ -3,7 +3,7 @@
 `merlin` is the power-user surface: everything you can reach in the
 dashboard (and a few things you can't) is operable from a shell, from any
 directory. The dashboard is the front door; the CLI is how you and
-[your agent](agents.md) drive the same system from scripts, cron jobs, and
+[your agent](agents.md) drive the same system from scripts, jobs, and
 terminal sessions.
 
 `merlin --help` is the authoritative catalog, and every subcommand
@@ -13,12 +13,12 @@ there, not here: this page is the map.
 ## The families
 
 - `merlin` / `merlin start`: the dashboard server. Bare `merlin` runs the
-  setup wizard on first start, then starts everything (dashboard, cron,
+  setup wizard on first start, then starts everything (dashboard, jobs,
   extensions, the bot if configured). [Getting started](getting-started.md)
   covers the first run.
 - `merlin agent`: print the agent brain doc, the operating manual
   [your agent](agents.md) reads; flags compose the persona layers.
-- `merlin cron`: manage [scheduled agent runs](cron.md) from the shell.
+- `merlin job`: manage [scheduled agent runs](jobs.md) from the shell.
 - `merlin notes` / `merlin kb` / `merlin remember`: search and feed the
   [knowledge base](notes.md).
 - `merlin chat`: send, reply, and react on the chat channel the

@@ -2,7 +2,7 @@
 Generate fake engine log data for dashboard development.
 
 Populates logs/engine-log.jsonl with realistic events spanning several days:
-invocations (discord + cron), bot events, cron dispatches, mix of successes
+invocations (discord + jobs), bot events, job dispatches, mix of successes
 and errors, with varying durations.
 
 Usage:
@@ -23,7 +23,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent.resolve()
 STRUCTURED_LOG_PATH = REPO_ROOT / "merlin-bot" / "logs" / "engine-log.jsonl"
 
-CRON_JOBS = [
+JOBS = [
     "daily-digest",
     "daily-python-check",
     "kb-gardening",
@@ -57,10 +57,10 @@ def gen_invocation(ts: str, caller: str, *, is_error: bool = False) -> dict:
     }
 
 
-def gen_cron_dispatch(ts: str, job_id: str, *, is_error: bool = False) -> dict:
+def gen_job_dispatch(ts: str, job_id: str, *, is_error: bool = False) -> dict:
     duration = random.uniform(10, 90) if not is_error else random.uniform(1, 5)
     return {
-        "type": "cron_dispatch",
+        "type": "job_dispatch",
         "timestamp": ts,
         "job_id": job_id,
         "event": "failed" if is_error else "completed",
@@ -115,8 +115,8 @@ def generate(days: int = 7) -> list[dict]:
                 )
             )
 
-        # Cron jobs (each runs once per day at roughly the right time)
-        for job_id in CRON_JOBS:
+        # Jobs (each runs once per day at roughly the right time)
+        for job_id in JOBS:
             hour = {
                 "daily-digest": 7.5,
                 "daily-python-check": 8.0,
@@ -125,12 +125,12 @@ def generate(days: int = 7) -> list[dict]:
             }.get(job_id, 12)
             ts = random_ts(day_base, hour)
             is_error = random.random() < 0.1
-            caller = f"cron-{job_id}"
+            caller = f"job-{job_id}"
 
-            # cron_dispatch started
+            # job_dispatch started
             events.append(
                 {
-                    "type": "cron_dispatch",
+                    "type": "job_dispatch",
                     "timestamp": ts,
                     "job_id": job_id,
                     "event": "started",
@@ -142,8 +142,8 @@ def generate(days: int = 7) -> list[dict]:
             # invocation
             events.append(gen_invocation(ts, caller, is_error=is_error))
 
-            # cron_dispatch completed/failed
-            events.append(gen_cron_dispatch(ts, job_id, is_error=is_error))
+            # job_dispatch completed/failed
+            events.append(gen_job_dispatch(ts, job_id, is_error=is_error))
 
         # Occasional errors
         if random.random() < 0.15:

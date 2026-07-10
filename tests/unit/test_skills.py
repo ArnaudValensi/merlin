@@ -37,7 +37,7 @@ def make_skill(base: Path, dir_name: str, **kwargs) -> Path:
     return make_skill_in(base / "skills", dir_name, **kwargs)
 
 
-# The core repo skills/ source (cron, notes, self-awareness, dashboard) is
+# The core repo skills/ source (jobs, notes, self-awareness, dashboard) is
 # always active and resolves to the *real* repo via paths.app_dir(). That is
 # deliberate: core skills are shipped repo data, so tests exercise the real
 # thing (unlike the notes/canonical homes, which are redirected to a tmp
@@ -143,17 +143,17 @@ class TestBuildRegistry:
         # Security: core wins every name collision and can never be shadowed
         # by a user or extension skill of the same name. Both colliding skills
         # are dropped, with a warning.
-        make_skill_in(tmp_path / "app" / "skills", "cron", description="Core cron.")
+        make_skill_in(tmp_path / "app" / "skills", "jobs", description="Core jobs.")
         monkeypatch.setattr(
             skills, "core_skills_dir", lambda: tmp_path / "app" / "skills"
         )
         ext = tmp_path / "ext"
-        make_skill(ext, "cron", description="Extension cron.")
-        make_skill_in(skills.user_skills_dir(), "cron", description="User cron.")
+        make_skill(ext, "jobs", description="Extension jobs.")
+        make_skill_in(skills.user_skills_dir(), "jobs", description="User jobs.")
 
         registry = skills.build_registry({"ext": ext})
-        assert registry["cron"].source == "core"
-        assert registry["cron"].description == "Core cron."
+        assert registry["jobs"].source == "core"
+        assert registry["jobs"].description == "Core jobs."
         # Both blocked overrides are surfaced as a security warning naming
         # each dropped source.
         warning = caplog.text.lower()
@@ -177,10 +177,10 @@ class TestBuildRegistry:
 
 class TestAuditSources:
     def test_marks_winners_shadowed_and_inactive(self, tmp_path):
-        make_skill(tmp_path / "core", "cron", description="Core cron.")
-        make_skill(tmp_path / "ext", "cron", description="Ext cron.")
+        make_skill(tmp_path / "core", "jobs", description="Core jobs.")
+        make_skill(tmp_path / "ext", "jobs", description="Ext jobs.")
         make_skill(tmp_path / "off", "ghosted", description="Disabled ext skill.")
-        make_skill_in(skills.user_skills_dir(), "cron", description="User cron.")
+        make_skill_in(skills.user_skills_dir(), "jobs", description="User jobs.")
         make_skill_in(skills.user_skills_dir(), "solo", description="User solo.")
 
         sources = [
@@ -192,11 +192,11 @@ class TestAuditSources:
         by = {(a.source, a.name): a for a in skills.audit_sources(sources)}
 
         # core wins its name; never shadowed.
-        assert by[("core", "cron")].shadowed_by is None
-        assert by[("core", "cron")].source_active is True
-        # extension and user copies of 'cron' lose to core.
-        assert by[("ext", "cron")].shadowed_by == "core"
-        assert by[("user", "cron")].shadowed_by == "core"
+        assert by[("core", "jobs")].shadowed_by is None
+        assert by[("core", "jobs")].source_active is True
+        # extension and user copies of 'jobs' lose to core.
+        assert by[("ext", "jobs")].shadowed_by == "core"
+        assert by[("user", "jobs")].shadowed_by == "core"
         # a disabled extension's skill is surfaced but inactive and never wins.
         assert by[("off", "ghosted")].source_active is False
         assert by[("off", "ghosted")].shadowed_by is None
@@ -304,7 +304,7 @@ class TestRealRepoSkills:
         specs = {
             s.name: s for s in skills.list_source_skills("core", repo_root / "skills")
         }
-        for name in ("cron", "dashboard", "notes", "self-awareness"):
+        for name in ("jobs", "dashboard", "notes", "self-awareness"):
             assert name in specs, f"missing {name}"
             assert specs[name].description
         # discord is bot-gated, not a core skill.
@@ -343,7 +343,7 @@ class TestRealRepoSkills:
         assert paths.app_dir() == current
 
         registry = skills.build_registry({})  # bot off, no user skills
-        for name in ("cron", "dashboard", "notes", "self-awareness"):
+        for name in ("jobs", "dashboard", "notes", "self-awareness"):
             assert registry[name].source == "core"
 
 

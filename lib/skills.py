@@ -290,7 +290,7 @@ def get_registry() -> dict[str, SkillSpec]:
 def list_canonical_skills() -> list[SkillSpec]:
     """Read skills back from the canonical dir (works across processes).
 
-    The in-memory registry only exists in the process that built it; cron
+    The in-memory registry only exists in the process that built it; job
     runner subprocesses and the engine fallback read the aggregation instead.
     """
     return list_source_skills("canonical", canonical_dir())

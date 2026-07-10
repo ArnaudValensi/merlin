@@ -109,8 +109,8 @@ class TestDevModePaths:
     def test_notes_dir(self):
         assert paths.notes_dir() == paths.merlin_home() / "notes"
 
-    def test_cron_jobs_dir(self):
-        assert paths.cron_jobs_dir() == paths.merlin_home() / "cron-jobs"
+    def test_jobs_dir(self):
+        assert paths.jobs_dir() == paths.merlin_home() / "jobs"
 
     def test_logs_dir(self):
         assert paths.logs_dir() == paths.merlin_home() / "logs"
@@ -147,8 +147,8 @@ class TestInstalledModePaths:
     def test_notes_dir(self):
         assert paths.notes_dir() == self.fake_home / "notes"
 
-    def test_cron_jobs_dir(self):
-        assert paths.cron_jobs_dir() == self.fake_home / "cron-jobs"
+    def test_jobs_dir(self):
+        assert paths.jobs_dir() == self.fake_home / "jobs"
 
     def test_logs_dir(self):
         assert paths.logs_dir() == self.fake_home / "logs"
@@ -184,7 +184,7 @@ class TestMerlinHomeOverride:
         assert paths.data_dir() == custom
         assert paths.config_path() == custom / "config.env"
         assert paths.notes_dir() == custom / "notes"
-        assert paths.cron_jobs_dir() == custom / "cron-jobs"
+        assert paths.jobs_dir() == custom / "jobs"
         assert paths.logs_dir() == custom / "logs"
 
 
@@ -254,7 +254,7 @@ class TestFirstRun:
         assert isinstance(paths.data_dir(), Path)
         assert isinstance(paths.config_path(), Path)
         assert isinstance(paths.notes_dir(), Path)
-        assert isinstance(paths.cron_jobs_dir(), Path)
+        assert isinstance(paths.jobs_dir(), Path)
         assert isinstance(paths.logs_dir(), Path)
 
         # None of these directories exist
@@ -321,14 +321,14 @@ class TestModuleIntegration:
         assert not str(sr.DATA_DIR).startswith(self._default_home)
         assert sr.DATA_DIR.name == "data"
 
-    def test_cron_state_uses_paths(self):
-        from cron.state import CRON_JOBS_DIR, STATE_DIR, LOCKS_DIR, HISTORY_FILE
+    def test_job_state_uses_paths(self):
+        from job.state import JOBS_DIR, STATE_DIR, LOCKS_DIR, HISTORY_FILE
 
-        assert not str(CRON_JOBS_DIR).startswith(self._default_home)
-        assert CRON_JOBS_DIR.name == "cron-jobs"
-        assert STATE_DIR == CRON_JOBS_DIR / ".state"
-        assert LOCKS_DIR == CRON_JOBS_DIR / ".locks"
-        assert HISTORY_FILE == CRON_JOBS_DIR / ".history.json"
+        assert not str(JOBS_DIR).startswith(self._default_home)
+        assert JOBS_DIR.name == "jobs"
+        assert STATE_DIR == JOBS_DIR / ".state"
+        assert LOCKS_DIR == JOBS_DIR / ".locks"
+        assert HISTORY_FILE == JOBS_DIR / ".history.json"
 
     def test_notes_routes_uses_paths(self):
         from notes.routes import _notes_dir, _media_dir
@@ -345,7 +345,7 @@ class TestModuleIntegration:
             paths.config_path,
             paths.bot_config_path,
             paths.notes_dir,
-            paths.cron_jobs_dir,
+            paths.jobs_dir,
             paths.logs_dir,
         ]:
             result = fn()

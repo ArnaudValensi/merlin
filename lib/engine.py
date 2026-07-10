@@ -9,7 +9,7 @@ Usage:
     from lib.engine import invoke, get_engine, AgentResult
 
     # Simple invocation (uses configured engine)
-    result = invoke("Check the weather", caller="cron-weather")
+    result = invoke("Check the weather", caller="job-weather")
 
     # With session continuity
     result = invoke("Follow up", caller="discord", session_id="abc-123")

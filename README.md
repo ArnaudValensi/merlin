@@ -53,7 +53,7 @@ Start here, then one doc per piece of Merlin:
 - [Files](docs/files.md): file browser, code viewer, image and 3D model preview
 - [Commits](docs/commits.md): git history and diffs, review your agent's work from your phone
 - [Notes](docs/notes.md): the notes editor and your agent's memory (user facts, daily logs, knowledge base)
-- [Cron](docs/cron.md): scheduled agent runs, reports, history and performance
+- [Cron](docs/jobs.md): scheduled agent runs, reports, history and performance
 - [Discord bot](docs/bot.md): the same agent in your chat, threads, voice messages
 - [Extensions](docs/extensions.md): enable, configure, and audit what your agent can do
 - [Your agent](docs/agents.md): running Claude Code or OpenCode with Merlin's skills and memory

@@ -5,7 +5,7 @@ Two modes:
   - Dev mode: Running from git checkout. App code in repo root.
   - Installed mode: Running from ~/.merlin/current/.
 
-User data (notes, cron-jobs, logs, config) always lives under ~/.merlin/
+User data (notes, jobs, logs, config) always lives under ~/.merlin/
 regardless of mode. Only app code location differs.
 
 Dev mode detected by (in order):
@@ -66,7 +66,7 @@ def app_dir() -> Path:
 
 
 def data_dir() -> Path:
-    """Where user data lives (notes, cron-jobs, data, logs).
+    """Where user data lives (notes, jobs, data, logs).
 
     Always ~/.merlin/ regardless of mode. User data is never in the code repo.
     """
@@ -118,7 +118,7 @@ def launch_cwd() -> Path:
     """Default working directory for jobs and agents: where Merlin was
     launched, falling back to the user's home.
 
-    main.py exports MERLIN_LAUNCH_CWD at startup; cron jobs layer a
+    main.py exports MERLIN_LAUNCH_CWD at startup; jobs layer a
     per-job working_dir on top of this chain.
     """
     return Path(os.environ.get("MERLIN_LAUNCH_CWD") or Path.home())
@@ -142,14 +142,14 @@ def notes_dir() -> Path:
     return data_dir() / "notes"
 
 
-def cron_jobs_dir() -> Path:
-    """Cron job definitions directory."""
-    return data_dir() / "cron-jobs"
+def jobs_dir() -> Path:
+    """Job definitions directory."""
+    return data_dir() / "jobs"
 
 
-def cron_logs_dir() -> Path:
-    """Cron execution log directory."""
-    return data_dir() / "cron-logs"
+def job_logs_dir() -> Path:
+    """Job execution log directory."""
+    return data_dir() / "job-logs"
 
 
 def logs_dir() -> Path:

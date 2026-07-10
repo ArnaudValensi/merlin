@@ -11,10 +11,10 @@ everything below works from a shell with no prior context.
 
 Merlin runs the user's AI agent (Claude Code, OpenCode, pluggable
 engines): run `merlin agent` to see the operating doc that agent gets;
-the Discord bot and cron jobs are that same agent on other channels, and
+the Discord bot and jobs are that same agent on other channels, and
 skills are how it learns to use your extension. An extension is how you
 grow Merlin's loop: commands the agent can call from any surface
-(terminal, Discord, cron), a skill that tells it when, and optionally a
+(terminal, Discord, jobs), a skill that tells it when, and optionally a
 scheduled job that runs it for you. Ship one directory and the whole
 assistant learns the capability.
 
@@ -92,7 +92,7 @@ import argparse
 
 Namespacing is solved by construction: each extension owns exactly its
 own id, and two extensions cannot collide because directory names are
-unique. Core command names (`start`, `agent`, `cron`, `chat`, `config`,
+unique. Core command names (`start`, `agent`, `job`, `chat`, `config`,
 `skills`, ...), built-in extension ids (`notes`, `merlin-bot`, ...), and
 the curated aliases (`kb`, `remember`) are reserved: an extension claiming
 one is rejected with a clear error at dispatch and at server load.
@@ -178,18 +178,18 @@ the web part entirely; commands plus a skill is a complete extension.
 
 ## Scheduled work
 
-Recurring jobs are managed through the cron CLI, from anywhere:
+Recurring jobs are managed through the job CLI, from anywhere:
 
 ```bash
-merlin cron add --id tasks-recap --schedule "0 18 * * *" \
+merlin job add --id tasks-recap --schedule "0 18 * * *" \
   --prompt "Run 'merlin tasks recap' and summarize the result."
-merlin cron list
+merlin job list
 ```
 
-Jobs live in `~/.merlin/cron-jobs/` as JSON files. Automatic discovery
-of a `cron-jobs/` folder inside extensions is not implemented yet; have
-your setup instructions (or your agent) register jobs via `merlin cron
-add`. `merlin cron --help` is the full reference.
+Jobs live in `~/.merlin/jobs/` as JSON files. Automatic discovery
+of a `jobs/` folder inside extensions is not implemented yet; have
+your setup instructions (or your agent) register jobs via `merlin job
+add`. `merlin job --help` is the full reference.
 
 ## Worked example: a quotes extension
 

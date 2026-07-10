@@ -15,10 +15,10 @@ UUID5 patterns, all using `uuid.NAMESPACE_DNS`:
 | Context | Pattern | Example Input |
 |---------|---------|---------------|
 | Thread message | `uuid5(DNS, f"discord-thread-{thread_id}")` | `discord-thread-1469102037017952367` |
-| Cron job | `uuid5(DNS, f"cron-job-{job_id}")` | `cron-job-daily-digest` |
+| Job | `uuid5(DNS, f"job-{job_id}")` | `job-daily-digest` |
 | Channel message (legacy, unused) | `uuid5(DNS, f"discord-channel-{channel_id}")` | channel messages create a thread and use the thread pattern; `session_id_for_channel` has no production caller |
 
-Ephemeral cron jobs use `uuid4()` instead (fresh session each run).
+Ephemeral jobs use `uuid4()` instead (fresh session each run).
 
 ## Session Storage (JSONL)
 
@@ -28,7 +28,7 @@ Each session is a JSONL file (one JSON object per line):
 
 ```jsonl
 {"v":1,"session_id":"abc-123","created_at":"2026-03-23T10:00:00+00:00","engine":"claude-code","model":"claude-opus-4-6"}
-{"role":"user","content":"Check the weather","ts":"2026-03-23T10:00:01+00:00","caller":"cron-weather"}
+{"role":"user","content":"Check the weather","ts":"2026-03-23T10:00:01+00:00","caller":"job-weather"}
 {"role":"assistant","content":"It's 18°C in Paris.","ts":"2026-03-23T10:00:05+00:00","duration":3.2,"tokens_in":150,"tokens_out":42,"cost_usd":0.01}
 ```
 
@@ -37,7 +37,7 @@ Each session is a JSONL file (one JSON object per line):
 | Role | When | Key fields |
 |------|------|------------|
 | `system` | System prompt | `content` |
-| `user` | User/cron prompt | `content`, `caller` |
+| `user` | User/job prompt | `content`, `caller` |
 | `assistant` | Engine response | `content`, `duration`, `tokens_in`, `tokens_out`, `cost_usd` |
 | `tool_call` | Engine called a tool | `name`, `input` |
 | `tool_result` | Tool returned a result | `name`, `output` |
@@ -102,7 +102,7 @@ User sends message in thread
      ├─ Found → return registered session_id
      └─ Not found
         → Check if thread starter message has a registered session
-           ├─ Found → use that session (cron continuation)
+           ├─ Found → use that session (job continuation)
            └─ Not found → derive session_id = uuid5(DNS, f"discord-thread-{thread_id}")
   → Register if new
   → Return (thread_id, parent_id, session_id, is_new_thread=False)
@@ -133,7 +133,7 @@ When history exceeds `engine.context_window * 0.8` (estimated via chars/4 heuris
 
 ## Cron Job Sessions
 
-- **Non-ephemeral**: `uuid5(DNS, f"cron-job-{job_id}")` — same session across all runs. Engine receives full history of previous executions.
+- **Non-ephemeral**: `uuid5(DNS, f"job-{job_id}")` — same session across all runs. Engine receives full history of previous executions.
 - **Ephemeral** (default): `uuid4()` — fresh session each run. Used for stateless tasks.
 
 ## MERLIN_SESSION_ID Environment Variable
@@ -161,4 +161,4 @@ The session viewer (`/bot` → Logs → View session) supports two formats:
 | `lib/engine.py` | Loads history, records turns, invokes engine |
 | `session_registry.py` | Thread/message → session mapping |
 | `merlin_bot.py` | Session resolution logic (`_resolve_session()`) |
-| `cron/runner.py` | `session_id_for_job()` — deterministic cron sessions |
+| `job/runner.py` | `session_id_for_job()` — deterministic job sessions |

@@ -1,7 +1,7 @@
 """YAML frontmatter parser for markdown files.
 
 Canonical parser, stdlib-only so it is importable from any in-process
-context (notes routes, lib/skills, cron runner). The standalone command
+context (notes routes, lib/skills, job runner). The standalone command
 scripts under notes/commands/ keep private copies: they run in isolated
 PEP 723 environments where importing the notes package would fail.
 """

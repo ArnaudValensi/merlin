@@ -351,7 +351,7 @@ class TestErrorHandling:
 
 
 class TestSkillsPlugin:
-    def _make_canonical_skill(self, tmp_path, name="cron"):
+    def _make_canonical_skill(self, tmp_path, name="jobs"):
         from lib import skills
 
         skill_dir = tmp_path / "src" / name
@@ -381,7 +381,7 @@ class TestSkillsPlugin:
         skills_link = plugin_dir / "skills"
         assert skills_link.is_symlink()
         assert skills_link.resolve() == canonical.resolve()
-        assert (skills_link / "cron" / "SKILL.md").is_file()
+        assert (skills_link / "jobs" / "SKILL.md").is_file()
         del skills  # imported for parity with other tests
 
     def test_ensure_none_when_no_skills(self, tmp_path):

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Restart Merlin (single process: dashboard + bot + cron)
+# Restart Merlin (single process: dashboard + bot + jobs)
 #
 # main.py — starts everything (project root)
 set -e

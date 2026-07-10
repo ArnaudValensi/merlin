@@ -7,7 +7,7 @@ and it already knows Merlin. Its skills are in place, the `merlin` CLI is
 its toolbox, and the [notes system](notes.md) is its memory. This is the
 "your own agent" node of the flywheel: what you teach your agent in the
 terminal lands in the shared notes and knowledge base, and the
-[Discord bot](bot.md) and [cron jobs](cron.md) run the same agent with the
+[Discord bot](bot.md) and [jobs](jobs.md) run the same agent with the
 same brain doc, so every channel gets sharper together.
 
 ## Run your agent anywhere
@@ -34,7 +34,7 @@ merlin agent --personality --user   # plus your user memory
 
 Each layer comes from the module that composes Merlin's managed
 channels, so a layer printed here is byte-identical to that layer as the
-bot or cron injects it (the channels pick different layer sets: cron
+bot or a job injects it (the channels pick different layer sets: jobs
 skips personality by design, and the bot adds a Discord style overlay). `merlin agent --help` has the
 details.
 
@@ -44,7 +44,7 @@ that works from any directory, with `merlin --help` as the catalog and
 three-layer notes system (user memory via `merlin remember`, daily logs,
 the Zettelkasten knowledge base) is the shared memory across channels and
 anything worth keeping must land there, because scheduled runs start
-fresh; `merlin cron` manages scheduled jobs; `merlin skills` lists skills
+fresh; `merlin job` manages scheduled jobs; `merlin skills` lists skills
 and where personal ones live; the extension authoring guide adds new
 capabilities; and edits to repo-tracked notes get committed and pushed.
 
@@ -61,7 +61,7 @@ with `merlin config skills-user-dir`).
 
 ## Pick the engine for managed channels
 
-The Discord bot and cron jobs invoke your agent through Merlin's engine
+The Discord bot and jobs invoke your agent through Merlin's engine
 abstraction. Set `AGENT_ENGINE` in the environment to choose:
 `claude-code` (default) or `opencode`. This only affects Merlin's managed
 channels; in the terminal you run whatever CLI you launch yourself.

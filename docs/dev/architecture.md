@@ -1,14 +1,14 @@
 # Merlin — System Architecture
 
-Merlin is a suite of dev tools built around the user's preferred AI agent. An **AgentEngine** abstraction invokes any AI coding tool (Claude Code, OpenCode, etc.), and Merlin manages its own conversation history as JSONL transcripts. The bot and cron handlers capture engine output and deliver it to the appropriate channel (Discord, etc.).
+Merlin is a suite of dev tools built around the user's preferred AI agent. An **AgentEngine** abstraction invokes any AI coding tool (Claude Code, OpenCode, etc.), and Merlin manages its own conversation history as JSONL transcripts. The bot and job handlers capture engine output and deliver it to the appropriate channel (Discord, etc.).
 
 ## System at a glance
 
 Four planes, one process:
 
 - **Dashboard surface**: files, terminal, commits, notes pages served by FastAPI (see [`dashboard-architecture.md`](dashboard-architecture.md), [`web-terminal.md`](web-terminal.md))
-- **Agent loop**: chat and cron invocations through `lib/engine.py`, with persona composition in `lib/agent_context.py` (this doc, below)
-- **Scheduling**: the cron core module dispatching agent jobs (see [`cron-system.md`](cron-system.md))
+- **Agent loop**: chat and job invocations through `lib/engine.py`, with persona composition in `lib/agent_context.py` (this doc, below)
+- **Scheduling**: the job core module dispatching agent jobs (see [`job-system.md`](job-system.md))
 - **Extensibility**: extensions contribute commands, skills, and pages (see [`extension-system.md`](extension-system.md), [`skill-system.md`](skill-system.md))
 
 ## Entry Points
@@ -18,7 +18,7 @@ Four planes, one process:
 ║                           ENTRY POINTS                                  ║
 ╠═══════════════════════════╦═══════════════════════════════════════════════╣
 ║                           ║                                             ║
-║   USER (Discord)          ║   TIME (cron/ scheduler in main.py)         ║
+║   USER (Discord)          ║   TIME (job/ scheduler in main.py)          ║
 ║   Sends a message         ║   Fires every minute                        ║
 ║                           ║                                             ║
 ╚═════════════╤═════════════╩═══════════════════╤═══════════════════════════╝
@@ -34,10 +34,10 @@ Four planes, one process:
              │                                  │
              ▼                                  ▼
 ┌──────────────────────────┐     ┌──────────────────────────────────┐
-│     merlin_bot.py        │     │        cron/runner.py             │
+│     merlin_bot.py        │     │        job/runner.py             │
 │   (Discord handler)      │     │     (spawned subprocess)          │
 │                          │     │                                   │
-│  on_message():           │     │  1. Load cron-jobs/*.json         │
+│  on_message():           │     │  1. Load jobs/*.json         │
 │  1. Filter: bot? allowed │     │  2. croniter: is job due?         │
 │     channel?             │     │  3. Execute via lib/engine.py     │
 │  2. Thread or channel?   │     │  4. Log + emit job_complete JSON  │
@@ -110,7 +110,7 @@ Four planes, one process:
 │    Channel msg  → create thread → uuid5("discord-thread-{id}")      │
 │    Thread msg   → lookup registry → use existing session            │
 │    Cron job     → uuid4() per run (ephemeral default);              │
-│                   uuid5("cron-job-{job_id}") if "ephemeral": false  │
+│                   uuid5("job-{job_id}") if "ephemeral": false  │
 │    Reply to bot → lookup message_id → resume that session           │
 │                                                                     │
 │  Compaction: when history exceeds engine context window,            │
@@ -140,12 +140,12 @@ Both loops, and the user in the web terminal, read and write this tree through t
 | Loop | Trigger | Path |
 |------|---------|------|
 | **Discord** | User sends message | Discord Gateway → `merlin_bot.py` → `lib/engine.py` → engine → `AgentResult` → bot sends to Discord |
-| **Cron** | `cron/` scheduler (every min) | `main.py` → `cron/runner.py` (subprocess) → `lib/engine.py` → engine → `AgentResult` → `notify.py` sends to Discord |
+| **Cron** | `job/` scheduler (every min) | `main.py` → `job/runner.py` (subprocess) → `lib/engine.py` → engine → `AgentResult` → `notify.py` sends to Discord |
 | **Terminal** | You, in the web terminal | interactive agent CLIs (Claude Code, etc.) get the same skills via the shims and the same notes/KB; `merlin agent` prints the brain doc on demand |
 
-The Discord and cron loops converge at `lib/engine.py` — the single chokepoint where every managed invocation is logged and sessions are managed (the terminal loop runs the agent CLIs directly). The engine is a black box — it has no notion of Discord, delivery, or persona. Contextual system-prompt content (brain doc, personality, user memory, channel overlays) is composed by `lib/agent_context.py`: each managed caller selects a recipe (the bot: managed-assistant; cron agent jobs: headless-worker) and passes the result into `invoke()`.
+The Discord and job loops converge at `lib/engine.py` — the single chokepoint where every managed invocation is logged and sessions are managed (the terminal loop runs the agent CLIs directly). The engine is a black box — it has no notion of Discord, delivery, or persona. Contextual system-prompt content (brain doc, personality, user memory, channel overlays) is composed by `lib/agent_context.py`: each managed caller selects a recipe (the bot: managed-assistant; job agent runs: headless-worker) and passes the result into `invoke()`.
 
-The cron system is a **core module** started from `main.py`, independent of merlin-bot. The bot extension only provides Discord connectivity; cron works standalone (notifications are silently skipped if the bot is not loaded).
+The job system is a **core module** started from `main.py`, independent of merlin-bot. The bot extension only provides Discord connectivity; jobs work standalone (notifications are silently skipped if the bot is not loaded).
 
 ## Agent context composition (`lib/agent_context.py`)
 
@@ -163,7 +163,7 @@ Recipes select layer sets per caller:
 | Recipe | Caller | Layers |
 |--------|--------|--------|
 | managed-assistant | Discord bot | brain + personality + user + Discord overlay |
-| headless-worker | cron agent jobs | brain + user (no personality by design) |
+| headless-worker | job agent runs | brain + user (no personality by design) |
 | interactive | `merlin agent` | brain printed; `--personality` / `--user` append the same layers |
 
 The composed prompt reaches the engine through `invoke(append_system_prompt=...)`; the engine stays channel-agnostic and appends its own skill fallback (non-native engines) after it, so the brain always precedes the skill table. Skills are not a layer; they are always-on and owned by the engine adapters (see [`skill-system.md`](skill-system.md)).
@@ -222,7 +222,7 @@ cli.py (merlin start)
 | File | Purpose |
 |------|---------|
 | `main.py` | FastAPI app, startup, extension loader, settings API |
-| `cli.py` | CLI entry point and subcommands (`start`, `version`, `setup`, `update`, `config`, `skills`, `agent`, `cron`, `chat`, `dashboard-url`) |
+| `cli.py` | CLI entry point and subcommands (`start`, `version`, `setup`, `update`, `config`, `skills`, `agent`, `job`, `chat`, `dashboard-url`) |
 | `paths.py` | Path resolution (dev mode vs installed) |
 | `lib/engine.py` | AgentEngine abstraction, `invoke()` entry point, engine registry |
 | `lib/session.py` | JSONL session manager (create, load, append, compact) |
@@ -232,6 +232,6 @@ cli.py (merlin start)
 | `merlin-bot/merlin_bot.py` | Discord handler, session resolution, prompt building |
 | `merlin-bot/discord_send.py` | Discord REST transport (send/reply/react/rename; CLI: `merlin chat`) |
 | `merlin-bot/session_registry.py` | Thread/message → session mapping |
-| `cron/runner.py` | Job dispatcher (check due, execute via engine) |
-| `cron/notify.py` | Notification delivery (report_mode logic, Discord fallback) |
-| `cron/__init__.py` | Scheduler loop |
+| `job/runner.py` | Job dispatcher (check due, execute via engine) |
+| `job/notify.py` | Notification delivery (report_mode logic, Discord fallback) |
+| `job/__init__.py` | Scheduler loop |

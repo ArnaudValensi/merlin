@@ -5,7 +5,7 @@ currently does inline in client-side JavaScript. It takes already-read
 :class:`InvocationEvent` models and returns a :class:`PerformanceData` model
 that FastAPI serializes directly (and documents in OpenAPI).
 
-Design rules (see epics/cli/cron-performance/requirements.md, R3):
+Design rules (see epics/cli/cron-performance/requirements.md (pre-rename epic name), R3):
   - No I/O and no internal clock reads. ``now`` is passed in so tests are
     deterministic and there is an explicit seam for future time-relative views.
   - ``caller`` strings pass through verbatim (including ids of deleted jobs).
@@ -93,7 +93,7 @@ def aggregate_invocations(
 
     Args:
         events: Invocation events to aggregate (already filtered to the desired
-            caller set by the caller, e.g. ``cron-*`` for the cron page).
+            caller set by the caller, e.g. ``job-*`` for the jobs page).
         now: The reference "current time". v1 produces no time-relative
             sections, so this is currently unused; it stays in the signature to
             forbid internal clock reads (determinism) and to reserve the seam

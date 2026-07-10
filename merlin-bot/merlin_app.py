@@ -117,7 +117,7 @@ def session_page(request: Request, filename: str):
     back_param = request.query_params.get("back", "bot")
     back_links = {
         "bot": ("/bot/logs", "Back to Bot Logs"),
-        "cron": ("/cron", "Back to Cron"),
+        "jobs": ("/jobs", "Back to Jobs"),
     }
     back_url, back_label = back_links.get(back_param, back_links["bot"])
 
@@ -148,13 +148,13 @@ def api_health():
         for e in events
         if e.get("exit_code", 0) != 0 or e.get("event") == "error"
         if (ts := _parse_ts(e)) is not None and (now - ts).total_seconds() < 86400
-        if not e.get("caller", "").startswith("cron-")
-        if e.get("type") != "cron_dispatch" and e.get("type") != "cron_runner_crash"
+        if not e.get("caller", "").startswith("job-")
+        if e.get("type") != "job_dispatch" and e.get("type") != "job_runner_crash"
     ]
 
-    # Filter to Discord-only invocations (exclude cron callers)
+    # Filter to Discord-only invocations (exclude job callers)
     discord_invocations = [
-        e for e in invocations if not e.get("caller", "").startswith("cron-")
+        e for e in invocations if not e.get("caller", "").startswith("job-")
     ]
     today_invocations = [
         e

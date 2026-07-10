@@ -2,7 +2,7 @@ flowchart LR
     subgraph Storage["Log Files"]
         EL["engine-log.jsonl"]
         RS["logs/raw-sessions/*.jsonl"]
-        CLG["cron-logs/job/*.json"]
+        JLG["job-logs/{job}/*.json"]
         ML["merlin.log"]
         SS["sessions/*.jsonl"]
     end
@@ -12,7 +12,7 @@ flowchart LR
         BP["Bot Performance\n/bot/performance\n(charts)"]
         BLG["Bot Logs\n/bot/logs\n(event tables)"]
         SV["Session Viewer\n/session/{file}\n(full transcript)"]
-        CD["Cron Dashboard\n/cron\n(history, crashes, performance)"]
+        CD["Jobs Dashboard\n/jobs\n(history, crashes, performance)"]
     end
 
     subgraph Internal["Internal"]
@@ -27,7 +27,7 @@ flowchart LR
 
     RS --> SV
 
-    CLG --> CD
+    JLG --> CD
 
     SS --> ER
 
@@ -35,6 +35,6 @@ flowchart LR
 
     style EL fill:#1e3a2f,stroke:#4ade80
     style RS fill:#1e3a2f,stroke:#4ade80
-    style CLG fill:#1e2d4a,stroke:#60a5fa
+    style JLG fill:#1e2d4a,stroke:#60a5fa
     style SS fill:#1e2d4a,stroke:#60a5fa
     style ML fill:#1e3a2f,stroke:#4ade80

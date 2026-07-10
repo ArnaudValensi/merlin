@@ -304,7 +304,7 @@ EXTENSION_META = {
 
 The `config_fields` metadata enables the Extensions page to render configuration forms for `DISCORD_BOT_TOKEN` and `DISCORD_CHANNEL_IDS`, saved to `config.env` via the config API endpoint.
 
-Note: merlin-bot is **Discord-only** in scope. It handles message listening, thread creation, voice transcription, and prompt building. Cron scheduling and the Claude wrapper are separate core modules (`cron/` and `lib/claude.py`).
+Note: merlin-bot is **Discord-only** in scope. It handles message listening, thread creation, voice transcription, and prompt building. Job scheduling and the Claude wrapper are separate core modules (`job/` and `lib/claude.py`).
 
 ## Key Files
 

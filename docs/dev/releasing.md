@@ -41,7 +41,7 @@ The install script (`install.sh`) and update command (`merlin update`) both:
 ├── current -> versions/0.2.0  # Symlink to active version
 ├── config.env           # User configuration
 ├── notes/               # User data (survives updates)
-├── cron-jobs/           # Scheduled jobs
+├── jobs/           # Scheduled jobs
 ├── logs/                # Logs
 └── data/                # Session registry, etc.
 ```

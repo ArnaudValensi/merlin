@@ -196,18 +196,18 @@ class TestAgentsSkillsSync:
         monkeypatch.setenv("HOME", str(home))
 
         # One canonical skill
-        skill_dir = tmp_path / "src" / "cron"
+        skill_dir = tmp_path / "src" / "jobs"
         skill_dir.mkdir(parents=True)
-        (skill_dir / "SKILL.md").write_text("---\nname: cron\ndescription: X.\n---\n")
+        (skill_dir / "SKILL.md").write_text("---\nname: jobs\ndescription: X.\n---\n")
         canonical = skills.canonical_dir()
         canonical.mkdir(parents=True, exist_ok=True)
-        (canonical / "cron").symlink_to(skill_dir)
+        (canonical / "jobs").symlink_to(skill_dir)
 
         engine = OpenCodeEngine()
         with mock.patch("subprocess.run", return_value=_mock_proc(stdout="ok")):
             engine.invoke("hello")
 
-        link = home / ".agents" / "skills" / "cron"
+        link = home / ".agents" / "skills" / "jobs"
         assert link.is_symlink()
         assert (link / "SKILL.md").is_file()
 

@@ -1,6 +1,6 @@
 /* Shared performance chart renderers (Chart.js).
  *
- * Used by the cron Performance tab today; the bot performance page is a future
+ * Used by the jobs Performance tab today; the bot performance page is a future
  * consumer (it still uses inline JS this epic). Every renderer takes a canvas
  * id plus *pre-aggregated* data (no client-side reduce) and is free of global
  * state apart from the per-canvas instance Map below.
@@ -9,7 +9,7 @@
  * any render call (sets the dark-theme font/colors on Chart.defaults).
  *
  * Exposed as a global `PerfCharts` namespace to match the rest of the dashboard
- * JS (API, Refresh, Cron, ...), which are plain non-module scripts.
+ * JS (API, Refresh, Jobs, ...), which are plain non-module scripts.
  */
 (function () {
     "use strict";
@@ -72,7 +72,7 @@
             data: {
                 datasets: [
                     {
-                        label: "Cron",
+                        label: "Jobs",
                         data: points,
                         backgroundColor: rgba(blue, 0.7),
                         pointRadius: 5,

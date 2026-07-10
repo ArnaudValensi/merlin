@@ -161,7 +161,7 @@ class TestReservedNames:
             assert name in ext_commands.reserved_names()
 
     def test_builtin_ids_reserved(self):
-        for name in ("notes", "merlin-bot", "cron", "files", "terminal", "commits"):
+        for name in ("notes", "merlin-bot", "job", "files", "terminal", "commits"):
             assert name in ext_commands.reserved_names()
 
 
@@ -215,12 +215,12 @@ class TestFormatExtensionHelp:
     ):
         # Builtin dirs resolve outside tmp MERLIN_HOME — point them elsewhere
         monkeypatch.setattr(ext_commands, "builtin_extension_dirs", lambda: {})
-        make_command(paths.extensions_dir() / "cron", "evil")
+        make_command(paths.extensions_dir() / "job", "evil")
         text = ext_commands.format_extension_help()
         err = capsys.readouterr().err
-        assert "merlin cron evil" not in text
+        assert "merlin job evil" not in text
         assert "reserved" in err
-        assert "cron" in err
+        assert "job" in err
 
     def test_builtin_group(self, tmp_path, monkeypatch):
         builtin = tmp_path / "builtin-notes"
@@ -292,9 +292,9 @@ class TestDispatch:
 
     def test_reserved_installed_extension_rejected(self, capsys, monkeypatch):
         monkeypatch.setattr(ext_commands, "builtin_extension_dirs", lambda: {})
-        make_command(paths.extensions_dir() / "cron", "evil")
+        make_command(paths.extensions_dir() / "job", "evil")
         with pytest.raises(SystemExit) as exc_info:
-            ext_commands.dispatch(["cron", "evil"])
+            ext_commands.dispatch(["job", "evil"])
         assert exc_info.value.code == 2
         err = capsys.readouterr().err
         assert "reserved" in err
@@ -395,16 +395,16 @@ class TestServerLoadRejection:
     def test_reserved_installed_extension_registered_as_error(self, tmp_path):
         import main
 
-        make_command(paths.extensions_dir() / "cron", "evil")
+        make_command(paths.extensions_dir() / "job", "evil")
         make_command(paths.extensions_dir() / "merlin-bot", "evil")
 
         saved_registry = dict(main.extension_registry)
         try:
-            main.extension_registry.pop("cron", None)
+            main.extension_registry.pop("job", None)
             main.extension_registry.pop("merlin-bot", None)
             main._load_installed_extensions()
 
-            for name in ("cron", "merlin-bot"):
+            for name in ("job", "merlin-bot"):
                 info = main.extension_registry[name]
                 assert info.tier == "installed"
                 assert info.loaded is False
@@ -593,13 +593,13 @@ class TestEnabledExtensionSourceDirs:
         assert enabled == set(ext_commands.enabled_extension_source_dirs())
 
     def test_all_extension_states_excludes_reserved_installed(self, tmp_path):
-        make_command(paths.extensions_dir() / "cron", "evil")
-        assert "cron" not in ext_commands.all_extension_states()
+        make_command(paths.extensions_dir() / "job", "evil")
+        assert "job" not in ext_commands.all_extension_states()
 
     def test_reserved_installed_excluded(self, tmp_path):
-        make_command(paths.extensions_dir() / "cron", "evil")
+        make_command(paths.extensions_dir() / "job", "evil")
         sources = ext_commands.enabled_extension_source_dirs()
-        assert "cron" not in sources
+        assert "job" not in sources
 
     def test_defaults_shared_with_main(self):
         import main

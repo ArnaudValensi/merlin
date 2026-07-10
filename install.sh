@@ -330,7 +330,7 @@ fi
 # ---------------------------------------------------------------------------
 
 step "Creating data directories..."
-for dir in notes cron-jobs data logs; do
+for dir in notes jobs data logs; do
     target="$MERLIN_HOME/$dir"
     if [[ -d "$target" ]]; then
         info "$dir/ exists"

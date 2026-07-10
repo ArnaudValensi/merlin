@@ -13,7 +13,7 @@ default; the group appears once something is installed).
 
 In the flywheel, this page is the trust-and-growth gate. Extensions are how
 your agent gains new capabilities: commands callable from every surface
-([terminal](terminal.md), [Discord bot](bot.md), [cron](cron.md)) and
+([terminal](terminal.md), [Discord bot](bot.md), [jobs](jobs.md)) and
 skills that teach it when to use them. The audit view is where you check
 what code your agent is about to gain before you flip the switch.
 
@@ -96,7 +96,7 @@ you when the live skill folder is out of date.
   sidebar. Fix the cause and restart.
 - **"Extension name X is reserved".** Installed extensions cannot reuse
   the name of a core command, a built-in extension, or an alias (`start`,
-  `setup`, `notes`, `cron`, `kb`, ...). The error shows up as an errored
+  `setup`, `notes`, `job`, `kb`, ...). The error shows up as an errored
   card, at the CLI, and in `merlin --help`. Fix: rename the directory.
 - **`merlin <ext> <cmd>` exits 126: file not executable.** Run the
   `chmod +x` command the error prints. Files starting with `.` or `_` are

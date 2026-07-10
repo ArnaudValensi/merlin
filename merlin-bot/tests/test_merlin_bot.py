@@ -384,11 +384,11 @@ class TestOnMessage:
         assert session_registry.get_thread_session("88888888") == expected_session
 
     @patch("merlin_bot.invoke")
-    def test_cron_continuation_via_message_registry(self, mock_invoke):
-        """Threading on a cron message should resume the cron session."""
+    def test_job_continuation_via_message_registry(self, mock_invoke):
+        """Threading on a job message should resume the job session."""
         mock_invoke.return_value = MagicMock(exit_code=0, session_id="s1", stderr="")
-        # Simulate cron having registered a message
-        session_registry.set_message_session("88888888", "cron-session-abc")
+        # Simulate a job having registered a message
+        session_registry.set_message_session("88888888", "job-session-abc")
 
         msg = make_message(
             is_thread=True,
@@ -398,10 +398,10 @@ class TestOnMessage:
         asyncio.run(merlin.on_message(msg))
 
         kwargs = mock_invoke.call_args[1]
-        assert kwargs["session_id"] == "cron-session-abc"
+        assert kwargs["session_id"] == "job-session-abc"
 
         # Should be registered as thread session too
-        assert session_registry.get_thread_session("88888888") == "cron-session-abc"
+        assert session_registry.get_thread_session("88888888") == "job-session-abc"
 
     @patch("merlin_bot.invoke")
     def test_session_id_passed_to_invoke(self, mock_invoke):

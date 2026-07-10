@@ -67,7 +67,7 @@ MERLIN_SAAS_API = os.getenv("MERLIN_SAAS_API", "https://merlincloud.dev")
 # CWD = where the user launched main.py
 CWD = Path.cwd().resolve()
 
-# Capture the launch directory so subprocesses (e.g. cron command jobs) can
+# Capture the launch directory so subprocesses (e.g. job command runs) can
 # default to running where Merlin was started. Inherited by child processes
 # through the environment. setdefault so an explicit override is respected.
 os.environ.setdefault("MERLIN_LAUNCH_CWD", str(CWD))
@@ -135,13 +135,13 @@ ICON_COMMITS = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stro
 ICON_NOTES = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><rect x="6" y="2" width="16" height="20" rx="2"/><path d="M10 8h8"/><path d="M10 12h8"/><path d="M10 16h8"/></svg>'
 ICON_EXTENSIONS = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.315 8.685a.98.98 0 0 1 .837-.276c.47.07.802.48.968.925a2.501 2.501 0 1 0 3.214-3.214c-.446-.166-.855-.497-.925-.968a.979.979 0 0 1 .276-.837l1.61-1.61a2.404 2.404 0 0 1 1.705-.707c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>'
 
-ICON_CRON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'
+ICON_JOBS = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'
 
 CORE_NAV_ITEMS = [
     {"url": "/files", "icon": ICON_FILES, "label": "Files"},
     {"url": "/terminal", "icon": ICON_TERMINAL, "label": "Terminal"},
     {"url": "/commits", "icon": ICON_COMMITS, "label": "Commits"},
-    {"url": "/cron", "icon": ICON_CRON, "label": "Cron"},
+    {"url": "/jobs", "icon": ICON_JOBS, "label": "Jobs"},
 ]
 
 # Extensions nav item — always visible, appended after all extension nav items
@@ -742,11 +742,11 @@ app.include_router(files_router, dependencies=[Depends(require_auth)])
 app.include_router(commits_router, dependencies=[Depends(require_auth)])
 app.include_router(terminal_router)  # WebSocket auth handled internally
 
-# Cron API + page
-from cron.routes import cron_page_router, cron_router
+# Job API + page
+from job.routes import job_page_router, job_router
 
-app.include_router(cron_router, dependencies=[Depends(require_auth)])
-app.include_router(cron_page_router, dependencies=[Depends(require_auth)])
+app.include_router(job_router, dependencies=[Depends(require_auth)])
+app.include_router(job_page_router, dependencies=[Depends(require_auth)])
 
 # Module statics BEFORE general static (more specific path first)
 app.mount(
@@ -1172,10 +1172,10 @@ def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
 
             await start_ssh_server()
 
-        # Start the cron scheduler (core feature, always runs)
-        import cron
+        # Start the job scheduler (core feature, always runs)
+        import job
 
-        await cron.start()
+        await job.start()
 
         # Start all extensions with start() hooks
         for info in extension_registry.values():

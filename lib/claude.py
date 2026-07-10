@@ -1,14 +1,14 @@
 """
 Claude Code wrapper — single entry point for all Claude Code invocations.
 
-Used by cron jobs, merlin-bot (Discord), and any extension that needs to call
+Used by jobs, merlin-bot (Discord), and any extension that needs to call
 Claude. Never call `claude` directly.
 
 Personality is layered:
   - Base personality: ~/.merlin/personality.md (always loaded)
   - User context: ~/.merlin/user.md (always loaded)
   - Extra system prompts: passed via extra_system_prompts parameter (e.g.
-    Discord directives, cron context)
+    Discord directives, job context)
 """
 
 import json
@@ -232,7 +232,7 @@ def invoke_claude(
 
     Args:
         prompt: The prompt to send to Claude.
-        caller: Who triggered this invocation (e.g. "discord", "cron-weather").
+        caller: Who triggered this invocation (e.g. "discord", "job-weather").
         session_id: Session ID (UUID). When *resume* is True (default), uses
             ``--resume`` to continue an existing session. When False, uses
             ``--session-id`` to create a new session with this ID.
@@ -433,7 +433,7 @@ Examples:
   uv run lib/claude.py --session abc-123 "Continue from where we left off"
 
   # With caller tag (for log identification)
-  uv run lib/claude.py --caller cron-weather "Check the weather in Paris"
+  uv run lib/claude.py --caller job-weather "Check the weather in Paris"
 
   # With safety limits
   uv run lib/claude.py --max-turns 10 --timeout 60 "Do a quick task"
@@ -446,7 +446,7 @@ Logging:
   Session transcripts saved to: logs/raw-sessions/<timestamp>-<caller>-<session>.jsonl
 
 Notes:
-  - This is the single entry point for all Claude Code calls (cron, Discord bot, etc.)
+  - This is the single entry point for all Claude Code calls (jobs, Discord bot, etc.)
   - Never call `claude` directly; always use this wrapper for consistent logging
   - Uses --dangerously-skip-permissions by default (use --no-skip-permissions to disable)
 """,

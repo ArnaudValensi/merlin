@@ -64,11 +64,11 @@ def test_read_events_parses_valid_invocation(_isolated_log):
     _write(
         _isolated_log,
         _invocation(
-            caller="cron-weather",
+            caller="job-weather",
             duration=12.5,
             exit_code=0,
             cost_usd=0.05,
-            session_file="2026-05-01_12-00-00-cron-weather-abc.jsonl",
+            session_file="2026-05-01_12-00-00-job-weather-abc.jsonl",
         ),
     )
 
@@ -77,51 +77,51 @@ def test_read_events_parses_valid_invocation(_isolated_log):
     inv = events[0]
     assert isinstance(inv, InvocationEvent)
     assert inv.type == "invocation"
-    assert inv.caller == "cron-weather"
+    assert inv.caller == "job-weather"
     assert inv.duration == 12.5
     assert inv.exit_code == 0
     assert inv.tokens_in == 100
     assert inv.tokens_out == 50
     assert inv.cost_usd == 0.05
-    assert inv.session_file == "2026-05-01_12-00-00-cron-weather-abc.jsonl"
+    assert inv.session_file == "2026-05-01_12-00-00-job-weather-abc.jsonl"
 
 
 def test_read_events_skips_malformed_json(_isolated_log):
     _write(
         _isolated_log,
-        _invocation(caller="cron-a"),
+        _invocation(caller="job-a"),
         "this is not json {{{",
-        _invocation(caller="cron-b"),
+        _invocation(caller="job-b"),
     )
 
     events = el.read_events()
     assert len(events) == 2
-    assert [e.caller for e in events] == ["cron-a", "cron-b"]
+    assert [e.caller for e in events] == ["job-a", "job-b"]
 
 
 def test_read_events_skips_validation_failures(_isolated_log, caplog):
     """A line whose duration is non-numeric fails validation and is skipped."""
     _write(
         _isolated_log,
-        _invocation(caller="cron-good"),
-        _invocation(caller="cron-bad", duration="not a number"),
+        _invocation(caller="job-good"),
+        _invocation(caller="job-bad", duration="not a number"),
     )
 
     with caplog.at_level(logging.WARNING, logger="merlin.event_log"):
         events = el.read_events()
 
     assert len(events) == 1
-    assert events[0].caller == "cron-good"
+    assert events[0].caller == "job-good"
     assert "skipped 1 malformed lines" in caplog.text
 
 
 def test_read_events_filters_by_event_type(_isolated_log):
     _write(
         _isolated_log,
-        _invocation(caller="cron-a"),
+        _invocation(caller="job-a"),
         json.dumps(
             {
-                "type": "cron_dispatch",
+                "type": "job_dispatch",
                 "timestamp": "2026-05-01T12:00:00+00:00",
                 "job_id": "weather",
                 "event": "completed",
@@ -151,14 +151,14 @@ def test_read_events_filters_by_since(_isolated_log):
     recent = datetime(2026, 5, 20, tzinfo=timezone.utc)
     _write(
         _isolated_log,
-        _invocation(caller="cron-old", timestamp=old.isoformat()),
-        _invocation(caller="cron-new", timestamp=recent.isoformat()),
+        _invocation(caller="job-old", timestamp=old.isoformat()),
+        _invocation(caller="job-new", timestamp=recent.isoformat()),
     )
 
     cutoff = datetime(2026, 5, 10, tzinfo=timezone.utc)
     events = el.read_events(since=cutoff)
     assert len(events) == 1
-    assert events[0].caller == "cron-new"
+    assert events[0].caller == "job-new"
 
 
 def test_read_events_filters_by_since_and_until(_isolated_log):
@@ -166,18 +166,18 @@ def test_read_events_filters_by_since_and_until(_isolated_log):
     _write(
         _isolated_log,
         _invocation(
-            caller="cron-before", timestamp=(base - timedelta(days=5)).isoformat()
+            caller="job-before", timestamp=(base - timedelta(days=5)).isoformat()
         ),
-        _invocation(caller="cron-inside", timestamp=base.isoformat()),
+        _invocation(caller="job-inside", timestamp=base.isoformat()),
         _invocation(
-            caller="cron-after", timestamp=(base + timedelta(days=5)).isoformat()
+            caller="job-after", timestamp=(base + timedelta(days=5)).isoformat()
         ),
     )
 
     events = el.read_events(
         since=base - timedelta(days=1), until=base + timedelta(days=1)
     )
-    assert [e.caller for e in events] == ["cron-inside"]
+    assert [e.caller for e in events] == ["job-inside"]
 
 
 def test_read_events_extra_fields_preserved(_isolated_log):
@@ -200,17 +200,17 @@ def test_read_events_extra_fields_preserved(_isolated_log):
 def test_read_events_logs_malformed_summary(_isolated_log, caplog):
     _write(
         _isolated_log,
-        _invocation(caller="cron-a"),
+        _invocation(caller="job-a"),
         "garbage line one",
         "garbage line two",
-        _invocation(caller="cron-b", duration="nope"),  # validation failure
-        _invocation(caller="cron-c"),
+        _invocation(caller="job-b", duration="nope"),  # validation failure
+        _invocation(caller="job-c"),
     )
 
     with caplog.at_level(logging.WARNING, logger="merlin.event_log"):
         events = el.read_events()
 
-    # 2 valid (cron-a, cron-c); 3 skipped (2 garbage + 1 validation failure).
+    # 2 valid (job-a, job-c); 3 skipped (2 garbage + 1 validation failure).
     assert len(events) == 2
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
@@ -223,28 +223,28 @@ def test_read_events_naive_since_coerced(_isolated_log):
     recent = datetime(2026, 5, 20, tzinfo=timezone.utc)
     _write(
         _isolated_log,
-        _invocation(caller="cron-old", timestamp=old.isoformat()),
-        _invocation(caller="cron-new", timestamp=recent.isoformat()),
+        _invocation(caller="job-old", timestamp=old.isoformat()),
+        _invocation(caller="job-new", timestamp=recent.isoformat()),
     )
 
     naive_cutoff = datetime(2026, 5, 10)  # no tzinfo
     events = el.read_events(since=naive_cutoff)
-    assert [e.caller for e in events] == ["cron-new"]
+    assert [e.caller for e in events] == ["job-new"]
 
 
 def test_read_events_survives_non_utf8(_isolated_log):
     """A corrupt non-UTF-8 byte run is counted malformed, never crashes the read."""
-    good = _invocation(caller="cron-ok").encode("utf-8")
+    good = _invocation(caller="job-ok").encode("utf-8")
     _isolated_log.write_bytes(good + b"\n" + b"\xff\xfe not utf8 \x80\n" + good + b"\n")
 
     events = el.read_events()  # must not raise
     assert len(events) == 2
-    assert all(e.caller == "cron-ok" for e in events)
+    assert all(e.caller == "job-ok" for e in events)
 
 
 def test_read_events_no_warning_when_all_valid(_isolated_log, caplog):
     """A clean read must not emit a malformed-lines warning."""
-    _write(_isolated_log, _invocation(caller="cron-a"), _invocation(caller="cron-b"))
+    _write(_isolated_log, _invocation(caller="job-a"), _invocation(caller="job-b"))
 
     with caplog.at_level(logging.WARNING, logger="merlin.event_log"):
         events = el.read_events()

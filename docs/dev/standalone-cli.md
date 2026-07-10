@@ -29,7 +29,7 @@ Only `app_dir()` differs between modes. User data always lives in `~/.merlin/`.
 | `config_path()` | `~/.merlin/config.env` | `~/.merlin/config.env` |
 | `bot_config_path()` | `~/.merlin/config.env` | `~/.merlin/config.env` |
 | `notes_dir()` | `~/.merlin/notes/` | `~/.merlin/notes/` |
-| `cron_jobs_dir()` | `~/.merlin/cron-jobs/` | `~/.merlin/cron-jobs/` |
+| `jobs_dir()` | `~/.merlin/jobs/` | `~/.merlin/jobs/` |
 | `logs_dir()` | `~/.merlin/logs/` | `~/.merlin/logs/` |
 | `merlin_home()` | `~/.merlin/` | `~/.merlin/` (or `MERLIN_HOME`) |
 
@@ -48,7 +48,7 @@ Set `MERLIN_HOME=/custom/path` to override the default `~/.merlin/` location. Al
 ├── current -> versions/0.2.0  # Symlink to active version
 ├── config.env           # User config (created by merlin setup)
 ├── notes/               # User data (survives updates)
-├── cron-jobs/           # Scheduled jobs
+├── jobs/           # Scheduled jobs
 ├── logs/                # Logs
 ├── data/                # Session registry, structured log
 ├── extensions/          # Installed extensions (each may ship commands/ and skills/)
@@ -73,7 +73,7 @@ See [`skill-system.md`](skill-system.md) for how `skills/`, `skills-user/`, and 
 | `merlin config notes-dir` | Print the notes directory path |
 | `merlin skills` | List every skill and its source (see [`skill-system.md`](skill-system.md)) |
 | `merlin agent` | Print the agent-facing brain doc |
-| `merlin cron ...` | Manage scheduled jobs (wraps `cron/manage.py`) |
+| `merlin job ...` | Manage scheduled jobs (wraps `job/manage.py`) |
 | `merlin chat ...` | Discord transport: `send`/`reply`/`react`/`rename-thread` |
 | `merlin dashboard-url` | Print the dashboard URL |
 
@@ -96,7 +96,7 @@ merlin config home                   # Print Merlin home (~/.merlin)
 cat "$(merlin config notes-dir)/kb/topic.md"  # Use in shell commands
 ```
 
-Available keys: `notes-dir`, `skills-user-dir`, `home`, `app-dir`, `data-dir`, `config-path`, `logs-dir`, `sessions-dir`, `cron-jobs-dir`, `extensions-dir`, `version`.
+Available keys: `notes-dir`, `skills-user-dir`, `home`, `app-dir`, `data-dir`, `config-path`, `logs-dir`, `sessions-dir`, `jobs-dir`, `extensions-dir`, `version`.
 
 Read-only — use the Settings/Extensions UI or edit `config.env` directly to change values.
 

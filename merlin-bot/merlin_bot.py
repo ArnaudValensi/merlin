@@ -3,7 +3,7 @@
 Every conversation happens in a Discord thread:
 - Channel messages create a new thread → new Claude session
 - Thread messages continue the existing session
-- Threading on a bot/cron message resumes that session
+- Threading on a bot/job message resumes that session
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ def build_prompt(
     """Build the rich prompt that Claude receives for a Discord message.
 
     Thread ID and channel ID are explicit so Claude uses the thread for replies
-    but knows the real channel ID for things like cron job creation.
+    but knows the real channel ID for things like job creation.
 
     If *transcription* is provided, the message is formatted as a voice message
     with the transcribed audio text.
@@ -210,7 +210,7 @@ async def _resolve_session(
         thread_id = str(message.channel.id)
         parent_id = str(message.channel.parent_id)
 
-        # Check registry for existing session (handles cron continuation)
+        # Check registry for existing session (handles job continuation)
         session = get_thread_session(thread_id)
         if session:
             logger.debug(
@@ -218,7 +218,7 @@ async def _resolve_session(
             )
             return thread_id, parent_id, session, False
 
-        # Check if thread starter message has a session (cron continuation)
+        # Check if thread starter message has a session (job continuation)
         # Thread ID equals the starter message ID for message-created threads
         starter_session = get_message_session(thread_id)
         if starter_session:
@@ -601,12 +601,12 @@ def validate():
 
 
 async def start():
-    """Start Discord client + cron scheduler."""
+    """Start Discord client + job scheduler."""
     await start_bot()
 
 
 def notify(channel_id: str, message: str, *, session_id: str | None = None) -> None:
-    """Send a notification to a Discord channel. Called by cron and other core modules.
+    """Send a notification to a Discord channel. Called by the job scheduler and other core modules.
 
     If *session_id* is provided, the message is registered with that session
     so replies can resume the conversation. Long messages automatically create

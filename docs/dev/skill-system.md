@@ -55,7 +55,7 @@ by `merlin setup` so a disabled extension's skills disappear. Only symlinks are
 managed; a real directory a user placed there is left alone with a warning.
 
 `list_canonical_skills()` reads the canonical dir back (works across
-processes — cron runner subprocesses never see the server's in-memory
+processes — job runner subprocesses never see the server's in-memory
 registry).
 
 ## Engine adapters
