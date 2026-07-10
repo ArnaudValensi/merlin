@@ -118,6 +118,7 @@ def append_history(
     session_id: str | None = None,
     timestamp: datetime | None = None,
     cost_usd: float | None = None,
+    trigger: str | None = None,
 ) -> None:
     """Append a run entry to the history for a job. Enforces rolling limit.
 
@@ -132,6 +133,7 @@ def append_history(
         "duration": round(duration, 2),
         "session_id": session_id,
         "cost_usd": round(cost_usd, 6) if cost_usd is not None else None,
+        "trigger": trigger,
     }
 
     lock_file = _acquire_history_lock()

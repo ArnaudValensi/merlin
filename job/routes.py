@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from job import logs, manage, state
+from job import logs, manage, state, webhook
 from job.schemas import JobCreate, JobUpdate
 from lib.event_log import JobRunnerCrashEvent, InvocationEvent, read_events
 from merlin_ext import make_templates
@@ -69,6 +69,10 @@ def _enrich_job(job: dict) -> dict:
             job["next_run"] = None
     else:
         job["next_run"] = None
+
+    # The URL an external sender calls, shown on the job detail/editor
+    if (job.get("webhook") or {}).get("secret"):
+        job["webhook_url"] = webhook.public_url(job_id)
 
     return job
 
@@ -199,6 +203,53 @@ def toggle_job(job_id: str):
 
     job["id"] = job_id
     return _enrich_job(job)
+
+
+@job_router.post("/jobs/{job_id}/webhook")
+def add_webhook(job_id: str):
+    """Enable the webhook trigger: generate a secret if none exists.
+
+    Idempotent — an existing webhook is returned unchanged (rotation is an
+    explicit, separate action).
+    """
+    job = manage.load_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    if not (job.get("webhook") or {}).get("secret"):
+        job["webhook"] = {"secret": webhook.generate_secret()}
+        manage.save_job(job_id, job)
+
+    return {"webhook": job["webhook"], "webhook_url": webhook.public_url(job_id)}
+
+
+@job_router.post("/jobs/{job_id}/webhook/rotate")
+def rotate_webhook(job_id: str):
+    """Replace the webhook secret. The old secret stops working immediately."""
+    job = manage.load_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+    if not (job.get("webhook") or {}).get("secret"):
+        raise HTTPException(
+            status_code=404, detail=f"Job '{job_id}' has no webhook trigger"
+        )
+
+    job["webhook"]["secret"] = webhook.generate_secret()
+    manage.save_job(job_id, job)
+
+    return {"webhook": job["webhook"], "webhook_url": webhook.public_url(job_id)}
+
+
+@job_router.delete("/jobs/{job_id}/webhook", status_code=204)
+def remove_webhook(job_id: str):
+    """Remove the webhook trigger from a job."""
+    job = manage.load_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    job.pop("webhook", None)
+    manage.save_job(job_id, job)
+    return None
 
 
 @job_router.post("/jobs/{job_id}/run", status_code=202)

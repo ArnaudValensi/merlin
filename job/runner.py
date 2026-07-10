@@ -339,7 +339,7 @@ def _run_command(job_id: str, job: dict) -> CommandResult:
         )
 
 
-def _run_agent(job_id: str, job: dict, request_id: str):
+def _run_agent(job_id: str, job: dict, request_id: str, *, trigger: str = "manual"):
     """Run a prompt job through the agent engine. Returns an AgentResult."""
     max_turns_cfg = job.get("max_turns", DEFAULT_MAX_TURNS)
     # 0 means unlimited — pass None to wrapper so --max-turns flag is omitted
@@ -349,7 +349,9 @@ def _run_agent(job_id: str, job: dict, request_id: str):
     # Ephemeral jobs (default) get a fresh UUID each time — no session continuity.
     # Cross-run context should use the notes system (KB, logs), not session history.
     # Set "ephemeral": false to opt into persistent sessions (costs grow per run).
-    if ephemeral:
+    # Webhook fires ALWAYS get a fresh session, regardless of the ephemeral
+    # setting: independent incidents must not bleed into each other.
+    if trigger == "webhook" or ephemeral:
         session = str(uuid.uuid4())
     else:
         session = session_id_for_job(job_id)
@@ -357,7 +359,10 @@ def _run_agent(job_id: str, job: dict, request_id: str):
     prompt = build_prompt(job)
 
     # Build prompt — engine returns text, notification system handles delivery
-    full_prompt = f"[Job: {job_id}]\n\n{prompt}"
+    if trigger == "webhook":
+        full_prompt = f"[Triggered by webhook: {job_id}]\n\n{prompt}"
+    else:
+        full_prompt = f"[Job: {job_id}]\n\n{prompt}"
 
     # Headless-worker recipe: brain + user memory, no personality by design
     # (operational jobs shouldn't sound like the bot).
@@ -372,7 +377,9 @@ def _run_agent(job_id: str, job: dict, request_id: str):
     )
 
 
-def run_job(job_id: str, job: dict, *, emit_result: bool = True):
+def run_job(
+    job_id: str, job: dict, *, emit_result: bool = True, trigger: str = "manual"
+):
     """Execute a single job. Acquires per-job lock to prevent double dispatch.
 
     Returns the job result (AgentResult or CommandResult), or None when the
@@ -385,12 +392,19 @@ def run_job(job_id: str, job: dict, *, emit_result: bool = True):
         return None
 
     try:
-        return _execute_job(job_id, job, emit_result=emit_result)
+        return _execute_job(job_id, job, emit_result=emit_result, trigger=trigger)
     finally:
         release_job_lock(lock)
 
 
-def _execute_job(job_id: str, job: dict, *, emit_result: bool = True):
+def _execute_job(
+    job_id: str,
+    job: dict,
+    *,
+    emit_result: bool = True,
+    trigger: str = "manual",
+    request_id: str | None = None,
+):
     """Execute a job (internal — assumes lock is held). Returns the result.
 
     Branches on job ``type``: a ``"command"`` job runs a shell command via
@@ -402,9 +416,15 @@ def _execute_job(job_id: str, job: dict, *, emit_result: bool = True):
     exists for the subprocess contract (the scheduler and the REST trigger
     parse it for notifications); in-process callers like 'merlin job
     trigger' pass False so their own stdout stays a single JSON document.
+
+    ``trigger`` records what launched the run (schedule / webhook / manual)
+    in events, history, and the run log — unified but filterable. Webhook
+    fires pass their ``request_id`` in so the run correlates with the
+    webhook_request event that accepted it.
     """
     job_type = job.get("type", "prompt")
-    request_id = str(uuid.uuid4())
+    if request_id is None:
+        request_id = str(uuid.uuid4())
 
     logger.info("[%s] Running %s job %s", request_id[:8], job_type, job_id)
     log_event(
@@ -414,6 +434,7 @@ def _execute_job(job_id: str, job: dict, *, emit_result: bool = True):
         duration=0,
         exit_code=0,
         request_id=request_id,
+        trigger=trigger,
     )
 
     # Mark as running BEFORE execution to prevent re-dispatch by concurrent schedulers
@@ -422,7 +443,7 @@ def _execute_job(job_id: str, job: dict, *, emit_result: bool = True):
     if job_type == "command":
         result = _run_command(job_id, job)
     else:
-        result = _run_agent(job_id, job, request_id)
+        result = _run_agent(job_id, job, request_id, trigger=trigger)
 
     # Update state with actual completion time
     now = _now()
@@ -434,6 +455,7 @@ def _execute_job(job_id: str, job: dict, *, emit_result: bool = True):
         session_id=result.session_id,
         timestamp=now,
         cost_usd=result.cost_usd,
+        trigger=trigger,
     )
 
     # Write detailed execution log (hybrid storage)
@@ -449,6 +471,7 @@ def _execute_job(job_id: str, job: dict, *, emit_result: bool = True):
                 "duration_seconds": round(result.duration, 2),
                 "cost_usd": result.cost_usd,
                 "session_id": result.session_id,
+                "trigger": trigger,
                 "output": result.result,
             },
         )
@@ -472,6 +495,7 @@ def _execute_job(job_id: str, job: dict, *, emit_result: bool = True):
             duration=round(result.duration, 3),
             exit_code=0,
             request_id=request_id,
+            trigger=trigger,
         )
     else:
         logger.error(
@@ -489,6 +513,7 @@ def _execute_job(job_id: str, job: dict, *, emit_result: bool = True):
             duration=round(result.duration, 3),
             exit_code=result.exit_code,
             request_id=request_id,
+            trigger=trigger,
         )
 
     # Emit structured JSON to stdout so the scheduler (main process) can
@@ -599,7 +624,8 @@ def run_dispatcher() -> None:
     # Execute due jobs in parallel
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {
-            executor.submit(run_job, job_id, job): job_id for job_id, job in due_jobs
+            executor.submit(run_job, job_id, job, trigger="schedule"): job_id
+            for job_id, job in due_jobs
         }
 
         for future in as_completed(futures):

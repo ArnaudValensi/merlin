@@ -755,6 +755,11 @@ import webhooks
 
 app.include_router(webhooks.router)
 
+# The job module's webhook trigger: core modules register directly.
+from job import webhook as job_webhook
+
+webhooks.register("job", job_webhook.resolve)
+
 # Module statics BEFORE general static (more specific path first)
 app.mount(
     "/static/files", StaticFiles(directory=str(FILES_STATIC_DIR)), name="files-static"
@@ -1134,6 +1139,9 @@ def _validate_config() -> None:
 def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
     """Start the Merlin dashboard server. Called by cli.py or main()."""
     import uvicorn
+
+    # Expose the bound port so IP-based public URLs (job webhooks) are exact.
+    os.environ["MERLIN_PORT"] = str(port)
 
     _setup_logging()
 
