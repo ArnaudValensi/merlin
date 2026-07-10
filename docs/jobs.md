@@ -156,9 +156,11 @@ What to know:
   secrets from one IP are throttled automatically.
 
 On Merlin Cloud, the URL rides your instance's own subdomain
-(`https://{you}.merlincloud.dev/webhooks/job/{id}`). Self-hosted, set
-`MERLIN_DASHBOARD_URL` in `~/.merlin/config.env` to whatever address
-reaches your box, and the editor and CLI will print it.
+(`https://{you}.merlincloud.dev/webhooks/job/{id}`) — discovered
+automatically, and it follows along if you rename your environment.
+Self-hosted behind your own tunnel or proxy, set `MERLIN_DASHBOARD_URL` in
+`~/.merlin/config.env` to whatever address reaches your box, and the editor
+and CLI will print it.
 
 ## Continue a run on Discord
 

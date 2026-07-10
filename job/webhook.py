@@ -25,6 +25,7 @@ import logging
 import os
 import secrets
 import socket
+import time
 import uuid
 from urllib.parse import urlparse
 
@@ -142,16 +143,67 @@ def _notify(job_id: str, job: dict, result) -> None:
 # Public URL derivation
 # ---------------------------------------------------------------------------
 
+# The public host in SaaS mode belongs to the portal and can change under a
+# running instance (environment rename), so it is resolved at read time via
+# the portal's whoami endpoint — never persisted. A short in-process memo
+# keeps repeated reads (e.g. enriching a job list) to one HTTP call, and the
+# last good answer survives portal hiccups for the life of the process.
+_WHOAMI_TTL_SECONDS = 300
+_whoami_host: str | None = None
+_whoami_at: float | None = None
+
+
+def _saas_public_host() -> str | None:
+    """The instance's public host per the portal, or None outside SaaS mode.
+
+    Never raises: on any failure it returns the last known host (stale is
+    better than wrong-with-confidence) or None so callers fall through.
+    """
+    global _whoami_host, _whoami_at
+
+    token = os.getenv("MERLIN_SAAS_TOKEN", "").strip()
+    if not token:
+        return None
+
+    now = time.monotonic()
+    if _whoami_at is not None and now - _whoami_at < _WHOAMI_TTL_SECONDS:
+        return _whoami_host
+
+    import json
+    import urllib.error
+    import urllib.request
+
+    api = os.getenv("MERLIN_SAAS_API", "https://merlincloud.dev").rstrip("/")
+    req = urllib.request.Request(
+        f"{api}/api/instance/whoami",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            host = json.loads(resp.read().decode()).get("public_host")
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+        logger.debug("whoami lookup failed, keeping last known host: %s", e)
+        # Memoize the failure too, so a down portal costs one 3s timeout
+        # per TTL window, not one per read.
+        _whoami_at = now
+        return _whoami_host
+
+    _whoami_host = host or None
+    _whoami_at = now
+    return _whoami_host
+
 
 def public_url(job_id: str) -> str:
     """The URL an external sender should call to fire this job's webhook.
 
     Resolution order:
-      1. ``MERLIN_DASHBOARD_URL`` — the operator's stated public base URL
-         (own tunnel, reverse proxy, or a {slug}.merlincloud.dev address).
-      2. ``MERLIN_ENVIRONMENT_SLUG`` — managed containers know their slug;
-         the instance subdomain rides the SaaS proxy with no portal changes.
-      3. Detected local IP + server port. May be private behind NAT — making
+      1. ``MERLIN_DASHBOARD_URL`` — explicit operator override (own tunnel or
+         reverse proxy; the one case that cannot be discovered).
+      2. The portal's whoami answer (SaaS mode, BYOI and managed alike) —
+         resolved at read time so a slug rename is picked up automatically.
+      3. ``MERLIN_ENVIRONMENT_SLUG`` — managed-container fallback if the
+         portal is unreachable before whoami ever succeeded.
+      4. Detected local IP + server port. May be private behind NAT — making
          it reachable is the operator's job.
     """
     # CLI entry points don't load config.env the way the server does; pull
@@ -166,6 +218,10 @@ def public_url(job_id: str) -> str:
         if "://" not in base:
             base = f"http://{base}"
         return f"{base.rstrip('/')}/webhooks/job/{job_id}"
+
+    saas_host = _saas_public_host()
+    if saas_host:
+        return f"https://{saas_host}/webhooks/job/{job_id}"
 
     slug = os.getenv("MERLIN_ENVIRONMENT_SLUG", "").strip()
     if slug:

@@ -256,6 +256,129 @@ class TestTriggerRecorded:
         assert history[0]["trigger"] == "schedule"
 
 
+@pytest.fixture(autouse=True)
+def _reset_whoami_memo():
+    """Isolate the whoami in-process memo between tests."""
+    webhook._whoami_host = None
+    webhook._whoami_at = None
+    yield
+    webhook._whoami_host = None
+    webhook._whoami_at = None
+
+
+def _fake_whoami(monkeypatch, public_host="wizard.merlincloud.dev"):
+    """Fake the portal whoami endpoint; returns the list of requested URLs."""
+    import io
+    import json as json_mod
+
+    calls: list[str] = []
+
+    def fake_urlopen(req, timeout=0):
+        calls.append(req.full_url)
+        body = json_mod.dumps({"slug": "wizard", "public_host": public_host}).encode()
+
+        class _Resp(io.BytesIO):
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        return _Resp(body)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    return calls
+
+
+class TestWhoamiResolution:
+    def test_saas_token_resolves_via_portal(self, monkeypatch):
+        monkeypatch.delenv("MERLIN_DASHBOARD_URL", raising=False)
+        monkeypatch.delenv("MERLIN_ENVIRONMENT_SLUG", raising=False)
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", "mrl_test")
+        monkeypatch.delenv("MERLIN_SAAS_API", raising=False)
+        calls = _fake_whoami(monkeypatch)
+
+        assert (
+            webhook.public_url("my-job")
+            == "https://wizard.merlincloud.dev/webhooks/job/my-job"
+        )
+        assert calls == ["https://merlincloud.dev/api/instance/whoami"]
+
+    def test_memo_makes_one_call_per_ttl_window(self, monkeypatch):
+        monkeypatch.delenv("MERLIN_DASHBOARD_URL", raising=False)
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", "mrl_test")
+        calls = _fake_whoami(monkeypatch)
+
+        webhook.public_url("a")
+        webhook.public_url("b")
+        webhook.public_url("c")
+        assert len(calls) == 1
+
+    def test_no_token_makes_no_call(self, monkeypatch):
+        monkeypatch.delenv("MERLIN_DASHBOARD_URL", raising=False)
+        monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
+        monkeypatch.delenv("MERLIN_ENVIRONMENT_SLUG", raising=False)
+        calls = _fake_whoami(monkeypatch)
+
+        webhook.public_url("j")
+        assert calls == []
+
+    def test_dashboard_url_still_wins_over_whoami(self, monkeypatch):
+        monkeypatch.setenv("MERLIN_DASHBOARD_URL", "https://me.example.com")
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", "mrl_test")
+        calls = _fake_whoami(monkeypatch)
+
+        assert webhook.public_url("j") == "https://me.example.com/webhooks/job/j"
+        assert calls == []
+
+    def test_portal_error_falls_back_to_slug_env(self, monkeypatch):
+        import urllib.error
+
+        monkeypatch.delenv("MERLIN_DASHBOARD_URL", raising=False)
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", "mrl_test")
+        monkeypatch.setenv("MERLIN_ENVIRONMENT_SLUG", "backup-slug")
+        monkeypatch.delenv("MERLIN_SAAS_API", raising=False)
+
+        def failing_urlopen(req, timeout=0):
+            raise urllib.error.URLError("portal down")
+
+        monkeypatch.setattr("urllib.request.urlopen", failing_urlopen)
+        assert (
+            webhook.public_url("j")
+            == "https://backup-slug.merlincloud.dev/webhooks/job/j"
+        )
+
+    def test_stale_host_survives_portal_outage(self, monkeypatch):
+        """After one success, a portal outage keeps the last known host
+        instead of downgrading to the IP fallback."""
+        import urllib.error
+
+        monkeypatch.delenv("MERLIN_DASHBOARD_URL", raising=False)
+        monkeypatch.delenv("MERLIN_ENVIRONMENT_SLUG", raising=False)
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", "mrl_test")
+        _fake_whoami(monkeypatch)
+        assert "wizard.merlincloud.dev" in webhook.public_url("j")
+
+        def failing_urlopen(req, timeout=0):
+            raise urllib.error.URLError("portal down")
+
+        monkeypatch.setattr("urllib.request.urlopen", failing_urlopen)
+        webhook._whoami_at = None  # expire the memo, forcing a re-fetch
+        assert "wizard.merlincloud.dev" in webhook.public_url("j")
+
+    def test_rename_picked_up_after_ttl(self, monkeypatch):
+        monkeypatch.delenv("MERLIN_DASHBOARD_URL", raising=False)
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", "mrl_test")
+        _fake_whoami(monkeypatch, public_host="before.merlincloud.dev")
+        assert "before.merlincloud.dev" in webhook.public_url("j")
+
+        _fake_whoami(monkeypatch, public_host="after.merlincloud.dev")
+        webhook._whoami_at = None  # expire the memo (TTL elapsed)
+        assert "after.merlincloud.dev" in webhook.public_url("j")
+
+
 class TestPublicUrl:
     def test_dashboard_url_wins(self, monkeypatch):
         monkeypatch.setenv("MERLIN_DASHBOARD_URL", "https://merlin.merlincloud.dev")

@@ -365,11 +365,15 @@ manual) in `job_dispatch` events, history entries, and run logs — unified
 but filterable.
 
 **Public URL** (`merlin job url`, shown in the editor): resolution order is
-`MERLIN_DASHBOARD_URL` (operator override, e.g. the instance's
-`{slug}.merlincloud.dev` address — the route rides the SaaS proxy with zero
-portal changes) → `MERLIN_ENVIRONMENT_SLUG` (managed containers) → detected
-local IP + bound port (may be NAT-private; reachability is the operator's
-job).
+`MERLIN_DASHBOARD_URL` (explicit operator override — own tunnel/proxy, the
+one undiscoverable case) → the portal's `GET /api/instance/whoami` answer
+(any SaaS instance, BYOI and managed alike; token-authenticated, resolved at
+read time with a 5-minute in-process memo so an environment rename is picked
+up automatically and never cached stale on disk) → `MERLIN_ENVIRONMENT_SLUG`
+(managed-container fallback when the portal is unreachable) → detected local
+IP + bound port (may be NAT-private; reachability is the operator's job).
+The fire path itself needs none of this — it rides the SaaS proxy with zero
+portal involvement; whoami only makes the *displayed* URL correct.
 
 Registration: `main.py` calls `webhooks.register("job", job_webhook.resolve)`
 directly. Extensions can export `WEBHOOK_HANDLERS = {source: resolver}`; the
