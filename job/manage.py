@@ -228,8 +228,19 @@ def format_history_discord(job_id: str, runs: list[dict]) -> str:
 
 def cmd_add(args) -> dict:
     """Add a new job."""
-    # Validate cron expression when a schedule is given. A job without one
-    # has no schedule trigger (webhook- or manual-only).
+    # An explicitly-empty --schedule (e.g. `--schedule "$CRON"` with $CRON
+    # unset) is a mistake, not a request for a trigger-less job — reject it so
+    # it can't silently create a job that never runs. Omitting --schedule
+    # entirely (None) is the intended way to make a webhook- or manual-only job.
+    if args.schedule is not None and not args.schedule.strip():
+        return {
+            "ok": False,
+            "error": (
+                "--schedule was given but empty. Omit --schedule entirely for "
+                "a webhook- or manual-only job."
+            ),
+        }
+    # Validate cron expression when a schedule is given.
     if args.schedule and not validate_cron(args.schedule):
         return {"ok": False, "error": f"Invalid cron expression: {args.schedule}"}
 
@@ -288,6 +299,11 @@ def cmd_add(args) -> dict:
 
         result["webhook_url"] = public_url(job_id)
         result["webhook_secret"] = job["webhook"]["secret"]
+    if not job.get("schedule") and not job.get("webhook"):
+        result["note"] = (
+            "This job has no schedule and no webhook — it runs only when "
+            "triggered manually (merlin job trigger)."
+        )
     return result
 
 

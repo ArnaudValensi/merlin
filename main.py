@@ -625,19 +625,14 @@ def api_get_settings(_auth=Depends(require_auth)):
 def _normalize_public_url(value: str) -> str:
     """Normalize an operator-entered public base URL.
 
-    Scheme-less input (a bare host or host:port) gets http://, matching how
-    dashboard-url reads the value; a trailing slash is stripped. Raises 422
-    on input that normalizes to no host at all.
+    Reuses the shared read-side normalizer (scheme-less gets http://, trailing
+    slash stripped) and adds the write-side check: reject input that normalizes
+    to no host at all.
     """
     from urllib.parse import urlsplit
 
-    value = value.strip()
-    if not value:
-        return ""
-    if "://" not in value:
-        value = f"http://{value}"
-    value = value.rstrip("/")
-    if not urlsplit(value).netloc:
+    value = job_webhook.normalize_base_url(value)
+    if value and not urlsplit(value).netloc:
         raise HTTPException(status_code=422, detail="Invalid public URL")
     return value
 
@@ -1197,8 +1192,15 @@ def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
     """Start the Merlin dashboard server. Called by cli.py or main()."""
     import uvicorn
 
-    # Expose the bound port so IP-based public URLs (job webhooks) are exact.
+    # Expose the bound port so IP-based public URLs (job webhooks) are exact —
+    # in this process via the env var, and to CLI processes via a small file.
     os.environ["MERLIN_PORT"] = str(port)
+    try:
+        port_file = paths.server_port_path()
+        port_file.parent.mkdir(parents=True, exist_ok=True)
+        port_file.write_text(str(port))
+    except OSError:
+        logger.debug("Could not persist server port", exc_info=True)
 
     _setup_logging()
 

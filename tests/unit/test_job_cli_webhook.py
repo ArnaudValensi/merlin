@@ -218,6 +218,21 @@ class TestCmdAddWebhook:
         assert result["ok"] is True
         stored = job_manage.load_job("new-job")
         assert "schedule" not in stored
+        # A trigger-less job is flagged as manual-only.
+        assert "manually" in result["note"]
+
+    def test_add_empty_schedule_rejected(self):
+        """--schedule "" (e.g. an unset shell var) is an error, not a silent
+        trigger-less job — distinct from omitting --schedule entirely."""
+        for empty in ("", "   "):
+            result = job_manage.cmd_add(self._add_args(schedule=empty))
+            assert result["ok"] is False
+            assert "empty" in result["error"].lower()
+            assert job_manage.load_job("new-job") is None
+
+    def test_add_with_webhook_has_no_manual_note(self):
+        result = job_manage.cmd_add(self._add_args(webhook=True))
+        assert "note" not in result
 
     def test_add_with_webhook_flag(self):
         result = job_manage.cmd_add(self._add_args(webhook=True))

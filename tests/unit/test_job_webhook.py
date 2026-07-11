@@ -380,6 +380,54 @@ class TestWhoamiResolution:
         assert "after.merlincloud.dev" in webhook.public_url("j")
 
 
+class TestServerPort:
+    def test_env_wins(self, monkeypatch):
+        monkeypatch.setenv("MERLIN_PORT", "8080")
+        assert webhook._server_port() == "8080"
+
+    def test_reads_persisted_file_when_env_unset(self, monkeypatch):
+        import paths
+
+        monkeypatch.delenv("MERLIN_PORT", raising=False)
+        p = paths.server_port_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("9090")
+        assert webhook._server_port() == "9090"
+
+    def test_default_when_absent(self, monkeypatch):
+        monkeypatch.delenv("MERLIN_PORT", raising=False)
+        assert webhook._server_port() == "3123"
+
+    def test_ip_tier_uses_persisted_port(self, monkeypatch):
+        import paths
+
+        for k in (
+            "MERLIN_DASHBOARD_URL",
+            "MERLIN_SAAS_TOKEN",
+            "MERLIN_ENVIRONMENT_SLUG",
+            "MERLIN_PORT",
+        ):
+            monkeypatch.delenv(k, raising=False)
+        monkeypatch.setattr(webhook, "_local_ip", lambda: "192.168.1.50")
+        p = paths.server_port_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("8080")
+        assert webhook.public_url("j") == "http://192.168.1.50:8080/webhooks/job/j"
+
+
+class TestNormalizeBaseUrl:
+    def test_schemeless_and_slash(self):
+        assert webhook.normalize_base_url("me.example.com:8443/") == (
+            "http://me.example.com:8443"
+        )
+
+    def test_empty(self):
+        assert webhook.normalize_base_url("  ") == ""
+
+    def test_keeps_https(self):
+        assert webhook.normalize_base_url("https://x.dev/") == "https://x.dev"
+
+
 class TestPublicUrl:
     def test_dashboard_url_wins(self, monkeypatch):
         monkeypatch.setenv("MERLIN_DASHBOARD_URL", "https://merlin.merlincloud.dev")

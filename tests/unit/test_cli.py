@@ -599,10 +599,14 @@ class TestTopLevelAliases:
 class TestDashboardUrl:
     @pytest.fixture(autouse=True)
     def _clean_env(self, monkeypatch):
+        # Clear the SaaS inputs too so resolution is hermetic (the ip tier),
+        # not dependent on a token in the dev shell reaching the real portal.
         for key in (
             "MERLIN_DASHBOARD_URL",
             "DASHBOARD_USER",
             "DASHBOARD_PASS",
+            "MERLIN_SAAS_TOKEN",
+            "MERLIN_ENVIRONMENT_SLUG",
         ):
             monkeypatch.delenv(key, raising=False)
 
@@ -614,6 +618,36 @@ class TestDashboardUrl:
         monkeypatch.setenv("MERLIN_DASHBOARD_URL", "http://box.example.org:3123")
         cli_main(["dashboard-url"])
         assert capsys.readouterr().out.strip() == "http://box.example.org:3123"
+
+    def test_saas_resolves_public_host_not_localhost(self, monkeypatch, capsys):
+        """On a SaaS box, dashboard-url uses the whoami public host — agreeing
+        with webhook URLs — instead of printing localhost (bug #10)."""
+        import io
+        import json as json_mod
+
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", "mrl_x")
+        monkeypatch.delenv("MERLIN_SAAS_API", raising=False)
+
+        from job import webhook
+
+        webhook._whoami_host = None
+        webhook._whoami_at = None
+
+        def fake_urlopen(req, timeout=0):
+            body = json_mod.dumps({"public_host": "wizard.merlincloud.dev"}).encode()
+
+            class _Resp(io.BytesIO):
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+            return _Resp(body)
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        cli_main(["dashboard-url"])
+        assert capsys.readouterr().out.strip() == "https://wizard.merlincloud.dev"
 
     def test_credentials_embedded(self, monkeypatch, capsys):
         monkeypatch.setenv("DASHBOARD_USER", "admin")

@@ -170,3 +170,13 @@ def extensions_dir() -> Path:
 def extensions_state_path() -> Path:
     """Extension state file. Always ~/.merlin/extensions.json."""
     return data_dir() / "extensions.json"
+
+
+def server_port_path() -> Path:
+    """File where the running server records its bound port.
+
+    Lets CLI processes (e.g. `merlin job url`) derive exact IP-based public
+    URLs even when the server runs on a non-default port. Stale-but-harmless if
+    the server isn't running; falls back to the default port when absent.
+    """
+    return data_dir() / "data" / "server-port"

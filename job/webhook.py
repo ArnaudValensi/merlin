@@ -230,11 +230,9 @@ def resolve_public_base() -> tuple[str, str]:
 
     paths.load_config_env()
 
-    base = os.getenv("MERLIN_DASHBOARD_URL", "").strip()
+    base = normalize_base_url(os.getenv("MERLIN_DASHBOARD_URL", ""))
     if base:
-        if "://" not in base:
-            base = f"http://{base}"
-        return base.rstrip("/"), "override"
+        return base, "override"
 
     return discovered_public_base()
 
@@ -259,8 +257,44 @@ def discovered_public_base() -> tuple[str, str]:
         host = urlparse(api).hostname or "merlincloud.dev"
         return f"https://{slug}.{host}", "slug"
 
-    port = os.getenv("MERLIN_PORT", "3123")
-    return f"http://{_local_ip()}:{port}", "ip"
+    return f"http://{_local_ip()}:{_server_port()}", "ip"
+
+
+def normalize_base_url(value: str) -> str:
+    """Add ``http://`` to a scheme-less value and strip a trailing slash.
+
+    Returns ``""`` for empty input. The single normalization rule shared by the
+    read side (``resolve_public_base``) and the Settings write side
+    (``main._normalize_public_url``, which adds host validation on top), so the
+    same operator input renders identically everywhere.
+    """
+    value = value.strip()
+    if not value:
+        return ""
+    if "://" not in value:
+        value = f"http://{value}"
+    return value.rstrip("/")
+
+
+def _server_port() -> str:
+    """The port the server is (or was last) bound to.
+
+    The live env var wins inside the server process; a CLI process reads the
+    file the server persisted; absent both, the default. Lets `merlin job url`
+    print the right port when the server runs on a non-default one.
+    """
+    env = os.getenv("MERLIN_PORT")
+    if env:
+        return env
+    import paths
+
+    try:
+        persisted = paths.server_port_path().read_text().strip()
+        if persisted:
+            return persisted
+    except OSError:
+        pass
+    return "3123"
 
 
 def public_url(job_id: str) -> str:

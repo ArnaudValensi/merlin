@@ -690,24 +690,25 @@ def run_agent(personality: bool = False, user: bool = False) -> None:
 def run_dashboard_url() -> None:
     """Print the dashboard URL, with login credentials embedded if set.
 
-    Resolution: MERLIN_DASHBOARD_URL (explicit override, e.g. a DNS name
-    pointing at the box) > http://localhost:3123. Set MERLIN_DASHBOARD_URL
-    when the dashboard is reachable through your own tunnel or reverse
-    proxy. A scheme-less override (bare host or host:port) is normalized
-    to http://.
+    The base URL is resolved exactly like webhook URLs, via
+    job.webhook.resolve_public_base: MERLIN_DASHBOARD_URL override > portal
+    whoami (SaaS) > managed slug > detected IP:port. So `merlin dashboard-url`
+    and the Settings page always agree. Credentials are embedded when
+    DASHBOARD_PASS is set.
     """
     from urllib.parse import quote, urlsplit, urlunsplit
 
+    from job.webhook import _server_port, resolve_public_base
+
     paths.load_config_env()
 
-    base = os.getenv("MERLIN_DASHBOARD_URL", "").strip()
-    if base and "://" not in base:
-        # A bare DNS name (which the resolution above invites) would land
-        # in urlsplit's .path and produce a mangled URL with credentials
-        # attached to an empty host.
-        base = f"http://{base}"
-    if not base:
-        base = "http://localhost:3123"
+    base, source = resolve_public_base()
+    if source == "ip":
+        # No public URL was discovered. For the dashboard, a local link is the
+        # useful default — the detected LAN/container IP often isn't reachable —
+        # whereas webhook URLs need that external IP. (This is the one tier the
+        # two intentionally differ.)
+        base = f"http://localhost:{_server_port()}"
 
     user = os.getenv("DASHBOARD_USER", "admin")
     password = os.getenv("DASHBOARD_PASS", "")
