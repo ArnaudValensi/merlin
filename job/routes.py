@@ -536,6 +536,10 @@ def jobs_page(request: Request):
     # Check for recent scheduler crashes
     crashes = _get_recent_crashes()
 
+    # The Webhooks tab (activity + rejected attempts) only appears when at
+    # least one job is webhook-firable, so it doesn't clutter non-webhook use.
+    any_webhook = any((job.get("webhook") or {}).get("secret") for job in jobs)
+
     # Resolve the default working directory for jobs (modal placeholder).
     import paths
 
@@ -547,6 +551,7 @@ def jobs_page(request: Request):
         {
             "jobs": jobs,
             "bot_loaded": bot_loaded,
+            "any_webhook": any_webhook,
             "crashes": crashes,
             "default_working_dir": default_working_dir,
         },

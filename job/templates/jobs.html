@@ -679,12 +679,6 @@
     font-family: 'Geist Mono', monospace;
 }
 
-.job-page .webhook-activity-title {
-    margin: 20px 0 8px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-secondary);
-}
 /* Timestamps stay on one line; the .log-table-wrap scrolls horizontally */
 .job-page .log-table td:first-child { white-space: nowrap; }
 .job-page .feed-badge.badge-coalesced {
@@ -841,6 +835,9 @@
         <div class="tab active" data-tab="jobs">Jobs</div>
         <div class="tab" data-tab="performance">Performance</div>
         <div class="tab" data-tab="logs">Logs</div>
+        {% if any_webhook %}
+        <div class="tab" data-tab="webhooks">Webhooks</div>
+        {% endif %}
     </div>
 
     <!-- ── Jobs tab ── -->
@@ -983,8 +980,29 @@
                 <div class="empty-text">Loading logs...</div>
             </div>
         </div>
-        <div id="job-webhook-activity" class="log-table-wrap"></div>
     </div><!-- /job-tab-logs -->
+
+    <!-- ── Webhooks tab (webhook fires + rejected attempts) ── -->
+    {% if any_webhook %}
+    <div class="job-tab-content" id="job-tab-webhooks" style="display:none">
+        <div style="margin-bottom: 12px;">
+            <select class="btn" id="job-webhook-filter" onchange="Jobs.loadWebhookActivity()" style="font-family: 'Geist Mono', monospace; font-size: 13px;">
+                <option value="">All webhook jobs</option>
+                {% for job in jobs %}
+                {% if job.get('webhook') %}
+                <option value="{{ job.id }}">{{ job.id }}</option>
+                {% endif %}
+                {% endfor %}
+            </select>
+        </div>
+        <div id="job-webhook-activity" class="log-table-wrap">
+            <div class="empty-state">
+                <div class="empty-icon">&#128302;</div>
+                <div class="empty-text">Loading...</div>
+            </div>
+        </div>
+    </div><!-- /job-tab-webhooks -->
+    {% endif %}
 
     <!-- ── Performance tab ── -->
     <div class="job-tab-content" id="job-tab-performance" style="display:none">
@@ -1228,6 +1246,7 @@ function switchJobsTab(tab) {
     document.getElementById('job-tab-' + tab).style.display = '';
     if (tab === 'logs') Jobs.loadAllLogs();
     if (tab === 'performance') Jobs.loadPerformance();
+    if (tab === 'webhooks') Jobs.loadWebhookActivity();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1291,20 +1310,24 @@ const Jobs = {
             </tr><tr class="row-detail" id="job-logdetail-${i}"><td colspan="7"><pre></pre></td></tr>`;
         });
         container.innerHTML = html + '</tbody></table>';
-        this._loadWebhookActivity(filter);
     },
 
+    // ── Webhooks tab ──
     // Webhook fires AND rejected attempts (a public endpoint's failed-secret
     // hits are a security signal, so they are shown, not hidden).
-    async _loadWebhookActivity(filterJobId) {
+    async loadWebhookActivity() {
         const container = document.getElementById('job-webhook-activity');
         if (!container) return;
+        const sel = document.getElementById('job-webhook-filter');
+        const filter = sel ? sel.value : '';
         let url = '/api/job/webhook-events?limit=50';
-        if (filterJobId) url += '&job_id=' + encodeURIComponent(filterJobId);
+        if (filter) url += '&job_id=' + encodeURIComponent(filter);
         const events = await API.get(url);
-        if (!events || events.length === 0) { container.innerHTML = ''; return; }
-        let html = '<h2 class="webhook-activity-title">Webhook activity</h2>';
-        html += '<table class="log-table"><thead><tr><th>Time</th><th>Job</th><th>Outcome</th><th>From</th></tr></thead><tbody>';
+        if (!events || events.length === 0) {
+            container.innerHTML = '<div class="empty-state"><div class="empty-icon">&#8623;</div><div class="empty-text">No webhook activity yet. Fires and rejected attempts show up here.</div></div>';
+            return;
+        }
+        let html = '<table class="log-table"><thead><tr><th>Time</th><th>Job</th><th>Outcome</th><th>From</th></tr></thead><tbody>';
         events.forEach(e => {
             const ok = e.outcome === 'launched';
             const soft = e.outcome === 'coalesced';

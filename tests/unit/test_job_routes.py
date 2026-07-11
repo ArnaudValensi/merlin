@@ -230,10 +230,41 @@ def test_job_modal_has_no_schedule_option(client):
     assert "No schedule (webhook or manual only)" in html
 
 
-def test_logs_tab_has_trigger_column_and_activity(client):
+def test_logs_tab_has_trigger_column(client):
+    """The Logs tab (execution logs) keeps its Trigger column."""
     html = client.get("/jobs").text
+    assert "<th>Trigger</th>" in html
+
+
+def _write_webhook_job(monkeypatch, tmp_path, webhook=True):
+    """Point the page at a temp jobs dir holding one (optionally webhook) job."""
+    import json
+
+    from job import manage as job_manage
+
+    monkeypatch.setattr(job_manage, "JOBS_DIR", tmp_path)
+    data = {"type": "command", "command": "echo hi", "enabled": True}
+    if webhook:
+        data["webhook"] = {"secret": "whk_x"}
+    (tmp_path / "wh.json").write_text(json.dumps(data))
+
+
+def test_webhooks_tab_hidden_without_webhook(client, tmp_path, monkeypatch):
+    """No webhook-firable job → no Webhooks tab (no clutter)."""
+    _write_webhook_job(monkeypatch, tmp_path, webhook=False)
+    html = client.get("/jobs").text
+    assert 'data-tab="webhooks"' not in html
+    assert 'id="job-tab-webhooks"' not in html
+
+
+def test_webhooks_tab_shown_with_webhook(client, tmp_path, monkeypatch):
+    """A webhook-firable job surfaces the dedicated Webhooks tab + activity."""
+    _write_webhook_job(monkeypatch, tmp_path, webhook=True)
+    html = client.get("/jobs").text
+    assert 'data-tab="webhooks"' in html
+    assert 'id="job-tab-webhooks"' in html
     assert "job-webhook-activity" in html
-    assert "_loadWebhookActivity" in html
+    assert "loadWebhookActivity" in html
 
 
 def test_webhook_events_endpoint_filters_job_source(client, tmp_path, monkeypatch):
