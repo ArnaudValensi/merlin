@@ -342,6 +342,30 @@ class TestUpdateJob:
         stored = json_mod.loads((_isolated_job_dirs / "test-job.json").read_text())
         assert "schedule" not in stored
 
+    def test_update_clears_working_dir(self, client, _isolated_job_dirs):
+        """PUT with working_dir='' clears it (was silently ignored before:
+        exclude_none dropped a null and kept the old value)."""
+        import json as json_mod
+
+        client.post("/api/job/jobs", json=_sample_job(working_dir="/old/path"))
+        assert (
+            json_mod.loads((_isolated_job_dirs / "test-job.json").read_text())[
+                "working_dir"
+            ]
+            == "/old/path"
+        )
+        resp = client.put("/api/job/jobs/test-job", json={"working_dir": ""})
+        assert resp.status_code == 200
+        stored = json_mod.loads((_isolated_job_dirs / "test-job.json").read_text())
+        assert "working_dir" not in stored
+
+    def test_create_empty_working_dir_stored_absent(self, client, _isolated_job_dirs):
+        import json as json_mod
+
+        client.post("/api/job/jobs", json=_sample_job(working_dir=""))
+        stored = json_mod.loads((_isolated_job_dirs / "test-job.json").read_text())
+        assert stored["working_dir"] is None
+
     def test_update_invalid_schedule(self, client):
         """PUT with invalid schedule returns 422."""
         client.post("/api/job/jobs", json=_sample_job())

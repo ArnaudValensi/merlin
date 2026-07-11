@@ -1612,7 +1612,10 @@ const Jobs = {
             type: type,
             report_mode: document.getElementById('field-report-mode').value,
         };
-        body.working_dir = document.getElementById('field-working-dir').value.trim() || null;
+        // Send "" (not null) when cleared so the server can distinguish
+        // "clear this field" from "field omitted / unchanged" (null is dropped
+        // by the update merge and would silently keep the old value).
+        body.working_dir = document.getElementById('field-working-dir').value.trim();
         if (type === 'command') {
             body.command = command;
         } else {

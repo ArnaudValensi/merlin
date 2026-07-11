@@ -107,7 +107,8 @@ def create_job(body: JobCreate):
         "type": body.type,
         "prompt": body.prompt,
         "command": body.command,
-        "working_dir": body.working_dir,
+        # "" (an emptied field) is stored as absent, not an empty string.
+        "working_dir": body.working_dir or None,
         "enabled": body.enabled,
         "report_mode": body.report_mode,
         "max_turns": body.max_turns,
@@ -149,12 +150,16 @@ def update_job(job_id: str, body: JobUpdate):
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
 
-    # Merge only non-None fields from the update body. An empty-string
-    # schedule means "remove the schedule trigger" (None means "unchanged").
+    # Merge only non-None fields from the update body. For the optional
+    # fields below, an empty string means "clear this back to the default"
+    # (working_dir/timezone/discord_channel) or "remove the trigger"
+    # (schedule); None still means "unchanged" and is dropped by exclude_none.
+    # Without this, a cleared field would silently keep its old value.
+    clearable = {"schedule", "working_dir", "timezone", "discord_channel"}
     update_data = body.model_dump(exclude_none=True)
     for key, value in update_data.items():
-        if key == "schedule" and value == "":
-            job.pop("schedule", None)
+        if key in clearable and value == "":
+            job.pop(key, None)
         else:
             job[key] = value
 
