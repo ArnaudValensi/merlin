@@ -51,13 +51,20 @@ def _enrich_job(job: dict) -> dict:
     job_id = job.get("id", "")
     schedule = job.get("schedule", "")
 
-    last_run = state.get_last_run(job_id)
-    job["last_run"] = last_run.isoformat() if last_run else None
+    # The schedule cursor advances only on scheduled runs; the next-run preview
+    # is measured from it. The card's "Last" display, by contrast, reflects the
+    # actual last run of ANY trigger (webhook/manual included), from history.
+    cursor = state.get_last_run(job_id)
+    recent = state.get_history(job_id, limit=1)
+    if recent:
+        job["last_run"] = recent[0].get("timestamp")
+    else:
+        job["last_run"] = cursor.isoformat() if cursor else None
 
     if schedule:
         # Base croniter in the scheduling timezone so "0 9 * * *" means 09:00
         # in that zone, not 09:00 UTC.
-        base = last_run.astimezone(tz) if last_run else datetime.now(tz=tz)
+        base = cursor.astimezone(tz) if cursor else datetime.now(tz=tz)
         try:
             cron = croniter(schedule, base)
             next_run = cron.get_next(datetime)

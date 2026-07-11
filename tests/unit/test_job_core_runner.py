@@ -402,7 +402,7 @@ class TestRunJob:
         assert mock_invoke.call_args[1]["append_system_prompt"] == "COMPOSED"
 
     def test_run_job_updates_state_and_history(self, temp_jobs_dir):
-        """run_job updates state and history after execution."""
+        """A scheduled run advances the schedule cursor and records history."""
         from job.runner import run_job
         from job.state import get_history, get_last_run
 
@@ -419,9 +419,9 @@ class TestRunJob:
             "job.runner.invoke",
             return_value=make_mock_result(duration=2.5, cost_usd=0.10),
         ):
-            run_job("test-job", job)
+            run_job("test-job", job, trigger="schedule")
 
-        # State should be updated
+        # A scheduled run advances the cursor
         assert get_last_run("test-job") is not None
 
         # History should have entry
@@ -430,6 +430,53 @@ class TestRunJob:
         assert history[0]["exit_code"] == 0
         assert history[0]["duration"] == 2.5
         assert history[0]["cost_usd"] == 0.10
+
+    def test_non_scheduled_run_does_not_advance_cursor(self, temp_jobs_dir):
+        """A webhook or manual run records history but leaves the schedule
+        cursor untouched, so it can't consume an upcoming scheduled slot (#7)."""
+        from job.runner import run_job
+        from job.state import get_history, get_last_run
+
+        job = {"schedule": "0 9 * * *", "prompt": "x", "enabled": True}
+
+        for trig in ("webhook", "manual"):
+            with patch("job.runner.invoke", return_value=make_mock_result()):
+                run_job(f"j-{trig}", job, trigger=trig)
+            # No cursor written...
+            assert get_last_run(f"j-{trig}") is None
+            # ...but the run is still recorded in history (drives the display).
+            assert len(get_history(f"j-{trig}")) == 1
+
+    def test_webhook_run_does_not_swallow_scheduled_slot(self, temp_jobs_dir):
+        """The concrete #7 scenario: the schedule cursor sits at the last
+        scheduled fire; a webhook run in between must leave it there so the
+        next scheduled slot still comes due (grace fires it)."""
+        from datetime import datetime, timedelta, timezone
+
+        from job.runner import is_job_due, run_job
+        from job.state import get_last_run, set_last_run
+
+        job = {"schedule": "0 9 * * *", "prompt": "x", "enabled": True}
+
+        # Yesterday's scheduled fire is the cursor.
+        yesterday_9 = datetime.now(tz=timezone.utc).replace(
+            hour=9, minute=0, second=0, microsecond=0
+        ) - timedelta(days=1)
+        set_last_run("daily", yesterday_9)
+
+        # A webhook fires and runs.
+        with patch("job.runner.invoke", return_value=make_mock_result()):
+            run_job("daily", job, trigger="webhook")
+
+        # Cursor unchanged — still yesterday's fire, not the webhook time.
+        assert get_last_run("daily") == yesterday_9
+
+        # A few minutes after today's 09:00 slot, the job is still due
+        # (within grace) — the slot was not swallowed.
+        just_after_9 = datetime.now(tz=timezone.utc).replace(
+            hour=9, minute=5, second=0, microsecond=0
+        )
+        assert is_job_due("daily", "0 9 * * *", just_after_9, tz=timezone.utc)
 
     def test_run_job_non_ephemeral_uses_deterministic_session(self, temp_jobs_dir):
         """Non-ephemeral job uses deterministic session ID (no resume logic)."""

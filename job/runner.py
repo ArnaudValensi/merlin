@@ -437,17 +437,28 @@ def _execute_job(
         trigger=trigger,
     )
 
-    # Mark as running BEFORE execution to prevent re-dispatch by concurrent schedulers
-    set_last_run(job_id, _now())
+    # Advance the schedule cursor only for scheduled runs. The cursor is what
+    # is_job_due measures the next fire from, so a webhook or manual run must
+    # NOT move it — otherwise a fire that overlaps a scheduled slot pushes the
+    # cursor past that slot and silently swallows it (see #7). The per-job
+    # flock is the real double-dispatch guard; every trigger still records
+    # history and logs below, which drive the "Last" display.
+    is_scheduled = trigger == "schedule"
+
+    # Mark as running BEFORE execution so a concurrent scheduler tick sees the
+    # slot claimed.
+    if is_scheduled:
+        set_last_run(job_id, _now())
 
     if job_type == "command":
         result = _run_command(job_id, job)
     else:
         result = _run_agent(job_id, job, request_id, trigger=trigger)
 
-    # Update state with actual completion time
+    # Advance the cursor to completion time (scheduled runs only).
     now = _now()
-    set_last_run(job_id, now)
+    if is_scheduled:
+        set_last_run(job_id, now)
     append_history(
         job_id,
         exit_code=result.exit_code,

@@ -466,6 +466,17 @@ class TestWebhookManagementApi:
         assert data["webhook_url"].endswith("/webhooks/job/hook-job")
         assert data["webhook_url_source"] in ("override", "saas", "slug", "ip")
 
+    def test_last_run_display_uses_history_not_cursor(self, client, _isolated_job_dirs):
+        """A webhook run doesn't touch the schedule cursor, but the job's
+        'last_run' still reflects it (from history) so the card shows it."""
+        _write_job(_isolated_job_dirs, webhook=None)
+        # No cursor (get_last_run None), but a run is in history.
+        job_state.append_history(
+            "hook-job", exit_code=0, duration=1.0, trigger="webhook"
+        )
+        data = client.get("/api/job/jobs/hook-job").json()
+        assert data["last_run"] is not None
+
     def test_get_job_source_reflects_override(
         self, client, _isolated_job_dirs, monkeypatch
     ):
