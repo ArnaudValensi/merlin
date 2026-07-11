@@ -98,18 +98,21 @@ async def _run_job_runner() -> None:
 
                 channel = _get_bot_default_channel(bot_info.module)
                 if channel:
-                    bot_info.notify(
+                    # Discord delivery is synchronous — keep it off the loop.
+                    await asyncio.to_thread(
+                        bot_info.notify,
                         channel,
-                        f"**Cron runner crashed** (exit {proc.returncode})\n```\n{error_msg}\n```",
+                        f"**Job runner crashed** (exit {proc.returncode})\n```\n{error_msg}\n```",
                     )
         except Exception:
             logger.debug("Could not send crash alert to Discord", exc_info=True)
 
     # Process job results and send Discord notifications (runs in main process
-    # where extension_registry is available)
+    # where extension_registry is available). Offloaded because notification
+    # does synchronous Discord I/O that must not block the event loop.
     if stdout:
         try:
-            _process_runner_output(stdout)
+            await asyncio.to_thread(_process_runner_output, stdout)
         except Exception:
             logger.warning(
                 "Failed to process runner output for notifications", exc_info=True

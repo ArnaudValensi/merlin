@@ -283,12 +283,13 @@ async def _run_job_with_notify(job_id: str) -> None:
 
     stdout, _stderr = await proc.communicate()
 
-    # Process job_complete events for Discord notifications
+    # Process job_complete events for Discord notifications. Offloaded because
+    # notification does synchronous Discord I/O that must not block the loop.
     if stdout:
         try:
             from job import _process_runner_output
 
-            _process_runner_output(stdout)
+            await asyncio.to_thread(_process_runner_output, stdout)
         except Exception:
             import logging
 

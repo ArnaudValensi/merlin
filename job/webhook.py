@@ -96,9 +96,17 @@ def _fire(job_id: str, job: dict) -> FireResult:
 
 
 async def _run(job_id: str, job: dict, run_id: str, lock) -> None:
-    """Execute the run in a worker thread, holding the flock throughout."""
+    """Execute the run in a worker thread, then notify.
+
+    Both the run and the notification are offloaded with ``asyncio.to_thread``
+    so nothing blocks the event loop (the run invokes the agent; notification
+    does synchronous Discord I/O). The flock is released as soon as the run
+    finishes — before notifying — so single-flight covers only the run itself,
+    not the delivery that follows it.
+    """
     from job import runner
 
+    result = None
     try:
         result = await asyncio.to_thread(
             runner._execute_job,
@@ -108,12 +116,19 @@ async def _run(job_id: str, job: dict, run_id: str, lock) -> None:
             trigger="webhook",
             request_id=run_id,
         )
-        _notify(job_id, job, result)
     except Exception:
         logger.exception("Webhook-triggered run of job %s crashed", job_id)
     finally:
         state.release_job_lock(lock)
         _in_flight.pop(job_id, None)
+
+    if result is not None:
+        try:
+            await asyncio.to_thread(_notify, job_id, job, result)
+        except Exception:
+            logger.warning(
+                "Failed to notify for webhook run of %s", job_id, exc_info=True
+            )
 
 
 def _notify(job_id: str, job: dict, result) -> None:

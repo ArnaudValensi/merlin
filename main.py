@@ -30,7 +30,7 @@ from typing import Any
 from urllib.parse import quote
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Form, Request, HTTPException
+from fastapi import Body, Depends, FastAPI, Form, Request, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -643,9 +643,14 @@ def _normalize_public_url(value: str) -> str:
 
 
 @app.post("/api/settings")
-async def api_save_settings(request: Request, _auth=Depends(require_auth)):
-    """Update settings in config.env."""
-    body = await request.json()
+def api_save_settings(body: dict = Body(...), _auth=Depends(require_auth)):
+    """Update settings in config.env.
+
+    Sync ``def`` on purpose: it resolves the public URL, which can make a
+    blocking whoami HTTP call, so FastAPI must run it in the threadpool and
+    never on the event loop (see portal/CODE_STYLE.md 'Never Block the Event
+    Loop'; the 2026-07-02 terminal outage is the cautionary tale).
+    """
     cfg = _read_config_env()
 
     password_changed = False
