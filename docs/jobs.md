@@ -132,7 +132,9 @@ curl -X POST -H 'X-Merlin-Webhook-Secret: whk_...' \
   https://your-instance/webhooks/job/my-job
 ```
 
-If the sender cannot set headers, append `?token=whk_...` instead.
+If the sender cannot set headers, append `?token=whk_...` instead — but
+prefer the header: a secret in the URL can show up in server and proxy
+logs, whereas a header does not.
 `merlin job url <id>` prints the URL, the secret, and that exact curl
 command; `merlin job test <id>` fires the hook against your own server as a
 dry run of the whole path.

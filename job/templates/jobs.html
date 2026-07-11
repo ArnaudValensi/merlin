@@ -1130,7 +1130,7 @@
                         <button type="button" class="btn btn-sm" id="webhook-reveal-btn" onclick="Jobs.toggleSecretReveal()">Show</button>
                         <button type="button" class="btn btn-sm" onclick="Jobs.copyWebhookField('field-webhook-secret', 'Secret')">Copy</button>
                     </div>
-                    <div class="form-help">Send it as the <code>X-Merlin-Webhook-Secret</code> header, or <code>?token=...</code> if the sender cannot set headers.</div>
+                    <div class="form-help">Send it as the <code>X-Merlin-Webhook-Secret</code> header (preferred). The <code>?token=...</code> query form works when the sender can't set headers, but a secret in the URL can show up in server and proxy logs, so use the header when you can.</div>
                     <div class="webhook-actions">
                         <button type="button" class="btn btn-sm" onclick="Jobs.rotateWebhookSecret()">Rotate secret</button>
                         <button type="button" class="btn btn-sm" onclick="Jobs.sendWebhookTest()">Send test</button>
