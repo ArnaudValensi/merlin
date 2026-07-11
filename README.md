@@ -1,15 +1,14 @@
 <!-- Source: readme/banner.html; capture #banner transparent at 2x after any brand change. -->
 ![Merlin](readme/banner.png)
 
-**Give your agents a machine of their own.**
+**Your agent operating environment**
 
-Merlin is an agent operating environment: the place where your AI agents
-work. It turns any Linux box or Mac into that place: a real shell, real
-files, real git, in your browser, for the agents you already use (Claude
-Code, OpenCode, Gemini, Codex: anything that runs in a terminal). You run
-it on one machine and control it from any other, phone included. Open
-source and self-hosted first; [Merlin Cloud](https://merlincloud.dev) is
-the hosted version.
+The place where your AI agents work. Merlin turns any Linux box or Mac
+into that place: a real shell, real files, real git, in your browser, for
+the agents you already use (Claude Code, OpenCode, Gemini, Codex: anything
+that runs in a terminal). You run it on one machine and control it from
+any other, phone included. Open source and self-hosted first;
+[Merlin Cloud](https://merlincloud.dev) is the hosted version.
 
 ## The three pillars
 
