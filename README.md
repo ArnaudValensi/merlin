@@ -1,7 +1,5 @@
 <!-- Source: readme/banner.html; capture #banner transparent at 2x after any brand change. -->
-![Merlin: the wizard-hat mark, and the three pillars: environment, orchestrator, memory](readme/banner.png)
-
-# Merlin
+![Merlin](readme/banner.png)
 
 **Give your agents a machine of their own.**
 
@@ -18,7 +16,7 @@ the hosted version.
 Merlin doesn't ship its own AI; it gives your agents a place to operate:
 a machine, a scheduler, and a memory.
 
-<!-- Captured from the landing's Three Pillars section (portal/templates/landing.html, .tp-stage, in the merlin-saas repo); recapture when the diagram changes. -->
+<!-- Captured from the landing's Three Pillars section (portal/templates/landing.html, .tp-stage, in the merlin-saas repo), transparent, pulse dots hidden; recapture when the diagram changes. -->
 <p align="center"><img src="readme/pillars.png" alt="The three pillars as a triangle: environment, orchestrator, memory" width="480"></p>
 
 - **A coding environment**: a terminal with your agents in it, the

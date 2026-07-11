@@ -3,19 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <title>readme banner source</title>
-  <!-- Source for readme/banner.png: capture .banner with a transparent
-       background at 2x (1560x480). Lockup left (hat mark from
-       static/favicon.svg), three-pillars triangle right (geometry from the
-       landing's .tp-stage, pulses omitted: static dots read as noise). -->
+  <!-- Source for readme/banner.png: capture #banner with a transparent
+       background at 2x (1560x480). Centered lockup: the wizard-hat mark from
+       static/favicon.svg plus the wordmark. -->
   <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@700&display=swap');
-
-    :root {
-      --primary: #4ade80;
-      --background: #141520;
-      --border: #2a2c42;
-      --muted: #7c7f96;
-    }
 
     html, body { background: transparent; margin: 0; }
 
@@ -24,78 +16,29 @@
       height: 240px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 0 44px;
-      box-sizing: border-box;
+      justify-content: center;
+      gap: 22px;
       font-family: 'JetBrains Mono', monospace;
     }
-
-    /* Left: identity lockup */
-    .lockup { display: flex; align-items: center; gap: 22px; }
     .mark { width: 62px; height: 62px; display: block; }
     .name {
       font-size: 48px;
       font-weight: 700;
-      color: var(--primary);
+      color: #4ade80;
       letter-spacing: 1px;
       text-shadow: 0 0 22px rgba(74, 222, 128, 0.35);
     }
-
-    /* Right: the three pillars, dot-less (geometry from the landing) */
-    .stage-scale { transform: scale(0.85); transform-origin: center; }
-    .tp-stage { position: relative; width: 300px; height: 240px; }
-    .tp-node { position: absolute; display: flex; flex-direction: column; align-items: center; gap: 8px; transform: translateX(-50%); }
-    .tp-node.top { flex-direction: column-reverse; }
-    .tp-env { left: 150px; top: 0; }
-    .tp-orch { left: 55px; top: 158px; }
-    .tp-mem { left: 245px; top: 158px; }
-    .tp-wire { position: absolute; height: 2px; background: var(--border); transform-origin: 0 50%; }
-    .tp-w1 { left: 129px; top: 77px; width: 94px; transform: rotate(125deg); }
-    .tp-w2 { left: 171px; top: 77px; width: 94px; transform: rotate(55deg); }
-    .tp-w3 { left: 85px; top: 183px; width: 130px; }
-    .rf-box {
-      display: flex; align-items: center; justify-content: center;
-      width: 52px; height: 52px;
-      border: 1px solid var(--primary);
-      background: var(--background);
-      border-radius: 2px;
-      box-shadow: 0 0 8px rgba(80, 220, 140, 0.35);
-    }
-    .rf-box svg { width: 28px; height: 28px; color: var(--primary); }
-    .rf-cap { font-size: 11px; letter-spacing: 1px; color: var(--muted); }
   </style>
 </head>
 <body>
   <div class="banner" id="banner">
-    <div class="lockup">
-      <svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-        <rect x="8" y="8" width="496" height="496" rx="32" ry="32" fill="#1e2035" stroke="#4ade80" stroke-width="16"/>
-        <g transform="translate(128 128) scale(0.5)">
-          <path fill="#4ade80" d="M64 416L168.6 180.7c15.3-34.4 40.3-63.5 72-83.7l146.9-94c3-1.9 6.5-2.9 10-2.9C407.7 0 416 8.3 416 18.6v1.6c0 2.6-.5 5.1-1.4 7.5L354.8 176.9c-1.9 4.7-2.8 9.7-2.8 14.7c0 5.5 1.2 11 3.4 16.1L448 416H240.9l11.8-35.4 40.4-13.5c6.5-2.2 10.9-8.3 10.9-15.2s-4.4-13-10.9-15.2l-40.4-13.5-13.5-40.4C237 276.4 230.9 272 224 272s-13 4.4-15.2 10.9l-13.5 40.4-40.4 13.5C148.4 339 144 345.1 144 352s4.4 13 10.9 15.2l40.4 13.5L207.1 416H64zM279.6 141.5c-1.1-3.3-4.1-5.5-7.6-5.5s-6.5 2.2-7.6 5.5l-6.7 20.2-20.2 6.7c-3.3 1.1-5.5 4.1-5.5 7.6s2.2 6.5 5.5 7.6l20.2 6.7 6.7 20.2c1.1 3.3 4.1 5.5 7.6 5.5s6.5-2.2 7.6-5.5l6.7-20.2 20.2-6.7c3.3-1.1 5.5-4.1 5.5-7.6s-2.2-6.5-5.5-7.6l-20.2-6.7-6.7-20.2zM32 448H480c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32z"/>
-        </g>
-      </svg>
-      <div class="name">merlin</div>
-    </div>
-
-    <div class="stage-scale">
-      <div class="tp-stage">
-        <div class="tp-node top tp-env">
-          <div class="rf-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></div>
-          <div class="rf-cap">environment</div>
-        </div>
-        <div class="tp-node tp-orch">
-          <div class="rf-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
-          <div class="rf-cap">orchestrator</div>
-        </div>
-        <div class="tp-node tp-mem">
-          <div class="rf-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></div>
-          <div class="rf-cap">memory</div>
-        </div>
-        <div class="tp-wire tp-w1"></div>
-        <div class="tp-wire tp-w2"></div>
-        <div class="tp-wire tp-w3"></div>
-      </div>
-    </div>
+    <svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+      <rect x="8" y="8" width="496" height="496" rx="32" ry="32" fill="#1e2035" stroke="#4ade80" stroke-width="16"/>
+      <g transform="translate(128 128) scale(0.5)">
+        <path fill="#4ade80" d="M64 416L168.6 180.7c15.3-34.4 40.3-63.5 72-83.7l146.9-94c3-1.9 6.5-2.9 10-2.9C407.7 0 416 8.3 416 18.6v1.6c0 2.6-.5 5.1-1.4 7.5L354.8 176.9c-1.9 4.7-2.8 9.7-2.8 14.7c0 5.5 1.2 11 3.4 16.1L448 416H240.9l11.8-35.4 40.4-13.5c6.5-2.2 10.9-8.3 10.9-15.2s-4.4-13-10.9-15.2l-40.4-13.5-13.5-40.4C237 276.4 230.9 272 224 272s-13 4.4-15.2 10.9l-13.5 40.4-40.4 13.5C148.4 339 144 345.1 144 352s4.4 13 10.9 15.2l40.4 13.5L207.1 416H64zM279.6 141.5c-1.1-3.3-4.1-5.5-7.6-5.5s-6.5 2.2-7.6 5.5l-6.7 20.2-20.2 6.7c-3.3 1.1-5.5 4.1-5.5 7.6s2.2 6.5 5.5 7.6l20.2 6.7 6.7 20.2c1.1 3.3 4.1 5.5 7.6 5.5s6.5-2.2 7.6-5.5l6.7-20.2 20.2-6.7c3.3-1.1 5.5-4.1 5.5-7.6s-2.2-6.5-5.5-7.6l-20.2-6.7-6.7-20.2zM32 448H480c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32z"/>
+      </g>
+    </svg>
+    <div class="name">merlin</div>
   </div>
 </body>
 </html>
