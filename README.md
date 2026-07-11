@@ -16,7 +16,7 @@ Merlin doesn't ship its own AI; it gives your agents a place to operate:
 a machine, a scheduler, and a memory.
 
 <!-- Captured from the landing's Three Pillars section (portal/templates/landing.html, .tp-stage, in the merlin-saas repo), transparent, pulse dots hidden, labels and wires recolored to the primary green, padding baked in; recapture when the diagram changes. -->
-<p align="center"><img src="readme/three-pillars.png" alt="The three pillars as a triangle: environment, orchestrator, memory" width="520"></p>
+<p align="center"><img src="readme/pillars-diagram.png" alt="The three pillars as a triangle: environment, orchestrator, memory" width="520"></p>
 
 - **A coding environment**: a terminal with your agents in it, the
   filesystem, and the git history, all in the browser, built for the way
