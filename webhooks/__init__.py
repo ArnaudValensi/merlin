@@ -2,8 +2,16 @@
 
 Core module. A single parameterized route ``POST /webhooks/{source}/{target_id}``
 owns everything shared and security-sensitive about inbound webhooks: secret
-verification (constant-time), the per-IP failed-secret throttle, and logging.
-It then dispatches by ``source`` to a resolver each module registers.
+verification (constant-time) and logging. It then dispatches by ``source`` to a
+resolver each module registers.
+
+Security model: the per-hook secret is the gate, and a valid secret is checked
+BEFORE anything else that could reject a request, so a legitimate sender can
+never be locked out. There is deliberately no in-app rate limiter — the secret
+is 256-bit (unguessable at any rate), so throttling failed guesses buys nothing
+for security. Bounding the cost of a junk flood is a job for the edge (our
+Caddy on SaaS; the operator's own reverse proxy when self-hosting), consistent
+with Merlin's bring-your-own-exposure model.
 
 The router is hand-mounted in ``main.py`` WITHOUT ``require_auth`` (the
 terminal precedent): ``/webhooks/*`` is intentionally public and
@@ -29,9 +37,7 @@ from __future__ import annotations
 import hmac
 import logging
 import re
-import time
 import uuid
-from collections import deque
 from dataclasses import dataclass
 from typing import Callable
 
@@ -49,15 +55,10 @@ SECRET_HEADER = "x-merlin-webhook-secret"
 
 # Target ids share the job-id shape: lowercase, digits, single hyphens,
 # starts with a letter. Enforced at the desk so a raw path segment can never
-# reach a module's filesystem lookup (path traversal).
-_ID_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
+# reach a module's filesystem lookup (path traversal). fullmatch (not match)
+# so a trailing newline can't slip through the ``$`` anchor.
+_ID_RE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
 _ID_MAX_LEN = 30
-
-# Failed-secret throttle: this many failures from one IP inside the window
-# puts the IP in cooldown (429) until failures age out. In-memory by design:
-# single process, reset on restart is acceptable.
-THROTTLE_MAX_FAILURES = 10
-THROTTLE_WINDOW_SECONDS = 300
 
 
 @dataclass
@@ -72,9 +73,9 @@ class FireResult:
 class WebhookTarget:
     """A resolved webhook target: the expected secret and how to fire it.
 
-    ``fire`` is called only after the secret check and throttle pass. It must
-    return quickly (launch asynchronously) — the HTTP response does not wait
-    for the run to finish.
+    ``fire`` is called only after the secret check passes. It must return
+    quickly (launch asynchronously) — the HTTP response does not wait for the
+    run to finish.
     """
 
     secret: str
@@ -85,11 +86,6 @@ class WebhookTarget:
 Resolver = Callable[[str], WebhookTarget | None]
 
 _registry: dict[str, Resolver] = {}
-
-# Failed-secret timestamps per client IP (monotonic seconds).
-_failures: dict[str, deque[float]] = {}
-
-_now = time.monotonic
 
 
 def register(source: str, resolver: Resolver) -> None:
@@ -108,36 +104,17 @@ def register(source: str, resolver: Resolver) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Failed-secret throttle
+# Client IP (for logging only)
 # ---------------------------------------------------------------------------
 
 
-def _prune_failures(ip: str) -> deque[float]:
-    """Drop failures older than the window; return the IP's live deque."""
-    q = _failures.setdefault(ip, deque())
-    cutoff = _now() - THROTTLE_WINDOW_SECONDS
-    while q and q[0] < cutoff:
-        q.popleft()
-    if not q:
-        _failures.pop(ip, None)
-    return q
-
-
-def _is_throttled(ip: str) -> bool:
-    return len(_prune_failures(ip)) >= THROTTLE_MAX_FAILURES
-
-
-def _record_failure(ip: str) -> None:
-    _failures.setdefault(ip, deque()).append(_now())
-
-
 def _client_ip(request: Request) -> str:
-    """Best-effort client IP: first X-Forwarded-For hop, else the socket peer.
+    """Best-effort client IP for the request log's ``ip`` field.
 
-    Behind the SaaS tunnel the socket peer is the tunnel's local end, so the
-    forwarded header is the only useful signal there. It is spoofable by
-    direct callers, which is acceptable for a brute-force throttle: a spoofing
-    attacker only pollutes buckets, never bypasses the secret.
+    Informational only — it is NOT used for any access decision. The first
+    X-Forwarded-For hop is caller-controlled (spoofable), and behind the SaaS
+    tunnel the socket peer is just the tunnel's local end, so this is a hint
+    for humans reading the audit log, never a gate.
     """
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
@@ -159,95 +136,53 @@ async def receive_webhook(
     """Verify and dispatch an inbound webhook. Public, secret-gated.
 
     Response codes: 200 accepted (launched or coalesced), 401 bad/missing
-    secret, 403 disabled target, 404 unknown source/target, 429 throttled.
+    secret, 403 disabled target, 404 unknown source/target.
+
+    A valid secret is verified before the enabled check and is never gated by
+    any per-caller state, so a legitimate sender cannot be locked out. Flood
+    protection is an edge concern (see the module docstring), not handled here.
     """
     request_id = str(uuid.uuid4())
     ip = _client_ip(request)
 
-    resolver = _registry.get(source)
-    if resolver is None:
+    def _log(outcome: str, target: str = target_id, **fields) -> None:
         log_event(
             "webhook_request",
             source=source[:64],
-            target="",
+            target=target,
             ip=ip,
-            outcome="unknown_source",
+            outcome=outcome,
             request_id=request_id,
+            **fields,
         )
+
+    resolver = _registry.get(source)
+    if resolver is None:
+        _log("unknown_source", target="")
         raise HTTPException(status_code=404, detail="Unknown webhook")
 
-    if len(target_id) > _ID_MAX_LEN or not _ID_RE.match(target_id):
+    if len(target_id) > _ID_MAX_LEN or not _ID_RE.fullmatch(target_id):
         # Don't echo an arbitrary path segment into the log.
-        log_event(
-            "webhook_request",
-            source=source,
-            target="",
-            ip=ip,
-            outcome="invalid_id",
-            request_id=request_id,
-        )
+        _log("invalid_id", target="")
         raise HTTPException(status_code=404, detail="Unknown webhook")
-
-    # Cooldown check before any secret work: a throttled IP gets no oracle.
-    if _is_throttled(ip):
-        log_event(
-            "webhook_request",
-            source=source,
-            target=target_id,
-            ip=ip,
-            outcome="throttled",
-            request_id=request_id,
-        )
-        logger.warning("Webhook throttled: ip=%s %s/%s", ip, source, target_id)
-        raise HTTPException(status_code=429, detail="Too many failed attempts")
 
     target = resolver(target_id)
     if target is None:
-        log_event(
-            "webhook_request",
-            source=source,
-            target=target_id,
-            ip=ip,
-            outcome="unknown_target",
-            request_id=request_id,
-        )
+        _log("unknown_target")
         raise HTTPException(status_code=404, detail="Unknown webhook")
 
     provided = request.headers.get(SECRET_HEADER) or token or ""
     if not hmac.compare_digest(provided.encode(), target.secret.encode()):
-        _record_failure(ip)
-        log_event(
-            "webhook_request",
-            source=source,
-            target=target_id,
-            ip=ip,
-            outcome="rejected_secret",
-            request_id=request_id,
-        )
+        _log("rejected_secret")
         logger.warning("Webhook secret rejected: ip=%s %s/%s", ip, source, target_id)
         raise HTTPException(status_code=401, detail="Invalid secret")
 
     if not target.enabled:
-        log_event(
-            "webhook_request",
-            source=source,
-            target=target_id,
-            ip=ip,
-            outcome="disabled",
-            request_id=request_id,
-        )
+        _log("disabled")
         raise HTTPException(status_code=403, detail="Webhook target is disabled")
 
     result = target.fire()
-    log_event(
-        "webhook_request",
-        source=source,
-        target=target_id,
-        ip=ip,
-        outcome=result.status,
-        run_id=result.run_id,
-        request_id=request_id,
-    )
+    _log(result.status, run_id=result.run_id)
     logger.info(
         "Webhook %s: %s/%s (ip=%s, run_id=%s)",
         result.status,

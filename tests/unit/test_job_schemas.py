@@ -16,6 +16,11 @@ class TestJobCreateType:
         assert job.command == ""
         assert job.working_dir is None
 
+    def test_trailing_newline_id_rejected(self):
+        """fullmatch, not match: a trailing newline must not pass the ^...$."""
+        with pytest.raises(ValidationError):
+            JobCreate(id="job\n", schedule="0 9 * * *", prompt="x")
+
     def test_prompt_job_requires_prompt(self):
         with pytest.raises(ValidationError):
             JobCreate(id="j", schedule="0 9 * * *", type="prompt")

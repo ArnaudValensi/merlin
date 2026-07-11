@@ -13,10 +13,9 @@ import webhooks
 
 @pytest.fixture(autouse=True)
 def _clean_desk(monkeypatch):
-    """Isolate the desk's registry and throttle state per test."""
+    """Isolate the desk's registry per test."""
     saved = dict(webhooks._registry)
     webhooks._registry.clear()
-    webhooks._failures.clear()
 
     monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
     monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
@@ -26,7 +25,6 @@ def _clean_desk(monkeypatch):
 
     webhooks._registry.clear()
     webhooks._registry.update(saved)
-    webhooks._failures.clear()
 
 
 @pytest.fixture
@@ -167,69 +165,60 @@ class TestPublicMount:
         assert resp.status_code == 200
 
 
-class TestThrottle:
-    def _fail(self, client, ip: str):
+class TestNoLockout:
+    """The secret is the gate; a valid secret is never blocked by prior
+    failures or by a caller-supplied X-Forwarded-For. There is no in-app
+    throttle (flood protection is an edge concern)."""
+
+    def _fail(self, client, ip="9.9.9.9"):
         return client.post(
             "/webhooks/testsrc/known-job",
             headers={"X-Merlin-Webhook-Secret": "wrong", "X-Forwarded-For": ip},
         )
 
-    def test_failures_below_limit_do_not_throttle(self, client):
+    def test_valid_secret_fires_after_many_failures(self, client):
+        """A stranger spamming wrong secrets cannot lock out the real sender."""
+        calls = _register()
+        for _ in range(50):
+            assert self._fail(client).status_code == 401
+        resp = client.post(
+            "/webhooks/testsrc/known-job",
+            headers={"X-Merlin-Webhook-Secret": "whk_test"},
+        )
+        assert resp.status_code == 200
+        assert calls == ["known-job"]
+
+    def test_wrong_secret_always_401_never_429(self, client):
+        """No throttle: repeated wrong secrets keep returning 401, not 429."""
         _register()
-        for _ in range(webhooks.THROTTLE_MAX_FAILURES - 1):
-            assert self._fail(client, "10.0.0.1").status_code == 401
+        for _ in range(30):
+            resp = self._fail(client)
+            assert resp.status_code == 401
+
+    def test_forged_xff_does_not_affect_outcome(self, client):
+        """A spoofed X-Forwarded-For (victim's IP) cannot poison anything:
+        the victim's valid secret still fires."""
+        calls = _register()
+        for _ in range(20):
+            self._fail(client, ip="203.0.113.5")  # pretend to be the real sender
         resp = client.post(
             "/webhooks/testsrc/known-job",
             headers={
                 "X-Merlin-Webhook-Secret": "whk_test",
-                "X-Forwarded-For": "10.0.0.1",
+                "X-Forwarded-For": "203.0.113.5",
             },
         )
         assert resp.status_code == 200
+        assert calls == ["known-job"]
 
-    def test_too_many_failures_throttle_even_valid_secret(self, client):
+    def test_trailing_newline_id_rejected(self, client):
+        """fullmatch: a target id with a trailing newline is a 404, not a pass."""
         _register()
-        for _ in range(webhooks.THROTTLE_MAX_FAILURES):
-            assert self._fail(client, "10.0.0.2").status_code == 401
         resp = client.post(
-            "/webhooks/testsrc/known-job",
-            headers={
-                "X-Merlin-Webhook-Secret": "whk_test",
-                "X-Forwarded-For": "10.0.0.2",
-            },
+            "/webhooks/testsrc/known-job%0A",
+            headers={"X-Merlin-Webhook-Secret": "whk_test"},
         )
-        assert resp.status_code == 429
-
-    def test_throttle_is_per_ip(self, client):
-        _register()
-        for _ in range(webhooks.THROTTLE_MAX_FAILURES):
-            self._fail(client, "10.0.0.3")
-        resp = client.post(
-            "/webhooks/testsrc/known-job",
-            headers={
-                "X-Merlin-Webhook-Secret": "whk_test",
-                "X-Forwarded-For": "10.0.0.4",
-            },
-        )
-        assert resp.status_code == 200
-
-    def test_throttle_expires_after_window(self, client, monkeypatch):
-        _register()
-        for _ in range(webhooks.THROTTLE_MAX_FAILURES):
-            self._fail(client, "10.0.0.5")
-
-        base = webhooks._now()
-        monkeypatch.setattr(
-            webhooks, "_now", lambda: base + webhooks.THROTTLE_WINDOW_SECONDS + 1
-        )
-        resp = client.post(
-            "/webhooks/testsrc/known-job",
-            headers={
-                "X-Merlin-Webhook-Secret": "whk_test",
-                "X-Forwarded-For": "10.0.0.5",
-            },
-        )
-        assert resp.status_code == 200
+        assert resp.status_code == 404
 
 
 class TestRegistry:

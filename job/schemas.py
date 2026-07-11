@@ -7,8 +7,9 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-# Job ID pattern: lowercase + alphanumeric + single hyphens, no --, max 30 chars, starts with letter
-_ID_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
+# Job ID pattern: lowercase + alphanumeric + single hyphens, no --, max 30 chars, starts with letter.
+# Used with fullmatch so a trailing newline can't slip through the ``$`` anchor.
+_ID_RE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
 
 VALID_REPORT_MODES = ("always", "silent", "off")
 
@@ -62,7 +63,7 @@ class JobCreate(BaseModel):
     def validate_id(cls, v: str) -> str:
         if len(v) > 30:
             raise ValueError("id must be at most 30 characters")
-        if not _ID_RE.match(v):
+        if not _ID_RE.fullmatch(v):
             raise ValueError(
                 "id must start with a letter, contain only lowercase letters, "
                 "digits, and single hyphens (no '--')"
