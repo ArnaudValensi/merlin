@@ -1,5 +1,5 @@
-<!-- Rendered from the OG card (portal/templates/og-card.html in the merlin-saas repo); recapture when the card changes. -->
-![Your agentic environment, everywhere: a machine, a scheduler, and a memory for your agents](readme/banner.jpg)
+<!-- Source: readme/banner.html; capture #banner transparent at 2x after any brand change. -->
+![Merlin: the wizard-hat mark, and the three pillars: environment, orchestrator, memory](readme/banner.png)
 
 # Merlin
 
