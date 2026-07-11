@@ -1,3 +1,6 @@
+<!-- Rendered from the OG card (portal/templates/og-card.html in the merlin-saas repo); recapture when the card changes. -->
+![Your agentic environment, everywhere: a machine, a scheduler, and a memory for your agents](readme/banner.jpg)
+
 # Merlin
 
 **Give your agents a machine of their own.**
@@ -14,6 +17,9 @@ the hosted version.
 
 Merlin doesn't ship its own AI; it gives your agents a place to operate:
 a machine, a scheduler, and a memory.
+
+<!-- Captured from the landing's Three Pillars section (portal/templates/landing.html, .tp-stage, in the merlin-saas repo); recapture when the diagram changes. -->
+<p align="center"><img src="readme/pillars.png" alt="The three pillars as a triangle: environment, orchestrator, memory" width="480"></p>
 
 - **A coding environment**: a terminal with your agents in it, the
   filesystem, and the git history, all in the browser, built for the way
