@@ -16,7 +16,7 @@ Merlin doesn't ship its own AI; it gives your agents a place to operate:
 a machine, a scheduler, and a memory.
 
 <!-- Captured from the landing's Three Pillars section (portal/templates/landing.html, .tp-stage, in the merlin-saas repo), transparent, pulse dots hidden, labels and wires recolored to the primary green, padding baked in; recapture when the diagram changes. -->
-<p align="center"><img src="readme/pillars-diagram.png" alt="The three pillars as a triangle: environment, orchestrator, memory" width="520"></p>
+<p align="center"><img src="readme/pillars-triangle.png" alt="The three pillars as a triangle: environment, orchestrator, memory" width="520"></p>
 
 - **A coding environment**: a terminal with your agents in it, the
   filesystem, and the git history, all in the browser, built for the way
@@ -57,7 +57,7 @@ Start here, then one doc per piece of Merlin:
 - [Files](docs/files.md): file browser, code viewer, image and 3D model preview
 - [Commits](docs/commits.md): git history and diffs, review your agent's work from your phone
 - [Notes](docs/notes.md): the notes editor and your agent's memory (user facts, daily logs, knowledge base)
-- [Cron](docs/jobs.md): scheduled agent runs, reports, history and performance
+- [Jobs](docs/jobs.md): agent runs on a schedule or an incoming webhook, reports, history and performance
 - [Discord bot](docs/bot.md): the same agent in your chat, threads, voice messages
 - [Extensions](docs/extensions.md): enable, configure, and audit what your agent can do
 - [Your agent](docs/agents.md): running Claude Code or OpenCode with Merlin's skills and memory
