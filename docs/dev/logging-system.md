@@ -13,7 +13,7 @@ Three distinct concepts, each with its own storage:
 │   ├── engine-log.jsonl        # Engine lifecycle events
 │   └── raw-sessions/           # Raw session recordings (session viewer)
 ├── sessions/                   # Session state — conversation continuity
-└── job-logs/                  # Cron execution logs
+└── job-logs/                  # Job execution logs
 ```
 
 - **`logs/`** — observability. Everything here can be rotated or deleted without breaking the app.

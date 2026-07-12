@@ -1,4 +1,4 @@
-# Cron
+# Jobs
 
 The `/jobs` page manages Merlin's built-in scheduler. It starts with the
 dashboard (no system crontab involved) and checks for due jobs every
@@ -9,10 +9,11 @@ while you sleep: scheduled agent runs read and feed the
 [notes and knowledge base](notes.md), then report back to Discord where
 you can pick up the conversation.
 
-![Cron jobs list on a phone](jobs/phone-jobs.jpg)
+![Jobs list on a phone](jobs/phone-jobs.jpg)
 
-The page has three tabs: Jobs, Performance, and Logs. The same jobs can
-also be managed from the terminal with `merlin job`.
+The page has tabs for Jobs, Performance, and Logs — plus a Webhooks tab
+when any job has a webhook (see below). The same jobs can also be managed
+from the terminal with `merlin job`.
 
 ## See your jobs
 
@@ -93,7 +94,7 @@ viewer for the full transcript.
 
 ## Check performance
 
-![Cron performance dashboard](jobs/phone-job-performance.jpg)
+![Job performance dashboard](jobs/phone-job-performance.jpg)
 
 The Performance tab charts execution time over time, success rate, and
 execution time and cost by job, over a 24h / 7d / 30d range. Only agent
@@ -153,9 +154,11 @@ What to know:
   (and a command job runs a shell command), so treat it like a credential.
   Rotate it anytime from the editor or `merlin job webhook <id> --rotate`;
   the old secret stops working immediately.
-- **Watch the traffic.** The Logs tab shows every fire and every rejected
-  attempt (wrong secret, throttled) with the caller's IP. Repeated wrong
-  secrets from one IP are throttled automatically.
+- **Watch the traffic.** The **Webhooks** tab shows every fire and every
+  rejected attempt (wrong secret, unknown job) with the caller's IP — a
+  public endpoint's failed hits are worth seeing. The secret is a 256-bit
+  token, so guessing it is hopeless; flood protection, if you need it, is a
+  job for your reverse proxy (on Merlin Cloud it's handled for you).
 
 On Merlin Cloud, the URL rides your instance's own subdomain
 (`https://{you}.merlincloud.dev/webhooks/job/{id}`) — discovered

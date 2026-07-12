@@ -131,7 +131,7 @@ When history exceeds `engine.context_window * 0.8` (estimated via chars/4 heuris
 3. Drop everything in between
 4. Insert a `{"role": "compaction", "dropped": N}` marker
 
-## Cron Job Sessions
+## Job Sessions
 
 - **Non-ephemeral**: `uuid5(DNS, f"job-{job_id}")` — same session across all runs. Engine receives full history of previous executions.
 - **Ephemeral** (default): `uuid4()` — fresh session each run. Used for stateless tasks.

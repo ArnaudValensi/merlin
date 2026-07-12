@@ -86,7 +86,7 @@ Four planes, one process:
              │         Caller handles delivery        │
              │                                       │
              │  Bot: send_message(thread_id, content) │
-             │  Cron: notify.py → Discord channel     │
+             │  Jobs: notify.py → Discord channel     │
              └───────────────────────────────────────┘
 ```
 
@@ -109,7 +109,7 @@ Four planes, one process:
 │  Session resolution (unchanged):                                    │
 │    Channel msg  → create thread → uuid5("discord-thread-{id}")      │
 │    Thread msg   → lookup registry → use existing session            │
-│    Cron job     → uuid4() per run (ephemeral default);              │
+│    Job          → uuid4() per run (ephemeral default);              │
 │                   uuid5("job-{job_id}") if "ephemeral": false  │
 │    Reply to bot → lookup message_id → resume that session           │
 │                                                                     │
@@ -133,14 +133,14 @@ notes/
     └── *.md            (atomic, interlinked notes)
 ```
 
-Both loops, and the user in the web terminal, read and write this tree through the notes CLI (`merlin notes`, `merlin kb`, `merlin remember`). Cron jobs write findings into `kb/` and `logs/`; the bot reads `user.md` and the KB through its agent_context recipe. One assistant, several entry points, one accumulating memory: the shared state is what makes invocations compound instead of starting cold.
+Both loops, and the user in the web terminal, read and write this tree through the notes CLI (`merlin notes`, `merlin kb`, `merlin remember`). Jobs write findings into `kb/` and `logs/`; the bot reads `user.md` and the KB through its agent_context recipe. One assistant, several entry points, one accumulating memory: the shared state is what makes invocations compound instead of starting cold.
 
 ## The Three Loops
 
 | Loop | Trigger | Path |
 |------|---------|------|
 | **Discord** | User sends message | Discord Gateway → `merlin_bot.py` → `lib/engine.py` → engine → `AgentResult` → bot sends to Discord |
-| **Cron** | `job/` scheduler (every min) | `main.py` → `job/runner.py` (subprocess) → `lib/engine.py` → engine → `AgentResult` → `notify.py` sends to Discord |
+| **Jobs** | `job/` scheduler (every min) | `main.py` → `job/runner.py` (subprocess) → `lib/engine.py` → engine → `AgentResult` → `notify.py` sends to Discord |
 | **Terminal** | You, in the web terminal | interactive agent CLIs (Claude Code, etc.) get the same skills via the shims and the same notes/KB; `merlin agent` prints the brain doc on demand |
 
 The Discord and job loops converge at `lib/engine.py` — the single chokepoint where every managed invocation is logged and sessions are managed (the terminal loop runs the agent CLIs directly). The engine is a black box — it has no notion of Discord, delivery, or persona. Contextual system-prompt content (brain doc, personality, user memory, channel overlays) is composed by `lib/agent_context.py`: each managed caller selects a recipe (the bot: managed-assistant; job agent runs: headless-worker) and passes the result into `invoke()`.

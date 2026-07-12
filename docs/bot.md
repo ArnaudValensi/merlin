@@ -51,7 +51,7 @@ restarts.
 
 ## Pick up a job report
 
-[Cron](jobs.md) job reports are posted to one of the bot's allowed
+[Job](jobs.md) reports are posted to one of the bot's allowed
 channels (or the job's own channel override)
 with their run's session attached. Start a thread on the report message and
 your messages there continue that run's session. Note: a plain channel reply

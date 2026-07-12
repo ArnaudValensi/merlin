@@ -1,4 +1,4 @@
-# Cron System
+# Job System
 
 Reference documentation for the scheduled job system. Covers module structure, REST API, job files, dispatch, state tracking, locking, hybrid log storage, notifications, and the scheduler loop.
 
@@ -338,9 +338,13 @@ manual run does. The flow is split between two modules:
   plumbing: the single public route `POST /webhooks/{source}/{target_id}`
   (mounted in `main.py` WITHOUT `require_auth` — the terminal precedent),
   constant-time secret verification (`X-Merlin-Webhook-Secret` header or
-  `?token=` fallback), a per-IP failed-secret throttle (10 failures / 5 min
-  → 429 cooldown), target-id regex validation, and logging of every request
-  outcome as a `webhook_request` event.
+  `?token=` fallback) checked BEFORE anything else that could reject the
+  request so a valid secret is never blocked, target-id regex validation,
+  and logging of every request outcome as a `webhook_request` event. There
+  is deliberately **no in-app rate limiter**: the 256-bit secret makes
+  throttling failed guesses pointless, and bounding a junk flood is an edge
+  concern (our Caddy on SaaS, the operator's own reverse proxy when
+  self-hosting) consistent with Merlin's bring-your-own-exposure model.
 - **`job/webhook.py` (the `job` source)** owns everything job-specific:
   resolving a job id to a target (a job without a `webhook` block is a 404,
   same as a missing job), the secret lifecycle (`whk_` +
@@ -351,18 +355,22 @@ in flight is coalesced — it returns 200/`"coalesced"` with the active run's
 id and starts nothing (BetterStack firing five times during one incident
 spawns exactly one run). An in-process in-flight map covers
 webhook-vs-webhook overlap; the per-job flock covers overlap with
-scheduled/manual runs. Launched runs execute in-process
-(`asyncio.to_thread` around `runner._execute_job`) with the flock held, and
-the accepted `run_id` doubles as the execution's `request_id` so
-`webhook_request` and `job_dispatch` events correlate.
+scheduled/manual runs. Launched runs execute in a worker thread
+(`asyncio.to_thread` around `runner._execute_job`, so the event loop is
+never blocked); the flock is released as soon as the run finishes — before
+the (also off-loop) Discord notification — so single-flight covers the run,
+not the delivery. The accepted `run_id` doubles as the execution's
+`request_id` so `webhook_request` and `job_dispatch` events correlate.
 
 **Response codes**: `200 {ok, status, run_id}` (launched or coalesced —
 the run itself is asynchronous), `401` bad/missing secret, `403` disabled
-job, `404` unknown source/job/no-webhook, `429` throttled.
+job, `404` unknown source/job/no-webhook.
 
 **Trigger provenance**: every run records `trigger` (schedule / webhook /
 manual) in `job_dispatch` events, history entries, and run logs — unified
-but filterable.
+but filterable. A webhook or manual run does **not** advance the schedule
+cursor (`last_run`), so a fire that overlaps a scheduled slot can't swallow
+it — the slot stays due and the grace window fires it.
 
 **Public URL** (`merlin job url`, shown in the editor): resolution order is
 `MERLIN_DASHBOARD_URL` (explicit operator override — own tunnel/proxy, the
@@ -424,7 +432,7 @@ uv run job/runner.py --job <job-id>
 | `job/logs.py` | Hybrid log storage (individual files + metadata) |
 | `job/notify.py` | Notification delivery (report_mode, Discord fallback) |
 | `job/webhook.py` | Webhook trigger: resolver, single-flight launch, secret lifecycle, public URL |
-| `webhooks/__init__.py` | The front desk: public route, secret check, throttle, request logging |
+| `webhooks/__init__.py` | The front desk: public route, secret check, request logging |
 | `job/templates/jobs.html` | Dashboard page template |
 | `lib/engine.py` | AgentEngine abstraction (used by runner) |
 | `lib/session.py` | JSONL session manager |

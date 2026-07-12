@@ -8,7 +8,7 @@ The dashboard is protected by cookie-based authentication (replacing HTTP Basic 
 
 Merlin serves plain HTTP and does not manage remote exposure itself. HTTPS comes from whatever sits in front: a tunnel or reverse proxy the user brings, or the Merlin Cloud SSH tunnel in SaaS mode (`saas_tunnel.py`). The bundled cloudflared tunnel was removed; `TUNNEL_*` keys in old configs are ignored and scrubbed by `merlin setup`.
 
-One route namespace is intentionally public: `/webhooks/*` (the webhooks front desk, mounted without `require_auth`) self-authenticates each request with a per-hook secret checked in constant time, plus a per-IP failed-secret throttle. Everything under `/api` and the pages stays session-gated. See [`job-system.md`](job-system.md#webhook-trigger).
+One route namespace is intentionally public: `/webhooks/*` (the webhooks front desk, mounted without `require_auth`) self-authenticates each request with a per-hook secret checked in constant time (a 256-bit token; flood protection is left to the edge). Everything under `/api` and the pages stays session-gated. See [`job-system.md`](job-system.md#webhook-trigger).
 
 ## Authentication
 

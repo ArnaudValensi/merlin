@@ -40,7 +40,7 @@ merlin/
 │   ├── notify.py              # Notification system (graceful Discord fallback)
 │   ├── webhook.py             # Webhook trigger (single-flight launch, secret lifecycle)
 │   └── templates/jobs.html    # Dashboard page template
-├── webhooks/                  # Public webhook front desk (secret check, throttle, dispatch)
+├── webhooks/                  # Public webhook front desk (secret check, dispatch)
 ├── files/                     # File browser module
 ├── terminal/                  # Web terminal module (xterm.js + tmux)
 ├── commits/                   # Git commit browser module

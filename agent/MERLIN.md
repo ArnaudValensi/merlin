@@ -77,10 +77,10 @@ you with history. Scheduled runs start fresh each time by default:
 anything worth carrying across runs must land in the notes system, not in
 session memory.
 
-## Cron jobs
+## Jobs
 
-Merlin runs scheduled jobs (recurring agent prompts). Cron jobs are full
-agent runs: they share your notes system, so use them to feed the KB
+Merlin runs jobs (agent prompts, triggered by a schedule or an incoming
+webhook). Jobs are full agent runs: they share your notes system, so use them to feed the KB
 (research, monitoring, digests) and draw on it, the same as any
 conversation. Manage them with `merlin job`: list, get, add, enable,
 disable, remove, trigger, history. `merlin job --help` has the full

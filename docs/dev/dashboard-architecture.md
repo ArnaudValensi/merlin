@@ -49,7 +49,7 @@ Pages are Jinja2 templates served by FastAPI. Data is fetched client-side via JS
 All events go to one file (`logs/engine-log.jsonl`). Each line is a JSON object with a `type` field. Types:
 - `invocation` — Claude Code call (fields: caller, prompt, duration, exit_code, num_turns, tokens_in, tokens_out, session_id, model)
 - `bot_event` — Discord bot events (fields: event, details, content for message_received)
-- `job_dispatch` — Cron job lifecycle (fields: job_id, event, duration, exit_code)
+- `job_dispatch` — Job lifecycle (fields: job_id, event, duration, exit_code)
 
 ### Auto-refresh via mtime polling
 
@@ -199,7 +199,7 @@ The notes editor uses Geist at `15px` with `line-height: 1.75`, matching the ren
 | `accent-green` | Success, online status, vim mode active |
 | `accent-red` | Errors, destructive actions (delete hover) |
 | `accent-yellow` | Warnings (push failed) |
-| `accent-orange` | Cron-related badges |
+| `accent-orange` | Job-related badges |
 | `accent-purple` | Invocation badges |
 
 For tinted backgrounds (active states, hover), use the accent color at 8–15% opacity:
@@ -419,7 +419,7 @@ terminal/
 
 **Note:** Terminal handles its own auth internally (WebSocket cookie check) rather than using `Depends(require_auth)` on the router.
 
-### Cron Dashboard
+### Jobs Dashboard
 
 ```
 job/
@@ -430,7 +430,7 @@ job/
 
 **Pages:** `/jobs` (see [`job-system.md`](job-system.md) for the backend).
 
-**Create/edit modal** — two coordinated pieces, both vanilla JS on the `Cron` object:
+**Create/edit modal** — two coordinated pieces, both vanilla JS on the `Jobs` object:
 
 - **Schedule builder.** A "Repeat" `<select>` (Every N minutes / Hourly / Daily /
   Weekly / Monthly / Custom) reveals only the contextual fields for the choice
