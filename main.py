@@ -854,7 +854,7 @@ def mount_module(
 # Core modules
 # ---------------------------------------------------------------------------
 
-from files import router as files_router, FILES_STATIC_DIR
+import files
 from files.routes import set_cwd as files_set_cwd
 from commits import router as commits_router, COMMITS_STATIC_DIR
 from commits.routes import set_startup_cwd as commits_set_startup_cwd
@@ -866,7 +866,7 @@ files_set_cwd(str(CWD))
 terminal_set_cwd(str(CWD))
 commits_set_startup_cwd(str(CWD))
 
-app.include_router(files_router, dependencies=[Depends(require_auth)])
+mount_module(files, "files")  # /api/files + /files + /static/files, authed
 app.include_router(commits_router, dependencies=[Depends(require_auth)])
 app.include_router(terminal_router)  # WebSocket auth handled internally
 
@@ -888,10 +888,9 @@ from job import webhook as job_webhook
 
 webhooks.register("job", job_webhook.resolve)
 
-# Module statics BEFORE general static (more specific path first)
-app.mount(
-    "/static/files", StaticFiles(directory=str(FILES_STATIC_DIR)), name="files-static"
-)
+# Module statics BEFORE general static (more specific path first).
+# files statics are mounted by mount_module(); the rest stay here until their
+# modules are converted.
 app.mount(
     "/static/commits",
     StaticFiles(directory=str(COMMITS_STATIC_DIR)),

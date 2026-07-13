@@ -30,7 +30,11 @@ FILES_STATIC_DIR = FILES_DIR / "static"
 
 templates = make_templates(FILES_TEMPLATES_DIR)
 
-router = APIRouter()
+# The framework mounts these under the module's slug: api_router at
+# /api/files and page_router at /files (both authed). Routes declare paths
+# relative to that namespace, no hardcoded module prefix.
+api_router = APIRouter()
+page_router = APIRouter()
 
 # CWD — set by main.py at startup, determines default browse path
 _cwd: str = "/"
@@ -47,12 +51,12 @@ def set_cwd(cwd: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/files", response_class=HTMLResponse)
+@page_router.get("", response_class=HTMLResponse)
 def files_page(request: Request):
     return templates.TemplateResponse(request, "files.html", {"startup_cwd": _cwd})
 
 
-@router.get("/files/{path:path}", response_class=HTMLResponse)
+@page_router.get("/{path:path}", response_class=HTMLResponse)
 def files_path_page(request: Request, path: str):
     return templates.TemplateResponse(request, "files.html", {"startup_cwd": _cwd})
 
@@ -74,7 +78,7 @@ def _find_git_root(path: Path) -> str | None:
     return None
 
 
-@router.get("/api/files/browse")
+@api_router.get("/browse")
 def api_browse(path: str = Query("/", description="Filesystem path to browse")):
     """Browse a path — returns directory listing or file info."""
     try:
@@ -97,7 +101,7 @@ def api_browse(path: str = Query("/", description="Filesystem path to browse")):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/api/files/content")
+@api_router.get("/content")
 def api_content(path: str = Query(..., description="Filesystem path to read")):
     """Read text file content (up to 2MB)."""
     try:
@@ -117,7 +121,7 @@ def api_content(path: str = Query(..., description="Filesystem path to read")):
         raise HTTPException(status_code=403, detail=str(e))
 
 
-@router.get("/api/files/raw")
+@api_router.get("/raw")
 def api_raw(path: str = Query(..., description="Filesystem path to serve")):
     """Serve a raw file (for images, downloads)."""
     try:
@@ -140,7 +144,7 @@ def api_raw(path: str = Query(..., description="Filesystem path to serve")):
         raise HTTPException(status_code=403, detail="Permission denied")
 
 
-@router.post("/api/files/upload")
+@api_router.post("/upload")
 async def api_upload(
     directory: str = Form(...),
     files: list[UploadFile] = File(...),
@@ -221,7 +225,7 @@ def _build_zip(items: list[tuple[Path, bool]], base: Path) -> ZipStream:
     return zs
 
 
-@router.post("/api/files/download")
+@api_router.post("/download")
 def api_download(req: DownloadRequest):
     """Download files/directories as a zip archive (or single file directly)."""
     if not req.paths:
@@ -288,7 +292,7 @@ class DeleteRequest(BaseModel):
     path: str
 
 
-@router.post("/api/files/create")
+@api_router.post("/create")
 def api_create(req: CreateRequest):
     """Create a new file or directory."""
     try:
@@ -314,7 +318,7 @@ def api_create(req: CreateRequest):
     return {"created": str(created), "name": created.name, "type": req.type}
 
 
-@router.post("/api/files/rename")
+@api_router.post("/rename")
 def api_rename(req: RenameRequest):
     """Rename a file or directory."""
     try:
@@ -337,7 +341,7 @@ def api_rename(req: RenameRequest):
     return {"renamed": str(new_path), "new_name": new_path.name}
 
 
-@router.post("/api/files/delete")
+@api_router.post("/delete")
 def api_delete(req: DeleteRequest):
     """Delete a file or directory."""
     try:

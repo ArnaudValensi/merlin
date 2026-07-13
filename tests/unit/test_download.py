@@ -6,7 +6,7 @@ import zipfile
 import pytest
 from fastapi.testclient import TestClient
 
-from files.routes import router
+from files.routes import api_router
 
 
 @pytest.fixture()
@@ -14,7 +14,8 @@ def client():
     from fastapi import FastAPI
 
     app = FastAPI()
-    app.include_router(router)
+    # Mount as the framework does: api_router under /api/files.
+    app.include_router(api_router, prefix="/api/files")
     return TestClient(app)
 
 
