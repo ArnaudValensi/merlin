@@ -52,6 +52,10 @@ class TestDryRun:
         result = run_installer()
         assert "Checking for uv" in result.stdout
 
+    def test_checks_fd(self):
+        result = run_installer()
+        assert "Checking for fd" in result.stdout
+
     def test_checks_tmux(self):
         result = run_installer()
         assert "Checking for tmux" in result.stdout
@@ -122,8 +126,12 @@ class TestNonInteractive:
         result = self._run()
         assert result.returncode == 0
         assert "Merlin installed" in result.stdout
-        # Optional deps that are absent must be skipped, never sudo-installed.
+        # System packages that are absent must be skipped, never
+        # sudo-installed (fd is required at runtime but still not worth a
+        # sudo prompt inside a non-interactive install).
         if "tmux not found" in result.stdout:
+            assert "Skipped (non-interactive)" in result.stdout
+        if "fd not found" in result.stdout:
             assert "Skipped (non-interactive)" in result.stdout
 
     def test_flag_accepted_in_any_order(self):

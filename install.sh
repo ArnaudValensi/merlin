@@ -11,7 +11,7 @@ set -euo pipefail
 # Configuration
 # ---------------------------------------------------------------------------
 
-INSTALLER_VERSION="0.17.0"
+INSTALLER_VERSION="0.18.0"
 MERLIN_HOME="${MERLIN_HOME:-$HOME/.merlin}"
 GITHUB_REPO="${MERLIN_REPO:-ArnaudValensi/merlin}"  # owner/repo
 # The active version's bin/ goes on PATH. The launcher (bin/merlin) ships
@@ -20,11 +20,12 @@ GITHUB_REPO="${MERLIN_REPO:-ArnaudValensi/merlin}"  # owner/repo
 BIN_DIR="$MERLIN_HOME/current/bin"
 VERSIONS_DIR="$MERLIN_HOME/versions"
 
-# --non-interactive (-y): no prompts. Required deps auto-install (uv, a
-# user-level installer), optional deps are skipped with a warning, and the
-# PATH line is added without asking. Combined with the managed container
-# (uv/tmux already present, PATH set by the image), this collapses to a
-# pure code install — which is how merlin-setup.sh reuses this script.
+# --non-interactive (-y): no prompts. uv (a user-level installer)
+# auto-installs; system packages (fd, tmux) are skipped with a warning,
+# and the PATH line is added without asking. Combined with the managed
+# container (uv/fd/tmux already present, PATH set by the image), this
+# collapses to a pure code install — which is how merlin-setup.sh reuses
+# this script.
 DRY_RUN=false
 NON_INTERACTIVE=false
 for arg in "$@"; do
@@ -144,7 +145,40 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 2: Check for tmux (optional)
+# Step 2: Check for fd (required at runtime)
+# ---------------------------------------------------------------------------
+# The installer completes without it, but merlin refuses to start until
+# it is installed (repo search and file finding are built on it).
+
+step "Checking for fd..."
+if command -v fd >/dev/null 2>&1 || command -v fdfind >/dev/null 2>&1; then
+    info "fd found"
+else
+    warn "fd not found (required: merlin will not start without it)"
+    fd_pkg="fd"
+    if [[ "$(detect_pkg_manager)" == "apt" ]]; then
+        fd_pkg="fd-find"
+    fi
+    cmd=$(install_cmd "$fd_pkg")
+    if $NON_INTERACTIVE; then
+        warn "Skipped (non-interactive). Install before starting merlin: ${cmd:-https://github.com/sharkdp/fd}"
+    elif [[ -n "$cmd" ]]; then
+        if confirm "Install fd? ($cmd)"; then
+            if install_pkg "$fd_pkg"; then
+                info "fd installed"
+            else
+                warn "fd installation failed. Install before starting merlin: $cmd"
+            fi
+        else
+            warn "Skipped. Install before starting merlin: $cmd"
+        fi
+    else
+        warn "No supported package manager found. Install fd: https://github.com/sharkdp/fd"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Step 3: Check for tmux (optional)
 # ---------------------------------------------------------------------------
 
 step "Checking for tmux..."
@@ -171,7 +205,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 3: Fetch latest tag
+# Step 4: Fetch latest tag
 # ---------------------------------------------------------------------------
 
 step "Fetching latest tag..."
@@ -197,7 +231,7 @@ fi
 info "Latest version: $TAG"
 
 # ---------------------------------------------------------------------------
-# Step 4: Download and extract
+# Step 5: Download and extract
 # ---------------------------------------------------------------------------
 
 VERSION_DIR="$VERSIONS_DIR/$TAG"
@@ -250,7 +284,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 5: Create current symlink
+# Step 6: Create current symlink
 # ---------------------------------------------------------------------------
 
 step "Setting active version..."
@@ -269,7 +303,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 6: Launcher
+# Step 7: Launcher
 # ---------------------------------------------------------------------------
 # No generation: bin/merlin (and bin/merlin-clip) ship in the release and
 # are exposed on PATH via current/bin below. This is what keeps the
@@ -277,7 +311,7 @@ fi
 info "Launcher: $BIN_DIR/merlin (shipped in the release)"
 
 # ---------------------------------------------------------------------------
-# Step 7: Add to PATH
+# Step 8: Add to PATH
 # ---------------------------------------------------------------------------
 
 step "Checking PATH..."
@@ -326,7 +360,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 8: Create data directories
+# Step 9: Create data directories
 # ---------------------------------------------------------------------------
 
 step "Creating data directories..."
