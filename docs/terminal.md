@@ -33,8 +33,9 @@ are one continuous workspace.
 ## Manage windows
 
 Each tmux window is a separate shell. F2 creates a window, F3/F4 switch
-to the previous/next one, F5 kills the current one. On mobile these are
-the toolbar buttons `+`, `◀`, `▶`, `✕`. The tmux status bar shows windows
+to the previous/next one, F5 kills the current one. On mobile the
+toolbar shows them in the order `◀`, `+`, `▶`, `✕` (previous, new,
+next, kill). The tmux status bar shows windows
 as dots: `●` active, `○` inactive.
 
 The key toolbar is visible by default on touch devices and hidden on

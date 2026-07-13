@@ -18,7 +18,8 @@ there, not here: this page is the map.
   covers the first run.
 - `merlin agent`: print the agent brain doc, the operating manual
   [your agent](agents.md) reads; flags compose the persona layers.
-- `merlin job`: manage [scheduled agent runs](jobs.md) from the shell.
+- `merlin job`: manage [jobs](jobs.md) from the shell: agent or command
+  runs fired by a schedule, a webhook, or by hand.
 - `merlin notes` / `merlin kb` / `merlin remember`: search and feed the
   [knowledge base](notes.md).
 - `merlin chat`: send, reply, and react on the chat channel the

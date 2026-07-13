@@ -10,7 +10,7 @@ Merlin runs as one process on your machine: a web dashboard on port 3123 with a 
 curl -fsSL https://raw.githubusercontent.com/ArnaudValensi/merlin/master/install.sh | bash
 ```
 
-The installer needs `uv` (it offers to install it if missing) and prompts for one optional dependency: tmux (needed for the web terminal). It downloads the latest release into `~/.merlin/versions/<tag>/`, points the `~/.merlin/current` symlink at it, and offers to add `~/.merlin/current/bin` to your PATH in your shell rc.
+The installer needs `uv` (it offers to install it if missing) and checks for two more tools, offering to install what is missing: fd (required, Merlin will not start without it) and tmux (optional, needed for the web terminal). It downloads the latest release into `~/.merlin/versions/<tag>/`, points the `~/.merlin/current` symlink at it, and offers to add `~/.merlin/current/bin` to your PATH in your shell rc.
 
 When it finishes: run `merlin` to start (you may need to restart your shell first).
 
@@ -96,7 +96,7 @@ Inside `~/.merlin`:
 ## Troubleshooting
 
 - **`merlin: command not found` right after install**: the PATH line went into your shell rc but your current shell predates it. `source` the rc or restart your shell.
-- **`Error: fd is not installed`**: fd is a hard requirement; the error message tells you how to install it.
+- **`Error: fd is not installed`**: fd is a hard requirement (the installer offers it); the error message tells you how to install it.
 - **tmux missing**: boot prints a warning, the Terminal nav item is grayed out with an install tooltip, everything else still works.
 - **Wrong password at login**: the form says so and returns 401. The password is whatever you set in `merlin setup`.
 - **`merlin dashboard-url` prints localhost but you reach Merlin through a tunnel**: the command cannot know your tunnel's address. Set `MERLIN_DASHBOARD_URL` in `config.env` to the public URL.

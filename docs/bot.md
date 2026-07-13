@@ -99,8 +99,6 @@ from the command line. See `merlin chat --help`.
 - Voice messages are handled entirely server-side: your phone only records
   and sends; download, transcription, and the verification quote all happen
   on your machine.
-- The "Dashboard is live" message gives you a tappable link to the dashboard
-  from your phone.
 
 ## Troubleshooting
 
@@ -120,7 +118,8 @@ from the command line. See `merlin chat --help`.
 - **Voice transcription failed**: the bot still invokes your agent with
   `[transcription failed]` as the audio content and posts no transcription
   quote. The local backend requires ffmpeg.
-- **Transcription comes out wrong**: the transcription language is currently
-  hardcoded to French for all backends.
+- **Transcription comes out wrong**: Discord voice messages are currently
+  transcribed as French no matter the backend (the terminal's EN/FR
+  selector does not apply here).
 - **Discord send failing**: verify the token and check the bot has
   permissions in the channel.
