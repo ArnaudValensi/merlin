@@ -154,7 +154,7 @@ class TestPublicMount:
         auth.configure("hunter2")
         _register()
 
-        gated = client.get("/api/job/jobs", follow_redirects=False)
+        gated = client.get("/api/jobs/jobs", follow_redirects=False)
         assert gated.status_code == 303
 
         resp = client.post(

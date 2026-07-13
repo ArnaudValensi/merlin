@@ -870,11 +870,10 @@ mount_module(files, "files")  # /api/files + /files + /static/files, authed
 mount_module(commits, "commits")  # /api/commits + /commits + /static/commits
 app.include_router(terminal_router)  # WebSocket auth handled internally
 
-# Job API + page
-from job.routes import job_page_router, job_router
+# Job API + page — URL_SLUG="jobs" maps api_router → /api/jobs, page_router → /jobs
+import job.routes as job_routes
 
-app.include_router(job_router, dependencies=[Depends(require_auth)])
-app.include_router(job_page_router, dependencies=[Depends(require_auth)])
+mount_module(job_routes, "job")
 
 # Webhooks front desk — intentionally mounted WITHOUT require_auth (terminal
 # precedent): /webhooks/* is public and self-authenticating via per-hook

@@ -1,4 +1,4 @@
-"""Tests for the timezone-correct, enriched POST /api/job/validate-schedule."""
+"""Tests for the timezone-correct, enriched POST /api/jobs/validate-schedule."""
 
 import pytest
 
@@ -27,7 +27,7 @@ def client():
 def test_valid_returns_human_timezone_and_runs(client, monkeypatch):
     monkeypatch.delenv("JOB_TIMEZONE", raising=False)
     monkeypatch.delenv("CRON_TIMEZONE", raising=False)
-    resp = client.post("/api/job/validate-schedule", json={"schedule": "0 9 * * *"})
+    resp = client.post("/api/jobs/validate-schedule", json={"schedule": "0 9 * * *"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["valid"] is True
@@ -43,7 +43,7 @@ def test_timezone_reflected_in_runs(client, monkeypatch):
     """With JOB_TIMEZONE=Europe/Paris the runs are formatted in Paris time."""
     monkeypatch.delenv("CRON_TIMEZONE", raising=False)
     monkeypatch.setenv("JOB_TIMEZONE", "Europe/Paris")
-    resp = client.post("/api/job/validate-schedule", json={"schedule": "0 9 * * *"})
+    resp = client.post("/api/jobs/validate-schedule", json={"schedule": "0 9 * * *"})
     data = resp.json()
     assert data["valid"] is True
     assert data["timezone"] == "Europe/Paris"
@@ -57,7 +57,7 @@ def test_request_timezone_overrides_default(client, monkeypatch):
     monkeypatch.delenv("JOB_TIMEZONE", raising=False)
     monkeypatch.delenv("CRON_TIMEZONE", raising=False)
     resp = client.post(
-        "/api/job/validate-schedule",
+        "/api/jobs/validate-schedule",
         json={"schedule": "0 9 * * *", "timezone": "America/New_York"},
     )
     data = resp.json()
@@ -72,7 +72,7 @@ def test_invalid_request_timezone_falls_back(client, monkeypatch):
     monkeypatch.delenv("JOB_TIMEZONE", raising=False)
     monkeypatch.delenv("CRON_TIMEZONE", raising=False)
     resp = client.post(
-        "/api/job/validate-schedule",
+        "/api/jobs/validate-schedule",
         json={"schedule": "0 9 * * *", "timezone": "Not/AZone"},
     )
     data = resp.json()
@@ -81,7 +81,7 @@ def test_invalid_request_timezone_falls_back(client, monkeypatch):
 
 
 def test_invalid_schedule(client):
-    resp = client.post("/api/job/validate-schedule", json={"schedule": "not a cron"})
+    resp = client.post("/api/jobs/validate-schedule", json={"schedule": "not a cron"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["valid"] is False

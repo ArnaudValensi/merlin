@@ -15,8 +15,14 @@ from lib.event_log import JobRunnerCrashEvent, InvocationEvent, read_events
 from merlin_ext import make_templates
 from perf.aggregate import PerformanceData, aggregate_invocations
 
-job_router = APIRouter(prefix="/api/job", tags=["job"])
-job_page_router = APIRouter(tags=["job"])
+# URL_SLUG="jobs" resolves the module's historical inconsistency (API was
+# /api/job, page was /jobs): the framework now mounts api_router at /api/jobs
+# and page_router at /jobs off one slug. The API paths keep their shapes, so
+# this is a literal /api/job/* -> /api/jobs/* rename.
+URL_SLUG = "jobs"
+
+api_router = APIRouter(tags=["job"])
+page_router = APIRouter(tags=["job"])
 
 _JOB_DIR = Path(__file__).parent.resolve()
 
@@ -87,14 +93,14 @@ def _enrich_job(job: dict) -> dict:
     return job
 
 
-@job_router.get("/jobs")
+@api_router.get("/jobs")
 def list_jobs():
     """List all jobs, enriched with last_run and next_run."""
     jobs = manage.list_jobs()
     return [_enrich_job(job) for job in jobs]
 
 
-@job_router.post("/jobs", status_code=201)
+@api_router.post("/jobs", status_code=201)
 def create_job(body: JobCreate):
     """Create a new job."""
     # Check uniqueness
@@ -130,7 +136,7 @@ def create_job(body: JobCreate):
     return _enrich_job(job)
 
 
-@job_router.get("/jobs/{job_id}")
+@api_router.get("/jobs/{job_id}")
 def get_job(job_id: str):
     """Get a single job with history."""
     job = manage.load_job(job_id)
@@ -143,7 +149,7 @@ def get_job(job_id: str):
     return job
 
 
-@job_router.put("/jobs/{job_id}")
+@api_router.put("/jobs/{job_id}")
 def update_job(job_id: str, body: JobUpdate):
     """Update an existing job (merge non-None fields)."""
     job = manage.load_job(job_id)
@@ -184,7 +190,7 @@ def update_job(job_id: str, body: JobUpdate):
     return _enrich_job(job)
 
 
-@job_router.delete("/jobs/{job_id}", status_code=204)
+@api_router.delete("/jobs/{job_id}", status_code=204)
 def delete_job(job_id: str):
     """Delete a job and clean up state/locks."""
     if not manage.delete_job(job_id):
@@ -206,7 +212,7 @@ def delete_job(job_id: str):
     return None
 
 
-@job_router.post("/jobs/{job_id}/toggle")
+@api_router.post("/jobs/{job_id}/toggle")
 def toggle_job(job_id: str):
     """Toggle a job's enabled state."""
     job = manage.load_job(job_id)
@@ -220,7 +226,7 @@ def toggle_job(job_id: str):
     return _enrich_job(job)
 
 
-@job_router.post("/jobs/{job_id}/webhook")
+@api_router.post("/jobs/{job_id}/webhook")
 def add_webhook(job_id: str):
     """Enable the webhook trigger: generate a secret if none exists.
 
@@ -238,7 +244,7 @@ def add_webhook(job_id: str):
     return {"webhook": job["webhook"], "webhook_url": webhook.public_url(job_id)}
 
 
-@job_router.post("/jobs/{job_id}/webhook/rotate")
+@api_router.post("/jobs/{job_id}/webhook/rotate")
 def rotate_webhook(job_id: str):
     """Replace the webhook secret. The old secret stops working immediately."""
     job = manage.load_job(job_id)
@@ -255,7 +261,7 @@ def rotate_webhook(job_id: str):
     return {"webhook": job["webhook"], "webhook_url": webhook.public_url(job_id)}
 
 
-@job_router.delete("/jobs/{job_id}/webhook", status_code=204)
+@api_router.delete("/jobs/{job_id}/webhook", status_code=204)
 def remove_webhook(job_id: str):
     """Remove the webhook trigger from a job."""
     job = manage.load_job(job_id)
@@ -267,7 +273,7 @@ def remove_webhook(job_id: str):
     return None
 
 
-@job_router.post("/jobs/{job_id}/run", status_code=202)
+@api_router.post("/jobs/{job_id}/run", status_code=202)
 async def run_job(job_id: str):
     """Trigger an immediate run of a job."""
     job = manage.load_job(job_id)
@@ -312,7 +318,7 @@ async def _run_job_with_notify(job_id: str) -> None:
             )
 
 
-@job_router.get("/jobs/{job_id}/logs")
+@api_router.get("/jobs/{job_id}/logs")
 def get_job_logs(job_id: str):
     """List execution logs for a job (newest first, no output field)."""
     job = manage.load_job(job_id)
@@ -322,7 +328,7 @@ def get_job_logs(job_id: str):
     return logs.list_logs(job_id)
 
 
-@job_router.get("/jobs/{job_id}/logs/{timestamp:path}")
+@api_router.get("/jobs/{job_id}/logs/{timestamp:path}")
 def get_job_log(job_id: str, timestamp: str):
     """Read a specific execution log by timestamp."""
     job = manage.load_job(job_id)
@@ -341,7 +347,7 @@ def get_job_log(job_id: str, timestamp: str):
 # ---------------------------------------------------------------------------
 
 
-@job_router.get("/logs")
+@api_router.get("/logs")
 def get_all_logs(job_id: str | None = None, limit: int = 100):
     """List execution logs across all jobs (or filtered by job_id), newest first."""
     import paths
@@ -382,7 +388,7 @@ def get_all_logs(job_id: str | None = None, limit: int = 100):
     return all_entries
 
 
-@job_router.get("/webhook-events")
+@api_router.get("/webhook-events")
 def webhook_events(job_id: str | None = None, limit: int = 50):
     """Recent webhook_request events for the job source, newest first.
 
@@ -405,7 +411,7 @@ def webhook_events(job_id: str | None = None, limit: int = 50):
     return out
 
 
-@job_router.post("/validate-schedule")
+@api_router.post("/validate-schedule")
 def validate_schedule(request_body: dict):
     """Validate a cron expression and return next 3 run times.
 
@@ -465,13 +471,13 @@ def _get_recent_crashes() -> list[JobRunnerCrashEvent]:
     return [e for e in events if isinstance(e, JobRunnerCrashEvent)]
 
 
-@job_router.get("/crashes")
+@api_router.get("/crashes")
 def get_crashes():
     """Get recent job_runner_crash events (last 24h)."""
     return [c.model_dump(exclude_unset=True) for c in _get_recent_crashes()]
 
 
-@job_router.get("/performance")
+@api_router.get("/performance")
 def job_performance(since: str | None = None) -> PerformanceData:
     """Aggregate performance metrics for job callers (caller starts with 'job-').
 
@@ -506,7 +512,7 @@ def job_performance(since: str | None = None) -> PerformanceData:
 # ---------------------------------------------------------------------------
 
 
-@job_page_router.get("/jobs", response_class=HTMLResponse, include_in_schema=False)
+@page_router.get("", response_class=HTMLResponse, include_in_schema=False)
 def jobs_page(request: Request):
     """Render the jobs dashboard page."""
     jobs = manage.list_jobs()

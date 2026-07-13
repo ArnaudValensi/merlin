@@ -268,7 +268,7 @@ def test_webhooks_tab_shown_with_webhook(client, tmp_path, monkeypatch):
 
 
 def test_webhook_events_endpoint_filters_job_source(client, tmp_path, monkeypatch):
-    """/api/job/webhook-events returns job-source events newest first,
+    """/api/jobs/webhook-events returns job-source events newest first,
     including rejected attempts, filterable by job id."""
     import json as json_mod
 
@@ -313,7 +313,7 @@ def test_webhook_events_endpoint_filters_job_source(client, tmp_path, monkeypatc
     path.write_text("".join(json_mod.dumps(e) + "\n" for e in lines))
     monkeypatch.setattr(event_log, "ENGINE_LOG_PATH", path)
 
-    resp = client.get("/api/job/webhook-events")
+    resp = client.get("/api/jobs/webhook-events")
     assert resp.status_code == 200
     events = resp.json()
     # Only source=job, newest first
@@ -323,12 +323,12 @@ def test_webhook_events_endpoint_filters_job_source(client, tmp_path, monkeypatc
         "launched",
     ]
 
-    resp = client.get("/api/job/webhook-events?job_id=triage")
+    resp = client.get("/api/jobs/webhook-events?job_id=triage")
     events = resp.json()
     assert len(events) == 2
     assert all(e["target"] == "triage" for e in events)
 
-    resp = client.get("/api/job/webhook-events?job_id=triage&limit=1")
+    resp = client.get("/api/jobs/webhook-events?job_id=triage&limit=1")
     assert len(resp.json()) == 1
 
 

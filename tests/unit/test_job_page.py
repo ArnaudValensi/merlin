@@ -149,11 +149,11 @@ class TestJobNavItem:
 
 
 class TestValidateSchedule:
-    """Test POST /api/job/validate-schedule."""
+    """Test POST /api/jobs/validate-schedule."""
 
     def test_valid_schedule(self, client):
         resp = client.post(
-            "/api/job/validate-schedule",
+            "/api/jobs/validate-schedule",
             json={"schedule": "0 9 * * *"},
         )
         assert resp.status_code == 200
@@ -165,7 +165,7 @@ class TestValidateSchedule:
 
     def test_invalid_schedule(self, client):
         resp = client.post(
-            "/api/job/validate-schedule",
+            "/api/jobs/validate-schedule",
             json={"schedule": "not a cron"},
         )
         assert resp.status_code == 200
@@ -175,7 +175,7 @@ class TestValidateSchedule:
 
     def test_empty_schedule(self, client):
         resp = client.post(
-            "/api/job/validate-schedule",
+            "/api/jobs/validate-schedule",
             json={"schedule": ""},
         )
         assert resp.status_code == 200

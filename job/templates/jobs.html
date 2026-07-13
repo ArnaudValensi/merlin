@@ -1275,7 +1275,7 @@ const Jobs = {
     // ── Logs tab ──
     async loadAllLogs(filterJobId) {
         const filter = filterJobId || document.getElementById('job-log-filter').value;
-        let url = '/api/job/logs?limit=100';
+        let url = '/api/jobs/logs?limit=100';
         if (filter) url += '&job_id=' + encodeURIComponent(filter);
 
         const container = document.getElementById('job-log-content');
@@ -1320,7 +1320,7 @@ const Jobs = {
         if (!container) return;
         const sel = document.getElementById('job-webhook-filter');
         const filter = sel ? sel.value : '';
-        let url = '/api/job/webhook-events?limit=50';
+        let url = '/api/jobs/webhook-events?limit=50';
         if (filter) url += '&job_id=' + encodeURIComponent(filter);
         const events = await API.get(url);
         if (!events || events.length === 0) {
@@ -1357,7 +1357,7 @@ const Jobs = {
 
         if (!jobId || !timestamp) { pre.textContent = '(no detail available)'; return; }
         pre.textContent = 'Loading...';
-        const resp = await fetch(`/api/job/jobs/${encodeURIComponent(jobId)}/logs/${encodeURIComponent(timestamp)}`);
+        const resp = await fetch(`/api/jobs/jobs/${encodeURIComponent(jobId)}/logs/${encodeURIComponent(timestamp)}`);
         if (!resp.ok) { pre.textContent = 'Failed to load log detail'; return; }
         const data = await resp.json();
         let text = data.output || '(no output)';
@@ -1391,7 +1391,7 @@ const Jobs = {
         const seq = ++this._perfReqSeq;
         const range = this._perfRange;
         const since = this._perfSince(range);
-        const data = await API.get('/api/job/performance?since=' + encodeURIComponent(since));
+        const data = await API.get('/api/jobs/performance?since=' + encodeURIComponent(since));
         if (seq !== this._perfReqSeq || !data) return;
 
         this._perfLoadedRange = range;
@@ -1476,7 +1476,7 @@ const Jobs = {
 
     async openEditModal(jobId) {
         this.closeAllMenus();
-        const resp = await fetch(`/api/job/jobs/${jobId}`);
+        const resp = await fetch(`/api/jobs/jobs/${jobId}`);
         if (!resp.ok) { this.toast('Failed to load job', 'error'); return; }
         const job = await resp.json();
 
@@ -1644,7 +1644,7 @@ const Jobs = {
         try {
             if (this._editingJobId) {
                 savedId = this._editingJobId;
-                resp = await fetch(`/api/job/jobs/${this._editingJobId}`, {
+                resp = await fetch(`/api/jobs/jobs/${this._editingJobId}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
@@ -1652,7 +1652,7 @@ const Jobs = {
             } else {
                 savedId = id;
                 body.id = id;
-                resp = await fetch('/api/job/jobs', {
+                resp = await fetch('/api/jobs/jobs', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
@@ -1701,7 +1701,7 @@ const Jobs = {
         if (!savedId) return;
         let ok = false;
         try {
-            const resp = await fetch(`/api/job/jobs/${savedId}/run`, { method: 'POST' });
+            const resp = await fetch(`/api/jobs/jobs/${savedId}/run`, { method: 'POST' });
             ok = resp.ok;
         } catch (e) { ok = false; }
         this.closeModal();
@@ -1746,7 +1746,7 @@ const Jobs = {
         const want = document.getElementById('field-webhook-enabled').checked;
         const have = !!this._webhook;
         if (want === have) return;
-        const resp = await fetch(`/api/job/jobs/${encodeURIComponent(jobId)}/webhook`, {
+        const resp = await fetch(`/api/jobs/jobs/${encodeURIComponent(jobId)}/webhook`, {
             method: want ? 'POST' : 'DELETE',
         });
         if (!resp.ok && resp.status !== 204) this.toast('Webhook change failed', 'error');
@@ -1774,7 +1774,7 @@ const Jobs = {
     async rotateWebhookSecret() {
         if (!this._editingJobId) return;
         if (!confirm('Rotate the webhook secret? The current secret stops working immediately.')) return;
-        const resp = await fetch(`/api/job/jobs/${encodeURIComponent(this._editingJobId)}/webhook/rotate`, { method: 'POST' });
+        const resp = await fetch(`/api/jobs/jobs/${encodeURIComponent(this._editingJobId)}/webhook/rotate`, { method: 'POST' });
         if (!resp.ok) { this.toast('Failed to rotate secret', 'error'); return; }
         const data = await resp.json();
         this._setWebhookState({
@@ -1811,7 +1811,7 @@ const Jobs = {
     async _loadWebhookLastFired(jobId) {
         const el = document.getElementById('webhook-last-fired');
         if (!el) return;
-        const events = await API.get(`/api/job/webhook-events?job_id=${encodeURIComponent(jobId)}&limit=1`);
+        const events = await API.get(`/api/jobs/webhook-events?job_id=${encodeURIComponent(jobId)}&limit=1`);
         if (!events || !events.length) { el.textContent = 'Never fired.'; return; }
         const e = events[0];
         const fired = (e.outcome === 'launched' || e.outcome === 'coalesced');
@@ -1821,7 +1821,7 @@ const Jobs = {
 
     // ── Actions ──
     async toggleJob(jobId) {
-        const resp = await fetch(`/api/job/jobs/${jobId}/toggle`, { method: 'POST' });
+        const resp = await fetch(`/api/jobs/jobs/${jobId}/toggle`, { method: 'POST' });
         if (resp.ok) {
             const job = await resp.json();
             const card = document.getElementById('job-card-' + jobId);
@@ -1835,7 +1835,7 @@ const Jobs = {
 
     async runJob(jobId) {
         this.closeAllMenus();
-        const resp = await fetch(`/api/job/jobs/${jobId}/run`, { method: 'POST' });
+        const resp = await fetch(`/api/jobs/jobs/${jobId}/run`, { method: 'POST' });
         if (resp.ok) {
             this.toast('Job triggered', 'success');
         } else {
@@ -1847,7 +1847,7 @@ const Jobs = {
         this.closeAllMenus();
         if (!confirm(`Delete job "${jobId}"? This will remove the job and all its logs.`)) return;
 
-        const resp = await fetch(`/api/job/jobs/${jobId}`, { method: 'DELETE' });
+        const resp = await fetch(`/api/jobs/jobs/${jobId}`, { method: 'DELETE' });
         if (resp.ok || resp.status === 204) {
             const card = document.getElementById('job-card-' + jobId);
             if (card) {
@@ -1887,7 +1887,7 @@ const Jobs = {
         const listEl = document.getElementById('log-list-' + jobId);
         if (!listEl) return;
 
-        const resp = await fetch(`/api/job/jobs/${jobId}/logs`);
+        const resp = await fetch(`/api/jobs/jobs/${jobId}/logs`);
         if (!resp.ok) {
             listEl.innerHTML = '<div style="color:var(--accent-red);font-size:12px;padding:8px 0;">Failed to load logs</div>';
             return;
@@ -1928,7 +1928,7 @@ const Jobs = {
         outputEl.querySelector('pre').textContent = 'Loading...';
         outputEl.classList.add('open');
 
-        const resp = await fetch(`/api/job/jobs/${jobId}/logs/${encodeURIComponent(timestamp)}`);
+        const resp = await fetch(`/api/jobs/jobs/${jobId}/logs/${encodeURIComponent(timestamp)}`);
         if (!resp.ok) {
             outputEl.querySelector('pre').textContent = 'Failed to load log detail';
             return;
@@ -2165,7 +2165,7 @@ const Jobs = {
             return;
         }
 
-        const resp = await fetch('/api/job/validate-schedule', {
+        const resp = await fetch('/api/jobs/validate-schedule', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ schedule, timezone: this._timezone() }),

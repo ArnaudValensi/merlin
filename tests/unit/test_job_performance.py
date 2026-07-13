@@ -1,6 +1,6 @@
-"""Tests for GET /api/job/performance.
+"""Tests for GET /api/jobs/performance.
 
-Auth note: every /api/job/* route is mounted under Depends(require_auth),
+Auth note: every /api/jobs/* route is mounted under Depends(require_auth),
 which in this codebase *redirects* unauthenticated requests to /login (303)
 rather than returning a bare 401 (see main.py:_auth_redirect_handler). The
 requirements doc phrased R9.1 as "returns 401"; we assert the real protective
@@ -72,7 +72,7 @@ def test_endpoint_requires_auth(client, monkeypatch):
     monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "secret")
     auth.configure("secret")
 
-    resp = client.get("/api/job/performance", follow_redirects=False)
+    resp = client.get("/api/jobs/performance", follow_redirects=False)
     assert resp.status_code in (302, 303, 307)
     assert "/login" in resp.headers.get("location", "")
 
@@ -80,7 +80,7 @@ def test_endpoint_requires_auth(client, monkeypatch):
 def test_endpoint_authenticated_returns_data(client):
     """With auth disabled (local mode) the endpoint serves data — the inverse
     of the redirect test, proving the dependency is the only gate."""
-    resp = client.get("/api/job/performance")
+    resp = client.get("/api/jobs/performance")
     assert resp.status_code == 200
 
 
@@ -93,7 +93,7 @@ def test_endpoint_returns_200_with_expected_shape(client, _isolated_engine_log):
     now = datetime.now(tz=timezone.utc)
     _write(_isolated_engine_log, _inv("job-foo", now - timedelta(hours=1)))
 
-    resp = client.get("/api/job/performance")
+    resp = client.get("/api/jobs/performance")
     assert resp.status_code == 200
     data = resp.json()
     assert set(data.keys()) == {
@@ -116,7 +116,7 @@ def test_endpoint_filters_to_job_callers_only(client, _isolated_engine_log):
         _inv("discord", now - timedelta(hours=2)),
     )
 
-    resp = client.get("/api/job/performance")
+    resp = client.get("/api/jobs/performance")
     assert resp.status_code == 200
     data = resp.json()
     assert data["success_rate"]["total"] == 3
@@ -132,7 +132,7 @@ def test_endpoint_default_since_is_7_days(client, _isolated_engine_log):
         _inv("job-old", now - timedelta(days=10)),
     )
 
-    resp = client.get("/api/job/performance")  # no ?since
+    resp = client.get("/api/jobs/performance")  # no ?since
     data = resp.json()
     assert data["success_rate"]["total"] == 1
     assert {d["caller"] for d in data["by_job_duration"]} == {"job-recent"}
@@ -149,7 +149,7 @@ def test_endpoint_custom_since_is_respected(client, _isolated_engine_log):
     since = (now - timedelta(days=1)).isoformat()
     # params= percent-encodes the value (matching the frontend's
     # encodeURIComponent), so the "+00:00" offset is not mangled into a space.
-    resp = client.get("/api/job/performance", params={"since": since})
+    resp = client.get("/api/jobs/performance", params={"since": since})
     data = resp.json()
     assert data["success_rate"]["total"] == 1
     assert {d["caller"] for d in data["by_job_duration"]} == {"job-very-recent"}
@@ -160,7 +160,7 @@ def test_endpoint_empty_engine_log_returns_empty_perf_data(
 ):
     # No file written — read_events sees a missing file.
     assert not _isolated_engine_log.exists()
-    resp = client.get("/api/job/performance")
+    resp = client.get("/api/jobs/performance")
     assert resp.status_code == 200
     data = resp.json()
     assert data["success_rate"] == {"success": 0, "error": 0, "total": 0}
@@ -171,7 +171,7 @@ def test_endpoint_empty_engine_log_returns_empty_perf_data(
 
 def test_endpoint_bad_since_returns_400(client, _isolated_engine_log):
     """A non-ISO 'since' is a client error, not a 500."""
-    resp = client.get("/api/job/performance", params={"since": "not-a-timestamp"})
+    resp = client.get("/api/jobs/performance", params={"since": "not-a-timestamp"})
     assert resp.status_code == 400
 
 
@@ -181,6 +181,6 @@ def test_endpoint_naive_since_is_accepted(client, _isolated_engine_log):
     _write(_isolated_engine_log, _inv("job-foo", now - timedelta(hours=1)))
 
     naive = (now - timedelta(days=1)).replace(tzinfo=None).isoformat()
-    resp = client.get("/api/job/performance", params={"since": naive})
+    resp = client.get("/api/jobs/performance", params={"since": naive})
     assert resp.status_code == 200
     assert resp.json()["success_rate"]["total"] == 1

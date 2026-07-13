@@ -357,9 +357,9 @@ class TestTimestampConversion:
 
 class TestLogEndpoints:
     def test_get_logs_returns_list(self, client, log_dir):
-        """GET /api/job/jobs/{id}/logs returns log list."""
+        """GET /api/jobs/jobs/{id}/logs returns log list."""
         # Create a job first
-        client.post("/api/job/jobs", json=_sample_job())
+        client.post("/api/jobs/jobs", json=_sample_job())
 
         # Write some logs
         logs.write_log(
@@ -377,7 +377,7 @@ class TestLogEndpoints:
             ),
         )
 
-        resp = client.get("/api/job/jobs/test-job/logs")
+        resp = client.get("/api/jobs/jobs/test-job/logs")
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 2
@@ -388,12 +388,12 @@ class TestLogEndpoints:
 
     def test_get_logs_nonexistent_job_returns_404(self, client):
         """GET logs for nonexistent job returns 404."""
-        resp = client.get("/api/job/jobs/nonexistent/logs")
+        resp = client.get("/api/jobs/jobs/nonexistent/logs")
         assert resp.status_code == 404
 
     def test_get_single_log_returns_content(self, client, log_dir):
-        """GET /api/job/jobs/{id}/logs/{ts} returns full log with output."""
-        client.post("/api/job/jobs", json=_sample_job())
+        """GET /api/jobs/jobs/{id}/logs/{ts} returns full log with output."""
+        client.post("/api/jobs/jobs", json=_sample_job())
 
         logs.write_log(
             "test-job",
@@ -404,7 +404,7 @@ class TestLogEndpoints:
             ),
         )
 
-        resp = client.get("/api/job/jobs/test-job/logs/2026-03-22T02:30:00+00:00")
+        resp = client.get("/api/jobs/jobs/test-job/logs/2026-03-22T02:30:00+00:00")
         assert resp.status_code == 200
         data = resp.json()
         assert data["output"] == "Hello from Claude"
@@ -412,13 +412,13 @@ class TestLogEndpoints:
 
     def test_get_single_log_not_found_returns_404(self, client):
         """GET nonexistent log returns 404."""
-        client.post("/api/job/jobs", json=_sample_job())
-        resp = client.get("/api/job/jobs/test-job/logs/2099-01-01T00:00:00+00:00")
+        client.post("/api/jobs/jobs", json=_sample_job())
+        resp = client.get("/api/jobs/jobs/test-job/logs/2099-01-01T00:00:00+00:00")
         assert resp.status_code == 404
 
     def test_delete_job_also_deletes_logs(self, client, log_dir):
-        """DELETE /api/job/jobs/{id} also removes execution logs."""
-        client.post("/api/job/jobs", json=_sample_job())
+        """DELETE /api/jobs/jobs/{id} also removes execution logs."""
+        client.post("/api/jobs/jobs", json=_sample_job())
 
         # Write a log
         logs.write_log(
@@ -430,7 +430,7 @@ class TestLogEndpoints:
         )
         assert (log_dir / "test-job").exists()
 
-        resp = client.delete("/api/job/jobs/test-job")
+        resp = client.delete("/api/jobs/jobs/test-job")
         assert resp.status_code == 204
 
         # Log directory should be gone

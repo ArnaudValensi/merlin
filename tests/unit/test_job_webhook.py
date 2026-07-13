@@ -469,7 +469,7 @@ class TestPublicUrl:
 class TestWebhookManagementApi:
     def test_add_webhook_generates_secret(self, client, _isolated_job_dirs):
         _write_job(_isolated_job_dirs, webhook=None)
-        resp = client.post("/api/job/jobs/hook-job/webhook")
+        resp = client.post("/api/jobs/jobs/hook-job/webhook")
         assert resp.status_code == 200
         data = resp.json()
         assert data["webhook"]["secret"].startswith("whk_")
@@ -480,16 +480,16 @@ class TestWebhookManagementApi:
 
     def test_add_webhook_is_idempotent(self, client, _isolated_job_dirs):
         _write_job(_isolated_job_dirs)
-        resp = client.post("/api/job/jobs/hook-job/webhook")
+        resp = client.post("/api/jobs/jobs/hook-job/webhook")
         assert resp.status_code == 200
         assert resp.json()["webhook"]["secret"] == "whk_secret"
 
     def test_add_webhook_unknown_job_404(self, client, _isolated_job_dirs):
-        assert client.post("/api/job/jobs/missing/webhook").status_code == 404
+        assert client.post("/api/jobs/jobs/missing/webhook").status_code == 404
 
     def test_rotate_replaces_secret(self, client, _isolated_job_dirs):
         _write_job(_isolated_job_dirs)
-        resp = client.post("/api/job/jobs/hook-job/webhook/rotate")
+        resp = client.post("/api/jobs/jobs/hook-job/webhook/rotate")
         assert resp.status_code == 200
         new_secret = resp.json()["webhook"]["secret"]
         assert new_secret != "whk_secret"
@@ -497,18 +497,18 @@ class TestWebhookManagementApi:
 
     def test_rotate_without_webhook_404(self, client, _isolated_job_dirs):
         _write_job(_isolated_job_dirs, webhook=None)
-        assert client.post("/api/job/jobs/hook-job/webhook/rotate").status_code == 404
+        assert client.post("/api/jobs/jobs/hook-job/webhook/rotate").status_code == 404
 
     def test_delete_removes_block(self, client, _isolated_job_dirs):
         _write_job(_isolated_job_dirs)
-        resp = client.delete("/api/job/jobs/hook-job/webhook")
+        resp = client.delete("/api/jobs/jobs/hook-job/webhook")
         assert resp.status_code == 204
         stored = json.loads((_isolated_job_dirs / "hook-job.json").read_text())
         assert "webhook" not in stored
 
     def test_get_job_includes_webhook_url(self, client, _isolated_job_dirs):
         _write_job(_isolated_job_dirs)
-        resp = client.get("/api/job/jobs/hook-job")
+        resp = client.get("/api/jobs/jobs/hook-job")
         assert resp.status_code == 200
         data = resp.json()
         assert data["webhook_url"].endswith("/webhooks/job/hook-job")
@@ -522,7 +522,7 @@ class TestWebhookManagementApi:
         job_state.append_history(
             "hook-job", exit_code=0, duration=1.0, trigger="webhook"
         )
-        data = client.get("/api/job/jobs/hook-job").json()
+        data = client.get("/api/jobs/jobs/hook-job").json()
         assert data["last_run"] is not None
 
     def test_get_job_source_reflects_override(
@@ -530,13 +530,13 @@ class TestWebhookManagementApi:
     ):
         monkeypatch.setenv("MERLIN_DASHBOARD_URL", "https://me.example.com")
         _write_job(_isolated_job_dirs)
-        data = client.get("/api/job/jobs/hook-job").json()
+        data = client.get("/api/jobs/jobs/hook-job").json()
         assert data["webhook_url_source"] == "override"
         assert data["webhook_url"] == "https://me.example.com/webhooks/job/hook-job"
 
     def test_get_job_without_webhook_has_no_url(self, client, _isolated_job_dirs):
         _write_job(_isolated_job_dirs, webhook=None)
-        resp = client.get("/api/job/jobs/hook-job")
+        resp = client.get("/api/jobs/jobs/hook-job")
         assert resp.status_code == 200
         assert "webhook_url" not in resp.json()
 
