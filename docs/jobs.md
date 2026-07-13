@@ -1,6 +1,6 @@
 # Jobs
 
-A **job** is one unit of work — a full agent run or a shell command — that
+A **job** is one unit of work (a full agent run or a shell command) that
 Merlin can launch three ways: on a **schedule**, by an **incoming webhook**,
 or **by hand**. The triggers are independent: a job can have a schedule, a
 webhook, both, or neither (manual-only). No system crontab is involved; the
@@ -12,7 +12,7 @@ Discord where you can pick up the conversation.
 
 ![Jobs list on a phone](jobs/phone-jobs.jpg)
 
-The page has tabs for **Jobs**, **Performance**, and **Logs** — plus a
+The page has tabs for **Jobs**, **Performance**, and **Logs**, plus a
 **Webhooks** tab once any job has a webhook. Everything here can also be
 driven from the terminal with `merlin job`.
 
@@ -54,7 +54,7 @@ still accepted as a deprecated alias).
 
 ![Webhook trigger in the job editor](jobs/phone-webhook.jpg)
 
-Any job can be launched by an external HTTP call — an uptime monitor's
+Any job can be launched by an external HTTP call: an uptime monitor's
 incident alert, a CI pipeline, a shortcut on your phone. In the editor,
 check **Allow firing this job via HTTP webhook** and save: Merlin generates
 a secret and shows the job's public URL. A `POST` to that URL with the
@@ -65,16 +65,16 @@ curl -X POST -H 'X-Merlin-Webhook-Secret: whk_...' \
   https://your-instance/webhooks/job/my-job
 ```
 
-If the sender cannot set headers, append `?token=whk_...` instead — but
-prefer the header: a secret in the URL can show up in server and proxy logs,
-whereas a header does not. `merlin job url <id>` prints the URL, the secret,
+If the sender cannot set headers, append `?token=whk_...` instead. Prefer
+the header when you can: a secret in the URL can show up in server and
+proxy logs, whereas a header does not. `merlin job url <id>` prints the URL, the secret,
 and that exact curl command; `merlin job test <id>` fires the hook against
 your own server as a dry run of the whole path.
 
 What to know:
 
 - **One run at a time.** A fire while a run is already active is accepted
-  (HTTP 200) but coalesces into the running one — a monitor that fires five
+  (HTTP 200) but coalesces into the running one: a monitor that fires five
   times during one incident launches exactly one agent.
 - **Fresh session per fire.** Each webhook-launched agent run starts with a
   clean session, so two separate incidents never share context.
@@ -82,7 +82,7 @@ What to know:
   (and a command job runs a shell command), so treat it like a credential.
   Rotate it anytime from the editor or `merlin job webhook <id> --rotate`;
   the old secret stops working immediately. The secret is a 256-bit token,
-  so guessing it is hopeless — there is no in-app rate limiter; flood
+  so guessing it is hopeless. There is no in-app rate limiter; flood
   protection, if you need it, is a job for your reverse proxy (on Merlin
   Cloud it is handled for you).
 - **Where the URL comes from.** On Merlin Cloud it rides your instance's own
@@ -94,7 +94,7 @@ What to know:
 
 ### Manual only
 
-A job with **no schedule and no webhook** runs only when you fire it — from
+A job with **no schedule and no webhook** runs only when you fire it: from
 the card's **Run Now**, **Save & run now**, or `merlin job trigger <id>`.
 Handy for a task you want on tap without it running on its own.
 
@@ -138,7 +138,7 @@ otherwise waits for its next occurrence (see troubleshooting).
 
 ## Run, pause, edit, delete
 
-Each card has a toggle switch (off pauses the job — the scheduler skips it,
+Each card has a toggle switch (off pauses the job: the scheduler skips it,
 webhook fires are refused, and the card dims with a `paused` tag) and a
 three-dot menu: **Edit** (reopens the form, the ID is locked), **Run Now**
 (background run, works even on paused jobs), **View Logs** (Logs tab
@@ -158,7 +158,7 @@ link into the session viewer for the full transcript.
 
 The **Webhooks** tab (shown once any job has a webhook) is the audit view
 for the public endpoint. It lists every fire **and every rejected attempt**
-(wrong secret, unknown job) with the caller's IP — a public endpoint's
+(wrong secret, unknown job) with the caller's IP: a public endpoint's
 failed hits are worth seeing. Outcomes are color-coded: `launched` and
 `coalesced` in green/amber, rejections in red. Filter by webhook job with
 the dropdown. The editor also shows a "last fired" line per job.
@@ -235,7 +235,7 @@ to the knowledge base, and the next scheduled run reads them. See
   runs; the scheduler skips a job that is mid-run and `merlin job trigger`
   reports the lock. Wait for the current run to finish.
 - **A command job exited with code 124**: command jobs are killed after 1
-  hour; the run log shows "Command timed out".
+  hour; the run log shows "Command timed out after 3600s".
 - **No Discord notification**: the bot extension must be loaded and a channel
   configured, otherwise notifications are silently skipped (the job still
   runs and logs). "Errors only" skips successful runs by design.
