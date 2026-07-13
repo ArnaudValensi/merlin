@@ -272,7 +272,6 @@ class TestTranscribeEndpoint:
                     file=self._make_file(),
                     language="en",
                     auto_enter="false",
-                    _auth=None,
                 )
             )
 
@@ -291,7 +290,6 @@ class TestTranscribeEndpoint:
                     file=self._make_file(),
                     language="en",
                     auto_enter="false",
-                    _auth=None,
                 )
             )
 
@@ -310,7 +308,6 @@ class TestTranscribeEndpoint:
                     file=self._make_file(),
                     language="en",
                     auto_enter="false",
-                    _auth=None,
                 )
             )
 
@@ -331,7 +328,6 @@ class TestTranscribeEndpoint:
                     file=self._make_file(),
                     language="fr",
                     auto_enter="false",
-                    _auth=None,
                 )
             )
 
@@ -350,7 +346,6 @@ class TestTranscribeEndpoint:
                     file=self._make_file(),
                     language="en",
                     auto_enter="false",
-                    _auth=None,
                 )
             )
 
@@ -369,7 +364,6 @@ class TestTranscribeEndpoint:
                     file=self._make_file(),
                     language="xx",
                     auto_enter="false",
-                    _auth=None,
                 )
             )
 
@@ -396,7 +390,6 @@ class TestTranscribeSizeLimit:
                 file=self._make_file(data=big_data),
                 language="en",
                 auto_enter="false",
-                _auth=None,
             )
         )
         assert result.status_code == 413
@@ -415,7 +408,6 @@ class TestTranscribeSizeLimit:
                     file=self._make_file(data=data),
                     language="en",
                     auto_enter="false",
-                    _auth=None,
                 )
             )
         assert result.status_code == 200
@@ -622,7 +614,6 @@ class TestTranscribeServerSideInjection:
                     file=self._make_file(),
                     language="en",
                     auto_enter="false",
-                    _auth=None,
                 )
             )
 
@@ -650,13 +641,11 @@ class TestTranscribeServerSideInjection:
                         file=self._make_file(b"audio1"),
                         language="en",
                         auto_enter="false",
-                        _auth=None,
                     )
                     r2 = await tr.transcribe_audio(
                         file=self._make_file(b"audio2"),
                         language="fr",
                         auto_enter="false",
-                        _auth=None,
                     )
                     # Drain background tasks
                     tasks = [
@@ -716,7 +705,6 @@ class TestTranscribeServerSideInjection:
             file=file,
             language=language,
             auto_enter=auto_enter,
-            _auth=None,
         )
         # Let the background task complete
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
@@ -748,7 +736,7 @@ class TestTerminalCwd:
                 git_proc.returncode = 0
                 mock_exec.side_effect = [tmux_proc, git_proc]
 
-                result = await tr.api_terminal_cwd(_auth=None)
+                result = await tr.api_terminal_cwd()
 
             body = json.loads(result.body)
             assert body["cwd"] == "/home/user/project"
@@ -767,7 +755,7 @@ class TestTerminalCwd:
                 proc.returncode = 1
                 mock_exec.return_value = proc
 
-                result = await tr.api_terminal_cwd(_auth=None)
+                result = await tr.api_terminal_cwd()
 
             body = json.loads(result.body)
             assert body["cwd"] is None
@@ -788,7 +776,7 @@ class TestTerminalCwd:
                 git_proc.returncode = 128
                 mock_exec.side_effect = [tmux_proc, git_proc]
 
-                result = await tr.api_terminal_cwd(_auth=None)
+                result = await tr.api_terminal_cwd()
 
             body = json.loads(result.body)
             assert body["cwd"] == "/tmp"

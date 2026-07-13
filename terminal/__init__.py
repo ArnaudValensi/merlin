@@ -1,5 +1,5 @@
 """Web terminal module — integrates into the Merlin dashboard."""
 
-from .routes import router
+from .routes import api_router, page_router, register_routes
 
-__all__ = ["router"]
+__all__ = ["api_router", "page_router", "register_routes"]

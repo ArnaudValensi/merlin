@@ -1161,7 +1161,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const form = new FormData();
             form.append('file', blob, filename || 'file');
-            const resp = await fetch('/api/upload-file', { method: 'POST', body: form });
+            const resp = await fetch('/api/terminal/upload-file', { method: 'POST', body: form });
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({}));
                 throw new Error(err.error || `Upload failed: ${resp.status}`);
@@ -1395,7 +1395,7 @@ document.addEventListener('DOMContentLoaded', () => {
             formData.append('auto_enter', autoEnter ? 'true' : 'false');
 
             const xhr = new XMLHttpRequest();
-            xhr.open('POST', '/api/transcribe');
+            xhr.open('POST', '/api/terminal/transcribe');
 
             xhr.upload.onprogress = (e) => {
                 if (e.lengthComputable) {

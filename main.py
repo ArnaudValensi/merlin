@@ -858,7 +858,7 @@ import files
 from files.routes import set_cwd as files_set_cwd
 import commits
 from commits.routes import set_startup_cwd as commits_set_startup_cwd
-from terminal import router as terminal_router
+import terminal
 from terminal.routes import set_cwd as terminal_set_cwd
 
 # Pass CWD to modules
@@ -868,7 +868,9 @@ commits_set_startup_cwd(str(CWD))
 
 mount_module(files, "files")  # /api/files + /files + /static/files, authed
 mount_module(commits, "commits")  # /api/commits + /commits + /static/commits
-app.include_router(terminal_router)  # WebSocket auth handled internally
+# terminal is now a normal module: /api/terminal + /terminal authed by the
+# framework, and its /ws/terminal WebSocket wired via register_routes(app).
+mount_module(terminal, "terminal")
 
 # Job API + page — URL_SLUG="jobs" maps api_router → /api/jobs, page_router → /jobs
 import job.routes as job_routes

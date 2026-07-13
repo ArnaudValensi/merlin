@@ -17,7 +17,6 @@ from pathlib import Path
 
 from fastapi import (
     APIRouter,
-    Depends,
     Form,
     Request,
     UploadFile,
@@ -26,7 +25,7 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from auth import require_auth, verify_ws_cookie
+from auth import verify_ws_cookie
 from merlin_ext import make_templates
 from terminal.pty_bridge import PtyBridge, terminate_client
 
@@ -38,7 +37,12 @@ TERMINAL_TEMPLATES_DIR = TERMINAL_DIR / "templates"
 
 templates = make_templates(TERMINAL_TEMPLATES_DIR)
 
-router = APIRouter()
+# api_router → /api/terminal, page_router → /terminal (both authed by the
+# framework). The /ws/terminal WebSocket is public and self-authenticating
+# via the session cookie, so it can't use the HTTP auth dependency — it is
+# wired through register_routes(app), the escape hatch, instead.
+api_router = APIRouter()
+page_router = APIRouter()
 
 TMUX_SESSION = "merlin-dev"
 
@@ -120,8 +124,8 @@ def _sync_clipboard(text: str) -> None:
         pass
 
 
-@router.get("/terminal", response_class=HTMLResponse)
-def terminal_page(request: Request, _auth=Depends(require_auth)):
+@page_router.get("", response_class=HTMLResponse)
+def terminal_page(request: Request):
     # Check if tmux is available (set by main.py)
     import main as _main
 
@@ -137,8 +141,8 @@ def terminal_page(request: Request, _auth=Depends(require_auth)):
     )
 
 
-@router.get("/clipboard-test", response_class=HTMLResponse)
-def clipboard_test_page(request: Request, _auth=Depends(require_auth)):
+@page_router.get("/clipboard-test", response_class=HTMLResponse)
+def clipboard_test_page(request: Request):
     return templates.TemplateResponse(request, "clipboard-test.html")
 
 
@@ -175,12 +179,11 @@ async def _transcribe_and_inject(
         _unlink_safe(tmp_path)
 
 
-@router.post("/api/transcribe")
+@api_router.post("/transcribe")
 async def transcribe_audio(
     file: UploadFile,
     language: str = Form("en"),
     auto_enter: str = Form("false"),
-    _auth=Depends(require_auth),
 ):
     """Transcribe an uploaded audio file.
 
@@ -261,8 +264,8 @@ def _safe_basename(name: str | None) -> str:
     return out or "file"
 
 
-@router.post("/api/upload-file")
-async def upload_file(file: UploadFile, _auth=Depends(require_auth)):
+@api_router.post("/upload-file")
+async def upload_file(file: UploadFile):
     """Save an uploaded file to /tmp/merlin-clipboard/ and return its path."""
     content = await file.read()
     if len(content) > UPLOAD_MAX_SIZE:
@@ -279,8 +282,8 @@ async def upload_file(file: UploadFile, _auth=Depends(require_auth)):
     return JSONResponse({"path": str(path)})
 
 
-@router.get("/api/terminal/cwd")
-async def api_terminal_cwd(_auth=Depends(require_auth)):
+@api_router.get("/cwd")
+async def api_terminal_cwd():
     """Get the current working directory of the active tmux pane."""
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -323,7 +326,6 @@ async def api_terminal_cwd(_auth=Depends(require_auth)):
     return JSONResponse({"cwd": cwd, "is_git_repo": False, "repo_root": None})
 
 
-@router.websocket("/ws/terminal")
 async def terminal_ws(websocket: WebSocket):
     # Auth: verify session cookie (browsers send cookies on WebSocket upgrade)
     if not verify_ws_cookie(websocket):
@@ -458,3 +460,14 @@ async def terminal_ws(websocket: WebSocket):
         # escalating to SIGKILL if it lingers.
         await terminate_client(pid)
         logger.info("Terminal WebSocket disconnected")
+
+
+def register_routes(app) -> None:
+    """Escape hatch: wire the /ws/terminal WebSocket directly onto the app.
+
+    The framework auto-auths api_router/page_router via an HTTP dependency,
+    but a WebSocket upgrade can't use that. terminal owns this path and its
+    auth: terminal_ws() self-authenticates against the session cookie
+    (browsers send cookies on the WS upgrade) before accepting the socket.
+    """
+    app.add_api_websocket_route("/ws/terminal", terminal_ws)
