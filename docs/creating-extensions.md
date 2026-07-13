@@ -31,7 +31,7 @@ extension id, and the id is the command namespace:
 ├── skills/              # SKILL.md folders -> agent skills
 │   └── tasks/
 │       └── SKILL.md
-└── tasks.py             # optional: web pages (FastAPI router)
+└── tasks.py             # optional: web pages (api_router / page_router)
 ```
 
 Everything is discovered by the filesystem alone: no manifest, no
@@ -145,13 +145,28 @@ documented for contributors in [`docs/dev/skill-system.md`](dev/skill-system.md)
 
 ## Web pages (optional, in-process)
 
-An extension that wants dashboard pages exports a FastAPI router from a
+An extension that wants dashboard pages exports FastAPI routers from a
 Python module named after the extension (`tasks/tasks.py`, hyphens become
-underscores):
+underscores). Merlin — not the extension — owns the URL namespace and auth:
+it mounts your `api_router` under `/api/{slug}` and your `page_router` under
+`/{slug}`, both behind login, where `slug` defaults to the extension id. So
+you declare paths *relative* to that namespace, with no hardcoded prefix:
+`@page_router.get("")` serves `/{slug}` and `@api_router.get("/items")`
+serves `/api/{slug}/items`.
 
-- `router` (required for pages): a FastAPI `APIRouter`.
+- `api_router` / `page_router` (need at least one for pages/APIs): FastAPI
+  `APIRouter`s, mounted at `/api/{slug}` and `/{slug}` and authed for you.
+- `URL_SLUG` (optional): the URL namespace; defaults to the extension id.
+  Set it when the nice URL differs from the folder name (folder
+  `video-scenes` serving `/scenes` → `URL_SLUG = "scenes"`).
+- `register_routes(app)` (optional): the escape hatch for anything the two
+  routers can't express (a WebSocket, say). You get the full app and own
+  the path *and* the auth for whatever you register; its use is logged at
+  startup. Prefer the auto-authed routers and reach for this only when you
+  must.
 - `NAV_ITEMS` (optional): sidebar entries, `[{"url", "icon", "label"}]`.
-- `STATIC_DIR` (optional): static assets directory.
+- `STATIC_DIR` (optional): static assets directory, served at
+  `/static/{slug}`.
 - `EXTENSION_META` (optional): `{"name", "description", "icon",
   "config_fields"}`. This is the server-side identity card: it feeds the
   Extensions page listing and declares config fields (key, label, type,
@@ -169,7 +184,7 @@ Installed extensions appear in their own group on the same page, with the
 same card pattern (toggle, Configure when `config_fields` are declared,
 and the Skills & commands audit link).
 
-**Dependency rule for in-process code**: the router module runs inside
+**Dependency rule for in-process code**: the routes module runs inside
 Merlin's server process and is restricted to Merlin's own dependencies
 (FastAPI, Jinja2, httpx, stdlib). Anything heavier belongs in
 `commands/` scripts where PEP 723 gives you any dependency you want
