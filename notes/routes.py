@@ -27,7 +27,10 @@ NOTES_STATIC_DIR = NOTES_DIR / "static"
 
 templates = make_templates(NOTES_TEMPLATES_DIR)
 
-router = APIRouter()
+# api_router → /api/notes, page_router → /notes (both authed by the
+# framework). Paths are declared relative to that namespace.
+api_router = APIRouter()
+page_router = APIRouter()
 
 # Non-note files to exclude
 EXCLUDE_FILES = {".history.json", "digest-history.json"}
@@ -70,17 +73,17 @@ def _slugify(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/notes", response_class=HTMLResponse)
+@page_router.get("", response_class=HTMLResponse)
 def notes_index(request: Request):
     return templates.TemplateResponse(request, "notes_index.html")
 
 
-@router.get("/notes/tags/{tag}", response_class=HTMLResponse)
+@page_router.get("/tags/{tag}", response_class=HTMLResponse)
 def notes_tag(request: Request, tag: str):
     return templates.TemplateResponse(request, "notes_tag.html", {"tag": tag})
 
 
-@router.get("/notes/{path:path}", response_class=HTMLResponse)
+@page_router.get("/{path:path}", response_class=HTMLResponse)
 def notes_view(request: Request, path: str):
     # Serve media files directly
     if path.startswith("media/"):
@@ -113,7 +116,7 @@ def notes_view(request: Request, path: str):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/notes")
+@api_router.get("")
 def api_list_notes():
     """List all notes with metadata."""
     mem = _notes_dir()
@@ -188,7 +191,7 @@ def _build_search_index() -> tuple[list[str], dict[str, tuple[str, list[str]]]]:
     return fzf_lines, file_meta
 
 
-@router.get("/api/notes/search")
+@api_router.get("/search")
 def api_search_notes(q: str = ""):
     """Full-text content search across all notes (fuzzy via fzf)."""
     query = q.strip()
@@ -264,7 +267,7 @@ def api_search_notes(q: str = ""):
     }
 
 
-@router.get("/api/notes/sync-status")
+@api_router.get("/sync-status")
 def api_sync_status():
     """Return git sync status including push state and any conflicted files."""
     from .sync import conflicted_files, sync_state
@@ -276,7 +279,7 @@ def api_sync_status():
     }
 
 
-@router.post("/api/notes/sync-test")
+@api_router.post("/sync-test")
 async def api_sync_test(request: Request):
     """Test if a git remote URL is accessible (runs git ls-remote)."""
     body = await request.json()
@@ -289,7 +292,7 @@ async def api_sync_test(request: Request):
     return {"ok": ok, "message": message}
 
 
-@router.get("/api/notes/{path:path}")
+@api_router.get("/{path:path}")
 def api_read_note(path: str):
     """Read a note's raw markdown content."""
     file_path = _validate_path(path)
@@ -298,7 +301,7 @@ def api_read_note(path: str):
     return JSONResponse({"content": file_path.read_text(encoding="utf-8")})
 
 
-@router.put("/api/notes/{path:path}")
+@api_router.put("/{path:path}")
 async def api_save_note(request: Request, path: str):
     """Save note content, git commit and push."""
     file_path = _validate_path(path)
@@ -313,7 +316,7 @@ async def api_save_note(request: Request, path: str):
     return {"status": "saved"}
 
 
-@router.delete("/api/notes/{path:path}")
+@api_router.delete("/{path:path}")
 async def api_delete_note(path: str):
     """Delete a note, git commit and push."""
     file_path = _validate_path(path)
@@ -326,7 +329,7 @@ async def api_delete_note(path: str):
     return {"status": "deleted"}
 
 
-@router.post("/api/notes/upload")
+@api_router.post("/upload")
 async def api_upload_media(file: UploadFile):
     """Upload a media file to notes/media/."""
     if not file.filename:

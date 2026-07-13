@@ -4,7 +4,7 @@ import subprocess
 
 import paths
 
-from .routes import router, NOTES_STATIC_DIR as STATIC_DIR
+from .routes import api_router, page_router, NOTES_STATIC_DIR as STATIC_DIR
 from .sync import start_sync, stop_sync
 
 
@@ -94,7 +94,8 @@ async def start():
 
 
 __all__ = [
-    "router",
+    "api_router",
+    "page_router",
     "STATIC_DIR",
     "NAV_ITEMS",
     "EXTENSION_META",
