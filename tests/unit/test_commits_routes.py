@@ -255,7 +255,7 @@ class TestApiGitRepos:
             old_fd = _main.FD_BINARY
             _main.FD_BINARY = "fd"
             try:
-                resp = client.get("/api/git/repos")
+                resp = client.get("/api/commits/repos")
             finally:
                 _main.FD_BINARY = old_fd
         assert resp.status_code == 200
@@ -275,7 +275,7 @@ class TestApiGitRepos:
             old_fd = _main.FD_BINARY
             _main.FD_BINARY = "fd"
             try:
-                resp = client.get("/api/git/repos?q=merlin")
+                resp = client.get("/api/commits/repos?q=merlin")
             finally:
                 _main.FD_BINARY = old_fd
         assert resp.status_code == 200
@@ -295,7 +295,7 @@ class TestApiGitRepos:
             old_fd = _main.FD_BINARY
             _main.FD_BINARY = "fd"
             try:
-                resp = client.get("/api/git/repos?q=")
+                resp = client.get("/api/commits/repos?q=")
             finally:
                 _main.FD_BINARY = old_fd
         assert resp.status_code == 200

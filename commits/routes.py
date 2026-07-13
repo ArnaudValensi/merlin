@@ -23,7 +23,10 @@ COMMITS_STATIC_DIR = COMMITS_DIR / "static"
 
 templates = make_templates(COMMITS_TEMPLATES_DIR)
 
-router = APIRouter()
+# api_router → /api/commits, page_router → /commits (both authed by the
+# framework). Paths are declared relative to that namespace.
+api_router = APIRouter()
+page_router = APIRouter()
 
 # Safe hash pattern
 HASH_RE = re.compile(r"^[0-9a-f]{4,40}$")
@@ -82,7 +85,7 @@ def _resolve_repo(repo: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/commits", response_class=HTMLResponse)
+@page_router.get("", response_class=HTMLResponse)
 def commits_page(request: Request, repo: str = ""):
     return templates.TemplateResponse(
         request,
@@ -94,7 +97,7 @@ def commits_page(request: Request, repo: str = ""):
     )
 
 
-@router.get("/commits/{commit_hash}", response_class=HTMLResponse)
+@page_router.get("/{commit_hash}", response_class=HTMLResponse)
 def commit_detail_page(request: Request, commit_hash: str, repo: str = ""):
     _validate_hash(commit_hash)
     return templates.TemplateResponse(
@@ -108,7 +111,7 @@ def commit_detail_page(request: Request, commit_hash: str, repo: str = ""):
     )
 
 
-@router.get("/commits/{commit_hash}/file/{file_path:path}", response_class=HTMLResponse)
+@page_router.get("/{commit_hash}/file/{file_path:path}", response_class=HTMLResponse)
 def commit_file_page(
     request: Request, commit_hash: str, file_path: str, repo: str = ""
 ):
@@ -131,7 +134,7 @@ def commit_file_page(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/commits")
+@api_router.get("")
 def api_list_commits(
     skip: int = 0,
     limit: int = 50,
@@ -163,52 +166,9 @@ def api_list_commits(
     return commits
 
 
-@router.get("/api/commits/{commit_hash}")
-def api_commit_detail(commit_hash: str, repo: str = ""):
-    """Single commit metadata with file stats."""
-    _validate_hash(commit_hash)
-    repo_dir = _resolve_repo(repo)
-    try:
-        return get_commit_detail(commit_hash, repo_dir=repo_dir)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/api/commits/{commit_hash}/diff")
-def api_commit_diff(commit_hash: str, repo: str = ""):
-    """Parsed unified diff for a commit."""
-    _validate_hash(commit_hash)
-    repo_dir = _resolve_repo(repo)
-    try:
-        return get_commit_diff(commit_hash, repo_dir=repo_dir)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/api/commits/{commit_hash}/file/{file_path:path}")
-def api_commit_file(commit_hash: str, file_path: str, repo: str = ""):
-    """Full file content with gutter annotations."""
-    _validate_hash(commit_hash)
-    _validate_path(file_path)
-    repo_dir = _resolve_repo(repo)
-    try:
-        return get_file_with_gutters(commit_hash, file_path, repo_dir=repo_dir)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ---------------------------------------------------------------------------
-# Git Repository Search (T5)
-# ---------------------------------------------------------------------------
-
-
-@router.get("/api/git/repos")
+# Registered before /{commit_hash} so "repos" is matched as a literal segment
+# and not captured as a commit hash.
+@api_router.get("/repos")
 async def api_git_repos(q: str = ""):
     """Find git repositories matching a fuzzy query. Runs fd on every request."""
     import main as _main
@@ -258,3 +218,43 @@ async def api_git_repos(q: str = ""):
 
     repos.sort()
     return repos
+
+
+@api_router.get("/{commit_hash}")
+def api_commit_detail(commit_hash: str, repo: str = ""):
+    """Single commit metadata with file stats."""
+    _validate_hash(commit_hash)
+    repo_dir = _resolve_repo(repo)
+    try:
+        return get_commit_detail(commit_hash, repo_dir=repo_dir)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/{commit_hash}/diff")
+def api_commit_diff(commit_hash: str, repo: str = ""):
+    """Parsed unified diff for a commit."""
+    _validate_hash(commit_hash)
+    repo_dir = _resolve_repo(repo)
+    try:
+        return get_commit_diff(commit_hash, repo_dir=repo_dir)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/{commit_hash}/file/{file_path:path}")
+def api_commit_file(commit_hash: str, file_path: str, repo: str = ""):
+    """Full file content with gutter annotations."""
+    _validate_hash(commit_hash)
+    _validate_path(file_path)
+    repo_dir = _resolve_repo(repo)
+    try:
+        return get_file_with_gutters(commit_hash, file_path, repo_dir=repo_dir)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

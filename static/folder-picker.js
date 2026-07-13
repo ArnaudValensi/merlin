@@ -222,7 +222,7 @@ var FolderPicker = (function() {
     }
 
     async function searchRepos(q) {
-        var data = await API.get('/api/git/repos?q=' + encodeURIComponent(q));
+        var data = await API.get('/api/commits/repos?q=' + encodeURIComponent(q));
         if (mode !== 'search') return; // user switched back
 
         if (!data || data.length === 0) {
