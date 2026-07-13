@@ -2,6 +2,22 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.23.0 (2026-07-14)
+
+### Added
+- **Webhook triggers for jobs** — Trigger a job from outside Merlin with a secret-gated HTTP webhook, alongside or instead of a schedule. Create, rotate, and remove the secret from the job's Webhooks tab or the `merlin job` CLI.
+- **Public URL in Settings** — Settings surfaces your instance's public URL (auto-discovered on Merlin Cloud) so webhook URLs and dashboard links are correct; you can override it.
+
+### Changed
+- **Cron is now "jobs"** — The cron system is renamed to jobs everywhere (dashboard, `merlin job` CLI, docs). A job's trigger — a schedule, a webhook, or both — is now an explicit, optional choice; a job with neither is manual-only.
+- **Bundled Cloudflare tunnel removed** — Merlin no longer ships or manages cloudflared. Remote access is now bring-your-own tunnel/reverse proxy or Merlin Cloud.
+
+### Fixed
+- **"View session" always works** — The session transcript viewer is always available now, so "View session" links on the Jobs page no longer 404 when the Discord bot extension is disabled.
+- **Empty schedule is rejected** — `merlin job add --schedule ""` errors instead of silently creating a trigger-less job.
+- **Overlapping runs keep the schedule** — A manual or webhook run overlapping a scheduled time no longer causes that scheduled run to be skipped.
+- **No dashboard freezes from job/settings paths** — Blocking work in the job-notification and settings-save paths is kept off the event loop, so it can't freeze the process.
+
 ## v0.22.1 (2026-07-03)
 
 ### Fixed
