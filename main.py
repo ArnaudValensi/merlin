@@ -775,6 +775,82 @@ def _build_extensions_list() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Module mounting — the framework owns namespacing and auth
+# ---------------------------------------------------------------------------
+
+
+def mount_module(
+    module: object, module_id: str, static_name: str | None = None
+) -> None:
+    """Mount a module under the framework-owned namespaces.
+
+    Merlin, not the module, decides where a module's routes live and how they
+    are guarded. A module declares intent-scoped routers with no prefixes and
+    the framework mounts them:
+
+    - ``api_router``  → ``/api/{slug}``, wrapped in ``require_auth``
+    - ``page_router`` → ``/{slug}``, wrapped in ``require_auth``
+    - ``STATIC_DIR``  → ``/static/{static_name or module_id}``
+    - ``register_routes(app)`` — the escape hatch: the module registers
+      anything the contract can't express (WebSockets, ...) directly on the
+      app and OWNS the path AND the auth for whatever it registers. Its use is
+      logged at startup so auth-bypassing routes stay auditable at a glance.
+
+    ``slug`` is ``URL_SLUG`` if the module declares one, else ``module_id``.
+
+    This is the single wiring path for both core modules (hand-imported in
+    ``main.py``) and extensions (via the loader), so their wiring is identical.
+    """
+    slug = getattr(module, "URL_SLUG", module_id)
+
+    # TRANSITIONAL (removed in Phase 5): modules not yet migrated to the
+    # api_router/page_router contract still export a single plain `router`
+    # carrying its own hardcoded prefixes. Keep mounting it the old way (whole
+    # router behind require_auth, no framework prefix) so each module can be
+    # converted one at a time without breaking the ones still on the old shape.
+    legacy_router = getattr(module, "router", None)
+    if legacy_router is not None:
+        app.include_router(legacy_router, dependencies=[Depends(require_auth)])
+
+    api_router = getattr(module, "api_router", None)
+    if api_router is not None:
+        app.include_router(
+            api_router,
+            prefix=f"/api/{slug}",
+            dependencies=[Depends(require_auth)],
+        )
+
+    page_router = getattr(module, "page_router", None)
+    if page_router is not None:
+        app.include_router(
+            page_router,
+            prefix=f"/{slug}",
+            dependencies=[Depends(require_auth)],
+        )
+
+    static_dir = getattr(module, "STATIC_DIR", None)
+    if static_dir:
+        mount_name = static_name or module_id
+        app.mount(
+            f"/static/{mount_name}",
+            StaticFiles(directory=str(static_dir)),
+            name=f"{mount_name}-static",
+        )
+
+    register_routes = getattr(module, "register_routes", None)
+    if register_routes is not None:
+        register_routes(app)
+        # Auditable at a glance: everything else under /api/{slug} and /{slug}
+        # is authed by the framework; this is the one place a module takes
+        # ownership of its own paths and auth.
+        logger.info(
+            "Module '%s' used register_routes(app) escape hatch "
+            "(owns its own path + auth for self-registered routes)",
+            module_id,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Core modules
 # ---------------------------------------------------------------------------
 
@@ -895,16 +971,10 @@ def _load_extension(
 
         mod.logger = _ext_logger(ext_id)
 
-    # Wire up router + statics
-    app.include_router(mod.router, dependencies=[Depends(require_auth)])
-    static_dir = getattr(mod, "STATIC_DIR", None)
-    if static_dir:
-        mount_name = static_name or ext_id
-        app.mount(
-            f"/static/{mount_name}",
-            StaticFiles(directory=str(static_dir)),
-            name=f"{mount_name}-static",
-        )
+    # Wire up routers + statics through the shared framework helper: api_router
+    # → /api/{slug}, page_router → /{slug} (both authed), STATIC_DIR → /static,
+    # and register_routes(app) for anything the contract can't express.
+    mount_module(mod, ext_id, static_name=static_name)
 
     # Collect nav items
     ext_nav = getattr(mod, "NAV_ITEMS", [])
