@@ -12,7 +12,7 @@ links to it instead of restating it.
 
 | Surface | Owns | Audience |
 |---|---|---|
-| `README.md` | the pitch, the flywheel overview, and the complete index of user docs | a visitor deciding whether to install |
+| `README.md` | the pitch, the three-pillars overview, and the complete index of user docs | a visitor deciding whether to install |
 | `docs/*.md` (top level) | task guides: what each feature is for and how to use it | users |
 | `docs/dev/*.md` | implementation: how it is built | contributors |
 | `merlin <cmd> --help` | exact syntax and options | anyone, terse |
@@ -44,9 +44,13 @@ Voice input is folded into the docs of the surfaces that have it
 
 Every page doc follows the same shape, in this order:
 
-1. **What it is**: one short paragraph, then a screenshot. State which
-   node of the flywheel this page is and what it feeds (the work loop,
-   the memory, the agent).
+1. **What it is**: one short paragraph, then a screenshot. Place the
+   page in the product in plain words: which of the three pillars it
+   serves (coding environment, agent orchestration, living knowledge
+   base) and what it feeds (the shared memory, the other channels).
+   The pillar vocabulary comes from the README; "flywheel" is retired
+   as reader-facing vocabulary, so describe the compounding loop in
+   plain language instead of naming it.
 2. **Tasks**: "do X" sections covering everything the page can do.
 3. **Mobile notes**: anything phone-specific (gestures, toolbar, quirks).
 4. **Troubleshooting**: the real failure modes and their fixes.

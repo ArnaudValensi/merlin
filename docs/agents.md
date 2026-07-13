@@ -4,8 +4,8 @@ Merlin does not ship its own AI. You bring your agent CLI (Claude Code by
 default, OpenCode too) and Merlin gives it a body: open the
 [web terminal](terminal.md) from anywhere, phone included, run your agent,
 and it already knows Merlin. Its skills are in place, the `merlin` CLI is
-its toolbox, and the [notes system](notes.md) is its memory. This is the
-"your own agent" node of the flywheel: what you teach your agent in the
+its toolbox, and the [notes system](notes.md) is its memory. One agent,
+every channel: what you teach your agent in the
 terminal lands in the shared notes and knowledge base, and the
 [Discord bot](bot.md) and [jobs](jobs.md) run the same agent with the
 same brain doc, so every channel gets sharper together.

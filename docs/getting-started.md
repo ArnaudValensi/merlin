@@ -1,6 +1,6 @@
 # Getting Started
 
-Merlin runs as one process on your machine: a web dashboard on port 3123 with a web terminal, files, commits, notes, and jobs, behind a password login. This page takes you from a fresh machine to that dashboard in your pocket. It is the entry node of the flywheel: the one process you start here hosts every other piece, and the `~/.merlin` home the installer creates is the shared memory they all read and feed.
+Merlin runs as one process on your machine: a web dashboard on port 3123 with a web terminal, files, commits, notes, and jobs, behind a password login. This page takes you from a fresh machine to that dashboard in your pocket. Everything else builds on what you set up here: the one process you start hosts all three pillars, and the `~/.merlin` home the installer creates is where your notes, jobs, and config live.
 
 ![Merlin running on a phone](terminal/phone-merlin.jpg)
 

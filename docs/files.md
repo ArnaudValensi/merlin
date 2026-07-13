@@ -4,13 +4,13 @@ The Files page (**Files** in the sidebar, `/files`) is a web file browser
 over your machine's whole filesystem: a directory listing plus a file
 viewer that renders code with line numbers and syntax highlighting,
 markdown and Mermaid diagrams, images, audio, video, and 3D models, and
-lets you upload, download, create, rename, and delete. In the flywheel it
-is the inspection node: your agent produces artifacts in the workspace
-(code, screenshots, docs, 3D models) and Files is how you review them from
-any device; upload closes the loop the other way, dropping assets in for
-your agent to act on. It opens in the same directory where `merlin` was
-launched, shared with the [Terminal](terminal.md) and
-[Commits](commits.md). Open **Files** in the sidebar.
+lets you upload, download, create, rename, and delete. It is the
+inspection side of the coding environment: your agent produces artifacts
+in the workspace (code, screenshots, docs, 3D models) and Files is how
+you review them from any device; upload closes the loop the other way,
+dropping assets in for your agent to act on. It opens in the same
+directory where `merlin` was launched, shared with the
+[Terminal](terminal.md) and [Commits](commits.md).
 
 ![File browser on a phone](files/phone-files.jpg)
 

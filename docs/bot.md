@@ -8,7 +8,7 @@ persistent agent session, and it answers in that thread.
 
 [SCREENSHOT PLACEHOLDER (mobile): a Discord thread showing a conversation with the bot, thinking-then-check reactions visible on the user message]
 
-This is the chat channel of the flywheel: the bot runs the same agent as the
+The bot is Merlin's chat channel: it runs the same agent as the
 [terminal](terminal.md) and [jobs](jobs.md), and it reads and writes the
 same [notes and knowledge base](notes.md). Scheduled
 work flows back into conversation, and conversations flow into the shared

@@ -4,7 +4,7 @@ The Commits page (sidebar: **Commits**, route `/commits`) is a read-only
 git history browser: a commit list with search and date filters, colored
 unified diffs, and a full-file view with change gutters and syntax
 highlighting. It shows one repository at a time and defaults to wherever
-your terminal session is working, so this is the review node of the loop:
+your terminal session is working, so this is where review happens:
 your agent codes in the [web terminal](terminal.md), and Commits is where
 you inspect what actually landed, from the same dashboard, phone included.
 

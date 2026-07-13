@@ -2,7 +2,7 @@
 
 The Notes page is a browser-based markdown editor over Merlin's notes
 directory (`~/.merlin/notes` by default, `~/shared/notes` on Merlin
-Cloud; `merlin config notes-dir` always prints the resolved path). This is the memory node of the flywheel:
+Cloud; `merlin config notes-dir` always prints the resolved path). This is the third pillar, the living knowledge base:
 everything here is plain markdown that your agent reads and writes from
 every channel. A fact you save on this page shapes your agent's next
 [job run](jobs.md) or [chat reply](bot.md), and what your agent learns

@@ -9,7 +9,7 @@ are all first-class.
 
 ![Merlin running on a phone](terminal/phone-merlin.jpg)
 
-The terminal is the front door of the flywheel: it is where you and
+The terminal is the heart of the coding environment: it is where you and
 [your agent](agents.md) actually do the work, and what you learn here
 lands in the [notes and knowledge base](notes.md) that every other
 channel reads.

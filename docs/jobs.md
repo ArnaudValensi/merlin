@@ -4,11 +4,11 @@ A **job** is one unit of work — a full agent run or a shell command — that
 Merlin can launch three ways: on a **schedule**, by an **incoming webhook**,
 or **by hand**. The triggers are independent: a job can have a schedule, a
 webhook, both, or neither (manual-only). No system crontab is involved; the
-`/jobs` page runs its own scheduler that starts with the dashboard. Agent
-jobs are the same brain and memory as every other channel — this is the
-flywheel node that works while you sleep: they read and feed the
-[notes and knowledge base](notes.md), then report to Discord where you can
-pick up the conversation.
+`/jobs` page runs its own scheduler that starts with the dashboard. An
+agent job runs [the same agent](agents.md), with the same memory, as
+every other channel. This is the pillar that works while you sleep: jobs
+read and feed the [notes and knowledge base](notes.md), then report to
+Discord where you can pick up the conversation.
 
 ![Jobs list on a phone](jobs/phone-jobs.jpg)
 

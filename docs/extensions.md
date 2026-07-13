@@ -11,7 +11,7 @@ default; the group appears once something is installed).
 
 ![Extensions page on mobile](creating-extensions/extensions-page-mobile.png)
 
-In the flywheel, this page is the trust-and-growth gate. Extensions are how
+This page is the trust-and-growth gate. Extensions are how
 your agent gains new capabilities: commands callable from every surface
 ([terminal](terminal.md), [Discord bot](bot.md), [jobs](jobs.md)) and
 skills that teach it when to use them. The audit view is where you check

@@ -13,7 +13,7 @@ Merlin runs the user's AI agent (Claude Code, OpenCode, pluggable
 engines): run `merlin agent` to see the operating doc that agent gets;
 the Discord bot and jobs are that same agent on other channels, and
 skills are how it learns to use your extension. An extension is how you
-grow Merlin's loop: commands the agent can call from any surface
+grow Merlin: commands the agent can call from any surface
 (terminal, Discord, jobs), a skill that tells it when, and optionally a
 scheduled job that runs it for you. Ship one directory and the whole
 assistant learns the capability.
