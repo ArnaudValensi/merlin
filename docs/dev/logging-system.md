@@ -166,7 +166,7 @@ Each file is the raw `--output-format stream-json` dump from one engine invocati
 
 1. **Bot dashboard** (`/bot`, `/bot/performance`, `/bot/logs`) → reads `engine-log.jsonl` via the shared reader `lib/event_log.py:read_events()`. Powers health cards, performance charts, and log tables.
 2. **Session viewer** (`/session/{filename}`) → reads `logs/raw-sessions/*.jsonl`. Renders the full timeline with thinking blocks, tool calls, token counts.
-3. **Jobs dashboard** (`/jobs`) → reads `engine-log.jsonl` via `lib/event_log.py` for two things: the **crash banner** (`job_runner_crash` events) and the **Performance tab**, which keeps only job callers (`caller` starts with `job-`) and aggregates them server-side via `perf/aggregate.py` behind `GET /api/job/performance`. Also reads `job-logs/` for execution history and session links.
+3. **Jobs dashboard** (`/jobs`) → reads `engine-log.jsonl` via `lib/event_log.py` for two things: the **crash banner** (`job_runner_crash` events) and the **Performance tab**, which keeps only job callers (`caller` starts with `job-`) and aggregates them server-side via `perf/aggregate.py` behind `GET /api/jobs/performance`. Also reads `job-logs/` for execution history and session links.
 4. **Engine resume** → reads `sessions/*.jsonl` to rebuild conversation history for `--resume`.
 5. **`merlin.log`** → manual debugging only (SSH into server and read).
 
@@ -215,7 +215,7 @@ These parts of the app produce no structured events (though app-level errors go 
 | `job/runner.py` | Job dispatcher — writes to engine log (job_dispatch), `job-logs/` |
 | `job/__init__.py` | Job scheduler — writes to engine log on crash (job_runner_crash) |
 | `job/logs.py` | Job execution log CRUD — reads/writes `job-logs/`, has `cleanup_logs()` |
-| `job/routes.py` | Jobs dashboard API — reads `engine-log.jsonl` via `lib/event_log.py` (crash banner + `/api/job/performance`), `job-logs/` for history |
+| `job/routes.py` | Jobs dashboard API — reads `engine-log.jsonl` via `lib/event_log.py` (crash banner + `/api/jobs/performance`), `job-logs/` for history |
 | `terminal/routes.py` | Terminal WebSocket — logs connect/disconnect, PTY errors |
 | `saas_tunnel.py` | SaaS tunnel — logs connect/disconnect, port forwarding, auth |
 | `ssh_server.py` | SSH server — logs host key, sessions, PTY operations |

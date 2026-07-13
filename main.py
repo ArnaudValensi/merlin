@@ -803,15 +803,6 @@ def mount_module(
     """
     slug = getattr(module, "URL_SLUG", module_id)
 
-    # TRANSITIONAL (removed in Phase 5): modules not yet migrated to the
-    # api_router/page_router contract still export a single plain `router`
-    # carrying its own hardcoded prefixes. Keep mounting it the old way (whole
-    # router behind require_auth, no framework prefix) so each module can be
-    # converted one at a time without breaking the ones still on the old shape.
-    legacy_router = getattr(module, "router", None)
-    if legacy_router is not None:
-        app.include_router(legacy_router, dependencies=[Depends(require_auth)])
-
     api_router = getattr(module, "api_router", None)
     if api_router is not None:
         app.include_router(
@@ -975,9 +966,10 @@ def _load_extension(
     if ext_nav:
         nav_items.extend(ext_nav)
 
-    # Register webhook resolvers with the front desk. Extensions cannot open
-    # their own unauthenticated route (their routers are force-wrapped in
-    # auth above), so this export is the only way for one to have a webhook.
+    # Register webhook resolvers with the front desk. An extension's
+    # api_router/page_router are auto-authed by mount_module(), so registering
+    # a handler here is the idiomatic way to expose a public, self-authenticating
+    # webhook without reaching for the register_routes(app) escape hatch.
     ext_hooks = getattr(mod, "WEBHOOK_HANDLERS", None)
     if ext_hooks:
         for hook_source, hook_resolver in ext_hooks.items():

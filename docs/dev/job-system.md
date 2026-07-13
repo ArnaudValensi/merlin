@@ -39,24 +39,24 @@ Key dependencies:
 
 ## REST API
 
-All endpoints require authentication. Prefix: `/api/job`.
+All endpoints require authentication. Prefix: `/api/jobs`.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/job/jobs` | GET | List all jobs (enriched with last_run, next_run) |
-| `/api/job/jobs` | POST | Create a new job |
-| `/api/job/jobs/{job_id}` | GET | Get a job with history |
-| `/api/job/jobs/{job_id}` | PUT | Update a job (merge non-None fields) |
-| `/api/job/jobs/{job_id}` | DELETE | Delete a job + state + locks + logs |
-| `/api/job/jobs/{job_id}/toggle` | POST | Toggle enabled/disabled |
-| `/api/job/jobs/{job_id}/run` | POST | Trigger immediate run (202 Accepted) |
-| `/api/job/jobs/{job_id}/logs` | GET | List execution logs (newest first) |
-| `/api/job/jobs/{job_id}/logs/{timestamp}` | GET | Read a specific execution log |
-| `/api/job/jobs/{job_id}/webhook` | POST | Enable the webhook trigger (generates a secret; idempotent) |
-| `/api/job/jobs/{job_id}/webhook/rotate` | POST | Replace the secret (the old one stops working immediately) |
-| `/api/job/jobs/{job_id}/webhook` | DELETE | Remove the webhook trigger |
-| `/api/job/webhook-events` | GET | Recent webhook_request events (fires + rejected attempts), filterable by `job_id` |
-| `/api/job/validate-schedule` | POST | Validate cron expression; returns `{valid, human, timezone, next_runs[3]}` preformatted in the cron timezone |
+| `/api/jobs/jobs` | GET | List all jobs (enriched with last_run, next_run) |
+| `/api/jobs/jobs` | POST | Create a new job |
+| `/api/jobs/jobs/{job_id}` | GET | Get a job with history |
+| `/api/jobs/jobs/{job_id}` | PUT | Update a job (merge non-None fields) |
+| `/api/jobs/jobs/{job_id}` | DELETE | Delete a job + state + locks + logs |
+| `/api/jobs/jobs/{job_id}/toggle` | POST | Toggle enabled/disabled |
+| `/api/jobs/jobs/{job_id}/run` | POST | Trigger immediate run (202 Accepted) |
+| `/api/jobs/jobs/{job_id}/logs` | GET | List execution logs (newest first) |
+| `/api/jobs/jobs/{job_id}/logs/{timestamp}` | GET | Read a specific execution log |
+| `/api/jobs/jobs/{job_id}/webhook` | POST | Enable the webhook trigger (generates a secret; idempotent) |
+| `/api/jobs/jobs/{job_id}/webhook/rotate` | POST | Replace the secret (the old one stops working immediately) |
+| `/api/jobs/jobs/{job_id}/webhook` | DELETE | Remove the webhook trigger |
+| `/api/jobs/webhook-events` | GET | Recent webhook_request events (fires + rejected attempts), filterable by `job_id` |
+| `/api/jobs/validate-schedule` | POST | Validate cron expression; returns `{valid, human, timezone, next_runs[3]}` preformatted in the cron timezone |
 
 **Dashboard page**: `GET /jobs` — renders the jobs management UI.
 

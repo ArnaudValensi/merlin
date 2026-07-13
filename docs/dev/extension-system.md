@@ -11,7 +11,7 @@ main.py (_load_extension)
   ├─ Core (files, terminal, commits) — always active, registered manually
   ├─ Built-in (notes, merlin-bot) — ship with Merlin, toggleable
   └─ Installed (~/.merlin/extensions/*) — user-installed, toggleable
-      └─ each folder is a Python module with a router
+      └─ each folder is a Python module with routers
 ```
 
 Key property: **Merlin always starts.** A broken extension is recorded in the registry with an error but never prevents the dashboard from loading.
@@ -28,13 +28,37 @@ An extension cannot declare itself as core or built-in. The tier is inferred fro
 
 ## Extension Interface
 
-Every extension can export the following. Only `router` is required.
+Every extension can export the following. The framework owns URL namespacing
+and auth: it mounts `api_router` at `/api/{slug}` and `page_router` at
+`/{slug}` (both behind `require_auth`), where `slug` is `URL_SLUG` or, if that
+is omitted, the module id. Routes declare paths **relative** to that
+namespace — no hardcoded module prefix. An extension needs at least one of
+`api_router` / `page_router` / `register_routes` to serve anything.
 
 ```python
 from fastapi import APIRouter
 
-# Required — FastAPI routes
-router = APIRouter()
+# Optional — API routes, mounted at /api/{slug}, authed by the framework.
+# @api_router.get("/list") → /api/{slug}/list
+api_router = APIRouter()
+
+# Optional — page routes, mounted at /{slug}, authed by the framework.
+# @page_router.get("")     → /{slug}
+# @page_router.get("/edit") → /{slug}/edit
+page_router = APIRouter()
+
+# Optional — URL namespace; defaults to the module id. Declare it only when
+# the nice URL differs from the package name (e.g. folder "video-scenes"
+# serving /scenes → URL_SLUG = "scenes").
+URL_SLUG = "scenes"
+
+# Optional — escape hatch for anything the two routers can't express
+# (WebSockets, SSE, unforeseen paths). Receives the full FastAPI app; the
+# module OWNS the path AND the auth for whatever it registers. Its use is
+# logged at startup so auth-bypassing routes stay auditable. Prefer the
+# auto-authed routers; reach for this only when you must.
+def register_routes(app):
+    app.add_api_websocket_route("/ws/thing", thing_ws)
 
 # Optional — sidebar entry (list, can have multiple)
 NAV_ITEMS = [
@@ -88,12 +112,12 @@ Extensions get a properly namespaced logger under the `merlin.ext.*` tree, which
 # my_extension/__init__.py
 from fastapi import APIRouter
 
-router = APIRouter()
+page_router = APIRouter()
 
 # logger is injected by Merlin — no import needed
 # It will be: logging.getLogger("merlin.ext.my_extension")
 
-@router.get("/my-page")
+@page_router.get("")  # → /my-extension
 def my_page():
     logger.info("Page loaded")  # writes to merlin.log as [merlin.ext.my_extension]
     ...
@@ -134,9 +158,9 @@ from merlin_ext import make_templates
 EXT_DIR = Path(__file__).parent.resolve()
 templates = make_templates(EXT_DIR / "templates")
 
-router = APIRouter()
+page_router = APIRouter()
 
-@router.get("/my-page")
+@page_router.get("")  # → /my-extension
 def my_page(request: Request):
     return templates.TemplateResponse(request, "page.html", {"foo": "bar"})
 ```
@@ -209,24 +233,24 @@ surface); core and user skills have no extension row, so they appear in
 
 1. Create a folder in `~/.merlin/extensions/` (e.g., `my-tool/`)
 2. Add a Python file matching the folder name with hyphens replaced by underscores (e.g., `my_tool.py`)
-3. Export at minimum a `router = APIRouter()`
-4. Optionally export `NAV_ITEMS`, `STATIC_DIR`, `EXTENSION_META`
+3. Export at minimum an `api_router` or `page_router` (`APIRouter()`)
+4. Optionally export `URL_SLUG`, `NAV_ITEMS`, `STATIC_DIR`, `EXTENSION_META`
 5. Restart Merlin — the extension appears on the Extensions page
 
-Example minimal extension:
+Example minimal extension (folder `my-tool/` → mounted at `/my-tool`):
 
 ```python
 """My Tool — a custom Merlin extension."""
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-router = APIRouter()
+page_router = APIRouter()
 
 NAV_ITEMS = [
     {"url": "/my-tool", "icon": '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>', "label": "My Tool"},
 ]
 
-@router.get("/my-tool", response_class=HTMLResponse)
+@page_router.get("", response_class=HTMLResponse)  # → /my-tool
 def my_tool_page(request: Request):
     return "<h1>Hello from My Tool</h1>"
 ```
@@ -317,5 +341,5 @@ Note: merlin-bot is **Discord-only** in scope. It handles message listening, thr
 | `static/extensions.css` + `.js` | Extensions page UI |
 | `static/settings.css` + `.js` | Settings page UI |
 | `templates/base.html` | Sidebar nav rendering, error badge, Settings link |
-| `notes/__init__.py` | Built-in extension example (exports router, NAV_ITEMS, STATIC_DIR) |
-| `merlin-bot/merlin_bot.py` | Built-in extension example (exports router, NAV_ITEMS, EXTENSION_META, start, validate) |
+| `notes/__init__.py` | Built-in extension example (exports api_router, page_router, STATIC_DIR, NAV_ITEMS) |
+| `merlin-bot/merlin_bot.py` | Built-in extension example (exports api_router, page_router, URL_SLUG, NAV_ITEMS, EXTENSION_META, start, validate) |

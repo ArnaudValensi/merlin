@@ -167,11 +167,13 @@ def test_register_routes_usage_is_logged(monkeypatch, caplog):
 
 
 # ---------------------------------------------------------------------------
-# Transitional legacy `router` support (removed in Phase 5)
+# The old plain `router` attribute is no longer part of the contract
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_router_still_mounts(monkeypatch, client):
+def test_legacy_router_is_ignored(monkeypatch, client):
+    """A module exposing only the dropped `router` attribute mounts nothing —
+    the framework mounts api_router/page_router, not a plain router."""
     auth.configure("")
     monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
 
@@ -184,5 +186,4 @@ def test_legacy_router_still_mounts(monkeypatch, client):
     app_mod.mount_module(_make_module(router=legacy), "legacymod")
 
     resp = client.get("/legacy/endpoint")
-    assert resp.status_code == 200
-    assert resp.json() == {"legacy": True}
+    assert resp.status_code == 404

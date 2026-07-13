@@ -130,7 +130,7 @@ repo" if you are not in one.
 
 - **Clipboard does nothing / "Clipboard blocked" flash**: the Clipboard
   API requires HTTPS, so use your tunnel URL, not plain http. On mobile,
-  use the pills or the toolbar buttons. `/clipboard-test` is the built-in
+  use the pills or the toolbar buttons. `/terminal/clipboard-test` is the built-in
   diagnostic page.
 - **Clipboard icon with `?` or red `✕` in the status bar**: the browser
   permission is unset or denied. Click the icon to trigger the prompt; if

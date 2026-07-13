@@ -172,7 +172,7 @@ When creating new scripts:
 
 | Script | Purpose | Docs |
 |--------|---------|------|
-| `merlin_bot.py` | Discord bot + extension interface (router, start, validate, EXTENSION_META) | [`discord-bot`](docs/dev/discord-bot.md) |
+| `merlin_bot.py` | Discord bot + extension interface (api_router, page_router, URL_SLUG, start, validate, EXTENSION_META) | [`discord-bot`](docs/dev/discord-bot.md) |
 | `merlin_app.py` | Bot monitoring page with tabs (Overview, Performance, Logs) | [`dashboard-architecture`](docs/dev/dashboard-architecture.md) |
 | `discord_directives.md` | Canonical Discord style overlay | [`discord-bot`](docs/dev/discord-bot.md) |
 | `discord_send.py` | Discord REST transport (CLI: `merlin chat`) | [`discord-bot`](docs/dev/discord-bot.md) |
@@ -222,7 +222,7 @@ Strategy: **resume-first** — try `--resume` first, fall back to `--session-id`
 - **Triggers**: optional `schedule` (cron) and/or `webhook` (secret-gated HTTP via the `webhooks/` front desk); neither = manual-only
 - **Job files**: `jobs/*.json`
 - **Management CLI**: `merlin job --help`
-- **REST API**: `/api/job/jobs/*` — full CRUD + toggle + trigger + logs
+- **REST API**: `/api/jobs/jobs/*` — full CRUD + toggle + trigger + logs
 - **Dashboard**: `/jobs` — web UI for managing jobs
 - **Scheduler**: Started from `main.py` via `job.start()` (always runs, independent of merlin-bot)
 - **Notifications**: Graceful fallback — Discord via merlin-bot if loaded, otherwise silent
@@ -283,7 +283,7 @@ Epics and project planning are managed in the private `merlin-saas` repo under `
 - **Self-documenting scripts**: Comprehensive `--help` with examples
 - **Provider-agnostic execution**: Always use `lib/engine.py` (`invoke()`), never call `claude` or `opencode` directly. Engine configured via `AGENT_ENGINE` env var (default: `claude-code`). Available engines: `claude-code`, `opencode`. Merlin manages conversation history as JSONL files in `~/.merlin/sessions/`.
 - **Deterministic sessions**: UUID5 from channel/job ID for session persistence
-- **Extension system**: Three tiers — core (files, terminal, commits: always active), built-in (notes, merlin-bot: toggleable), installed (`~/.merlin/extensions/`: user-installed). Extensions export `router`, `NAV_ITEMS`, `STATIC_DIR`, plus optional `start()`, `validate()`. `main.py` builds an `extension_registry` at startup. State persisted in `~/.merlin/extensions.json`. Extensions page at `/extensions` for management.
+- **Extension system**: Three tiers — core (files, terminal, commits: always active), built-in (notes, merlin-bot: toggleable), installed (`~/.merlin/extensions/`: user-installed). Extensions export `api_router`/`page_router` (mounted at `/api/{slug}` and `/{slug}`, slug from optional `URL_SLUG`), `NAV_ITEMS`, `STATIC_DIR`, plus optional `register_routes(app)` escape hatch, `start()`, `validate()`. `main.py` builds an `extension_registry` at startup. State persisted in `~/.merlin/extensions.json`. Extensions page at `/extensions` for management.
 - **Dynamic sidebar**: Nav items built from enabled extensions. Core items always shown, extension items added when loaded, Extensions nav item always last.
 - **Path resolution (paths.py)**: All modules use `paths.py` for file/directory resolution. Only `app_dir()` differs between modes (repo root vs `~/.merlin/current/`). User data (notes, jobs, logs, config) always lives under `~/.merlin/` regardless of mode. Dev mode detection: explicit `set_dev_mode()` > `MERLIN_DEV` env var > `.git/` directory presence. Custom install location via `MERLIN_HOME` env var.
 - **Graceful degradation**: At startup, `_check_optional_deps()` checks for tmux. Missing deps result in boot warnings, disabled nav items (grayed out with tooltip), and 503 responses on affected routes — not crashes.

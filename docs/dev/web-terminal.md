@@ -79,7 +79,7 @@ All copy operations go through `merlin-clip`, which writes OSC 52 directly to th
 
 **tmux configuration** (`terminal/tmux.conf`, NOT `~/.tmux.conf`): the web terminal starts tmux with `terminal/tmux.conf`, which loads first and sources `~/.tmux.conf` at the end. Mouse copy is handled by `copy-pipe-and-cancel "merlin-clip copy"` — copy text and send it to the browser clipboard in one step.
 
-User-facing copy/paste recipes (shortcuts, pills, NeoVim config, `/clipboard-test`) live in [`docs/terminal.md`](../terminal.md).
+User-facing copy/paste recipes (shortcuts, pills, NeoVim config, `/terminal/clipboard-test`) live in [`docs/terminal.md`](../terminal.md).
 
 ## Backend
 
@@ -130,7 +130,7 @@ while its pipe transports reject TTYs).
 
 ### Transcription API
 
-`POST /api/transcribe`:
+`POST /api/terminal/transcribe`:
 - Accepts multipart form: `file` (audio), `language`, `auto_enter` (`true`/`false`)
 - Transcribes via `transcribe.py` (SaaS proxy → OpenAI Whisper → local faster-whisper)
 - **With PTY registered**: returns `202 Accepted`, transcribes in background, writes text to the PTY through `bridge.write()` via `_transcribe_and_inject()`

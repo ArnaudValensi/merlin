@@ -53,7 +53,7 @@ All events go to one file (`logs/engine-log.jsonl`). Each line is a JSON object 
 
 ### Auto-refresh via mtime polling
 
-JS polls `/api/last-modified` every 5 seconds. The endpoint returns the mtime of `engine-log.jsonl`. When mtime changes, registered callbacks re-fetch data. This avoids unnecessary API calls when nothing has changed.
+JS polls `/api/bot/last-modified` every 5 seconds. The endpoint returns the mtime of `engine-log.jsonl`. When mtime changes, registered callbacks re-fetch data. This avoids unnecessary API calls when nothing has changed.
 
 ```
 Refresh.register(myLoadFunction);  // register callback
@@ -269,11 +269,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
 | Endpoint | Returns |
 |----------|---------|
-| `GET /api/health` | `{ bot_start_time, invocations_today, errors_24h, ... }` |
+| `GET /api/bot/health` | `{ bot_start_time, invocations_today, errors_24h, ... }` |
 | `GET /api/events?type=&since=&until=&status=` | Array of all events, filtered |
 | `GET /api/invocations?since=&until=&caller=` | Invocation events only |
 | `GET /api/jobs` | Per-job stats with recent run history |
-| `GET /api/last-modified` | `{ mtime }` of engine-log.jsonl |
+| `GET /api/bot/last-modified` | `{ mtime }` of engine-log.jsonl |
 | `GET /api/session/{filename}` | Session JSONL events as JSON array |
 
 ### Notes
@@ -441,7 +441,7 @@ job/
   round-trips a stored expression back into the builder for edit mode, falling back to
   Custom for shapes it doesn't recognize. We stay 100% on cron — storage and the
   scheduler are untouched; this is presentation only. On every change it debounces a
-  call to `POST /api/job/validate-schedule` and renders the plain-English description
+  call to `POST /api/jobs/validate-schedule` and renders the plain-English description
   (via the `cron-descriptor` dependency), the timezone, the next 3 runs, and the raw
   `cron:` line. The preview is **timezone-correct**: runs are computed and preformatted
   in the job's scheduling timezone, so it matches when the job fires.
@@ -456,7 +456,7 @@ job/
   disclosure: Max turns, Session mode) and **Shell command** (command textarea +
   optional working-dir whose placeholder is the resolved `default_working_dir`). The
   advanced disclosure is hidden entirely for command jobs. **Save & run now** saves,
-  triggers `POST /api/job/jobs/{id}/run`, and deep-links to the Logs tab via a
+  triggers `POST /api/jobs/jobs/{id}/run`, and deep-links to the Logs tab via a
   `#logs=<id>` hash handler. Job cards show a type badge (`🤖 agent` purple /
   `>_ command` green-mono), command jobs render the command preview and omit cost.
 
