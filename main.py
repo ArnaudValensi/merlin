@@ -888,6 +888,13 @@ import job.routes as job_routes
 
 mount_module(job_routes, "job")
 
+# Session viewer — core module. Transcripts under logs/raw-sessions/ are
+# written by lib/ for every caller (jobs, bot, terminal), so viewing one is
+# shared infra, not bot-specific. URL_SLUG="session" → /session + /api/session.
+import sessions
+
+mount_module(sessions, "sessions")
+
 # Webhooks front desk — intentionally mounted WITHOUT require_auth (terminal
 # precedent): /webhooks/* is public and self-authenticating via per-hook
 # secrets, verified inside the module. Everything under /api stays gated.

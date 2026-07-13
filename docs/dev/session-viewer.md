@@ -8,7 +8,7 @@ The session viewer displays full Claude Code session transcripts as interactive 
 
 ## Session Files
 
-**Location**: `logs/sessions/` (inside `merlin-bot/` in dev mode, `~/.merlin/logs/sessions/` when installed)
+**Location**: `~/.merlin/logs/raw-sessions/` (written by `lib/` for every invocation — jobs, bot, terminal)
 
 **Naming**: `{date}_{time}-{caller}-{session_id}.jsonl`
 
@@ -108,8 +108,8 @@ In `lib/claude.py`, invocations use `--output-format stream-json`:
 
 | File | Purpose |
 |------|---------|
-| `merlin_app.py` | Session viewer routes (`/session/{filename}`) |
+| `sessions/routes.py` | Session viewer routes (core module: `/session/{filename}` + `/api/session/{filename}`) |
+| `sessions/templates/session.html` | Transcript timeline template |
 | `lib/claude.py` | Captures stream-json output to session files |
 | `lib/structured_log.py` | Records `session_file` in invocation events |
-| `templates/logs.html` | "View session" links in log table |
-| `logs/sessions/*.jsonl` | Session transcript files (dev mode path) |
+| `logs/raw-sessions/*.jsonl` | Session transcript files (under `~/.merlin/logs/`) |

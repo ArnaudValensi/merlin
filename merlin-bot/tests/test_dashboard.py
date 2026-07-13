@@ -1,4 +1,8 @@
-"""Tests for merlin_app.py — session API and filename validation."""
+"""Tests for merlin_app.py — bot monitoring endpoints.
+
+The session viewer (filename validation + JSONL reading) moved to the core
+`sessions` module; see tests/unit/test_sessions.py.
+"""
 
 import json
 
@@ -7,188 +11,18 @@ import pytest
 import merlin_app as db
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture(autouse=True)
-def _redirect_paths(tmp_path, monkeypatch):
-    """Redirect RAW_SESSION_DIR and ENGINE_LOG_PATH to temp directory."""
+def _redirect_engine_log(tmp_path, monkeypatch):
+    """Redirect ENGINE_LOG_PATH to a temp file so the monitoring endpoints
+    read an isolated log, not whatever the import-time MERLIN_HOME pointed at."""
     from lib import event_log
 
-    session_dir = tmp_path / "logs" / "raw-sessions"
-    session_dir.mkdir(parents=True)
-    monkeypatch.setattr(db, "RAW_SESSION_DIR", session_dir)
-    monkeypatch.setattr(db, "ENGINE_LOG_PATH", tmp_path / "engine-log.jsonl")
-    # api_health/api_invocations/api_events now read via the shared reader, which
-    # resolves its own ENGINE_LOG_PATH; patch it too or those endpoints would
-    # read whatever log the import-time MERLIN_HOME pointed at (not isolated).
-    monkeypatch.setattr(event_log, "ENGINE_LOG_PATH", tmp_path / "engine-log.jsonl")
-    return session_dir
-
-
-@pytest.fixture
-def session_dir(tmp_path):
-    """Return the session dir (same as autouse fixture)."""
-    return db.RAW_SESSION_DIR
-
-
-@pytest.fixture
-def sample_session_file(session_dir):
-    """Create a sample session JSONL file and return its filename."""
-    filename = "2026-02-06_12-00-00-test-sess-abc.jsonl"
-    content = (
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "type": "system",
-                        "subtype": "init",
-                        "model": "opus",
-                        "session_id": "sess-abc",
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {"content": [{"type": "text", "text": "Hello"}]},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "result",
-                        "subtype": "success",
-                        "result": "Hello",
-                        "session_id": "sess-abc",
-                        "num_turns": 1,
-                        "duration_ms": 1000,
-                        "usage": {},
-                        "total_cost_usd": 0.01,
-                    }
-                ),
-            ]
-        )
-        + "\n"
-    )
-    (session_dir / filename).write_text(content)
-    return filename
-
-
-# ---------------------------------------------------------------------------
-# Filename validation
-# ---------------------------------------------------------------------------
-
-
-class TestFilenameValidation:
-    """_validate_session_filename prevents path traversal and bad names."""
-
-    def test_valid_filename(self):
-        # Should not raise
-        db._validate_session_filename("2026-02-06_12-00-00-discord-sess-abc.jsonl")
-
-    def test_rejects_path_traversal_dots(self):
-        from fastapi import HTTPException
-
-        with pytest.raises(HTTPException) as exc_info:
-            db._validate_session_filename("../../etc/passwd")
-        assert exc_info.value.status_code == 400
-
-    def test_rejects_forward_slash(self):
-        from fastapi import HTTPException
-
-        with pytest.raises(HTTPException):
-            db._validate_session_filename("subdir/file.jsonl")
-
-    def test_rejects_backslash(self):
-        from fastapi import HTTPException
-
-        with pytest.raises(HTTPException):
-            db._validate_session_filename("subdir\\file.jsonl")
-
-    def test_rejects_non_jsonl_extension(self):
-        from fastapi import HTTPException
-
-        with pytest.raises(HTTPException):
-            db._validate_session_filename("file.txt")
-
-    def test_rejects_empty(self):
-        from fastapi import HTTPException
-
-        with pytest.raises(HTTPException):
-            db._validate_session_filename("")
-
-    def test_rejects_special_chars(self):
-        from fastapi import HTTPException
-
-        with pytest.raises(HTTPException):
-            db._validate_session_filename("file name.jsonl")
-
-    def test_accepts_hyphens_underscores(self):
-        db._validate_session_filename("2026-02-06_12-00-00-test-no-session.jsonl")
-
-
-# ---------------------------------------------------------------------------
-# Session file reading (api_session logic)
-# ---------------------------------------------------------------------------
-
-
-class TestSessionReading:
-    """Session JSONL files are parsed correctly."""
-
-    def test_reads_session_events(self, sample_session_file):
-        """Simulates what api_session does: reads and parses JSONL."""
-        session_path = db.RAW_SESSION_DIR / sample_session_file
-        events = []
-        for line in session_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-
-        assert len(events) == 3
-        assert events[0]["type"] == "system"
-        assert events[1]["type"] == "assistant"
-        assert events[2]["type"] == "result"
-
-    def test_nonexistent_file(self):
-        """Session file that doesn't exist."""
-        path = db.RAW_SESSION_DIR / "nonexistent.jsonl"
-        assert not path.exists()
-
-    def test_empty_session_file(self, session_dir):
-        """Empty session file returns no events."""
-        filename = "empty.jsonl"
-        (session_dir / filename).write_text("")
-
-        events = []
-        for line in (session_dir / filename).read_text().splitlines():
-            if line.strip():
-                events.append(json.loads(line))
-
-        assert events == []
-
-    def test_malformed_lines_skipped(self, session_dir):
-        """Malformed JSON lines are skipped."""
-        filename = "malformed.jsonl"
-        content = "not json\n" + json.dumps({"type": "result", "result": "ok"}) + "\n"
-        (session_dir / filename).write_text(content)
-
-        events = []
-        for line in (session_dir / filename).read_text().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-
-        assert len(events) == 1
-        assert events[0]["type"] == "result"
+    log_path = tmp_path / "engine-log.jsonl"
+    monkeypatch.setattr(db, "ENGINE_LOG_PATH", log_path)
+    # api_health/api_invocations/api_events read via the shared reader, which
+    # resolves its own ENGINE_LOG_PATH; patch it too for isolation.
+    monkeypatch.setattr(event_log, "ENGINE_LOG_PATH", log_path)
+    return log_path
 
 
 # ---------------------------------------------------------------------------

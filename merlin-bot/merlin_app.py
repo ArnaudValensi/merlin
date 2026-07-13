@@ -9,12 +9,10 @@ Exports:
     BOT_START_TIME: Set by merlin_bot.py when the bot starts
 """
 
-import json
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
 
 import paths
@@ -24,7 +22,6 @@ from merlin_ext import make_templates
 _SCRIPT_DIR = Path(__file__).parent.resolve()
 
 ENGINE_LOG_PATH = paths.logs_dir() / "engine-log.jsonl"
-RAW_SESSION_DIR = paths.logs_dir() / "raw-sessions"
 
 # Bot start time — set by merlin_bot.py when it starts
 BOT_START_TIME: datetime | None = None
@@ -75,14 +72,6 @@ def _read_event_dicts(
     ]
 
 
-def _validate_session_filename(filename: str) -> None:
-    """Validate session filename to prevent path traversal."""
-    if "/" in filename or "\\" in filename or ".." in filename:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    if not re.match(r"^[\w\-]+\.jsonl$", filename):
-        raise HTTPException(status_code=400, detail="Invalid filename format")
-
-
 def _parse_ts(event: dict) -> datetime | None:
     """Parse the timestamp field of an event."""
     try:
@@ -111,32 +100,6 @@ def bot_performance_page(request: Request):
 @page_router.get("/logs", response_class=HTMLResponse)
 def bot_logs_page(request: Request):
     return templates.TemplateResponse(request, "bot.html", {"active_tab": "logs"})
-
-
-@page_router.get("/session/{filename}", response_class=HTMLResponse)
-def session_page(request: Request, filename: str):
-    _validate_session_filename(filename)
-    session_path = RAW_SESSION_DIR / filename
-    if not session_path.exists():
-        raise HTTPException(status_code=404, detail="Session file not found")
-
-    # Determine back link based on ?back= query parameter
-    back_param = request.query_params.get("back", "bot")
-    back_links = {
-        "bot": ("/bot/logs", "Back to Bot Logs"),
-        "jobs": ("/jobs", "Back to Jobs"),
-    }
-    back_url, back_label = back_links.get(back_param, back_links["bot"])
-
-    return templates.TemplateResponse(
-        request,
-        "session.html",
-        {
-            "filename": filename,
-            "back_url": back_url,
-            "back_label": back_label,
-        },
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -243,27 +206,6 @@ def api_events(
             for e in events
             if e.get("exit_code", 0) == 0 and e.get("event") != "error"
         ]
-
-    return events
-
-
-@api_router.get("/session/{filename}")
-def api_session(filename: str):
-    """Read a session JSONL file and return events as a JSON array."""
-    _validate_session_filename(filename)
-    session_path = RAW_SESSION_DIR / filename
-    if not session_path.exists():
-        raise HTTPException(status_code=404, detail="Session file not found")
-
-    events = []
-    for line in session_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
 
     return events
 

@@ -364,7 +364,7 @@ function renderInvocationTable(events, container) {
     let html = `<table class="log-table"><thead><tr><th>Time</th><th>Caller</th><th>Duration</th><th>Exit</th><th>Turns</th><th>Tokens In</th><th>Tokens Out</th><th></th></tr></thead><tbody>`;
     events.forEach((e, i) => {
         const isError = e.exit_code !== 0;
-        const sessionLink = e.session_file ? `<a class="session-link" href="/bot/session/${encodeURIComponent(e.session_file)}?back=bot" onclick="event.stopPropagation()">View session</a>` : '';
+        const sessionLink = e.session_file ? `<a class="session-link" href="/session/${encodeURIComponent(e.session_file)}?back=bot" onclick="event.stopPropagation()">View session</a>` : '';
         html += `<tr class="clickable ${isError ? 'error' : ''}" onclick="toggleDetail(${i})">
             <td title="${utcString(e.timestamp)}">${formatDateTime(e.timestamp)}</td>
             <td>${escapeHtml(e.caller || '—')}</td>

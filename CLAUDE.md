@@ -44,6 +44,7 @@ merlin/
 ├── files/                     # File browser module
 ├── terminal/                  # Web terminal module (xterm.js + tmux)
 ├── commits/                   # Git commit browser module
+├── sessions/                  # Session transcript viewer (core module, /session/{file})
 ├── notes/                     # Notes editor module (markdown)
 │   └── commands/              # merlin notes search / kb / remember commands
 ├── skills/                    # Core operational skills (jobs/, notes/, dashboard/, self-awareness/) — always active, aggregated regardless of the bot
@@ -56,7 +57,7 @@ merlin/
 │   ├── discord_directives.md  # Canonical Discord style overlay
 │   ├── discord_send.py        # Discord REST API transport (used by bot + merlin chat)
 │   ├── jobs/                  # Job files (*.json)
-│   ├── templates/             # Bot-specific templates (bot.html with tabs, session.html)
+│   ├── templates/             # Bot-specific templates (bot.html with tabs)
 │   ├── skills/                # Bot-gated skills (discord/) — only active when the bot is enabled
 │   ├── .env                   # Bot token (gitignored)
 │   ├── tests/                 # Bot-specific tests
