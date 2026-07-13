@@ -569,7 +569,9 @@ def main() -> None:
 # ---------------------------------------------------------------------------
 
 from merlin_app import (  # noqa: F401
-    merlin_app_router as router,
+    api_router,
+    page_router,
+    URL_SLUG,
     MERLIN_APP_NAV_ITEMS as NAV_ITEMS,
     MERLIN_APP_STATIC_DIR as STATIC_DIR,
 )

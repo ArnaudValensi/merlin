@@ -1,7 +1,9 @@
 """Merlin Bot app — monitoring pages that plug into the Merlin dashboard.
 
 Exports:
-    merlin_app_router: FastAPI APIRouter with monitoring pages + API endpoints
+    api_router: API endpoints, mounted by the framework at /api/bot
+    page_router: monitoring pages, mounted by the framework at /bot
+    URL_SLUG: "bot" — the /bot + /api/bot namespace
     MERLIN_APP_NAV_ITEMS: Nav items to add to the sidebar
     MERLIN_APP_STATIC_DIR: Static files directory (None — uses root statics)
     BOT_START_TIME: Set by merlin_bot.py when the bot starts
@@ -29,7 +31,12 @@ BOT_START_TIME: datetime | None = None
 
 templates = make_templates(_SCRIPT_DIR / "templates")
 
-merlin_app_router = APIRouter()
+# URL_SLUG="bot" — the module id is "merlin-bot" but its pages live under
+# /bot. api_router → /api/bot, page_router → /bot (both authed).
+URL_SLUG = "bot"
+
+api_router = APIRouter()
+page_router = APIRouter()
 
 # No static dir — monitoring pages use the root dashboard.css/js
 MERLIN_APP_STATIC_DIR = None
@@ -89,24 +96,24 @@ def _parse_ts(event: dict) -> datetime | None:
 # ---------------------------------------------------------------------------
 
 
-@merlin_app_router.get("/bot", response_class=HTMLResponse)
+@page_router.get("", response_class=HTMLResponse)
 def bot_page(request: Request):
     return templates.TemplateResponse(request, "bot.html", {"active_tab": "overview"})
 
 
-@merlin_app_router.get("/bot/performance", response_class=HTMLResponse)
+@page_router.get("/performance", response_class=HTMLResponse)
 def bot_performance_page(request: Request):
     return templates.TemplateResponse(
         request, "bot.html", {"active_tab": "performance"}
     )
 
 
-@merlin_app_router.get("/bot/logs", response_class=HTMLResponse)
+@page_router.get("/logs", response_class=HTMLResponse)
 def bot_logs_page(request: Request):
     return templates.TemplateResponse(request, "bot.html", {"active_tab": "logs"})
 
 
-@merlin_app_router.get("/session/{filename}", response_class=HTMLResponse)
+@page_router.get("/session/{filename}", response_class=HTMLResponse)
 def session_page(request: Request, filename: str):
     _validate_session_filename(filename)
     session_path = RAW_SESSION_DIR / filename
@@ -137,7 +144,7 @@ def session_page(request: Request, filename: str):
 # ---------------------------------------------------------------------------
 
 
-@merlin_app_router.get("/api/health")
+@api_router.get("/health")
 def api_health():
     """System health summary."""
     now = datetime.now(tz=timezone.utc)
@@ -193,7 +200,7 @@ def api_health():
     }
 
 
-@merlin_app_router.get("/api/invocations")
+@api_router.get("/invocations")
 def api_invocations(
     since: str | None = Query(None, description="ISO 8601 start time"),
     until: str | None = Query(None, description="ISO 8601 end time"),
@@ -211,7 +218,7 @@ def api_invocations(
     return events
 
 
-@merlin_app_router.get("/api/events")
+@api_router.get("/events")
 def api_events(
     event_type: str | None = Query(
         None, alias="type", description="Filter by event type"
@@ -240,7 +247,7 @@ def api_events(
     return events
 
 
-@merlin_app_router.get("/api/session/{filename}")
+@api_router.get("/session/{filename}")
 def api_session(filename: str):
     """Read a session JSONL file and return events as a JSON array."""
     _validate_session_filename(filename)
@@ -261,7 +268,7 @@ def api_session(filename: str):
     return events
 
 
-@merlin_app_router.get("/api/last-modified")
+@api_router.get("/last-modified")
 def api_last_modified():
     """Return the mtime of engine-log.jsonl for smart refresh."""
     if not ENGINE_LOG_PATH.exists():

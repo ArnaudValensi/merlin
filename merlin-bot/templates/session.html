@@ -24,7 +24,7 @@ const SESSION_FILE = "{{ filename }}";
 const COLLAPSE_THRESHOLD = 12;
 
 async function loadSession() {
-    const events = await API.get('/api/session/' + encodeURIComponent(SESSION_FILE));
+    const events = await API.get('/api/bot/session/' + encodeURIComponent(SESSION_FILE));
     if (!events || !events.length) {
         document.getElementById('session-timeline').innerHTML = `
             <div class="empty-state">

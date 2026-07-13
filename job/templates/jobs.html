@@ -1297,7 +1297,7 @@ const Jobs = {
                 ? '<span class="feed-badge badge-error">Error</span>'
                 : '<span class="feed-badge badge-success">OK</span>';
             const sessionLink = e.session_file
-                ? `<a class="session-link" href="/session/${encodeURIComponent(e.session_file)}?back=jobs" onclick="event.stopPropagation()">View session</a>`
+                ? `<a class="session-link" href="/bot/session/${encodeURIComponent(e.session_file)}?back=jobs" onclick="event.stopPropagation()">View session</a>`
                 : '';
             html += `<tr class="clickable ${isError ? 'error' : ''}" onclick="Jobs.toggleLogRow(${i}, '${e.job_id || ''}', '${ts}')" title="${utcString(ts)}">
                 <td>${time}</td>

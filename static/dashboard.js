@@ -11,7 +11,7 @@ const API = {
     }
 };
 
-// Smart auto-refresh: poll /api/last-modified, only refresh when data changes
+// Smart auto-refresh: poll /api/bot/last-modified, only refresh when data changes
 const Refresh = {
     _lastMtime: null,
     _interval: null,
@@ -26,7 +26,7 @@ const Refresh = {
     },
 
     async _check() {
-        const data = await API.get('/api/last-modified');
+        const data = await API.get('/api/bot/last-modified');
         if (!data) return;
         if (this._lastMtime !== null && data.mtime !== this._lastMtime) {
             for (const cb of this._callbacks) {

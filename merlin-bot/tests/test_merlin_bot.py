@@ -645,10 +645,12 @@ class TestVoiceMessages:
 class TestPluginInterface:
     """Verify merlin_bot.py exports the plugin interface main.py expects."""
 
-    def test_router_is_api_router(self):
+    def test_exports_contract_routers(self):
         from fastapi import APIRouter
 
-        assert isinstance(merlin.router, APIRouter)
+        assert isinstance(merlin.api_router, APIRouter)
+        assert isinstance(merlin.page_router, APIRouter)
+        assert merlin.URL_SLUG == "bot"
 
     def test_nav_items_is_list(self):
         assert isinstance(merlin.NAV_ITEMS, list)
