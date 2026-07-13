@@ -424,7 +424,7 @@ terminal/
 ```
 job/
 ├── routes.py             # /jobs page + REST API
-├── tz.py                 # cron_timezone() — shared UTC-fallback tz resolver
+├── tz.py                 # job_timezone_default() — shared UTC-fallback tz resolver
 └── templates/jobs.html   # Jobs/Performance/Logs tabs + create/edit modal
 ```
 
@@ -450,7 +450,7 @@ job/
   (`Intl.DateTimeFormat().resolvedOptions().timeZone`) for new jobs, or the stored zone
   when editing. It is sent to the preview endpoint and saved as the job's `timezone`, so
   schedules are DST-aware (17:00 stays 17:00 across the time change). Jobs without a
-  timezone fall back to the server-wide `CRON_TIMEZONE`. Cards show the zone when set.
+  timezone fall back to the server-wide `JOB_TIMEZONE`. Cards show the zone when set.
 - **Action toggle.** A segmented control (`.segmented`, `#field-type`) switches between
   **Agent prompt** (textarea + agent-only options grouped under an "Advanced"
   disclosure: Max turns, Session mode) and **Shell command** (command textarea +

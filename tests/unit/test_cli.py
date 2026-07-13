@@ -436,7 +436,7 @@ class TestCliRouting:
 # ---------------------------------------------------------------------------
 
 
-class TestCronDelegation:
+class TestJobDelegation:
     def test_job_routes_to_manage(self, monkeypatch, capsys):
         import job.manage
 

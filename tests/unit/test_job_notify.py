@@ -96,7 +96,7 @@ def _sample_result(**overrides) -> dict:
 # ---------------------------------------------------------------------------
 
 
-class TestNotifyCronResult:
+class TestNotifyJobResult:
     """Tests for the top-level notify_job_result function."""
 
     def test_bot_loaded_channel_configured(self):

@@ -47,7 +47,8 @@ timezone, and the generated cron expression.
 
 Each job has its own timezone, defaulting to your browser's. Schedules are
 DST-aware: a 17:00 job stays at 17:00 wall-clock across the time change. The
-server-wide default comes from `CRON_TIMEZONE`.
+server-wide default comes from `JOB_TIMEZONE` (the old `CRON_TIMEZONE` name is
+still accepted as a deprecated alias).
 
 ### Webhook
 
@@ -243,7 +244,7 @@ to the knowledge base, and the next scheduled run reads them. See
   prompt).
 - **"A job with this ID already exists"**: job IDs are unique; pick another.
 - **Wrong timezone behavior**: an invalid per-job timezone falls back to the
-  server default. An invalid server-wide `CRON_TIMEZONE` shows up as
+  server default. An invalid server-wide `JOB_TIMEZONE` shows up as
   recurring scheduler crashes (the red banner) while schedule previews fall
   back to UTC; fix the value in `config.env`.
 - **Truncated output**: the log viewer caps run output at 100KB with an

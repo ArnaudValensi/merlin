@@ -48,8 +48,8 @@ _SCRIPT_DIR = Path(__file__).parent.resolve()
 
 load_dotenv(paths.bot_config_path())
 
-# Timezone for interpreting cron schedules. Loaded lazily in _validate_config().
-CRON_TZ: ZoneInfo | None = None
+# Timezone for interpreting job schedules. Loaded lazily in _validate_config().
+JOB_TZ: ZoneInfo | None = None
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -165,16 +165,16 @@ def load_all_jobs() -> dict[str, dict]:
 
 def _now() -> datetime:
     """Current time in the configured timezone (or system local if unset)."""
-    if CRON_TZ:
-        return datetime.now(tz=CRON_TZ)
+    if JOB_TZ:
+        return datetime.now(tz=JOB_TZ)
     return datetime.now(tz=timezone.utc)
 
 
 def job_timezone(job: dict) -> ZoneInfo | None:
     """Resolve a job's scheduling timezone.
 
-    Order: per-job ``timezone`` (if set and valid) -> server-wide ``CRON_TZ``
-    (from ``CRON_TIMEZONE``) -> None (meaning system/UTC, unchanged behavior).
+    Order: per-job ``timezone`` (if set and valid) -> server-wide ``JOB_TZ``
+    (from ``JOB_TIMEZONE``) -> None (meaning system/UTC, unchanged behavior).
     """
     name = job.get("timezone")
     if name:
@@ -182,7 +182,7 @@ def job_timezone(job: dict) -> ZoneInfo | None:
             return ZoneInfo(name)
         except Exception:
             logger.warning("Job has invalid timezone %r, using server default", name)
-    return CRON_TZ
+    return JOB_TZ
 
 
 def is_job_due(
@@ -195,7 +195,7 @@ def is_job_due(
     """Check if a job is due to run based on schedule and last run time.
 
     The schedule is interpreted in ``tz`` (the job's timezone) when given, else
-    the server-wide ``CRON_TZ``. Interpreting in a DST-aware zone keeps a
+    the server-wide ``JOB_TZ``. Interpreting in a DST-aware zone keeps a
     wall-clock schedule (e.g. "0 17 * * *" = 17:00 local) stable across DST.
 
     Includes staleness window and never-seen guard:
@@ -217,7 +217,7 @@ def is_job_due(
 
     # Normalize to the scheduling timezone so croniter interprets the schedule
     # in the right timezone (e.g. "30 7" = 7:30 local, not 7:30 UTC).
-    effective_tz = tz or CRON_TZ
+    effective_tz = tz or JOB_TZ
     if effective_tz:
         last_run = last_run.astimezone(effective_tz)
         now = now.astimezone(effective_tz)
@@ -651,7 +651,7 @@ def run_dispatcher() -> None:
 
 def _validate_config() -> None:
     """Validate required configuration at startup. Fails fast with helpful messages."""
-    global CRON_TZ
+    global JOB_TZ
     env_path = paths.bot_config_path()
     errors: list[str] = []
 
@@ -662,17 +662,18 @@ def _validate_config() -> None:
             f"    cp {_SCRIPT_DIR / '.env.example'} {env_path}"
         )
 
-    tz_name = os.getenv("CRON_TIMEZONE")
+    # CRON_TIMEZONE is the deprecated alias, still honored for back-compat.
+    tz_name = os.getenv("JOB_TIMEZONE") or os.getenv("CRON_TIMEZONE")
     if tz_name:
         try:
-            CRON_TZ = ZoneInfo(tz_name)
+            JOB_TZ = ZoneInfo(tz_name)
         except (KeyError, Exception):
             errors.append(
-                f"Invalid CRON_TIMEZONE={tz_name!r}\n"
+                f"Invalid JOB_TIMEZONE={tz_name!r}\n"
                 "  Use a valid IANA timezone name, e.g.:\n"
-                "    CRON_TIMEZONE=Europe/Paris\n"
-                "    CRON_TIMEZONE=America/New_York\n"
-                "    CRON_TIMEZONE=UTC\n"
+                "    JOB_TIMEZONE=Europe/Paris\n"
+                "    JOB_TIMEZONE=America/New_York\n"
+                "    JOB_TIMEZONE=UTC\n"
                 "  Full list: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones"
             )
 
@@ -711,7 +712,7 @@ Job file format (jobs/<job-id>.json):
   {
     "description": "Human-readable summary",
     "schedule": "0 9 * * *",       # Cron expression
-    "timezone": "Europe/Paris",    # Optional IANA zone; default CRON_TIMEZONE then UTC
+    "timezone": "Europe/Paris",    # Optional IANA zone; default JOB_TIMEZONE then UTC
     "type": "prompt",              # "prompt" (agent, default) or "command" (shell)
     "prompt": "Task for Claude",   # Prompt jobs: what to ask the agent
     "command": "echo hi",          # Command jobs: shell command run via bash -lc

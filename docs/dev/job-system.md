@@ -88,7 +88,7 @@ Job ID is the filename without `.json` (e.g., `daily-digest.json` -> job ID `dai
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `schedule` | string | `null` | Optional 5-field cron expression (via `croniter`). Absent = no schedule trigger (webhook- or manual-only job) |
-| `timezone` | string | `null` | IANA zone the schedule is interpreted in (e.g. `Europe/Paris`). `null` = fall back to server-wide `CRON_TIMEZONE`, then UTC. DST-aware (see below) |
+| `timezone` | string | `null` | IANA zone the schedule is interpreted in (e.g. `Europe/Paris`). `null` = fall back to server-wide `JOB_TIMEZONE`, then UTC. DST-aware (see below) |
 | `type` | string | `"prompt"` | Job action type: `"prompt"` (agent) or `"command"` (shell). Absent = `"prompt"` (backward compatible) |
 | `prompt` | string | required for `prompt` jobs | Prompt sent to the engine (no delivery instructions — engine is a black box) |
 | `command` | string | required for `command` jobs | Shell command run via `bash -lc` (see Command Jobs below) |
@@ -170,7 +170,7 @@ Standard 5-field cron format parsed by `croniter`:
 * * * * *
 ```
 
-**Timezone**: Each job carries an optional per-job `timezone` (IANA name). The runner resolves a job's zone in order: per-job `timezone` → server-wide `CRON_TIMEZONE` (`.env`) → UTC (`runner.py:job_timezone()`). `is_job_due()` interprets the schedule in that zone, so a wall-clock schedule like `0 17 * * *` fires at 17:00 **local** and stays 17:00 across DST transitions (storing local-time + zone, not a frozen UTC offset). The shared helper `job/tz.py:cron_timezone()` resolves the server-wide default (UTC fallback) and is used by the preview/enrich helpers in `routes.py`, which prefer the job's own zone — so the dashboard's next-run preview and the cards' "Next" reflect when the job actually fires. The modal's timezone selector defaults to the browser's zone for new jobs.
+**Timezone**: Each job carries an optional per-job `timezone` (IANA name). The runner resolves a job's zone in order: per-job `timezone` → server-wide `JOB_TIMEZONE` (`.env`; the old `CRON_TIMEZONE` name is still honored) → UTC (`runner.py:job_timezone()`). `is_job_due()` interprets the schedule in that zone, so a wall-clock schedule like `0 17 * * *` fires at 17:00 **local** and stays 17:00 across DST transitions (storing local-time + zone, not a frozen UTC offset). The shared helper `job/tz.py:job_timezone_default()` resolves the server-wide default (UTC fallback) and is used by the preview/enrich helpers in `routes.py`, which prefer the job's own zone — so the dashboard's next-run preview and the cards' "Next" reflect when the job actually fires. The modal's timezone selector defaults to the browser's zone for new jobs.
 
 > **DST edge**: on a "spring-forward" day a wall-clock time in the skipped hour (e.g. 02:30 where the clock jumps 02:00→03:00) resolves to the next valid instant; this is `croniter`/`zoneinfo` behavior and is acceptable.
 

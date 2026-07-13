@@ -18,7 +18,7 @@ def temp_jobs_dir(tmp_path):
         "state_dir": job_state.STATE_DIR,
         "locks_dir": job_state.LOCKS_DIR,
         "history_file": job_state.HISTORY_FILE,
-        "job_tz": job_runner.CRON_TZ,
+        "job_tz": job_runner.JOB_TZ,
     }
     job_runner.JOBS_DIR = tmp_path
     job_state.STATE_DIR = tmp_path / ".state"
@@ -29,7 +29,7 @@ def temp_jobs_dir(tmp_path):
     job_state.STATE_DIR = orig["state_dir"]
     job_state.LOCKS_DIR = orig["locks_dir"]
     job_state.HISTORY_FILE = orig["history_file"]
-    job_runner.CRON_TZ = orig["job_tz"]
+    job_runner.JOB_TZ = orig["job_tz"]
 
 
 class TestJobTimezone:
@@ -38,18 +38,18 @@ class TestJobTimezone:
 
         assert job_timezone({"timezone": "Europe/Paris"}) == ZoneInfo("Europe/Paris")
 
-    def test_invalid_falls_back_to_cron_tz(self, monkeypatch):
+    def test_invalid_falls_back_to_job_tz(self, monkeypatch):
         from job import runner as job_runner
 
-        monkeypatch.setattr(job_runner, "CRON_TZ", ZoneInfo("America/New_York"))
+        monkeypatch.setattr(job_runner, "JOB_TZ", ZoneInfo("America/New_York"))
         assert job_runner.job_timezone({"timezone": "Bogus/Zone"}) == ZoneInfo(
             "America/New_York"
         )
 
-    def test_no_timezone_uses_cron_tz(self, monkeypatch):
+    def test_no_timezone_uses_job_tz(self, monkeypatch):
         from job import runner as job_runner
 
-        monkeypatch.setattr(job_runner, "CRON_TZ", None)
+        monkeypatch.setattr(job_runner, "JOB_TZ", None)
         assert job_runner.job_timezone({}) is None
 
 

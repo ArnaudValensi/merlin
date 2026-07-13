@@ -223,7 +223,7 @@ async def _resolve_session(
         starter_session = get_message_session(thread_id)
         if starter_session:
             logger.info(
-                "Cron continuation: thread %s → session %s", thread_id, starter_session
+                "Job continuation: thread %s → session %s", thread_id, starter_session
             )
             set_thread_session(thread_id, starter_session)
             return thread_id, parent_id, starter_session, False

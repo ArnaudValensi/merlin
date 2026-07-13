@@ -1,5 +1,5 @@
 """
-Cron core module — scheduler loop and runner subprocess.
+Job core module — scheduler loop and runner subprocess.
 
 The scheduler runs job/runner.py at the start of every minute,
 replacing the system cron dependency. Started from main.py as a
@@ -82,7 +82,7 @@ async def _run_job_runner() -> None:
         )
 
         logger.error(
-            "Cron runner crashed (exit %d, %.1fs): %s",
+            "Job runner crashed (exit %d, %.1fs): %s",
             proc.returncode,
             duration,
             error_msg[:200],

@@ -25,10 +25,10 @@ templates = make_templates(_JOB_DIR / "templates")
 
 def _job_tz(job: dict):
     """Resolve a job's scheduling timezone: per-job `timezone` if set and valid,
-    otherwise the server-wide `CRON_TIMEZONE` (UTC fallback)."""
+    otherwise the server-wide `JOB_TIMEZONE` (UTC fallback)."""
     from zoneinfo import ZoneInfo
 
-    from job.tz import cron_timezone
+    from job.tz import job_timezone_default
 
     name = job.get("timezone")
     if name:
@@ -36,14 +36,14 @@ def _job_tz(job: dict):
             return ZoneInfo(name)
         except Exception:
             pass
-    return cron_timezone()
+    return job_timezone_default()
 
 
 def _enrich_job(job: dict) -> dict:
     """Add last_run and next_run to a job dict.
 
     next_run is computed in the job's scheduling timezone (per-job `timezone`,
-    else `CRON_TIMEZONE`) so the card's "Next" matches the time the job fires.
+    else `JOB_TIMEZONE`) so the card's "Next" matches the time the job fires.
     """
     from croniter import croniter
 
@@ -410,14 +410,14 @@ def validate_schedule(request_body: dict):
     """Validate a cron expression and return next 3 run times.
 
     Runs are computed and preformatted in the requested timezone (the modal
-    sends the job's selected timezone; falls back to CRON_TIMEZONE, then UTC),
+    sends the job's selected timezone; falls back to JOB_TIMEZONE, then UTC),
     so the preview reflects when the job actually fires.
     """
     from zoneinfo import ZoneInfo
 
     from croniter import croniter
 
-    from job.tz import cron_timezone
+    from job.tz import job_timezone_default
 
     schedule = request_body.get("schedule", "")
     tz_name = request_body.get("timezone")
@@ -425,9 +425,9 @@ def validate_schedule(request_body: dict):
         try:
             tz = ZoneInfo(tz_name)
         except Exception:
-            tz = cron_timezone()
+            tz = job_timezone_default()
     else:
-        tz = cron_timezone()
+        tz = job_timezone_default()
     try:
         c = croniter(schedule, datetime.now(tz=tz))
         next_runs = []

@@ -1,4 +1,4 @@
-"""Cron notification — delivers engine results to Discord.
+"""Job notification — delivers engine results to Discord.
 
 The engine has no notion of Discord. It returns text output.
 This module decides whether and how to deliver that output.

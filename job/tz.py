@@ -1,9 +1,10 @@
-"""Shared timezone helper for cron-expression scheduling.
+"""Shared timezone helper for job scheduling.
 
-Both the preview endpoint (routes.py) and the runner interpret cron schedules
-in the timezone named by ``CRON_TIMEZONE`` (default UTC). This module is the
-single source of truth for resolving that timezone, so the preview shown in the
-UI matches when jobs actually fire.
+Both the preview endpoint (routes.py) and the runner interpret job schedules
+in the timezone named by ``JOB_TIMEZONE`` (default UTC; the old ``CRON_TIMEZONE``
+name is still honored as a deprecated alias). This module is the single source
+of truth for resolving that timezone, so the preview shown in the UI matches
+when jobs actually fire.
 """
 
 from __future__ import annotations
@@ -17,12 +18,14 @@ from dotenv import load_dotenv
 load_dotenv(paths.bot_config_path())
 
 
-def cron_timezone() -> ZoneInfo:
-    """Return the configured cron timezone, or UTC if unset/invalid.
+def job_timezone_default() -> ZoneInfo:
+    """Return the configured job timezone, or UTC if unset/invalid.
 
-    Pure aside from reading ``CRON_TIMEZONE`` from the environment.
+    Pure aside from reading ``JOB_TIMEZONE`` (or the deprecated ``CRON_TIMEZONE``
+    alias) from the environment.
     """
-    name = os.getenv("CRON_TIMEZONE")
+    # CRON_TIMEZONE is the deprecated alias, still honored for back-compat.
+    name = os.getenv("JOB_TIMEZONE") or os.getenv("CRON_TIMEZONE")
     if not name:
         return ZoneInfo("UTC")
     try:

@@ -84,7 +84,7 @@ def _create_job(jobs_dir: Path, job_id: str = "test-job", **overrides) -> None:
 # ---------------------------------------------------------------------------
 
 
-class TestCronPageRoute:
+class TestJobPageRoute:
     """Test GET /jobs returns the page."""
 
     def test_jobs_page_returns_200(self, client):
@@ -93,7 +93,7 @@ class TestCronPageRoute:
 
     def test_jobs_page_contains_heading(self, client):
         resp = client.get("/jobs")
-        assert "Cron Jobs" in resp.text
+        assert "Jobs" in resp.text
 
     def test_jobs_page_html_content_type(self, client):
         resp = client.get("/jobs")
@@ -131,8 +131,8 @@ class TestCronPageRoute:
         assert "+ New Job" in resp.text
 
 
-class TestCronNavItem:
-    """Test that the Cron nav item appears in the sidebar."""
+class TestJobNavItem:
+    """Test that the Job nav item appears in the sidebar."""
 
     def test_nav_item_in_sidebar(self, client):
         resp = client.get("/jobs")
@@ -140,10 +140,10 @@ class TestCronNavItem:
 
     def test_nav_item_label(self, client):
         resp = client.get("/jobs")
-        assert "Cron" in resp.text
+        assert "Jobs" in resp.text
 
     def test_nav_item_present_on_other_pages(self, client):
-        """Cron nav item should be on all pages (it's a core nav item)."""
+        """Job nav item should be on all pages (it's a core nav item)."""
         resp = client.get("/extensions")
         assert 'href="/jobs"' in resp.text
 

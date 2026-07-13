@@ -1,5 +1,5 @@
 """
-Cron job management script — create, list, edit, enable/disable, remove jobs.
+Job management script — create, list, edit, enable/disable, remove jobs.
 
 Used by the jobs skill to ensure reliable, validated operations.
 """

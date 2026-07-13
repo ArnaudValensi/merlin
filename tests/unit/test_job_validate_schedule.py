@@ -25,6 +25,7 @@ def client():
 
 
 def test_valid_returns_human_timezone_and_runs(client, monkeypatch):
+    monkeypatch.delenv("JOB_TIMEZONE", raising=False)
     monkeypatch.delenv("CRON_TIMEZONE", raising=False)
     resp = client.post("/api/job/validate-schedule", json={"schedule": "0 9 * * *"})
     assert resp.status_code == 200
@@ -39,8 +40,9 @@ def test_valid_returns_human_timezone_and_runs(client, monkeypatch):
 
 
 def test_timezone_reflected_in_runs(client, monkeypatch):
-    """With CRON_TIMEZONE=Europe/Paris the runs are formatted in Paris time."""
-    monkeypatch.setenv("CRON_TIMEZONE", "Europe/Paris")
+    """With JOB_TIMEZONE=Europe/Paris the runs are formatted in Paris time."""
+    monkeypatch.delenv("CRON_TIMEZONE", raising=False)
+    monkeypatch.setenv("JOB_TIMEZONE", "Europe/Paris")
     resp = client.post("/api/job/validate-schedule", json={"schedule": "0 9 * * *"})
     data = resp.json()
     assert data["valid"] is True
@@ -52,6 +54,7 @@ def test_timezone_reflected_in_runs(client, monkeypatch):
 
 def test_request_timezone_overrides_default(client, monkeypatch):
     """A timezone in the request body is used and echoed back."""
+    monkeypatch.delenv("JOB_TIMEZONE", raising=False)
     monkeypatch.delenv("CRON_TIMEZONE", raising=False)
     resp = client.post(
         "/api/job/validate-schedule",
@@ -66,6 +69,7 @@ def test_request_timezone_overrides_default(client, monkeypatch):
 
 def test_invalid_request_timezone_falls_back(client, monkeypatch):
     """An invalid timezone in the request falls back to the server default."""
+    monkeypatch.delenv("JOB_TIMEZONE", raising=False)
     monkeypatch.delenv("CRON_TIMEZONE", raising=False)
     resp = client.post(
         "/api/job/validate-schedule",
