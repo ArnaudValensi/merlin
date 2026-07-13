@@ -301,6 +301,26 @@ class TestApiGitRepos:
         assert resp.status_code == 200
         assert len(resp.json()) == 2
 
+    def test_repos_not_shadowed_by_commit_hash_route(self, client):
+        """Invariant: /repos must be registered before /{commit_hash} so
+        "repos" is matched as a literal, not captured as a commit hash. If the
+        route functions are ever reordered, this reaches api_commit_detail and
+        fails hash validation (400) instead of the repos handler. With
+        FD_BINARY unset the repos handler returns 500 "fd is not available" —
+        which is exactly the proof it resolved to api_git_repos, not to
+        _validate_hash("repos").
+        """
+        import main as _main
+
+        old_fd = _main.FD_BINARY
+        _main.FD_BINARY = ""
+        try:
+            resp = client.get("/api/commits/repos")
+        finally:
+            _main.FD_BINARY = old_fd
+        assert resp.status_code == 500
+        assert "fd is not available" in resp.json()["detail"]
+
 
 # ---------------------------------------------------------------------------
 # Page routes

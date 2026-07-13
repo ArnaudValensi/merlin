@@ -65,7 +65,8 @@ NAV_ITEMS = [
     {"url": "/scenes", "icon": '<svg .../>', "label": "Scenes"},
 ]
 
-# Optional — static files directory
+# Optional — static files directory, mounted at /static/{id} (keyed by the
+# extension id, NOT URL_SLUG; reference assets by the folder id)
 STATIC_DIR = Path(__file__).parent / "static"
 
 # Optional — metadata for the Extensions page

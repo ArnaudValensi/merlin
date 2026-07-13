@@ -790,7 +790,9 @@ def mount_module(
 
     - ``api_router``  → ``/api/{slug}``, wrapped in ``require_auth``
     - ``page_router`` → ``/{slug}``, wrapped in ``require_auth``
-    - ``STATIC_DIR``  → ``/static/{static_name or module_id}``
+    - ``STATIC_DIR``  → ``/static/{static_name or module_id}`` — statics are
+      keyed by the module id (or ``static_name`` override), NOT the slug, so a
+      module's assets stay put even if its ``URL_SLUG`` differs from its id
     - ``register_routes(app)`` — the escape hatch: the module registers
       anything the contract can't express (WebSockets, ...) directly on the
       app and OWNS the path AND the auth for whatever it registers. Its use is
@@ -802,6 +804,7 @@ def mount_module(
     ``main.py``) and extensions (via the loader), so their wiring is identical.
     """
     slug = getattr(module, "URL_SLUG", module_id)
+    mounted_something = False
 
     api_router = getattr(module, "api_router", None)
     if api_router is not None:
@@ -810,6 +813,7 @@ def mount_module(
             prefix=f"/api/{slug}",
             dependencies=[Depends(require_auth)],
         )
+        mounted_something = True
 
     page_router = getattr(module, "page_router", None)
     if page_router is not None:
@@ -818,6 +822,7 @@ def mount_module(
             prefix=f"/{slug}",
             dependencies=[Depends(require_auth)],
         )
+        mounted_something = True
 
     static_dir = getattr(module, "STATIC_DIR", None)
     if static_dir:
@@ -827,16 +832,31 @@ def mount_module(
             StaticFiles(directory=str(static_dir)),
             name=f"{mount_name}-static",
         )
+        mounted_something = True
 
     register_routes = getattr(module, "register_routes", None)
     if register_routes is not None:
         register_routes(app)
+        mounted_something = True
         # Auditable at a glance: everything else under /api/{slug} and /{slug}
         # is authed by the framework; this is the one place a module takes
         # ownership of its own paths and auth.
         logger.info(
             "Module '%s' used register_routes(app) escape hatch "
             "(owns its own path + auth for self-registered routes)",
+            module_id,
+        )
+
+    # A module still on the pre-migration contract exports a bare `router`,
+    # which is no longer recognized — it would otherwise load as healthy while
+    # serving nothing. Surface that loudly instead of failing silently. (A
+    # commands/skills-only extension legitimately contributes no routes and has
+    # no `router`, so it stays quiet.)
+    if not mounted_something and getattr(module, "router", None) is not None:
+        logger.warning(
+            "Module '%s' exposes a legacy `router` attribute but no "
+            "api_router/page_router/register_routes, so it serves NO routes. "
+            "Migrate it to the api_router/page_router contract.",
             module_id,
         )
 

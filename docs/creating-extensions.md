@@ -166,7 +166,10 @@ serves `/api/{slug}/items`.
   must.
 - `NAV_ITEMS` (optional): sidebar entries, `[{"url", "icon", "label"}]`.
 - `STATIC_DIR` (optional): static assets directory, served at
-  `/static/{slug}`.
+  `/static/{id}` — keyed by the extension folder id, **not** `URL_SLUG`. So
+  a folder `video-scenes` with `URL_SLUG = "scenes"` serves pages at
+  `/scenes` but assets at `/static/video-scenes`; reference them by the
+  folder id in your templates.
 - `EXTENSION_META` (optional): `{"name", "description", "icon",
   "config_fields"}`. This is the server-side identity card: it feeds the
   Extensions page listing and declares config fields (key, label, type,

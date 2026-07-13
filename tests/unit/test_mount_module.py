@@ -171,9 +171,11 @@ def test_register_routes_usage_is_logged(monkeypatch, caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_router_is_ignored(monkeypatch, client):
+def test_legacy_router_is_ignored_and_warns(monkeypatch, client, caplog):
     """A module exposing only the dropped `router` attribute mounts nothing —
-    the framework mounts api_router/page_router, not a plain router."""
+    the framework mounts api_router/page_router, not a plain router — and the
+    silent no-op is surfaced as a warning so authors aren't left debugging a
+    routeless module."""
     auth.configure("")
     monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
 
@@ -183,7 +185,22 @@ def test_legacy_router_is_ignored(monkeypatch, client):
     def _legacy():
         return {"legacy": True}
 
-    app_mod.mount_module(_make_module(router=legacy), "legacymod")
+    with caplog.at_level("WARNING", logger="merlin"):
+        app_mod.mount_module(_make_module(router=legacy), "legacymod")
 
-    resp = client.get("/legacy/endpoint")
-    assert resp.status_code == 404
+    assert client.get("/legacy/endpoint").status_code == 404
+    assert any(
+        "legacymod" in rec.message and "legacy `router`" in rec.message
+        for rec in caplog.records
+    )
+
+
+def test_no_warning_for_routeless_commands_only_module(monkeypatch, caplog):
+    """A commands/skills-only module exports no routers and no legacy `router`
+    — that's legitimate, so it must NOT warn."""
+    monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
+
+    with caplog.at_level("WARNING", logger="merlin"):
+        app_mod.mount_module(_make_module(NAV_ITEMS=[]), "commandsonly")
+
+    assert not any("commandsonly" in rec.message for rec in caplog.records)
