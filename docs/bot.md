@@ -30,6 +30,9 @@ To get a channel ID, right-click the channel in Discord and pick
 **Copy Channel ID** (requires Developer Mode: Settings > Advanced >
 Developer Mode). Multiple channels are comma-separated.
 
+Steps 4 and 5 can also be done from the dashboard instead of the shell:
+the [Extensions page](extensions.md) edits both fields (next section).
+
 ## Enable it
 
 The bot is disabled by default. Toggle it on the

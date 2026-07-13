@@ -1,8 +1,9 @@
 # Notes
 
 The Notes page is a browser-based markdown editor over Merlin's notes
-directory (`~/.merlin/notes` by default, `~/shared/notes` on Merlin
-Cloud; `merlin config notes-dir` always prints the resolved path). This is the third pillar, the living knowledge base:
+directory (`~/.merlin/notes` by default, `~/shared/notes` on
+[Merlin Cloud](getting-started.md#merlin-cloud); `merlin config notes-dir`
+always prints the resolved path). This is the third pillar, the living knowledge base:
 everything here is plain markdown that your agent reads and writes from
 every channel. A fact you save on this page shapes your agent's next
 [job run](jobs.md) or [chat reply](bot.md), and what your agent learns
@@ -18,8 +19,9 @@ The directory has three layers:
 
 Your agent acts as the curator: it writes atomic notes with tags and
 related links, asks before saving during conversations, and saves
-directly during scheduled runs (its operating rules are in the brain doc,
-printed by `merlin agent`). Scheduled runs start fresh each time, so
+directly during scheduled runs (its operating rules live in the brain
+doc, the operating manual [your agent](agents.md) reads, printed by
+`merlin agent`). Scheduled runs start fresh each time, so
 anything worth keeping lands here, not in session memory. The Notes page
 is your read/write window into that same tree.
 

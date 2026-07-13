@@ -54,13 +54,13 @@ Start here, then one doc per piece of Merlin:
 
 - [Getting started](docs/getting-started.md): install, setup, first run, phone access, update and rollback
 - [Terminal](docs/terminal.md): the web terminal, touch gestures, mobile toolbar, clipboard, voice input
+- [Your agent](docs/agents.md): running Claude Code or OpenCode with Merlin's skills and memory
 - [Files](docs/files.md): file browser, code viewer, image and 3D model preview
 - [Commits](docs/commits.md): git history and diffs, review your agent's work from your phone
 - [Notes](docs/notes.md): the notes editor and your agent's memory (user facts, daily logs, knowledge base)
-- [Jobs](docs/jobs.md): agent runs on a schedule or an incoming webhook, reports, history and performance
+- [Jobs](docs/jobs.md): agent or command runs on a schedule, a webhook, or on demand; reports, history and performance
 - [Discord bot](docs/bot.md): the same agent in your chat, threads, voice messages
 - [Extensions](docs/extensions.md): enable, configure, and audit what your agent can do
-- [Your agent](docs/agents.md): running Claude Code or OpenCode with Merlin's skills and memory
 - [Creating extensions](docs/creating-extensions.md): add your own dashboard pages, `merlin` commands, and agent skills
 - [The merlin CLI](docs/cli.md): drive everything from the shell; the command map, with syntax in `merlin --help`
 - [Contributor docs](docs/dev/development-setup.md): working on Merlin's code; setup and tests first, then [architecture](docs/dev/architecture.md) and the per-system internals

@@ -15,8 +15,8 @@ same brain doc, so every channel gets sharper together.
 Open the terminal (or any shell on the machine) and launch `claude` or
 `opencode`. No per-project setup: Merlin mirrors its canonical skill set
 (`~/.merlin/skills`) as symlinks into `~/.claude/skills` (read by Claude
-Code) and `~/.agents/skills` (the location OpenCode and Pi read), so your
-agent finds Merlin's skills from any working directory. The mirror is
+Code) and `~/.agents/skills` (read by OpenCode and other agent CLIs), so
+your agent finds Merlin's skills from any working directory. The mirror is
 refreshed automatically at every server startup; `merlin setup` refreshes
 it on demand.
 
