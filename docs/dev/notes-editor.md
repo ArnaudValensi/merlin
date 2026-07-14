@@ -23,13 +23,10 @@ notes/
     └── notes.js         # Palette, editor, save, markdown rendering
 ```
 
-Mounted in `main.py`:
-```python
-from notes import router as notes_router
-app.include_router(notes_router)
-```
-
-Static files at `/static/notes/`. Templates extend `base.html`.
+Notes is a built-in extension: it exports `api_router` + `page_router` and is
+mounted by the extension loader through `mount_module` (slug `notes`), so its
+routes live at `/api/notes/*` and `/notes*`. Static files at `/static/notes/`.
+Templates extend `base.html`.
 
 ## Pages & Routes
 

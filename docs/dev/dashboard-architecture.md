@@ -28,11 +28,12 @@ merlin/
 ├── files/                     # File browser module
 ├── terminal/                  # Web terminal module
 ├── commits/                   # Commit browser module
+├── sessions/                  # Session transcript viewer (/session, /api/session)
 ├── notes/                     # Notes editor module
 └── merlin-bot/
     ├── merlin_app.py          # Bot extension: monitoring page with tabs (/bot, /bot/performance, /bot/logs)
     ├── structured_log.py      # JSONL writer (thread-safe, used by all emitters)
-    └── templates/             # Bot-specific templates (bot.html with tabs, session.html)
+    └── templates/             # Bot-specific templates (bot.html with tabs)
 ```
 
 ## Architecture Decisions
@@ -308,26 +309,34 @@ All modules follow the same self-contained structure:
 
 ```
 module/
-├── __init__.py       # Exports router + STATIC_DIR
-├── routes.py         # APIRouter with page routes + API endpoints
+├── __init__.py       # Exports api_router / page_router (+ optional URL_SLUG, STATIC_DIR)
+├── routes.py         # api_router (API) + page_router (pages), no hardcoded prefixes
 ├── templates/        # Jinja2 templates extending base.html
 └── static/           # Module-specific CSS + JS
 ```
 
-Registration in `main.py`:
+Registration in `main.py` — the framework owns namespacing and auth via one
+helper (`mount_module`), used for both core modules and extensions:
 ```python
-from module import router as module_router, MODULE_STATIC_DIR
-app.include_router(module_router, dependencies=[Depends(require_auth)])
-app.mount("/static/module", StaticFiles(directory=str(MODULE_STATIC_DIR)), name="module-static")
+import module
+mount_module(module, "module")
+# api_router  → /api/{slug}  (authed)
+# page_router → /{slug}      (authed)
+# STATIC_DIR  → /static/{id}
+# register_routes(app) → escape hatch for anything the two routers can't express
+# slug = URL_SLUG or the module id
 ```
 
-Static mounts go **before** the general `/static` mount for route priority.
+Routes declare paths **relative** to the slug (`@page_router.get("")` → `/{slug}`,
+`@api_router.get("/x")` → `/api/{slug}/x`). Static mounts happen inside
+`mount_module`, **before** the general `/static` mount, for route priority. See
+[`extension-system.md`](extension-system.md) for the full contract.
 
 ### Notes Editor
 
 ```
 notes/
-├── __init__.py            # Exports router + NOTES_STATIC_DIR
+├── __init__.py            # Exports api_router, page_router, STATIC_DIR
 ├── routes.py              # Pages (/notes, /notes/{path}) + API endpoints
 ├── git_ops.py             # Async git add/commit/push
 ├── frontmatter.py         # YAML frontmatter parser
@@ -347,7 +356,7 @@ notes/
 
 ```
 commits/
-├── __init__.py            # Exports router + COMMITS_STATIC_DIR
+├── __init__.py            # Exports api_router, page_router, STATIC_DIR
 ├── routes.py              # Pages + API endpoints
 ├── git_parser.py          # Git log/diff/show parsing (subprocess calls to git)
 ├── templates/
@@ -371,7 +380,7 @@ commits/
 
 ```
 files/
-├── __init__.py            # Exports router + FILES_STATIC_DIR
+├── __init__.py            # Exports api_router, page_router, STATIC_DIR
 ├── routes.py              # Pages + API endpoints
 ├── fs_helpers.py          # Path validation, directory listing, file reading, type detection
 ├── templates/
@@ -403,8 +412,8 @@ files/
 
 ```
 terminal/
-├── __init__.py            # Exports router
-├── routes.py              # Page route + WebSocket endpoint + voice transcription
+├── __init__.py            # Exports api_router, page_router, register_routes
+├── routes.py              # Pages + API; /ws/terminal WebSocket via register_routes (escape hatch)
 └── templates/
     └── terminal.html      # xterm.js terminal, mobile toolbar, voice input
 ```
@@ -465,7 +474,7 @@ job/
 ## Adding a New Page
 
 1. Create `templates/newpage.html` extending `base.html`
-2. Add route in the appropriate module's `routes.py` (or `main.py` for core pages)
+2. Add the route to the module's `page_router` (relative path, e.g. `@page_router.get("/newpage")` → `/{slug}/newpage`); app-shell pages go in `main.py`
 3. For extensions: export `NAV_ITEMS` from the extension module. For core pages: add to `CORE_NAV_ITEMS` in `main.py`
 4. Use `Refresh.register()` + `Refresh.start()` for live data
 5. Validate with screenshots: `uv run .claude/skills/screenshot/screenshot.py --all http://localhost:3123 --user admin --pass <pass>`
