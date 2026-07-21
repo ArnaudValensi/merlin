@@ -16,6 +16,7 @@ dependencies = [
     "pydantic",
     "python-dotenv",
     "python-multipart",
+    "pyyaml",
     "uvicorn[standard]",
     "zipstream-ng",
 ]

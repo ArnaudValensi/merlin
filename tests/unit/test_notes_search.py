@@ -43,6 +43,7 @@ def kb_with_entries(notes_dir):
     (kb_dir / "docker-setup.md").write_text(
         textwrap.dedent("""\
         ---
+        type: technique
         title: Docker Setup
         created: 2026-01-15
         tags: [devops, docker]
@@ -156,7 +157,7 @@ class TestKbSearch:
         from notes.commands.search import cmd_kb
         import argparse
 
-        args = argparse.Namespace(keyword=None, tag=None, discord=False)
+        args = argparse.Namespace(keyword=None, tag=None, type=None, discord=False)
         cmd_kb(args)
         output = capsys.readouterr().out
         assert "2 entries" in output
@@ -165,11 +166,31 @@ class TestKbSearch:
         # _index.md should be excluded from list
         assert "Knowledge Base Index" not in output
 
+    def test_kb_type_filter(self, kb_with_entries, capsys):
+        from notes.commands.search import cmd_kb
+        import argparse
+
+        args = argparse.Namespace(
+            keyword=None, tag=None, type="technique", discord=False
+        )
+        cmd_kb(args)
+        output = capsys.readouterr().out
+        assert "Docker Setup" in output
+        assert "Tech Gear" not in output
+
+    def test_kb_type_shown_in_results(self, kb_with_entries, capsys):
+        from notes.commands.search import cmd_kb
+        import argparse
+
+        args = argparse.Namespace(keyword=None, tag=None, type=None, discord=False)
+        cmd_kb(args)
+        assert "[technique]" in capsys.readouterr().out
+
     def test_kb_tag_search(self, kb_with_entries, capsys):
         from notes.commands.search import cmd_kb
         import argparse
 
-        args = argparse.Namespace(keyword=None, tag="tech", discord=False)
+        args = argparse.Namespace(keyword=None, tag="tech", type=None, discord=False)
         cmd_kb(args)
         output = capsys.readouterr().out
         assert "Tech Gear" in output
@@ -179,7 +200,9 @@ class TestKbSearch:
         from notes.commands.search import cmd_kb
         import argparse
 
-        args = argparse.Namespace(keyword=None, tag="nonexistent", discord=False)
+        args = argparse.Namespace(
+            keyword=None, tag="nonexistent", type=None, discord=False
+        )
         cmd_kb(args)
         output = capsys.readouterr().out
         assert "no KB entries" in output
@@ -188,7 +211,9 @@ class TestKbSearch:
         from notes.commands.search import cmd_kb
         import argparse
 
-        args = argparse.Namespace(keyword="keyboard", tag=None, discord=False)
+        args = argparse.Namespace(
+            keyword="keyboard", tag=None, type=None, discord=False
+        )
         cmd_kb(args)
         output = capsys.readouterr().out
         assert "Tech Gear" in output
@@ -198,7 +223,9 @@ class TestKbSearch:
         from notes.commands.search import cmd_kb
         import argparse
 
-        args = argparse.Namespace(keyword="nonexistent_xyz", tag=None, discord=False)
+        args = argparse.Namespace(
+            keyword="nonexistent_xyz", tag=None, type=None, discord=False
+        )
         cmd_kb(args)
         output = capsys.readouterr().out
         assert "no KB matches" in output
@@ -207,7 +234,7 @@ class TestKbSearch:
         from notes.commands.search import cmd_kb
         import argparse
 
-        args = argparse.Namespace(keyword=None, tag=None, discord=False)
+        args = argparse.Namespace(keyword=None, tag=None, type=None, discord=False)
         cmd_kb(args)
         output = capsys.readouterr().out
         assert "no KB entries" in output

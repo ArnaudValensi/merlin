@@ -78,6 +78,9 @@ def notes_env(tmp_path, monkeypatch):
     monkeypatch.setattr(notes_search, "KB_DIR", kb_dir)
     monkeypatch.setattr(notes_search, "LOGS_DIR", logs_dir)
     monkeypatch.setattr(kb_add, "KB_DIR", kb_dir)
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+    monkeypatch.setattr(kb_add, "MEDIA_DIR", media_dir)
     monkeypatch.setattr(remember, "USER_MD", user_md)
 
     return tmp_path
@@ -95,10 +98,12 @@ class TestFullFlow:
         # Add a KB entry
         cmd_add(
             argparse.Namespace(
+                type="reference",
                 title="Docker Networking",
                 tags="devops, docker, networking",
-                summary="How container networking works",
+                description="How container networking works",
                 content="Docker uses bridge networks by default. Custom networks isolate services.",
+                resource=None,
                 filename=None,
                 dry_run=False,
                 force=False,
@@ -107,54 +112,63 @@ class TestFullFlow:
         capsys.readouterr()  # clear
 
         # Search should find it by keyword
-        cmd_kb(argparse.Namespace(keyword="bridge", tag=None, discord=False))
+        cmd_kb(argparse.Namespace(keyword="bridge", tag=None, type=None, discord=False))
         output = capsys.readouterr().out
         assert "Docker Networking" in output
 
         # Search should find it by tag
-        cmd_kb(argparse.Namespace(keyword=None, tag="networking", discord=False))
+        cmd_kb(
+            argparse.Namespace(keyword=None, tag="networking", type=None, discord=False)
+        )
         output = capsys.readouterr().out
         assert "Docker Networking" in output
 
-    def test_kb_add_links_related(self, notes_env, capsys):
-        """Create two related KB entries and verify they link to each other."""
+    def test_kb_add_writes_no_links(self, notes_env, capsys):
+        """The command never invents links; the index is refreshed instead."""
         import argparse
         from notes.commands.kb import cmd_add, parse_frontmatter
 
         kb_dir = notes_env / "kb"
 
-        # Create first entry
         cmd_add(
             argparse.Namespace(
+                type="technique",
                 title="Python Testing",
                 tags="python, testing",
-                summary="Python test frameworks",
-                content="Use pytest for testing. Fixtures for setup. Monkeypatch for mocking.",
+                description="Python test frameworks",
+                content="Use pytest for testing.",
+                resource=None,
                 filename=None,
                 dry_run=False,
                 force=False,
             )
         )
-
-        # Create second entry with overlapping tags
         cmd_add(
             argparse.Namespace(
+                type="technique",
                 title="Pytest Fixtures",
                 tags="python, testing, pytest",
-                summary="How to use pytest fixtures",
-                content="Fixtures provide setup and teardown. Use tmp_path for temp files. Monkeypatch for patching.",
+                description="How to use pytest fixtures",
+                content="Extends [Python Testing](python-testing.md) with fixture patterns.",
+                resource=None,
                 filename=None,
                 dry_run=False,
                 force=False,
             )
         )
 
-        # Verify bidirectional links
+        # No related frontmatter anywhere; author-written body link is intact
         fm1 = parse_frontmatter(kb_dir / "python-testing.md")
         fm2 = parse_frontmatter(kb_dir / "pytest-fixtures.md")
+        assert "related" not in fm1
+        assert "related" not in fm2
+        assert "python-testing.md" in (kb_dir / "pytest-fixtures.md").read_text()
 
-        assert "pytest-fixtures.md" in fm1.get("related", "")
-        assert "python-testing.md" in fm2.get("related", "")
+        # Index regenerated with both notes, grouped by type
+        index = (kb_dir / "index.md").read_text()
+        assert "python-testing.md" in index
+        assert "pytest-fixtures.md" in index
+        assert "## technique" in index
 
     def test_remember_then_list(self, notes_env, capsys):
         """Remember facts, then verify they show up in list."""
@@ -196,10 +210,12 @@ class TestFullFlow:
 
         cmd_add(
             argparse.Namespace(
+                type="reference",
                 title="Music Gear",
                 tags="music, shopping",
-                summary="Audio equipment notes",
+                description="Audio equipment notes",
                 content="Looking for a receiver.",
+                resource=None,
                 filename=None,
                 dry_run=False,
                 force=False,
@@ -207,10 +223,12 @@ class TestFullFlow:
         )
         cmd_add(
             argparse.Namespace(
+                type="reference",
                 title="Travel Plans",
                 tags="travel, personal",
-                summary="Upcoming trips",
+                description="Upcoming trips",
                 content="Planning a trip.",
+                resource=None,
                 filename=None,
                 dry_run=False,
                 force=False,
@@ -232,10 +250,12 @@ class TestFullFlow:
 
         cmd_add(
             argparse.Namespace(
+                type="reference",
                 title="Unique Topic",
                 tags="test",
-                summary="A topic",
+                description="A topic",
                 content="Some content.",
+                resource=None,
                 filename=None,
                 dry_run=False,
                 force=False,
@@ -246,9 +266,10 @@ class TestFullFlow:
         with pytest.raises(SystemExit):
             cmd_add(
                 argparse.Namespace(
+                    type="reference",
                     title="Unique Topic",
                     tags="test",
-                    summary="Duplicate",
+                    description="Duplicate",
                     content="Different content.",
                     filename=None,
                     dry_run=False,

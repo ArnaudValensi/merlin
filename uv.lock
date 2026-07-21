@@ -841,6 +841,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
+    { name = "pyyaml" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "zipstream-ng" },
 ]
@@ -864,6 +865,7 @@ requires-dist = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
+    { name = "pyyaml" },
     { name = "uvicorn", extras = ["standard"] },
     { name = "zipstream-ng" },
 ]

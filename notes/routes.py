@@ -130,21 +130,25 @@ def api_list_notes():
             continue
 
         content = md_file.read_text(encoding="utf-8")
-        meta, _ = parse_frontmatter(content)
+        meta, body = parse_frontmatter(content)
         stat = md_file.stat()
 
         # Path without .md extension for clean URLs
         path_str = str(rel.with_suffix(""))
+
+        # Body links to other notes (the KB graph lives in prose now)
+        links = len(re.findall(r"\[[^\]]*\]\([^)\s]+\.md[^)\s]*\)", body))
 
         notes.append(
             {
                 "path": path_str,
                 "filename": md_file.name,
                 "title": meta.get("title", md_file.stem.replace("-", " ").title()),
-                "summary": meta.get("summary", ""),
+                "type": str(meta.get("type") or ""),
+                "summary": meta.get("description") or meta.get("summary", ""),
                 "tags": meta.get("tags", []),
-                "related": meta.get("related", []),
-                "created": meta.get("created", ""),
+                "links": links,
+                "created": str(meta.get("created") or ""),
                 "mtime": stat.st_mtime,
             }
         )

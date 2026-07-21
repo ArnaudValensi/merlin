@@ -356,7 +356,7 @@ const NoteView = {
             const slug = path.includes('/') ? path.split('/').pop() : path;
             const title = slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
             const today = new Date().toISOString().slice(0, 10);
-            this._rawContent = `---\ntitle: ${title}\ncreated: ${today}\ntags: []\nrelated: []\nsummary: \n---\n\n# ${title}\n\n`;
+            this._rawContent = `---\ntype: reference\ntitle: ${title}\ndescription: \ntags: []\ncreated: ${today}\nupdated: ${today}\n---\n\n# ${title}\n\n`;
             // Hide delete button for unsaved new notes
             const deleteBtn = document.getElementById('btn-delete');
             if (deleteBtn) deleteBtn.style.display = 'none';
@@ -764,9 +764,9 @@ const TagPage = {
             (n.tags || []).some(t => t.toLowerCase() === tag.toLowerCase())
         );
 
-        // Count connections: related[] length + tags count
+        // Count connections: body links + tags count
         for (const note of this._notes) {
-            note._connections = (note.tags || []).length + (note.related || []).length;
+            note._connections = (note.tags || []).length + (note.links || 0);
         }
 
         // Update count

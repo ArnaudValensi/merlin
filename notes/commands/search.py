@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# dependencies = []
+# dependencies = ["pyyaml"]
 # ///
 """Search Merlin's notes: knowledge base (Zettelkasten) and daily logs."""
 
@@ -13,6 +13,8 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root for paths
 import paths
 from argparse_help import HelpfulParser
@@ -22,6 +24,9 @@ paths.load_config_env()  # Honor config.env (e.g. NOTES_DIR) from any cwd
 NOTES_DIR = paths.notes_dir()
 KB_DIR = NOTES_DIR / "kb"
 LOGS_DIR = NOTES_DIR / "logs"
+
+# Reserved filenames are not concept notes (OKF reserved + our legacy index).
+RESERVED_FILES = {"index.md", "log.md", "_index.md"}
 
 
 # ---------------------------------------------------------------------------
@@ -39,38 +44,56 @@ def _rg(pattern: str, path: Path, *, ignore_case: bool = True, context: int = 1)
     return result.stdout
 
 
-def _parse_frontmatter(path: Path) -> dict[str, str]:
-    """Extract YAML frontmatter fields from a markdown file.
+def _normalize(value):
+    """Keep frontmatter values string-friendly: dates become ISO strings."""
+    import datetime
 
-    Returns a dict with keys: title, created, tags, summary, related.
-    Missing keys are empty strings.
-    """
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_normalize(v) for v in value]
+    return value
+
+
+def _parse_frontmatter(path: Path) -> dict:
+    """Parse YAML frontmatter from a markdown file. {} when unparseable."""
     text = path.read_text(errors="replace")
-    fm: dict[str, str] = {}
-
     match = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
     if not match:
-        return fm
+        return {}
+    try:
+        meta = yaml.safe_load(match.group(1))
+    except yaml.YAMLError:
+        return {}
+    if not isinstance(meta, dict):
+        return {}
+    return {k: _normalize(v) for k, v in meta.items()}
 
-    for line in match.group(1).splitlines():
-        if ":" in line:
-            key, _, value = line.partition(":")
-            fm[key.strip()] = value.strip()
-    return fm
+
+def _tags_list(fm: dict) -> list[str]:
+    """Frontmatter tags as a list of strings."""
+    tags = fm.get("tags") or []
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.strip("[] ").split(",")]
+    return [str(t).strip() for t in tags if str(t).strip()]
 
 
 def _format_kb_result(path: Path, snippet: str | None = None) -> str:
     """Format a single KB search result."""
     fm = _parse_frontmatter(path)
     title = fm.get("title", path.stem)
-    summary = fm.get("summary", "")
-    tags = fm.get("tags", "")
+    note_type = str(fm.get("type") or "").strip()
+    description = fm.get("description") or fm.get("summary") or ""
+    tags = _tags_list(fm)
 
-    lines = [f"**{title}** — `{path.name}`"]
-    if summary:
-        lines.append(f"  {summary}")
+    header = f"**{title}** — `{path.name}`"
+    if note_type:
+        header += f" [{note_type}]"
+    lines = [header]
+    if description:
+        lines.append(f"  {description}")
     if tags:
-        lines.append(f"  Tags: {tags}")
+        lines.append(f"  Tags: {', '.join(tags)}")
     if snippet:
         lines.append(f"  ```\n  {snippet.strip()}\n  ```")
     return "\n".join(lines)
@@ -87,14 +110,16 @@ def cmd_kb(args: argparse.Namespace) -> None:
         print("Knowledge base directory not found.", file=sys.stderr)
         sys.exit(1)
 
-    # Collect all .md files (exclude _index.md from keyword search results)
-    kb_files = sorted(KB_DIR.glob("*.md"))
+    # Collect concept notes (reserved files excluded)
+    kb_files = sorted(f for f in KB_DIR.glob("*.md") if f.name not in RESERVED_FILES)
     if not kb_files:
         print("(no KB entries found)")
         return
 
     if args.tag:
         _kb_search_tag(kb_files, args.tag, discord=args.discord)
+    elif args.type:
+        _kb_search_type(kb_files, args.type, discord=args.discord)
     elif args.keyword:
         _kb_search_keyword(args.keyword, discord=args.discord)
     else:
@@ -103,12 +128,8 @@ def cmd_kb(args: argparse.Namespace) -> None:
 
 
 def _kb_list(files: list[Path], *, discord: bool = False) -> None:
-    """List all KB entries with summaries."""
-    results = []
-    for f in files:
-        if f.name == "_index.md":
-            continue
-        results.append(_format_kb_result(f))
+    """List all KB entries with descriptions."""
+    results = [_format_kb_result(f) for f in files]
 
     if not results:
         print("(no KB entries found)")
@@ -124,11 +145,8 @@ def _kb_search_tag(files: list[Path], tag: str, *, discord: bool = False) -> Non
     tag_lower = tag.lower()
     results = []
     for f in files:
-        if f.name == "_index.md":
-            continue
         fm = _parse_frontmatter(f)
-        tags_str = fm.get("tags", "").lower()
-        if tag_lower in tags_str:
+        if any(tag_lower in t.lower() for t in _tags_list(fm)):
             results.append(_format_kb_result(f))
 
     if not results:
@@ -136,6 +154,26 @@ def _kb_search_tag(files: list[Path], tag: str, *, discord: bool = False) -> Non
         return
 
     header = f"**KB entries tagged '{tag}'** ({len(results)} results)"
+    output = header + "\n\n" + "\n\n".join(results)
+    print(output)
+
+
+def _kb_search_type(
+    files: list[Path], note_type: str, *, discord: bool = False
+) -> None:
+    """Filter KB entries by type."""
+    type_lower = note_type.lower()
+    results = []
+    for f in files:
+        fm = _parse_frontmatter(f)
+        if str(fm.get("type") or "").strip().lower() == type_lower:
+            results.append(_format_kb_result(f))
+
+    if not results:
+        print(f"(no KB entries of type '{note_type}')")
+        return
+
+    header = f"**KB entries of type '{note_type}'** ({len(results)} results)"
     output = header + "\n\n" + "\n\n".join(results)
     print(output)
 
@@ -156,6 +194,8 @@ def _kb_search_keyword(keyword: str, *, discord: bool = False) -> None:
         if match:
             filepath = match.group(1)
             content = match.group(2)
+            if Path(filepath).name in RESERVED_FILES:
+                continue
             if filepath != current_file:
                 current_file = filepath
                 results[filepath] = []
@@ -314,18 +354,11 @@ def cmd_tags(args: argparse.Namespace) -> None:
     tag_map: dict[str, list[str]] = {}  # tag -> [filenames]
 
     for f in sorted(KB_DIR.glob("*.md")):
-        if f.name == "_index.md":
+        if f.name in RESERVED_FILES:
             continue
         fm = _parse_frontmatter(f)
-        tags_str = fm.get("tags", "")
-        # Parse [tag1, tag2] format
-        cleaned = tags_str.strip("[] ")
-        if not cleaned:
-            continue
-        for tag in cleaned.split(","):
-            tag = tag.strip()
-            if tag:
-                tag_map.setdefault(tag, []).append(f.name)
+        for tag in _tags_list(fm):
+            tag_map.setdefault(tag, []).append(f.name)
 
     if not tag_map:
         print("(no tags found)")
@@ -360,6 +393,9 @@ Examples:
   # Search KB by tag
   merlin notes search kb --tag "project"
 
+  # Filter KB by note type
+  merlin notes search kb --type company
+
   # List all daily logs
   merlin notes search log
 
@@ -391,6 +427,9 @@ Output:
     )
     kb_parser.add_argument("--keyword", "-k", help="Search KB content by keyword")
     kb_parser.add_argument("--tag", "-t", help="Filter by tag")
+    kb_parser.add_argument(
+        "--type", help="Filter by note type (e.g. company, technique, transcript)"
+    )
     kb_parser.add_argument(
         "--discord", action="store_true", help="Format output for Discord"
     )

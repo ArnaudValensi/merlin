@@ -1,44 +1,44 @@
 """YAML frontmatter parser for markdown files.
 
-Canonical parser, stdlib-only so it is importable from any in-process
-context (notes routes, lib/skills, job runner). The standalone command
-scripts under notes/commands/ keep private copies: they run in isolated
-PEP 723 environments where importing the notes package would fail.
+Canonical parser for in-process contexts (notes routes, lib/skills, job
+runner), backed by PyYAML. The standalone command scripts under
+notes/commands/ keep private copies: they run in isolated PEP 723
+environments and declare pyyaml themselves.
 """
 
+import datetime
 import re
 
-FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-FIELD_RE = re.compile(r"^(\w+):\s*(.+)$", re.MULTILINE)
-ARRAY_RE = re.compile(r"\[([^\]]*)\]")
+import yaml
+
+FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
+
+
+def _normalize(value):
+    """Keep frontmatter values JSON-friendly: dates become ISO strings."""
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_normalize(v) for v in value]
+    return value
 
 
 def parse_frontmatter(content: str) -> tuple[dict, str]:
     """Parse YAML frontmatter from markdown content.
 
-    Returns (metadata_dict, body_without_frontmatter).
-    If no frontmatter found, returns ({}, full_content).
+    Returns (metadata_dict, body_without_frontmatter). Date values are
+    normalized to ISO strings. If no frontmatter is found or it fails to
+    parse, returns ({}, full_content).
     """
     match = FRONTMATTER_RE.match(content)
     if not match:
         return {}, content
 
-    raw = match.group(1)
     body = content[match.end() :]
-    meta = {}
-
-    for field_match in FIELD_RE.finditer(raw):
-        key = field_match.group(1)
-        value = field_match.group(2).strip()
-
-        # Parse YAML arrays: [a, b, c]
-        arr_match = ARRAY_RE.match(value)
-        if arr_match:
-            items = [
-                item.strip().strip("'\"") for item in arr_match.group(1).split(",")
-            ]
-            meta[key] = [i for i in items if i]
-        else:
-            meta[key] = value.strip("'\"")
-
-    return meta, body
+    try:
+        meta = yaml.safe_load(match.group(1))
+    except yaml.YAMLError:
+        return {}, content
+    if not isinstance(meta, dict):
+        return {}, content
+    return {k: _normalize(v) for k, v in meta.items()}, body

@@ -1,27 +1,29 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# dependencies = []
+# dependencies = ["pyyaml"]
 # ///
-"""Add entries to Merlin's knowledge base with automatic link discovery.
+"""Merlin's knowledge base commands: add, index, check.
 
-Creates atomic KB notes following the Zettelkasten method:
-- Searches for duplicate/similar notes before creating
-- Finds related notes by keyword and tag overlap
-- Generates proper frontmatter with links to related notes
-- Updates related notes to link back (bidirectional linking)
+The KB is a flat directory of OKF-style notes: markdown with YAML
+frontmatter, one concept per file. `type` is required; links live in the
+body as normal markdown links, each carried by prose stating the
+relationship. This command never writes links: relationship judgment
+belongs to the author (usually an agent), the command validates and
+maintains the mechanical parts (index, conformance).
 
-All research (searching, matching) happens inside this script
-to avoid polluting the caller's context.
+Full format spec: docs/dev/notes-system.md.
 """
 
 from __future__ import annotations
 
 import argparse
 import re
-import subprocess
 import sys
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
+
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root for paths
 import paths
@@ -31,6 +33,17 @@ paths.load_config_env()  # Honor config.env (e.g. NOTES_DIR) from any cwd
 
 NOTES_DIR = paths.notes_dir()
 KB_DIR = NOTES_DIR / "kb"
+MEDIA_DIR = NOTES_DIR / "media"
+
+# Reserved filenames are not concept notes (OKF reserved + our legacy index).
+RESERVED_FILES = {"index.md", "log.md", "_index.md"}
+
+OKF_VERSION = "0.1"
+
+FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
+
+# Markdown links: [label](target). Target captured up to ) or whitespace.
+MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)\s]+)\)")
 
 
 # ---------------------------------------------------------------------------
@@ -49,144 +62,111 @@ def slugify(text: str) -> str:
 
 def parse_tags(tags_str: str) -> list[str]:
     """Parse a comma-separated or YAML-style tag string into a list."""
-    # Handle YAML array format: [tag1, tag2]
     cleaned = tags_str.strip("[] ")
     if not cleaned:
         return []
     return [t.strip() for t in cleaned.split(",") if t.strip()]
 
 
-def parse_frontmatter(path: Path) -> dict[str, str]:
-    """Extract YAML frontmatter fields from a markdown file."""
-    text = path.read_text(errors="replace")
-    fm: dict[str, str] = {}
+def _normalize(value):
+    """Keep frontmatter values string-friendly: dates become ISO strings."""
+    import datetime
 
-    match = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
-    if not match:
-        return fm
-
-    for line in match.group(1).splitlines():
-        if ":" in line:
-            key, _, value = line.partition(":")
-            fm[key.strip()] = value.strip()
-    return fm
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_normalize(v) for v in value]
+    return value
 
 
-def rg_search(pattern: str, path: Path) -> list[str]:
-    """Run ripgrep and return matching file paths."""
-    cmd = ["rg", "-l", "-i", pattern, str(path)]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        return []
-    return [p.strip() for p in result.stdout.strip().splitlines() if p.strip()]
+def read_frontmatter(path: Path) -> tuple[dict | None, str | None]:
+    """Parse YAML frontmatter from a note file.
 
-
-# ---------------------------------------------------------------------------
-# Related-note discovery
-# ---------------------------------------------------------------------------
-
-
-def find_related_notes(
-    title: str, tags: list[str], content: str, exclude_file: str | None = None
-) -> dict[str, dict]:
-    """Find KB notes related to the new entry.
-
-    Searches by:
-    1. Title words appearing in other notes
-    2. Tag overlap
-    3. Content keyword matches
-
-    Returns {filename: {title, tags, summary, score, reasons}} sorted by score.
+    Returns (meta, error). meta is None when there is no parseable
+    frontmatter block; error carries the reason.
     """
-    kb_files = [
-        f
-        for f in KB_DIR.glob("*.md")
-        if f.name != "_index.md" and f.name != exclude_file
-    ]
+    text = path.read_text(errors="replace")
+    match = FRONTMATTER_RE.match(text)
+    if not match:
+        return None, "no frontmatter block"
+    try:
+        meta = yaml.safe_load(match.group(1))
+    except yaml.YAMLError as e:
+        return None, f"invalid YAML: {e}"
+    if not isinstance(meta, dict):
+        return None, "frontmatter is not a mapping"
+    return {k: _normalize(v) for k, v in meta.items()}, None
 
-    if not kb_files:
-        return {}
 
-    # Build score map: filename -> {score, reasons}
-    scores: dict[str, dict] = {}
+def parse_frontmatter(path: Path) -> dict:
+    """Frontmatter as a dict, {} when missing or unparseable."""
+    meta, _ = read_frontmatter(path)
+    return meta or {}
 
-    def _add_score(path: Path, points: int, reason: str):
-        name = path.name
-        if name not in scores:
-            fm = parse_frontmatter(path)
-            scores[name] = {
-                "title": fm.get("title", path.stem),
-                "tags": fm.get("tags", ""),
-                "summary": fm.get("summary", ""),
-                "score": 0,
-                "reasons": [],
-            }
-        scores[name]["score"] += points
-        scores[name]["reasons"].append(reason)
 
-    # 1. Tag overlap — strongest signal
-    if tags:
-        for f in kb_files:
-            fm = parse_frontmatter(f)
-            file_tags = parse_tags(fm.get("tags", ""))
-            overlap = set(t.lower() for t in tags) & set(t.lower() for t in file_tags)
-            if overlap:
-                _add_score(f, 3 * len(overlap), f"shared tags: {', '.join(overlap)}")
+def note_body(path: Path) -> str:
+    """Note content with the frontmatter block stripped."""
+    text = path.read_text(errors="replace")
+    match = FRONTMATTER_RE.match(text)
+    return text[match.end() :] if match else text
 
-    # 2. Title word matches — check if significant title words appear in other notes
-    title_words = [w.lower() for w in re.findall(r"\w{4,}", title)]
-    for word in title_words:
-        matching_files = rg_search(word, KB_DIR)
-        for filepath in matching_files:
-            path = Path(filepath)
-            if path.name == "_index.md" or path.name == exclude_file:
+
+def kb_notes() -> list[Path]:
+    """All concept notes (reserved files excluded), sorted by name."""
+    return sorted(f for f in KB_DIR.glob("*.md") if f.name not in RESERVED_FILES)
+
+
+def corpus_vocab() -> tuple[Counter, Counter]:
+    """(type counts, tag counts) across the KB."""
+    types: Counter = Counter()
+    tags: Counter = Counter()
+    for f in kb_notes():
+        meta = parse_frontmatter(f)
+        note_type = str(meta.get("type") or "").strip()
+        if note_type:
+            types[note_type] += 1
+        note_tags = meta.get("tags") or []
+        if isinstance(note_tags, list):
+            tags.update(str(t).strip() for t in note_tags if str(t).strip())
+    return types, tags
+
+
+def body_kb_links(body: str) -> list[tuple[str, str, str]]:
+    """Markdown links to KB notes in a body: (label, target, line).
+
+    External links (with a scheme) and non-.md targets are ignored.
+    Bundle-absolute targets (leading /) are resolved from the KB root.
+    """
+    links = []
+    for line in body.splitlines():
+        for match in MD_LINK_RE.finditer(line):
+            label, target = match.group(1), match.group(2)
+            if "://" in target or not target.split("#")[0].endswith(".md"):
                 continue
-            if path in kb_files:
-                _add_score(path, 2, f"title word '{word}' found in content")
-
-    # 3. Content keyword matches — extract significant words from content
-    content_words = set(w.lower() for w in re.findall(r"\w{5,}", content))
-    # Limit to avoid excessive rg calls
-    sample_words = sorted(content_words - set(title_words))[:10]
-    for word in sample_words:
-        matching_files = rg_search(word, KB_DIR)
-        for filepath in matching_files:
-            path = Path(filepath)
-            if path.name == "_index.md" or path.name == exclude_file:
-                continue
-            if path in kb_files:
-                _add_score(path, 1, f"content word '{word}' found")
-
-    # Sort by score descending, return top results
-    sorted_scores = dict(
-        sorted(scores.items(), key=lambda x: x[1]["score"], reverse=True)
-    )
-    return sorted_scores
+            links.append((label, target.split("#")[0].lstrip("/"), line))
+    return links
 
 
-def find_duplicates(title: str, tags: list[str]) -> list[tuple[str, str]]:
+# ---------------------------------------------------------------------------
+# Duplicate detection
+# ---------------------------------------------------------------------------
+
+
+def find_duplicates(title: str) -> list[tuple[str, str]]:
     """Check for potentially duplicate KB entries.
 
     Returns list of (filename, reason) for likely duplicates.
     """
     slug = slugify(title)
     duplicates = []
-
-    for f in KB_DIR.glob("*.md"):
-        if f.name == "_index.md":
-            continue
-
-        # Exact filename match
+    for f in kb_notes():
         if f.stem == slug:
             duplicates.append((f.name, "exact filename match"))
             continue
-
-        # Similar title
-        fm = parse_frontmatter(f)
-        existing_title = fm.get("title", "").lower()
+        meta = parse_frontmatter(f)
+        existing_title = str(meta.get("title") or "").lower()
         if existing_title and existing_title == title.lower():
             duplicates.append((f.name, "exact title match"))
-
     return duplicates
 
 
@@ -196,139 +176,225 @@ def find_duplicates(title: str, tags: list[str]) -> list[tuple[str, str]]:
 
 
 def build_frontmatter(
-    title: str, tags: list[str], summary: str, related: list[str]
+    note_type: str,
+    title: str,
+    description: str,
+    tags: list[str],
+    resource: str | None,
 ) -> str:
-    """Build YAML frontmatter string."""
-    created = datetime.now().strftime("%Y-%m-%d")
+    """Build the YAML frontmatter block, hand-formatted for a stable style."""
+    today = datetime.now().strftime("%Y-%m-%d")
     tags_str = f"[{', '.join(tags)}]" if tags else "[]"
-    related_str = f"[{', '.join(related)}]" if related else "[]"
-
-    return f"""---
-title: {title}
-created: {created}
-tags: {tags_str}
-related: {related_str}
-summary: {summary}
----"""
-
-
-def update_related_note(note_path: Path, new_file: str) -> bool:
-    """Add a backlink to an existing note's related field.
-
-    Returns True if the note was updated.
-    """
-    text = note_path.read_text(errors="replace")
-
-    match = re.match(r"^(---\s*\n)(.*?)(\n---)", text, re.DOTALL)
-    if not match:
-        return False
-
-    fm_content = match.group(2)
-
-    # Find the related: line
-    related_match = re.search(r"^(related:\s*)\[([^\]]*)\]", fm_content, re.MULTILINE)
-    if not related_match:
-        # No related field — add one
-        new_fm = fm_content + f"\nrelated: [{new_file}]"
-        new_text = match.group(1) + new_fm + match.group(3) + text[match.end() :]
-        note_path.write_text(new_text)
-        return True
-
-    existing = related_match.group(2).strip()
-    if new_file in existing:
-        return False  # Already linked
-
-    if existing:
-        new_related = f"{existing}, {new_file}"
-    else:
-        new_related = new_file
-
-    new_line = f"{related_match.group(1)}[{new_related}]"
-    new_fm = (
-        fm_content[: related_match.start()]
-        + new_line
-        + fm_content[related_match.end() :]
-    )
-    new_text = match.group(1) + new_fm + match.group(3) + text[match.end() :]
-    note_path.write_text(new_text)
-    return True
+    lines = [
+        "---",
+        f"type: {note_type}",
+        f"title: {title}",
+        f"description: {description}",
+        f"tags: {tags_str}",
+    ]
+    if resource:
+        lines.append(f"resource: {resource}")
+    lines += [f"created: {today}", f"updated: {today}", "---"]
+    return "\n".join(lines)
 
 
 def create_note(
+    note_type: str,
     title: str,
+    description: str,
     tags: list[str],
-    summary: str,
     content: str,
-    related: list[str],
     *,
+    resource: str | None = None,
     filename: str | None = None,
 ) -> Path:
-    """Create a new KB note file."""
+    """Create a new KB note file. Links are the author's job, not ours."""
     if filename is None:
         filename = slugify(title) + ".md"
-
     filepath = KB_DIR / filename
-    frontmatter = build_frontmatter(title, tags, summary, related)
-
-    note_content = f"""{frontmatter}
-
-# {title}
-
-{content.strip()}
-"""
-
-    # Add See Also section if there are related notes
-    if related:
-        note_content += "\n## See Also\n"
-        for rel in related:
-            rel_path = KB_DIR / rel
-            if rel_path.exists():
-                fm = parse_frontmatter(rel_path)
-                rel_title = fm.get("title", rel_path.stem)
-            else:
-                rel_title = Path(rel).stem
-            note_content += f"- [{rel_title}]({rel})\n"
-
-    filepath.write_text(note_content)
+    frontmatter = build_frontmatter(note_type, title, description, tags, resource)
+    filepath.write_text(f"{frontmatter}\n\n# {title}\n\n{content.strip()}\n")
     return filepath
 
 
 # ---------------------------------------------------------------------------
-# Commands
+# Index generation
+# ---------------------------------------------------------------------------
+
+
+def build_index() -> str:
+    """Render kb/index.md from note frontmatter, grouped by type."""
+    groups: dict[str, list[tuple[str, str, str]]] = {}
+    for f in kb_notes():
+        meta = parse_frontmatter(f)
+        note_type = str(meta.get("type") or "").strip() or "(untyped)"
+        title = str(meta.get("title") or f.stem)
+        description = str(meta.get("description") or meta.get("summary") or "").strip()
+        groups.setdefault(note_type, []).append((title, f.name, description))
+
+    note_count = sum(len(v) for v in groups.values())
+    typed = sorted(k for k in groups if k != "(untyped)")
+    ordered = typed + (["(untyped)"] if "(untyped)" in groups else [])
+
+    lines = [
+        "---",
+        f'okf_version: "{OKF_VERSION}"',
+        "---",
+        "",
+        "# Knowledge Base Index",
+        "",
+        f"{note_count} notes across {len(typed)} types. "
+        "Generated by `merlin kb index`; do not edit by hand.",
+    ]
+    for note_type in ordered:
+        lines += ["", f"## {note_type}", ""]
+        for title, name, description in sorted(groups[note_type]):
+            entry = f"* [{title}]({name})"
+            if description:
+                entry += f" - {description}"
+            lines.append(entry)
+    return "\n".join(lines) + "\n"
+
+
+def cmd_index(args: argparse.Namespace) -> None:
+    """Regenerate kb/index.md."""
+    if not KB_DIR.is_dir():
+        print("Knowledge base directory not found.", file=sys.stderr)
+        sys.exit(1)
+    content = build_index()
+    index_path = KB_DIR / "index.md"
+    changed = not index_path.exists() or index_path.read_text() != content
+    index_path.write_text(content)
+    types, _ = corpus_vocab()
+    status = "updated" if changed else "already current"
+    print(
+        f"**Index {status}:** `{index_path.name}` "
+        f"({len(kb_notes())} notes, {len(types)} types)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Conformance check
+# ---------------------------------------------------------------------------
+
+
+def check_findings() -> list[tuple[str, str]]:
+    """Run all conformance checks. Returns (file, message) findings."""
+    findings: list[tuple[str, str]] = []
+    notes = kb_notes()
+    note_names = {f.name for f in notes}
+    resources: list[str] = []
+
+    for f in notes:
+        meta, error = read_frontmatter(f)
+        if meta is None:
+            findings.append((f.name, error or "unparseable frontmatter"))
+            continue
+        if not str(meta.get("type") or "").strip():
+            findings.append((f.name, "missing required field: type"))
+        if "related" in meta:
+            findings.append(
+                (f.name, "legacy field: related (links belong in the body)")
+            )
+        if "summary" in meta and "description" not in meta:
+            findings.append((f.name, "legacy field: summary (rename to description)"))
+        if meta.get("resource"):
+            resources.append(str(meta["resource"]))
+
+        body = note_body(f)
+        for label, target, line in body_kb_links(body):
+            if target not in note_names:
+                findings.append((f.name, f"broken link: ({target})"))
+                continue
+            # A link should be carried by prose: the line must say more
+            # than the link itself.
+            remainder = MD_LINK_RE.sub("", line).strip().strip("-*").strip()
+            if len(remainder) < 5:
+                findings.append(
+                    (
+                        f.name,
+                        f"bare link to ({target}): state the relationship in prose",
+                    )
+                )
+
+    # Legacy index file
+    if (KB_DIR / "_index.md").exists():
+        findings.append(
+            ("_index.md", "legacy index file (replaced by generated index.md)")
+        )
+
+    # Generated index freshness
+    index_path = KB_DIR / "index.md"
+    if not index_path.exists():
+        findings.append(("index.md", "missing (run `merlin kb index`)"))
+    elif index_path.read_text() != build_index():
+        findings.append(("index.md", "stale (run `merlin kb index`)"))
+
+    # Media ownership: every media file referenced by some note's resource
+    if MEDIA_DIR.is_dir():
+        for media_file in sorted(MEDIA_DIR.iterdir()):
+            if media_file.name.startswith("."):
+                continue
+            if not any(media_file.name in r for r in resources):
+                findings.append(
+                    (
+                        f"media/{media_file.name}",
+                        "orphaned: no note claims it via resource",
+                    )
+                )
+
+    return findings
+
+
+def cmd_check(args: argparse.Namespace) -> None:
+    """Check KB conformance; exit 1 on findings."""
+    if not KB_DIR.is_dir():
+        print("Knowledge base directory not found.", file=sys.stderr)
+        sys.exit(1)
+    findings = check_findings()
+    if not findings:
+        print(f"**KB conforms** ({len(kb_notes())} notes, 0 findings)")
+        return
+    print(f"**KB check: {len(findings)} finding(s)**\n")
+    for name, message in findings:
+        print(f"- `{name}`: {message}")
+    sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Add
 # ---------------------------------------------------------------------------
 
 
 def cmd_add(args: argparse.Namespace) -> None:
-    """Add a new KB entry with automatic link discovery."""
+    """Add a new KB entry."""
     if not KB_DIR.is_dir():
         print("Knowledge base directory not found.", file=sys.stderr)
         sys.exit(1)
 
+    note_type = args.type.strip()
     title = args.title
     tags = parse_tags(args.tags) if args.tags else []
-    summary = args.summary or ""
+    description = args.description or ""
     content = args.content or ""
     filename = (args.filename + ".md") if args.filename else None
 
-    # Read content from stdin if not provided
     if not content and not sys.stdin.isatty():
         content = sys.stdin.read()
-
     if not content:
         print(
             "Error: --content is required (or pipe content via stdin).", file=sys.stderr
         )
         sys.exit(1)
 
-    # --- Check for duplicates ---
-    duplicates = find_duplicates(title, tags)
+    # --- Duplicates ---
+    duplicates = find_duplicates(title)
     if duplicates:
         print("**Potential duplicates found:**")
         for dup_file, reason in duplicates:
-            fm = parse_frontmatter(KB_DIR / dup_file)
-            dup_title = fm.get("title", dup_file)
+            meta = parse_frontmatter(KB_DIR / dup_file)
+            dup_title = meta.get("title", dup_file)
             print(f"  - `{dup_file}` — {dup_title} ({reason})")
-
         if not args.force:
             print(
                 "\nUse --force to create anyway, or update the existing note instead."
@@ -336,62 +402,75 @@ def cmd_add(args: argparse.Namespace) -> None:
             sys.exit(1)
         print()
 
-    # --- Find related notes ---
+    # --- Link validation ---
     target_filename = filename or (slugify(title) + ".md")
-    related = find_related_notes(title, tags, content, exclude_file=target_filename)
+    note_names = {f.name for f in kb_notes()}
+    broken = [
+        target
+        for _, target, _ in body_kb_links(content)
+        if target not in note_names and target != target_filename
+    ]
+    if broken:
+        print("**Broken links** (targets not in the KB):")
+        for target in broken:
+            print(f"  - `{target}`")
+        if not args.force:
+            print("\nFix the links or use --force to create anyway.")
+            sys.exit(1)
+        print()
 
-    # Pick top related notes (score >= 2)
-    related_files = [name for name, info in related.items() if info["score"] >= 2]
-    # Cap at 8 related notes
-    related_files = related_files[:8]
+    # --- Vocabulary notices (informative, never blocking) ---
+    types, tag_counts = corpus_vocab()
+    notices = []
+    if note_type not in types:
+        existing = ", ".join(f"{t} ({n})" for t, n in types.most_common()) or "(none)"
+        notices.append(f"**New type** `{note_type}`. Existing types: {existing}")
+    novel_tags = [t for t in tags if t not in tag_counts]
+    if novel_tags:
+        novel = ", ".join(f"`{t}`" for t in novel_tags)
+        notices.append(
+            f"**New tag(s)** {novel}. Check `merlin notes search tags` for the "
+            "existing vocabulary; keep new tags deliberate."
+        )
 
     if args.dry_run:
         print(f"**Dry run — would create:** `{target_filename}`\n")
+        print(f"**Type:** {note_type}")
         print(f"**Title:** {title}")
         print(f"**Tags:** {', '.join(tags) if tags else '(none)'}")
-        print(f"**Summary:** {summary or '(none)'}")
+        print(f"**Description:** {description or '(none)'}")
+        if args.resource:
+            print(f"**Resource:** {args.resource}")
         print(f"**Content length:** {len(content)} chars")
-
-        if related_files:
-            print(f"\n**Related notes** ({len(related_files)} found):")
-            for name in related_files:
-                info = related[name]
-                reasons = "; ".join(info["reasons"][:3])
-                print(
-                    f"  - `{name}` — {info['title']} (score: {info['score']}, {reasons})"
-                )
-        else:
-            print("\n**Related notes:** (none found)")
-
-        if related and not related_files:
-            weak = list(related.items())[:3]
-            if weak:
-                print("\n**Weak matches** (score < 2):")
-                for name, info in weak:
-                    print(f"  - `{name}` — {info['title']} (score: {info['score']})")
+        for notice in notices:
+            print(f"\n{notice}")
         return
 
-    # --- Create the note ---
+    # --- Create + refresh index ---
     filepath = create_note(
-        title, tags, summary, content, related_files, filename=filename
+        note_type,
+        title,
+        description,
+        tags,
+        content,
+        resource=args.resource,
+        filename=filename,
     )
+    (KB_DIR / "index.md").write_text(build_index())
 
-    # --- Update backlinks on related notes ---
-    backlinked = []
-    for rel_name in related_files:
-        rel_path = KB_DIR / rel_name
-        if rel_path.exists() and update_related_note(rel_path, filepath.name):
-            backlinked.append(rel_name)
-
-    # --- Output summary ---
     print(f"**Created:** `{filepath.name}`")
-    print(f"**Title:** {title}")
+    print(f"**Type:** {note_type}")
     if tags:
         print(f"**Tags:** {', '.join(tags)}")
-    if related_files:
-        print(f"**Linked to:** {', '.join(f'`{r}`' for r in related_files)}")
-    if backlinked:
-        print(f"**Backlinks added to:** {', '.join(f'`{b}`' for b in backlinked)}")
+    print("**Index refreshed.**")
+    for notice in notices:
+        print(f"\n{notice}")
+    if not body_kb_links(content):
+        print(
+            "\nNo links in the body. Fine for a standalone note; if a related "
+            "note exists in the index, consider adding a prose link stating "
+            "the relationship."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +481,7 @@ def cmd_add(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = HelpfulParser(
         prog="merlin kb",
-        description="Merlin's knowledge base (Zettelkasten).",
+        description="Merlin's knowledge base (OKF-style Zettelkasten).",
         epilog="Also available as: merlin notes kb",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -410,51 +489,52 @@ def main(argv: list[str] | None = None) -> None:
 
     add_parser = subparsers.add_parser(
         "add",
-        help="Add a KB entry with automatic link discovery",
-        description="Add an entry to the knowledge base with automatic link discovery.",
+        help="Add a KB entry",
+        description="Add an entry to the knowledge base.",
         epilog="""
 Examples:
-  # Add a simple note
-  merlin kb add --title "Docker Compose Tips" \\
+  # Add a note (type is required; pick tags from the existing vocabulary)
+  merlin kb add --type technique --title "Docker Compose Tips" \\
     --tags "devops, docker" \\
-    --summary "Useful patterns for docker-compose" \\
+    --description "Useful patterns for docker-compose" \\
     --content "Use volumes for persistent data..."
 
-  # Pipe content from a file or command
-  echo "Long article content..." | merlin kb add \\
-    --title "Article Notes" --tags "reading"
+  # Pipe long content via stdin; point resource at the source
+  cat transcript.md | merlin kb add --type transcript \\
+    --title "Talk Notes" --tags "ai" \\
+    --resource "https://youtube.com/watch?v=..."
 
-  # Preview without creating (shows related notes found)
-  merlin kb add --title "Mechanical Keyboards" \\
-    --tags "tech, gear" --content "..." --dry-run
+  # Preview without creating
+  merlin kb add --type tool --title "Mechanical Keyboards" \\
+    --tags "gear" --content "..." --dry-run
 
-  # Force create even if duplicate detected
-  merlin kb add --title "Docker Setup" \\
-    --tags "devops" --content "..." --force
-
-How it works:
-  1. Checks for duplicate notes (same title or filename)
-  2. Searches KB for related notes by tag overlap, title words, content keywords
-  3. Creates the note with frontmatter linking to related notes
-  4. Updates related notes with backlinks to the new note
-  5. Prints a summary of what was created and linked
-
-The search happens entirely inside this script to keep the caller's
-context clean (Zettelkasten link discovery can be token-heavy).
+Links are YOUR job, not this command's: put markdown links in the body
+prose, each with the relationship stated ("Extends [X](x.md) by...").
+The command validates link targets and refreshes index.md; it never
+invents links.
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     add_parser.add_argument(
-        "--title",
-        "-t",
+        "--type",
         required=True,
-        help="Note title (also used to generate filename)",
+        help="Kind of note (e.g. company, technique, tool, transcript, decision, reference)",
     )
     add_parser.add_argument(
-        "--tags", "-T", help="Comma-separated tags (e.g. 'music, gear, shopping')"
+        "--title", "-t", required=True, help="Note title (also generates the filename)"
     )
     add_parser.add_argument(
-        "--summary", "-s", help="One-line summary for quick scanning"
+        "--tags", "-T", help="Comma-separated topic tags (e.g. 'music, gear')"
+    )
+    add_parser.add_argument(
+        "--description",
+        "-s",
+        "--summary",
+        dest="description",
+        help="One-line description for the index and search results",
+    )
+    add_parser.add_argument(
+        "--resource", "-r", help="URL or media/ path of the source asset"
     )
     add_parser.add_argument("--content", "-c", help="Note content (or pipe via stdin)")
     add_parser.add_argument(
@@ -467,9 +547,28 @@ context clean (Zettelkasten link discovery can be token-heavy).
         help="Preview what would be created (no file changes)",
     )
     add_parser.add_argument(
-        "--force", action="store_true", help="Create even if duplicate detected"
+        "--force",
+        action="store_true",
+        help="Create despite duplicates or broken links",
     )
     add_parser.set_defaults(func=cmd_add)
+
+    index_parser = subparsers.add_parser(
+        "index",
+        help="Regenerate kb/index.md from note frontmatter",
+        description="Regenerate the KB index (grouped by type). Deterministic; safe to run anytime.",
+    )
+    index_parser.set_defaults(func=cmd_index)
+
+    check_parser = subparsers.add_parser(
+        "check",
+        help="Check KB conformance (exit 1 on findings)",
+        description=(
+            "Conformance check: frontmatter parses, type present, links resolve "
+            "and carry prose, index fresh, media owned. The executable format spec."
+        ),
+    )
+    check_parser.set_defaults(func=cmd_check)
 
     args = parser.parse_args(argv)
 

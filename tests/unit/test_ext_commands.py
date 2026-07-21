@@ -526,6 +526,8 @@ class TestBuiltinNotesEndToEnd:
             [
                 "kb",
                 "add",
+                "--type",
+                "reference",
                 "--title",
                 "New Note",
                 "--tags",
