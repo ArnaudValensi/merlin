@@ -128,12 +128,12 @@ notes/
 ├── user.md           ← User memory layer (injected by the managed recipes)
 ├── logs/
 │   └── YYYY-MM-DD.md ← Daily notes, decisions, discoveries
-└── kb/               ← Zettelkasten knowledge base
-    ├── _index.md       (entry point)
-    └── *.md            (atomic, interlinked notes)
+└── kb/               ← Knowledge base (typed OKF-style notes)
+    ├── index.md        (generated catalog, injected by the recipes)
+    └── *.md            (atomic notes, linked in prose)
 ```
 
-Both loops, and the user in the web terminal, read and write this tree through the notes CLI (`merlin notes`, `merlin kb`, `merlin remember`). Jobs write findings into `kb/` and `logs/`; the bot reads `user.md` and the KB through its agent_context recipe. One assistant, several entry points, one accumulating memory: the shared state is what makes invocations compound instead of starting cold.
+Both loops, and the user in the web terminal, read and write this tree through the notes CLI (`merlin notes`, `merlin kb`, `merlin remember`). Jobs write findings into `kb/` and `logs/`; the bot reads `user.md`, and both recipes inject the generated KB index through agent_context. One assistant, several entry points, one accumulating memory: the shared state is what makes invocations compound instead of starting cold.
 
 ## The Three Loops
 
