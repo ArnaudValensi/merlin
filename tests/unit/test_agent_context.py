@@ -138,6 +138,38 @@ class TestCompose:
         assert "PERSONALITY" not in result
         assert "OVERLAY" not in result
 
+    def test_kb_index_included_when_present(self, all_layers):
+        app, home, notes = all_layers
+        _write(
+            notes / "kb" / "index.md",
+            '---\nokf_version: "0.1"\n---\n\n# Knowledge Base Index\n\n* [X](x.md) - a note\n',
+        )
+        for recipe in ("managed-assistant", "headless-worker"):
+            result = ac.compose(recipe)
+            assert "# Knowledge Base Index" in result
+            assert "* [X](x.md) - a note" in result
+            assert "okf_version" not in result
+
+
+class TestKbIndex:
+    def test_missing_returns_none(self, env):
+        assert ac.kb_index() is None
+
+    def test_strips_frontmatter(self, env):
+        app, home, notes = env
+        _write(
+            notes / "kb" / "index.md",
+            '---\nokf_version: "0.1"\n---\n\n# Knowledge Base Index\n\n* [X](x.md) - a note\n',
+        )
+        result = ac.kb_index()
+        assert result.startswith("# Knowledge Base Index")
+        assert "okf_version" not in result
+
+    def test_no_frontmatter_passthrough(self, env):
+        app, home, notes = env
+        _write(notes / "kb" / "index.md", "# Knowledge Base Index\n\n* [X](x.md)\n")
+        assert ac.kb_index().startswith("# Knowledge Base Index")
+
     def test_missing_layers_skipped(self, env):
         app, _, _ = env
         _write(app / "agent" / "MERLIN.md", "BRAIN")

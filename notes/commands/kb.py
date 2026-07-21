@@ -272,6 +272,18 @@ def create_note(
 # ---------------------------------------------------------------------------
 
 
+# Index entries stay scannable (and cheap to inject into agent context):
+# long descriptions are truncated at a word boundary.
+INDEX_DESCRIPTION_MAX = 180
+
+
+def _index_description(description: str) -> str:
+    if len(description) <= INDEX_DESCRIPTION_MAX:
+        return description
+    cut = description[:INDEX_DESCRIPTION_MAX].rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;:.") + "..."
+
+
 def build_index() -> str:
     """Render kb/index.md from note frontmatter, grouped by type."""
     groups: dict[str, list[tuple[str, str, str]]] = {}
@@ -280,7 +292,9 @@ def build_index() -> str:
         note_type = str(meta.get("type") or "").strip() or "(untyped)"
         title = str(meta.get("title") or f.stem)
         description = str(meta.get("description") or meta.get("summary") or "").strip()
-        groups.setdefault(note_type, []).append((title, f.name, description))
+        groups.setdefault(note_type, []).append(
+            (title, f.name, _index_description(description))
+        )
 
     note_count = sum(len(v) for v in groups.values())
     typed = sorted(k for k in groups if k != "(untyped)")

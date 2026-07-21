@@ -326,6 +326,18 @@ class TestBuildIndex:
         assert (kb_with_notes / "index.md").exists()
         assert "Index updated" in capsys.readouterr().out
 
+    def test_long_descriptions_truncated(self, kb_with_notes):
+        from notes.commands.kb import INDEX_DESCRIPTION_MAX, build_index
+
+        long_desc = "word " * 80
+        (kb_with_notes / "verbose.md").write_text(
+            f"---\ntype: reference\ntitle: Verbose\ndescription: {long_desc.strip()}\n---\n\n# V\n\nBody.\n"
+        )
+        index = build_index()
+        entry = next(line for line in index.splitlines() if "verbose.md" in line)
+        assert entry.endswith("...")
+        assert len(entry) < INDEX_DESCRIPTION_MAX + 60
+
 
 class TestCheck:
     def _write_index(self, kb):
