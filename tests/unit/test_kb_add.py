@@ -159,6 +159,69 @@ class TestBodyKbLinks:
         links = body_kb_links("See [X](/other-note.md).")
         assert links[0][1] == "other-note.md"
 
+    def test_ignores_code_spans_and_fences(self):
+        from notes.commands.kb import body_kb_links
+
+        body = (
+            "Inline example: `Extends [X](x.md) with...` is the style.\n"
+            "```\n[In a fence](fenced.md)\n```\n"
+            "Real link: extends [Docker Setup](docker-setup.md) properly.\n"
+        )
+        links = body_kb_links(body)
+        assert [target for _, target, _ in links] == ["docker-setup.md"]
+
+    def test_ignores_filesystem_paths(self):
+        from notes.commands.kb import body_kb_links
+
+        body = "See [analysis](home/user/refs/thing.md) and [abs](/home/user/x.md)."
+        assert body_kb_links(body) == []
+
+    def test_wrapped_bullet_annotation_stays_attached(self):
+        from notes.commands.kb import body_kb_links
+
+        body = (
+            "- [Docker Setup](docker-setup.md) -\n"
+            "  the annotation wrapped onto the following line\n"
+        )
+        links = body_kb_links(body)
+        assert len(links) == 1
+        assert "wrapped onto the following line" in links[0][2]
+
+    def test_nested_bullet_annotation_stays_attached(self):
+        from notes.commands.kb import body_kb_links
+
+        body = (
+            "- [Docker Setup](docker-setup.md)\n"
+            "  - annotation lives in a nested sub-bullet\n"
+            "- [Other](other.md)\n"
+        )
+        links = body_kb_links(body)
+        assert "nested sub-bullet" in links[0][2]
+        assert "nested sub-bullet" not in links[1][2]
+
+
+class TestYamlValue:
+    def test_plain_stays_plain(self):
+        from notes.commands.kb import yaml_value
+
+        assert yaml_value("Simple Title") == "Simple Title"
+        assert yaml_value("https://example.com/x") == "https://example.com/x"
+
+    def test_colon_space_quoted_and_roundtrips(self):
+        import yaml
+
+        from notes.commands.kb import yaml_value
+
+        for raw in [
+            "Docker: layer order is your cache strategy",
+            'He said "hi": a story',
+            "trailing colon:",
+            "- looks like a list",
+            "value # with comment",
+        ]:
+            rendered = yaml_value(raw)
+            assert yaml.safe_load(f"title: {rendered}")["title"] == raw
+
 
 class TestFindDuplicates:
     def test_exact_filename_match(self, kb_with_notes):
@@ -360,6 +423,18 @@ class TestCheck:
         (kb_with_notes / "photo-note.md").write_text(
             "---\ntype: reference\ntitle: Photo\ndescription: a photo\n"
             "resource: media/photo.jpeg\n---\n\n# Photo\n\nWhat it shows.\n"
+        )
+        findings = kb_mod.check_findings()
+        assert not any("orphaned" in msg for _, msg in findings)
+
+    def test_list_resource_claims_multiple_media(self, kb_with_notes):
+        from notes.commands import kb as kb_mod
+
+        (kb_mod.MEDIA_DIR / "front.jpeg").write_text("a")
+        (kb_mod.MEDIA_DIR / "back.jpeg").write_text("b")
+        (kb_with_notes / "gear-note.md").write_text(
+            "---\ntype: reference\ntitle: Gear\ndescription: gear photos\n"
+            "resource: [media/front.jpeg, media/back.jpeg]\n---\n\n# Gear\n\nTwo views.\n"
         )
         findings = kb_mod.check_findings()
         assert not any("orphaned" in msg for _, msg in findings)

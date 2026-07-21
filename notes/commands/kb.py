@@ -134,16 +134,49 @@ def corpus_vocab() -> tuple[Counter, Counter]:
 def body_kb_links(body: str) -> list[tuple[str, str, str]]:
     """Markdown links to KB notes in a body: (label, target, line).
 
-    External links (with a scheme) and non-.md targets are ignored.
-    Bundle-absolute targets (leading /) are resolved from the KB root.
+    Ignored: external links (with a scheme), non-.md targets, links inside
+    fenced code blocks or inline code spans (notes about markdown quote
+    example links), and targets with directory components (the KB is flat,
+    so those point outside the bundle). Bundle-absolute targets (leading /)
+    are resolved from the KB root.
     """
-    links = []
+    # Join wrapped lines into logical lines so a list bullet's annotation
+    # that continues on the next line stays attached to its link.
+    logical: list[str] = []
+    in_fence = False
     for line in body.splitlines():
-        for match in MD_LINK_RE.finditer(line):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        stripped = line.strip()
+        # An indented bullet is a nested item annotating its parent bullet.
+        nested_bullet = line[
+            : len(line) - len(line.lstrip())
+        ] != "" and stripped.startswith(("-", "*"))
+        is_continuation = (
+            logical
+            and stripped != ""
+            and logical[-1].strip() != ""
+            and (nested_bullet or not stripped.startswith(("-", "*", "#", ">")))
+        )
+        if is_continuation:
+            logical[-1] += " " + stripped
+        else:
+            logical.append(line)
+
+    links = []
+    for line in logical:
+        searchable = re.sub(r"`[^`]*`", "", line)  # drop inline code spans
+        for match in MD_LINK_RE.finditer(searchable):
             label, target = match.group(1), match.group(2)
             if "://" in target or not target.split("#")[0].endswith(".md"):
                 continue
-            links.append((label, target.split("#")[0].lstrip("/"), line))
+            target = target.split("#")[0].lstrip("/")
+            if "/" in target:
+                continue
+            links.append((label, target, line))
     return links
 
 
@@ -175,6 +208,23 @@ def find_duplicates(title: str) -> list[tuple[str, str]]:
 # ---------------------------------------------------------------------------
 
 
+def yaml_value(value: str) -> str:
+    """Quote a scalar for YAML when a plain rendering would misparse it."""
+    needs_quoting = (
+        ": " in value
+        or value.endswith(":")
+        or " #" in value
+        or value != value.strip()
+        or value.startswith(
+            ("[", "{", "!", "&", "*", ">", "|", "%", "@", "`", '"', "'", "-", "?")
+        )
+    )
+    if not needs_quoting:
+        return value
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def build_frontmatter(
     note_type: str,
     title: str,
@@ -188,12 +238,12 @@ def build_frontmatter(
     lines = [
         "---",
         f"type: {note_type}",
-        f"title: {title}",
-        f"description: {description}",
+        f"title: {yaml_value(title)}",
+        f"description: {yaml_value(description)}",
         f"tags: {tags_str}",
     ]
     if resource:
-        lines.append(f"resource: {resource}")
+        lines.append(f"resource: {yaml_value(resource)}")
     lines += [f"created: {today}", f"updated: {today}", "---"]
     return "\n".join(lines)
 
@@ -298,8 +348,11 @@ def check_findings() -> list[tuple[str, str]]:
             )
         if "summary" in meta and "description" not in meta:
             findings.append((f.name, "legacy field: summary (rename to description)"))
-        if meta.get("resource"):
-            resources.append(str(meta["resource"]))
+        res = meta.get("resource")
+        if isinstance(res, list):
+            resources.extend(str(r) for r in res)
+        elif res:
+            resources.append(str(res))
 
         body = note_body(f)
         for label, target, line in body_kb_links(body):
