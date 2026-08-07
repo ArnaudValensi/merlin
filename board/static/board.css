@@ -91,6 +91,28 @@
   gap: 8px;
 }
 
+/* Header icon buttons (next / reorder / close). The design system's icon button:
+   34x34, bordered, bg-card, subtle until hovered. These had no style before —
+   `.btn-icon` is not global — so they fell back to default browser buttons. */
+.board-header .btn-icon {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.board-header .btn-icon:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .board-reorder-toggle.active {
   color: var(--accent-blue);
   border-color: var(--accent-blue);
