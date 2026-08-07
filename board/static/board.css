@@ -1,53 +1,31 @@
-/* Sessions board — the terminal's Sessions drawer.
-   Uses the dashboard design-system variables (dashboard.css); no hardcoded
-   colors. Slides in from the right (wide on mobile). Stable slots: cards are
-   never reordered by state, only by the user's manual order. Attention is an
-   in-place glow, never movement. */
+/* Sessions board — lives in the web terminal.
+   Uses the CLI dashboard design-system variables (dashboard.css); no hardcoded
+   colors. Mobile-first: base = a fullscreen modal (same family as the jobs
+   modal); at >=769px it becomes a persistent panel docked on the right, always
+   visible next to the terminal. Stable slots: cards are never reordered by
+   state, only by the user's manual order. Attention is an in-place glow. */
 
-/* Drawer shell (structure lives in terminal.html) --------------------- */
+/* Panel shell (markup lives in terminal.html) ------------------------- */
 
-.sessions-overlay {
+.sessions-backdrop {
+  display: none;
   position: fixed;
   inset: 0;
   z-index: 190;
-  background: rgba(0, 0, 0, 0.45);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s ease;
+  background: rgba(0, 0, 0, 0.7);
 }
-.sessions-overlay.open {
-  opacity: 1;
-  pointer-events: auto;
-}
+.sessions-backdrop.open { display: block; }
 
-.sessions-drawer {
+.sessions-panel {
+  display: none;
   position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   z-index: 200;
-  width: 440px;
-  max-width: 92vw;
-  background: var(--bg-primary);
-  border-left: 1px solid var(--border);
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.4);
-  transform: translateX(100%);
-  transition: transform 0.2s ease;
-  display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--bg-primary);
 }
-.sessions-drawer.open {
-  transform: translateX(0);
-}
-
-/* board.js mounts here: a flex column with a fixed header and a scrolling body */
-.board-body-wrap {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
+.sessions-panel.open { display: flex; }
 
 .board-header {
   display: flex;
@@ -55,7 +33,7 @@
   align-items: center;
   gap: 12px;
   flex: 0 0 auto;
-  padding: 16px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -63,6 +41,7 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   padding: 12px 16px 20px;
 }
 
@@ -74,12 +53,13 @@
 
 .board-title h2 {
   margin: 0;
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: 'Geist Mono', monospace;
   color: var(--text-primary);
 }
 
-/* "N waiting on you" — green count pill. Never causes a reflow of cards. */
+/* "N waiting" — green count pill. Never causes a reflow of cards. */
 .board-attention {
   display: inline-flex;
   align-items: center;
@@ -91,6 +71,19 @@
   color: var(--accent-green);
   background: rgba(52, 211, 153, 0.12);
   border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+/* Desktop: docked, persistent panel. The terminal makes room via .main
+   margin-right (terminal.html), and its ResizeObserver refits xterm. */
+@media (min-width: 769px) {
+  .sessions-panel {
+    display: flex;
+    left: auto;
+    width: 360px;
+    border-left: 1px solid var(--border);
+  }
+  .sessions-backdrop { display: none !important; }
+  .board-panel-close { display: none; }
 }
 
 .board-toolbar {
@@ -139,11 +132,11 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 12px;
   margin-bottom: 8px;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 6px;
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s;
 }
@@ -157,10 +150,11 @@
 }
 
 /* Depth: children nest one indent under their parent; capped so a deep chain
-   can't march off a phone screen (hierarchy is kept in data, flattened in px). */
-.session-card[data-depth="1"] { margin-left: 22px; }
-.session-card[data-depth="2"] { margin-left: 44px; }
-.session-card[data-depth="3"] { margin-left: 60px; }
+   can't march off a phone screen (hierarchy is kept in data, flattened in px).
+   Mobile-first: tight indents by default, roomier from 769px up. */
+.session-card[data-depth="1"] { margin-left: 12px; }
+.session-card[data-depth="2"] { margin-left: 24px; }
+.session-card[data-depth="3"] { margin-left: 32px; }
 
 .session-glyph {
   font-size: 15px;
@@ -243,8 +237,8 @@
 }
 
 .session-actions .card-btn {
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -258,6 +252,12 @@
 .session-actions .card-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+/* Close-session (kill) button: neutral until hovered/pressed, then danger. */
+.session-actions .card-btn-danger:hover {
+  color: var(--accent-red);
+  border-color: rgba(248, 113, 113, 0.5);
 }
 
 /* Reorder controls are hidden until reorder mode is on. */
@@ -305,8 +305,8 @@
   margin: 6px auto 0;
 }
 
-@media (max-width: 768px) {
-  .session-card[data-depth="1"] { margin-left: 14px; }
-  .session-card[data-depth="2"] { margin-left: 26px; }
-  .session-card[data-depth="3"] { margin-left: 34px; }
+@media (min-width: 769px) {
+  .session-card[data-depth="1"] { margin-left: 20px; }
+  .session-card[data-depth="2"] { margin-left: 40px; }
+  .session-card[data-depth="3"] { margin-left: 56px; }
 }

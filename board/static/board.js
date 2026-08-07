@@ -11,8 +11,15 @@ window.SessionsBoard = (function () {
   var POLL_MS = 4000;
 
   var S = { root: null, body: null, att: null, next: null, reorderBtn: null,
-            view: null, reordering: false, paused: false,
+            view: null, lastSig: null, reordering: false, paused: false,
             onAttention: function () {}, onJump: function () {}, onClose: null };
+
+  // Signature of everything we render (excludes the per-poll timestamp), so the
+  // 4s poll only rebuilds the DOM when something actually changed. Without this
+  // the constant rebuild ate taps — a reorder press often had to be made twice.
+  function sigOf(v) {
+    return JSON.stringify({ p: v.projects, o: v.other_windows, a: v.attention });
+  }
 
   function api(path, body) {
     var opts = { headers: { Accept: 'application/json' } };
@@ -42,6 +49,7 @@ window.SessionsBoard = (function () {
   var IC_UP = icon('<path d="m18 15-6-6-6 6"/>');
   var IC_DOWN = icon('<path d="m6 9 6 6 6-6"/>');
   var IC_X = icon('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
+  var IC_KILL = icon('<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>');
 
   function flatten(v) {
     var out = [];
@@ -96,8 +104,8 @@ window.SessionsBoard = (function () {
     var j = i + dir;
     if (i < 0 || j < 0 || j >= arr.length) return;
     var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-    render(S.view);
-    api('/order', { sids: flatten(S.view) }).then(load);
+    render(S.view);  // optimistic + updates lastSig, so the next poll is a no-op
+    api('/order', { sids: flatten(S.view) });
   }
 
   function makeCard(node, projectIndex) {
@@ -140,11 +148,6 @@ window.SessionsBoard = (function () {
       });
       actions.appendChild(dismiss);
     } else {
-      var edit = el('button', 'card-btn', null);
-      edit.innerHTML = IC_EDIT;
-      edit.title = 'Rename';
-      edit.addEventListener('click', function (e) { e.stopPropagation(); renameCard(node, card); });
-      actions.appendChild(edit);
       if (node.depth === 0) {
         var up = el('button', 'card-btn reorder-btn', null);
         up.innerHTML = IC_UP; up.title = 'Move up';
@@ -155,6 +158,23 @@ window.SessionsBoard = (function () {
         actions.appendChild(up);
         actions.appendChild(down);
       }
+      var edit = el('button', 'card-btn', null);
+      edit.innerHTML = IC_EDIT;
+      edit.title = 'Rename';
+      edit.addEventListener('click', function (e) { e.stopPropagation(); renameCard(node, card); });
+      actions.appendChild(edit);
+      // Close the session (kill its tmux window). Destructive -> confirm first.
+      var kill = el('button', 'card-btn card-btn-danger', null);
+      kill.innerHTML = IC_KILL;
+      kill.title = 'Close session';
+      kill.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var label = node.custom_name || node.auto_name;
+        if (window.confirm('Close session "' + label + '"? Its agent window will be killed.')) {
+          api('/kill', { sid: node.sid }).then(load);
+        }
+      });
+      actions.appendChild(kill);
     }
     card.appendChild(actions);
 
@@ -169,6 +189,7 @@ window.SessionsBoard = (function () {
 
   function render(v) {
     S.view = v;
+    S.lastSig = sigOf(v);
     var body = S.body;
     body.textContent = '';
 
@@ -221,11 +242,12 @@ window.SessionsBoard = (function () {
 
   function load() {
     if (S.paused) return Promise.resolve();
-    return api('').then(function (v) { if (v) render(v); });
+    return api('').then(function (v) {
+      if (v && sigOf(v) !== S.lastSig) render(v);
+    });
   }
 
   function buildShell(root) {
-    root.classList.add('board-body-wrap');
     var header = el('div', 'board-header');
     var title = el('div', 'board-title');
     title.appendChild(el('h2', null, 'Sessions'));
@@ -255,7 +277,7 @@ window.SessionsBoard = (function () {
     toolbar.appendChild(S.next);
     toolbar.appendChild(S.reorderBtn);
     if (S.onClose) {
-      var close = el('button', 'btn-icon', null);
+      var close = el('button', 'btn-icon board-panel-close', null);
       close.innerHTML = icon('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
       close.title = 'Close';
       close.addEventListener('click', function () { S.onClose(); });

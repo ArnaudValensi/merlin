@@ -483,15 +483,20 @@ board/
 └── static/board.css, board.js
 ```
 
-**Surface:** there is no page of its own. The board renders as a **drawer inside
-the web terminal** (`terminal/templates/terminal.html`), where the sessions
-actually live. A "Sessions" button sits in the terminal's persistent status bar
-next to the mic; its badge shows the "waiting on you" count; tapping it opens a
-right-side drawer (wide on mobile) that `board.js` mounts itself into via
-`window.SessionsBoard.init({container, onAttention, onJump, onClose})`. Tapping a
-session focuses its tmux window (`POST /api/board/focus`) and closes the drawer.
-Built on the `@agent_state` tmux pills (see the archived `session-status-signals`
-epic and `terminal/hooks/`).
+**Surface:** there is no page of its own. The board renders **inside the web
+terminal** (`terminal/templates/terminal.html`), where the sessions actually
+live — a **fullscreen modal on mobile, a persistent docked panel on desktop**
+(same responsive family as the jobs modal). A "Sessions" button sits in the
+terminal's status bar next to the mic (styled to match it; hidden on desktop
+where the panel is always open); its badge shows the "waiting on you" count.
+`board.js` mounts itself into the panel via
+`window.SessionsBoard.init({container, onAttention, onJump, onClose})`. On desktop
+`.main` reserves `margin-right` for the panel so the terminal shrinks and its
+`ResizeObserver` refits xterm. Per-card actions: rename, reorder (root-level),
+and close-session (`POST /api/board/kill` — kills the tmux window and drops the
+record so an intentional close vanishes rather than tombstoning). Tapping a card
+focuses its window (`POST /api/board/focus`). Built on the `@agent_state` tmux
+pills (see the archived `session-status-signals` epic and `terminal/hooks/`).
 
 **Data flow.** The board never owns the live signal — tmux does. `GET /api/board`
 runs one `tmux list-windows -a -F` sweep (`sweep.py`), joins it with durable

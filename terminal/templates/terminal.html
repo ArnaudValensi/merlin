@@ -69,9 +69,10 @@
     </button>
 </div>
 
-<!-- Sessions drawer: the board, in the terminal where the sessions live. -->
-<div id="sessions-overlay" class="sessions-overlay"></div>
-<aside id="sessions-drawer" class="sessions-drawer" aria-label="Sessions"></aside>
+<!-- Sessions board, in the terminal where the sessions live: a fullscreen modal
+     on mobile, a persistent docked panel on desktop. -->
+<div id="sessions-backdrop" class="sessions-backdrop"></div>
+<aside id="sessions-panel" class="sessions-panel" aria-label="Sessions"></aside>
 {% endblock %}
 
 {% block scripts %}
@@ -83,35 +84,55 @@
 <script src="/static/vendor/xterm-addon-web-links.min.js"></script>
 <script src="/static/board/board.js"></script>
 <style>
-/* Sessions toolbar button badge (mirrors the mic/clipboard badge pattern). */
-#sessions-btn { position: relative; }
-#sessions-btn.has-waiting { color: var(--accent-green); }
+/* Sessions toolbar button: a sibling of the mic button — same shape, border,
+   and size so the bar stays consistent. Green when a session is waiting. */
+#sessions-btn {
+    position: relative;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    padding: 2px 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    height: 24px;
+}
+#sessions-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+#sessions-btn.has-waiting { color: var(--accent-green); border-color: rgba(52, 211, 153, 0.4); }
 #sessions-badge {
-    position: absolute; top: -3px; right: -3px;
-    min-width: 15px; height: 15px; padding: 0 3px;
+    position: absolute; top: -6px; right: -6px;
+    min-width: 14px; height: 14px; padding: 0 3px;
     border-radius: 999px; background: var(--accent-green); color: #0b1411;
-    font-size: 9px; font-weight: 700; line-height: 15px; text-align: center;
+    font-size: 9px; font-weight: 700; line-height: 14px; text-align: center;
+}
+/* Desktop: the board is a persistent panel docked on the right. Reserve room
+   for it on .main so the terminal shrinks (its ResizeObserver refits xterm),
+   and hide the toggle button since the panel is always there. */
+@media (min-width: 769px) {
+    .main { margin-right: 360px; }
+    #terminal-status #sessions-btn { display: none; }
 }
 </style>
 <script>
-// Sessions drawer: mount the board (board.js) into the drawer, wire the
-// toolbar button + overlay to open/close, and reflect the waiting-count on the
-// button badge. The board lives in the terminal, next to the mic.
+// Sessions board: mount board.js into the panel. On mobile the button opens it
+// as a fullscreen modal; on desktop CSS keeps it docked and always visible (the
+// .open toggle is a no-op there). The waiting-count rides the button badge.
 (function () {
     var btn = document.getElementById('sessions-btn');
-    var drawer = document.getElementById('sessions-drawer');
-    var overlay = document.getElementById('sessions-overlay');
+    var panel = document.getElementById('sessions-panel');
+    var backdrop = document.getElementById('sessions-backdrop');
     var badge = document.getElementById('sessions-badge');
-    if (!btn || !drawer || !overlay) return;
-    function open() { drawer.classList.add('open'); overlay.classList.add('open'); }
-    function close() { drawer.classList.remove('open'); overlay.classList.remove('open'); }
-    function toggle() { drawer.classList.contains('open') ? close() : open(); }
+    if (!btn || !panel || !backdrop) return;
+    function open() { panel.classList.add('open'); backdrop.classList.add('open'); }
+    function close() { panel.classList.remove('open'); backdrop.classList.remove('open'); }
+    function toggle() { panel.classList.contains('open') ? close() : open(); }
     btn.addEventListener('click', toggle);
-    overlay.addEventListener('click', close);
+    backdrop.addEventListener('click', close);
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
     window.SessionsBoard.init({
-        container: drawer,
-        onJump: close,          // tapping a session jumps to its window, then closes
+        container: panel,
+        onJump: close,          // tapping a session jumps to its window, then closes (mobile)
         onClose: close,
         onAttention: function (n) {
             if (n > 0) { badge.textContent = n; badge.hidden = false; btn.classList.add('has-waiting'); }

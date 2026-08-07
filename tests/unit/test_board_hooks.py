@@ -200,3 +200,40 @@ class TestRelate:
         s.run(RELATE_SH, w["b"], "sibling", pane=s.pane_of(w["a"]))
         assert s.wopt(w["b"], "@agent_relation") == "sibling"
         assert s.wopt(w["b"], "@agent_parent") == ""
+
+
+# ---------------------------------------------------------------------------
+# sweep.py against a real tmux server (parse + focus + kill)
+# ---------------------------------------------------------------------------
+class TestSweepIntegration:
+    def test_sweep_parses_real_tmux(self, srv, monkeypatch):
+        s, w = srv
+        s.set_wopt(w["a"], "@agent_sid", "sid-a")
+        s.set_wopt(w["a"], "@agent_state", "busy")
+        s.set_wopt(w["a"], "@agent_cwd", "/tmp/proj one")  # space survives (tab-delimited)
+        monkeypatch.setenv("TMUX", s._tmux_var())
+        from board import sweep
+
+        rec = next((x for x in sweep.run_sweep() if x.sid == "sid-a"), None)
+        assert rec is not None
+        assert rec.state == "busy"
+        assert rec.cwd == "/tmp/proj one"
+        assert rec.is_agent is True
+
+    def test_focus_and_kill_window(self, srv, monkeypatch):
+        s, w = srv
+        s.set_wopt(w["a"], "@agent_sid", "sid-a")
+        s.set_wopt(w["a"], "@agent_state", "done")
+        monkeypatch.setenv("TMUX", s._tmux_var())
+        from board import sweep
+
+        rec = next((x for x in sweep.run_sweep() if x.sid == "sid-a"), None)
+        assert rec is not None
+        assert sweep.focus_window(rec.session, rec.window_id) is True
+        assert sweep.kill_window(rec.session, rec.window_id) is True
+        assert all(x.window_id != rec.window_id for x in sweep.run_sweep())
+
+    def test_kill_window_rejects_empty(self):
+        from board import sweep
+
+        assert sweep.kill_window("", "") is False

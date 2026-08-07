@@ -98,3 +98,19 @@ def api_focus(req: SidReq):
     if not sweep.focus_window(target.session, target.window_id):
         raise HTTPException(status_code=502, detail="Could not focus window")
     return {"ok": True}
+
+
+@api_router.post("/kill")
+def api_kill(req: SidReq):
+    """Close a session: kill its tmux window and drop its record. Dropping it
+    first marks the close as intentional, so it vanishes rather than leaving a
+    'died while working' tombstone even if it was busy."""
+    windows = sweep.run_sweep()
+    target = next((w for w in windows if w.sid == req.sid and w.is_agent), None)
+    with store.transaction() as st:
+        st.sessions.pop(req.sid, None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Session is not live")
+    if not sweep.kill_window(target.session, target.window_id):
+        raise HTTPException(status_code=502, detail="Could not close window")
+    return {"ok": True}

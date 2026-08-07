@@ -118,11 +118,24 @@ def focus_window(session: str, window_id: str) -> bool:
     Returns True on success. Best-effort: a stale id or a dead session just
     returns False.
     """
+    return _window_cmd("select-window", session, window_id)
+
+
+def kill_window(session: str, window_id: str) -> bool:
+    """Close a session by killing its tmux window (the user's explicit close).
+
+    Returns True on success. Best-effort: a stale id or a dead session just
+    returns False.
+    """
+    return _window_cmd("kill-window", session, window_id)
+
+
+def _window_cmd(cmd: str, session: str, window_id: str) -> bool:
     if not shutil.which("tmux") or not session or not window_id:
         return False
     try:
         proc = subprocess.run(
-            ["tmux", "select-window", "-t", f"{session}:{window_id}"],
+            ["tmux", cmd, "-t", f"{session}:{window_id}"],
             capture_output=True,
             text=True,
             timeout=5,
