@@ -167,8 +167,23 @@
   background: var(--bg-hover);
 }
 
+/* The window the terminal is currently showing: unmistakable, not a faint
+   border. A left accent bar + tint, plus a "current" chip in the name row. */
 .session-card.active {
   border-color: var(--accent-blue);
+  background: rgba(74, 158, 255, 0.08);
+  box-shadow: inset 3px 0 0 var(--accent-blue);
+}
+
+.session-current {
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-blue);
+  border: 1px solid rgba(74, 158, 255, 0.4);
+  border-radius: 999px;
+  padding: 1px 7px;
+  flex: 0 0 auto;
 }
 
 /* Depth: children nest one indent under their parent; capped so a deep chain

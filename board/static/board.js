@@ -10,7 +10,7 @@ window.SessionsBoard = (function () {
   var GLYPH = { idle: '○', busy: '◐', done: '●' };
   var POLL_MS = 4000;
 
-  var S = { root: null, body: null, att: null, next: null, reorderBtn: null,
+  var S = { root: null, body: null, att: null, reorderBtn: null,
             view: null, lastSig: null, reordering: false, paused: false,
             onAttention: function () {}, onJump: function () {}, onClose: null };
 
@@ -61,17 +61,6 @@ window.SessionsBoard = (function () {
     });
     return out;
   }
-  function firstWaiting(v) {
-    var found = null;
-    (v.projects || []).forEach(function (p) {
-      (p.sessions || []).forEach(function walk(n) {
-        if (!found && n.waiting) found = n.sid;
-        (n.children || []).forEach(walk);
-      });
-    });
-    return found;
-  }
-
   function renameCard(node, cardEl) {
     var nameEl = cardEl.querySelector('.session-name');
     if (!nameEl || cardEl.querySelector('.session-name-input')) return;
@@ -122,7 +111,8 @@ window.SessionsBoard = (function () {
     var body = el('div', 'session-body');
     var nameRow = el('div', 'session-name-row');
     nameRow.appendChild(el('span', 'session-name', node.name));
-    nameRow.appendChild(el('span', 'session-short-id', node.short_id));
+    if (node.active) nameRow.appendChild(el('span', 'session-current', 'current'));
+    else nameRow.appendChild(el('span', 'session-short-id', node.short_id));
     body.appendChild(nameRow);
 
     var meta = el('div', 'session-meta');
@@ -232,10 +222,8 @@ window.SessionsBoard = (function () {
     if (v.attention > 0) {
       S.att.textContent = v.attention + ' waiting';
       S.att.hidden = false;
-      S.next.hidden = false;
     } else {
       S.att.hidden = true;
-      S.next.hidden = true;
     }
     S.onAttention(v.attention || 0);
   }
@@ -257,15 +245,6 @@ window.SessionsBoard = (function () {
     header.appendChild(title);
 
     var toolbar = el('div', 'board-toolbar');
-    S.next = el('button', 'btn-icon', null);
-    S.next.innerHTML = icon('<path d="m6 9 6 6 6-6"/>');
-    S.next.title = 'Jump to next waiting';
-    S.next.hidden = true;
-    S.next.addEventListener('click', function () {
-      if (!S.view) return;
-      var sid = firstWaiting(S.view);
-      if (sid) api('/focus', { sid: sid }).then(function (r) { if (r) S.onJump(); });
-    });
     S.reorderBtn = el('button', 'btn-icon board-reorder-toggle', null);
     S.reorderBtn.innerHTML = icon('<path d="m18 8-4-4-4 4"/><path d="M14 4v8"/><path d="m6 16 4 4 4-4"/><path d="M10 20v-8"/>');
     S.reorderBtn.title = 'Reorder sessions';
@@ -274,7 +253,6 @@ window.SessionsBoard = (function () {
       S.reorderBtn.classList.toggle('active', S.reordering);
       S.body.classList.toggle('reordering', S.reordering);
     });
-    toolbar.appendChild(S.next);
     toolbar.appendChild(S.reorderBtn);
     if (S.onClose) {
       var close = el('button', 'btn-icon board-panel-close', null);
