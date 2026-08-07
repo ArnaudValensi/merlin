@@ -28,6 +28,11 @@ dev = [
 ]
 
 [tool.ruff.lint]
+# Ruff's default `select` broadened in newer releases (0.16.x turns on
+# isort, pyupgrade, bugbear, and more out of the box). Declare the classic
+# default explicitly so `validate` is reproducible across ruff versions
+# instead of drifting when an unpinned uvx ruff resolves to a newer one.
+select = ["E4", "E7", "E9", "F"]
 ignore = [
     "E402",  # module-level import not at top — needed after sys.path setup
     "E731",  # lambda assignment — acceptable in tests and config
