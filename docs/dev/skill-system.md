@@ -83,6 +83,28 @@ cwd:
 Shims never overwrite a path Merlin does not own: only symlinks pointing into
 the Merlin home are managed; foreign entries are skipped with a warning.
 
+## Interactive hooks (agent-state pills)
+
+`sync_interactive_hooks()` is the shims' sibling for the tmux agent-state pills
+(the `terminal/` window pills). The interactive `claude` command line is the
+user's, not Merlin's, so the state hook cannot be injected per-invocation the
+way headless jobs use `--plugin-dir`; it has to live in the `hooks` key of
+`~/.claude/settings.json`, which Claude Code reads on every launch. The
+reconciler owns exactly three entries there (`UserPromptSubmit` -> busy,
+`Stop` -> done, `SessionStart` -> idle), marked by a sentinel + version baked
+into the command string (a harmless trailing shell comment).
+
+Like the shims it is idempotent and drift-only, so an update re-writes the hook
+without the user re-running setup. Unlike the shims it is **consent-gated** (it
+edits the user's own config): the `agent-state-hooks` config value drives it —
+`auto` installs/updates silently, `off` removes Merlin's entries, `ask`
+(default) only detects drift and leaves the dashboard consent banner to ask.
+The write is a collision-safe atomic merge (read, merge in memory, temp file,
+parse-verify, rename); foreign hooks are never touched. Called from
+`_rebuild_skill_registry()` at startup, from the Settings save, and from the
+consent banner (`/api/agent-state-hooks`). See the epic in `merlin-saas`
+(`epics/cli/session-status-signals/`).
+
 ## `merlin skills`
 
 Lists every skill grouped by source in precedence order — the global view the
@@ -122,7 +144,7 @@ audit.
 
 | File | Responsibility |
 |------|----------------|
-| `lib/skills.py` | `build_registry`, `audit_sources`, canonical aggregation (`rebuild`), interactive shims (`sync_interactive_shims`), source paths (`core_skills_dir`, `user_skills_dir`, `canonical_dir`) |
+| `lib/skills.py` | `build_registry`, `audit_sources`, canonical aggregation (`rebuild`), interactive shims (`sync_interactive_shims`), agent-state hook reconciler (`sync_interactive_hooks`, `agent_state_hooks_mode`), source paths (`core_skills_dir`, `user_skills_dir`, `canonical_dir`) |
 | `cli.py` | `run_skills` (`merlin skills`), `skills-user-dir` config key |
 | `ext_commands.py` | `all_extension_states` / `enabled_extension_source_dirs` (which extensions contribute, and their enabled flag) |
 | `lib/engines/claude_code.py` | Claude Code plugin adapter (`--plugin-dir`) |

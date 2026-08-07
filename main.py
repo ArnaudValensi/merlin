@@ -137,9 +137,12 @@ ICON_EXTENSIONS = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" s
 
 ICON_JOBS = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'
 
+ICON_BOARD = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>'
+
 CORE_NAV_ITEMS = [
     {"url": "/files", "icon": ICON_FILES, "label": "Files"},
     {"url": "/terminal", "icon": ICON_TERMINAL, "label": "Terminal"},
+    {"url": "/board", "icon": ICON_BOARD, "label": "Sessions"},
     {"url": "/commits", "icon": ICON_COMMITS, "label": "Commits"},
     {"url": "/jobs", "icon": ICON_JOBS, "label": "Jobs"},
 ]
@@ -608,6 +611,8 @@ def api_get_settings(_auth=Depends(require_auth)):
 
     public_base, public_source = job_webhook.resolve_public_base()
 
+    from lib import skills
+
     return {
         "password_set": bool(cfg.get("DASHBOARD_PASS")),
         "openai_key_set": bool(cfg.get("OPENAI_API_KEY")),
@@ -619,6 +624,7 @@ def api_get_settings(_auth=Depends(require_auth)):
         "effective_public_url": public_base,
         "public_url_source": public_source,
         "default_public_url": job_webhook.discovered_public_base()[0],
+        "agent_state_hooks": skills.agent_state_hooks_mode(),
     }
 
 
@@ -667,7 +673,27 @@ def api_save_settings(body: dict = Body(...), _auth=Depends(require_auth)):
             # Don't delete AGENT_ENGINE when empty — it has a default
             cfg.pop(key, None)
 
+    # Agent-state pill hooks consent (auto|ask|off). Validated against the
+    # single source of truth in lib/skills and folded into the same write.
+    from lib import skills
+
+    if "AGENT_STATE_HOOKS" in body:
+        mode = (body.get("AGENT_STATE_HOOKS") or "").strip().lower()
+        if mode not in skills.AGENT_STATE_HOOKS_MODES:
+            raise HTTPException(
+                status_code=422, detail="Invalid agent-state-hooks mode"
+            )
+        cfg[skills.AGENT_STATE_HOOKS_KEY] = mode
+
     _write_config_env(cfg)
+
+    # Apply the consent choice now: install/refresh on auto, remove on off.
+    # `ask` only persists (the dashboard banner drives any sync). Never blocks.
+    if "AGENT_STATE_HOOKS" in body:
+        try:
+            skills.sync_interactive_hooks()
+        except Exception:
+            logger.warning("agent-state hook sync failed", exc_info=True)
 
     # Reconfigure auth if password changed
     if password_changed:
@@ -694,6 +720,50 @@ def api_save_settings(body: dict = Body(...), _auth=Depends(require_auth)):
         "public_url_source": public_source,
         "default_public_url": job_webhook.discovered_public_base()[0],
     }
+
+
+@app.get("/api/agent-state-hooks")
+def api_agent_state_hooks_status(_auth=Depends(require_auth)):
+    """Consent state for the tmux agent-state pill hook.
+
+    `pending` is true only in `ask` mode with real drift (not installed, or an
+    update changed the shipped hook) — that is when the dashboard banner asks.
+    """
+    from lib import skills
+
+    mode = skills.agent_state_hooks_mode()
+    pending = mode == "ask" and skills.interactive_hooks_drift()
+    return {"mode": mode, "pending": pending}
+
+
+@app.post("/api/agent-state-hooks")
+def api_agent_state_hooks_consent(body: dict = Body(...), _auth=Depends(require_auth)):
+    """Apply a consent-banner choice.
+
+    always    -> mode auto, install now       (yes, and keep it updated)
+    once      -> stay ask, install now        (yes, just this once)
+    not_now   -> stay ask, do nothing         (ask me again later)
+    never     -> mode off, remove Merlin's    (no, stop asking)
+    """
+    from lib import skills
+
+    choice = (body.get("choice") or "").strip().lower()
+    if choice == "always":
+        skills.set_agent_state_hooks_mode("auto")
+        changed = skills.install_interactive_hooks()
+    elif choice == "once":
+        changed = skills.install_interactive_hooks()
+    elif choice == "not_now":
+        changed = False
+    elif choice == "never":
+        skills.set_agent_state_hooks_mode("off")
+        changed = skills.remove_interactive_hooks()
+    else:
+        raise HTTPException(status_code=422, detail="Invalid consent choice")
+
+    mode = skills.agent_state_hooks_mode()
+    pending = mode == "ask" and skills.interactive_hooks_drift()
+    return {"ok": True, "mode": mode, "pending": pending, "changed": changed}
 
 
 def _extension_audit(info: ExtensionInfo) -> tuple[list[dict], list[dict]]:
@@ -894,6 +964,12 @@ mount_module(job_routes, "job")
 import sessions
 
 mount_module(sessions, "sessions")
+
+# Sessions board — core module. A 2D overview of parallel agent sessions built
+# on the @agent_state tmux pills. URL_SLUG="board" → /board + /api/board.
+import board
+
+mount_module(board, "board")
 
 # Webhooks front desk — intentionally mounted WITHOUT require_auth (terminal
 # precedent): /webhooks/* is public and self-authenticating via per-hook
@@ -1115,6 +1191,11 @@ def _skill_source_dirs() -> dict[str, Path]:
     return sources
 
 
+# Latest agent-state hook reconcile status, read by the dashboard consent
+# banner. "pending" means ask-mode drift the user should be asked about.
+_agent_state_hooks_status: str = "in-sync"
+
+
 def _rebuild_skill_registry() -> None:
     """Build the skill registry, canonical aggregation, and user shims."""
     from lib import skills
@@ -1131,6 +1212,17 @@ def _rebuild_skill_registry() -> None:
         )
     except Exception:
         logger.warning("Skill registry rebuild failed", exc_info=True)
+
+    # Agent-state pill hooks: reconcile ~/.claude/settings.json per the consent
+    # mode (auto installs/updates, off removes, ask only detects drift). Kept
+    # separate from the shim sync so a settings.json issue can never stop the
+    # skills from refreshing. Never blocks startup.
+    global _agent_state_hooks_status
+    try:
+        _agent_state_hooks_status = skills.sync_interactive_hooks()
+        logger.info("Agent-state hooks: %s", _agent_state_hooks_status)
+    except Exception:
+        logger.warning("Agent-state hook sync failed", exc_info=True)
 
 
 # Extensions nav item — always last in nav, before sidebar footer

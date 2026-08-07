@@ -29,8 +29,12 @@ The Extensions page lists each extension's skills and commands read-only.
 
 from __future__ import annotations
 
+import contextlib
+import copy
+import json
 import logging
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -370,3 +374,305 @@ def sync_interactive_shims() -> None:
             sync_shim_links(target)
         except OSError as e:
             logger.warning("Could not sync skill shims into %s: %s", target, e)
+
+
+# ---------------------------------------------------------------------------
+# Agent-state pill hooks: consent config
+#
+# The tmux window pills (terminal/tmux.conf) need a Claude Code state hook
+# installed into the user's ~/.claude/settings.json. That edits the user's own
+# config, so it is consent-gated by a single config value:
+#
+#   auto  sync silently on every start ("always, don't ask")
+#   ask   (default) surface the consent prompt in the dashboard on drift
+#   off   remove Merlin's entries, never sync, never prompt
+#
+# This is the single source of truth read by the CLI, the Settings page, the
+# reconciler, and the consent banner.
+# ---------------------------------------------------------------------------
+
+AGENT_STATE_HOOKS_KEY = "AGENT_STATE_HOOKS"
+AGENT_STATE_HOOKS_MODES = ("auto", "ask", "off")
+AGENT_STATE_HOOKS_DEFAULT = "ask"
+
+
+def _config_env_read(key: str) -> str | None:
+    """Read a single key from config.env, falling back to os.environ.
+
+    Mirrors paths.load_config_env's parsing (optional ``export `` prefix,
+    matching surrounding quotes stripped) but for one key, without mutating
+    the process environment.
+    """
+    path = paths.config_path()
+    if path.exists():
+        try:
+            lines = path.read_text().splitlines()
+        except OSError:
+            lines = []
+        for line in lines:
+            line = line.strip()
+            if line.startswith("export "):
+                line = line[len("export ") :]
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            if k.strip() == key:
+                v = v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+                    v = v[1:-1]
+                return v
+    return os.environ.get(key)
+
+
+def _config_env_write(key: str, value: str) -> None:
+    """Set a single key in config.env, preserving all other lines (0600)."""
+    path = paths.config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    replaced = False
+    if path.exists():
+        for line in path.read_text().splitlines():
+            stripped = line.strip()
+            if stripped.startswith(f"{key}=") or stripped.startswith(f"export {key}="):
+                lines.append(f"{key}={value}")
+                replaced = True
+            else:
+                lines.append(line)
+    if not replaced:
+        lines.append(f"{key}={value}")
+    path.write_text("\n".join(lines) + "\n")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def agent_state_hooks_mode() -> str:
+    """The current consent mode (auto|ask|off). Unknown/unset -> default ask."""
+    val = (_config_env_read(AGENT_STATE_HOOKS_KEY) or "").strip().lower()
+    return val if val in AGENT_STATE_HOOKS_MODES else AGENT_STATE_HOOKS_DEFAULT
+
+
+def set_agent_state_hooks_mode(mode: str) -> str:
+    """Validate and persist the consent mode. Returns the normalized value.
+
+    Raises ValueError on an invalid mode so callers surface a clear error.
+    """
+    normalized = (mode or "").strip().lower()
+    if normalized not in AGENT_STATE_HOOKS_MODES:
+        raise ValueError(
+            f"invalid agent-state-hooks mode {mode!r}; "
+            f"expected one of {', '.join(AGENT_STATE_HOOKS_MODES)}"
+        )
+    _config_env_write(AGENT_STATE_HOOKS_KEY, normalized)
+    return normalized
+
+
+# ---------------------------------------------------------------------------
+# Agent-state pill hooks: the settings.json reconciler
+#
+# The interactive `claude` command line is the user's, not Merlin's, so the
+# state hook has to be pre-registered where Claude Code reads it on every
+# launch: the `hooks` key of ~/.claude/settings.json (--plugin-dir is CLI-only,
+# so it cannot help the interactive path). This reconciler owns exactly three
+# entries there and nothing else, the same idempotent, drift-only shape as
+# sync_interactive_shims(): it re-writes them whenever what Merlin ships drifts
+# from what is installed, so an 'auto' user never re-runs setup after an update.
+#
+# Merlin's entries are MARKED (a sentinel + version baked into the command
+# string, which is a harmless trailing shell comment) so they can be found,
+# compared, refreshed, and removed. Foreign entries are never touched, and the
+# write is a collision-safe atomic merge: read, merge in memory, write a temp
+# file, parse-verify, atomic rename.
+# ---------------------------------------------------------------------------
+
+_HOOK_MARKER = "merlin:agent-state-pill"
+_HOOK_VERSION = 2  # v2: SessionStart also runs agent-session-init.sh (board sid/cwd)
+# Claude Code event -> agent-state.sh argument.
+_HOOK_EVENTS = {
+    "UserPromptSubmit": "busy",  # you submitted a prompt: the agent is working
+    "Stop": "done",  # the agent finished a turn: waiting on you
+    "SessionStart": "idle",  # a session started / resumed: nothing running yet
+}
+
+
+def claude_settings_path() -> Path:
+    """Claude Code's user settings file (~/.claude/settings.json)."""
+    return claude_skills_dir().parent / "settings.json"
+
+
+def _hook_command(state: str) -> str:
+    """The shipped command for a state, with the version marker as a trailing
+    shell comment (ignored on execution, used for identification + drift)."""
+    script = paths.app_dir() / "terminal" / "hooks" / "agent-state.sh"
+    return f'bash "{script}" {state}  # {_HOOK_MARKER}:v{_HOOK_VERSION}'
+
+
+def _session_init_command() -> str:
+    """The SessionStart companion that mints the board's stable session id and
+    pins the launch cwd (see terminal/hooks/agent-session-init.sh). Carries the
+    same marker so it is found, refreshed, and removed with the state hooks."""
+    script = paths.app_dir() / "terminal" / "hooks" / "agent-session-init.sh"
+    return f'bash "{script}"  # {_HOOK_MARKER}:v{_HOOK_VERSION}'
+
+
+def _is_merlin_group(group: object) -> bool:
+    """True if a hook matcher-group is one Merlin owns (marked command)."""
+    if not isinstance(group, dict):
+        return False
+    entries = group.get("hooks")
+    if not isinstance(entries, list):
+        return False
+    for entry in entries:
+        if isinstance(entry, dict) and _HOOK_MARKER in str(entry.get("command", "")):
+            return True
+    return False
+
+
+def _merlin_group(event: str, state: str) -> dict:
+    """The hook entries Merlin owns for one event. SessionStart carries a second
+    command (the board session-init) in the same group."""
+    entries = [{"type": "command", "command": _hook_command(state)}]
+    if event == "SessionStart":
+        entries.append({"type": "command", "command": _session_init_command()})
+    return {"hooks": entries}
+
+
+def _read_claude_settings() -> dict | None:
+    """Read settings.json. {} if absent, None if unreadable/invalid or not an
+    object (caller must then NOT write, to never clobber the user's file)."""
+    path = claude_settings_path()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _hooks_shape_ok(settings: dict) -> bool:
+    """The `hooks` block, if present, must be the object-of-lists shape we can
+    safely merge into. Anything else -> bail rather than risk corrupting it."""
+    hooks = settings.get("hooks")
+    if hooks is None:
+        return True
+    if not isinstance(hooks, dict):
+        return False
+    for event in _HOOK_EVENTS:
+        value = hooks.get(event)
+        if value is not None and not isinstance(value, list):
+            return False
+    return True
+
+
+def _reconcile_install(settings: dict) -> dict:
+    """Desired settings with Merlin's three groups fresh: strip any existing
+    Merlin groups (stale version / old path) and append the shipped ones.
+    Foreign groups keep their place and order."""
+    out = copy.deepcopy(settings)
+    hooks = out.setdefault("hooks", {})
+    for event, state in _HOOK_EVENTS.items():
+        groups = [g for g in hooks.get(event, []) if not _is_merlin_group(g)]
+        groups.append(_merlin_group(event, state))
+        hooks[event] = groups
+    return out
+
+
+def _reconcile_remove(settings: dict) -> dict:
+    """Desired settings with every Merlin group removed; foreign groups kept.
+    Event keys and the `hooks` block are dropped only if they end up empty."""
+    out = copy.deepcopy(settings)
+    hooks = out.get("hooks")
+    if not isinstance(hooks, dict):
+        return out
+    for event in list(hooks.keys()):
+        value = hooks.get(event)
+        if not isinstance(value, list):
+            continue
+        kept = [g for g in value if not _is_merlin_group(g)]
+        if kept:
+            hooks[event] = kept
+        else:
+            hooks.pop(event, None)
+    if not hooks:
+        out.pop("hooks", None)
+    return out
+
+
+def _write_claude_settings(data: dict) -> None:
+    """Collision-safe atomic write: render, parse-verify, temp file, rename.
+    Preserves the file's existing permission bits when it already exists."""
+    path = claude_settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(data, indent=2) + "\n"
+    json.loads(text)  # parse-verify before touching the real file
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o644
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".settings-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+def install_interactive_hooks() -> bool:
+    """Install/refresh Merlin's state hooks. Returns True if it wrote a change.
+    No-op (and no write) when already in sync or when the file can't be merged
+    safely."""
+    settings = _read_claude_settings()
+    if settings is None or not _hooks_shape_ok(settings):
+        logger.warning(
+            "Skipping agent-state hook install: %s is unreadable or has an "
+            "unexpected shape",
+            claude_settings_path(),
+        )
+        return False
+    desired = _reconcile_install(settings)
+    if desired == settings:
+        return False
+    _write_claude_settings(desired)
+    return True
+
+
+def remove_interactive_hooks() -> bool:
+    """Remove Merlin's state hooks, leaving foreign entries untouched. Returns
+    True if it wrote a change."""
+    settings = _read_claude_settings()
+    if settings is None:
+        return False
+    desired = _reconcile_remove(settings)
+    if desired == settings:
+        return False
+    _write_claude_settings(desired)
+    return True
+
+
+def interactive_hooks_drift() -> bool:
+    """True if installing would change settings.json (not installed, or a
+    version/path update made the shipped command differ). False when the file
+    can't be merged safely (we won't nag about something we won't touch)."""
+    settings = _read_claude_settings()
+    if settings is None or not _hooks_shape_ok(settings):
+        return False
+    return _reconcile_install(settings) != settings
+
+
+def sync_interactive_hooks() -> str:
+    """Reconcile the state hooks per the consent mode. Called at every startup
+    and after a consent change. Never raises into the caller's happy path.
+
+    Returns a short status: 'synced' | 'in-sync' | 'removed' | 'clean' |
+    'pending' (ask-mode drift the dashboard banner should surface).
+    """
+    mode = agent_state_hooks_mode()
+    if mode == "off":
+        return "removed" if remove_interactive_hooks() else "clean"
+    if mode == "auto":
+        return "synced" if install_interactive_hooks() else "in-sync"
+    # ask: startup never writes; the dashboard consent banner drives any sync.
+    return "pending" if interactive_hooks_drift() else "in-sync"

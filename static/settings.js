@@ -42,6 +42,28 @@ const Settings = {
         this._save({ OPENAI_API_KEY: val }, 'toast-openai');
     },
 
+    // ── Agent-state pills (auto | ask | off) ──
+    _highlightAgentStateHooks(mode) {
+        const group = document.getElementById('agent-state-hooks');
+        if (!group) return;
+        group.querySelectorAll('.settings-seg-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === mode);
+        });
+    },
+
+    async loadAgentStateHooks() {
+        const group = document.getElementById('agent-state-hooks');
+        if (!group) return;
+        const data = await API.get('/api/settings');
+        if (!data) return;
+        this._highlightAgentStateHooks(data.agent_state_hooks || 'ask');
+    },
+
+    setAgentStateHooks(mode) {
+        this._highlightAgentStateHooks(mode);   // optimistic
+        this._save({ AGENT_STATE_HOOKS: mode }, 'toast-agent-state-hooks');
+    },
+
     // ── Public URL ──
     async savePublicUrl() {
         const val = document.getElementById('public-url-input').value.trim();
@@ -186,4 +208,5 @@ const Settings = {
 
 document.addEventListener('DOMContentLoaded', () => {
     Settings.loadPublicUrl();
+    Settings.loadAgentStateHooks();
 });

@@ -277,3 +277,49 @@
 }
 .settings-checkbox input { accent-color: var(--accent-blue); }
 .settings-input:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Segmented control (3-way choice, e.g. agent-state pill consent) */
+.settings-segmented {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    max-width: 100%;
+    margin-bottom: 4px;
+}
+
+.settings-seg-btn {
+    min-height: 44px;
+    padding: 8px 20px;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    border: none;
+    border-right: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.settings-seg-btn:last-child { border-right: none; }
+
+.settings-seg-btn.active {
+    background: rgba(74, 158, 255, 0.15);
+    color: var(--accent-blue);
+}
+
+.settings-seg-btn:not(.active):hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+/* Pill glyphs used in the help text */
+.pill-idle { color: var(--text-muted); }
+.pill-busy { color: var(--accent-yellow); }
+.pill-done { color: var(--accent-green); }
+
+@media (max-width: 768px) {
+    .settings-segmented { display: flex; width: 100%; }
+    .settings-seg-btn { flex: 1; padding: 12px 8px; }
+}

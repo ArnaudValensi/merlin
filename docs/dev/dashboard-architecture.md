@@ -471,6 +471,52 @@ job/
 
 **Dependency:** `cron-descriptor` (in `pyproject.toml`) powers `cron_to_human()`.
 
+### Sessions Board
+
+```
+board/
+├── __init__.py            # Exports api_router, page_router, STATIC_DIR, URL_SLUG
+├── sweep.py               # tmux sweep: parse `list-windows -a -F` into Window records
+├── store.py               # Durable per-session metadata (~/.merlin/board.json)
+├── model.py               # reconcile() + build_view() — pure, tested without tmux
+├── routes.py              # /board page + /api/board (GET view; POST name/order/dismiss/focus)
+├── templates/board.html
+└── static/board.css, board.js
+```
+
+**Pages:** `/board` (nav item "Sessions"). A 2D overview of parallel agent
+sessions, built on the `@agent_state` tmux pills (see the archived
+`session-status-signals` epic and `terminal/hooks/`).
+
+**Data flow.** The board never owns the live signal — tmux does. `GET /api/board`
+runs one `tmux list-windows -a -F` sweep (`sweep.py`), joins it with durable
+metadata keyed by a stable session id (`store.py`), reconciles (`model.reconcile`),
+and returns the view (`model.build_view`). The stable id `@agent_sid` and the
+pinned launch cwd `@agent_cwd` are stamped once by the SessionStart hook
+(`terminal/hooks/agent-session-init.sh`, installed by the same reconciler as the
+pills — `lib/skills.py`, hook v2). Family links `@agent_parent` (the parent's
+`@agent_sid`) and `@agent_relation` (`sibling`|`child`) are stamped by the spawner
+(`terminal/hooks/agent-relate.sh`, used by the fork/handoff skills).
+
+**Design invariants** (from the `sessions-board` epic):
+
+- **Stable position.** Cards never reorder by state. Order is the user's (manual
+  reorder persisted as `order`), falling back to first-seen. Attention is an
+  in-place glow on `done` cards, never movement; a count badge (also the global
+  `.board-fab` in `base.html`) and a jump-to-next action surface it without reflow.
+- **Pinned cwd.** Grouped by project = `basename(@agent_cwd)`, captured at launch
+  and never moved when the agent `cd`s.
+- **Families.** `child` nests one indent under its parent (hierarchy wins over
+  project placement); `sibling` (the default) stays flat as a peer. Visual indent
+  is depth-capped in CSS.
+- **Stop policy.** A session gone from the sweep while `idle`/`done` vanishes; gone
+  while `busy` leaves a dismissible tombstone ("died while working").
+- **Two tiers.** `@agent_state`-carrying windows are rich cards; plain windows are a
+  collapsed "other windows" list. The tmux tab bar stays the fast switcher.
+
+**Known limit:** in-session Task sub-agents (spawned inside one session, no tmux
+window) do not surface separately — only the parent window's aggregate state does.
+
 ## Adding a New Page
 
 1. Create `templates/newpage.html` extending `base.html`

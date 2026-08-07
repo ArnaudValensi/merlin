@@ -343,6 +343,11 @@ async def terminal_ws(websocket: WebSocket):
     if pid == 0:
         # Child process — start in CWD (or project root)
         os.chdir(_cwd or str(PROJECT_ROOT))
+        # tmux.conf's agent-state switch-clear hook resolves this to find
+        # terminal/hooks/agent-state-switch.sh. Exported here (child only,
+        # pre-exec) so tmux captures it into its global environment when it
+        # creates the merlin-dev server; run-shell children then inherit it.
+        os.environ["MERLIN_TERMINAL_HOOKS"] = str(TERMINAL_DIR / "hooks")
         tmux_conf = TERMINAL_DIR / "tmux.conf"
         tmux_args = ["tmux"]
         if tmux_conf.exists():

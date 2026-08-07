@@ -1,0 +1,264 @@
+/* Sessions board — 2D overview of parallel agent sessions.
+   Uses the dashboard design-system variables (dashboard.css); no hardcoded
+   colors. Mobile-first, single 768px breakpoint. Stable slots: cards are never
+   reordered by state, only by the user's manual order. Attention is an in-place
+   glow, never movement. */
+
+.board-wrap {
+  padding: 24px 28px;
+  max-width: 1100px;
+}
+
+.board-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.board-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.board-title h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* "N waiting on you" — green count pill. Never causes a reflow of cards. */
+.board-attention {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-green);
+  background: rgba(52, 211, 153, 0.12);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+.board-toolbar {
+  display: flex;
+  gap: 8px;
+}
+
+.board-reorder-toggle.active {
+  color: var(--accent-blue);
+  border-color: var(--accent-blue);
+}
+
+/* Project groups ------------------------------------------------------- */
+
+.board-project {
+  margin-bottom: 24px;
+}
+
+.board-project-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.board-project-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.board-project-path {
+  font-family: 'Geist Mono', monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Session cards -------------------------------------------------------- */
+
+.session-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.session-card:hover {
+  background: var(--bg-hover);
+}
+
+.session-card.active {
+  border-color: var(--accent-blue);
+}
+
+/* Depth: children nest one indent under their parent; capped so a deep chain
+   can't march off a phone screen (hierarchy is kept in data, flattened in px). */
+.session-card[data-depth="1"] { margin-left: 22px; }
+.session-card[data-depth="2"] { margin-left: 44px; }
+.session-card[data-depth="3"] { margin-left: 60px; }
+
+.session-glyph {
+  font-size: 15px;
+  line-height: 1;
+  width: 16px;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
+.state-idle .session-glyph { color: var(--text-muted); }
+.state-busy .session-glyph { color: var(--accent-yellow); }
+.state-done .session-glyph { color: var(--accent-green); }
+
+/* Done = waiting on you: a steady in-place glow. It draws the eye without
+   moving the card out of its slot. */
+.session-card.waiting {
+  border-color: rgba(52, 211, 153, 0.4);
+  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.25), 0 0 12px rgba(52, 211, 153, 0.15);
+}
+
+.session-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.session-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-short-id {
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.session-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-relation {
+  color: var(--accent-purple);
+  font-weight: 500;
+}
+
+.session-name-input {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--accent-blue);
+  border-radius: 4px;
+  padding: 2px 6px;
+  width: 100%;
+  max-width: 240px;
+}
+
+/* Per-card actions ----------------------------------------------------- */
+
+.session-actions {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.session-actions .card-btn {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.session-actions .card-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Reorder controls are hidden until reorder mode is on. */
+.board-body:not(.reordering) .reorder-btn { display: none; }
+.board-body.reordering .session-card { cursor: default; }
+
+/* Tombstone: died while working. Greyed, dashed, holds its slot until dismissed. */
+.session-card.tombstone {
+  opacity: 0.6;
+  border-style: dashed;
+  cursor: default;
+}
+
+.session-card.tombstone .session-glyph { color: var(--accent-red); }
+
+/* Plain (non-agent) windows: a demoted, collapsed courtesy tier. */
+.board-other {
+  margin-top: 28px;
+}
+
+.board-other summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.other-window {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-radius: 6px;
+}
+
+.other-window:hover { background: var(--bg-hover); }
+.other-window .ow-session { color: var(--text-muted); font-family: 'Geist Mono', monospace; font-size: 10px; }
+
+.empty-hint {
+  color: var(--text-muted);
+  font-size: 13px;
+  max-width: 420px;
+  margin: 6px auto 0;
+}
+
+@media (max-width: 768px) {
+  .board-wrap { padding: 16px; }
+  .session-card[data-depth="1"] { margin-left: 14px; }
+  .session-card[data-depth="2"] { margin-left: 26px; }
+  .session-card[data-depth="3"] { margin-left: 34px; }
+}

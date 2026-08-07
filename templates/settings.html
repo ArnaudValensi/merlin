@@ -101,6 +101,33 @@
     </div>
 </div>
 
+<div class="settings-section">
+    <div class="settings-section-title">Agent-state pills</div>
+    <div class="settings-card">
+        <div class="settings-field">
+            <label class="settings-label" id="agent-state-hooks-label">Terminal window pills</label>
+            <div class="settings-segmented" id="agent-state-hooks" role="group" aria-labelledby="agent-state-hooks-label">
+                <button class="settings-seg-btn" type="button" data-mode="auto" onclick="Settings.setAgentStateHooks('auto')">Always</button>
+                <button class="settings-seg-btn" type="button" data-mode="ask" onclick="Settings.setAgentStateHooks('ask')">Ask</button>
+                <button class="settings-seg-btn" type="button" data-mode="off" onclick="Settings.setAgentStateHooks('off')">Off</button>
+            </div>
+            <span class="settings-toast" id="toast-agent-state-hooks"></span>
+            <div class="settings-help">
+                Encode each Claude Code session's state in the tmux window tabs of the web
+                terminal: <span class="pill-idle">&#9675;</span> idle,
+                <span class="pill-busy">&#9680;</span> working,
+                <span class="pill-done">&#9679;</span> done and waiting on you. Installing it adds a
+                small state hook to <code>~/.claude/settings.json</code>.
+                <strong>Always</strong> keeps it installed and updated,
+                <strong>Ask</strong> prompts you here whenever there is a change to install,
+                <strong>Off</strong> removes it and stops asking. Your own hooks are never touched.
+                Already-open <code>claude</code> sessions pick up a new or updated hook only after a
+                session restart.
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}

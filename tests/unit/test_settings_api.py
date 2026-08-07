@@ -183,3 +183,137 @@ class TestPublicUrlSetting:
         (tmp_path / "config.env").write_text("")
         data = client.get("/api/settings").json()
         assert data["default_public_url"].startswith("http")
+
+
+class TestAgentStateHooksSetting:
+    @pytest.fixture
+    def settings_json(self, tmp_path, monkeypatch):
+        """Isolate ~/.claude/settings.json so the sync never touches real home."""
+        from lib import skills
+
+        # load_config_env's setdefault can leak AGENT_STATE_HOOKS into os.environ
+        # across tests in-process; clear it so config.env stays the source.
+        monkeypatch.delenv("AGENT_STATE_HOOKS", raising=False)
+        p = tmp_path / "dot-claude" / "settings.json"
+        monkeypatch.setattr(skills, "claude_settings_path", lambda: p)
+        return p
+
+    def test_get_default_ask(self, client, tmp_path, monkeypatch):
+        monkeypatch.delenv("AGENT_STATE_HOOKS", raising=False)
+        (tmp_path / "config.env").write_text("")
+        assert client.get("/api/settings").json()["agent_state_hooks"] == "ask"
+
+    def test_set_auto_persists_and_installs(self, client, tmp_path, settings_json):
+        (tmp_path / "config.env").write_text("")
+        resp = client.post("/api/settings", json={"AGENT_STATE_HOOKS": "auto"})
+        assert resp.status_code == 200
+        assert "AGENT_STATE_HOOKS=auto" in (tmp_path / "config.env").read_text()
+        # auto triggers an immediate install
+        assert settings_json.exists()
+        data = json.loads(settings_json.read_text())
+        assert set(data["hooks"]) == {"UserPromptSubmit", "Stop", "SessionStart"}
+
+    def test_set_off_removes(self, client, tmp_path, settings_json):
+        (tmp_path / "config.env").write_text("")
+        client.post("/api/settings", json={"AGENT_STATE_HOOKS": "auto"})
+        assert settings_json.exists()
+        client.post("/api/settings", json={"AGENT_STATE_HOOKS": "off"})
+        assert "AGENT_STATE_HOOKS=off" in (tmp_path / "config.env").read_text()
+        assert "hooks" not in json.loads(settings_json.read_text())
+
+    def test_set_ask_persists_without_writing_settings(
+        self, client, tmp_path, settings_json
+    ):
+        (tmp_path / "config.env").write_text("")
+        client.post("/api/settings", json={"AGENT_STATE_HOOKS": "ask"})
+        assert "AGENT_STATE_HOOKS=ask" in (tmp_path / "config.env").read_text()
+        assert not settings_json.exists()  # ask never writes at startup/save
+
+    def test_invalid_mode_rejected(self, client, tmp_path, settings_json):
+        (tmp_path / "config.env").write_text("")
+        resp = client.post("/api/settings", json={"AGENT_STATE_HOOKS": "bogus"})
+        assert resp.status_code == 422
+        # nothing persisted on rejection
+        assert "AGENT_STATE_HOOKS" not in (tmp_path / "config.env").read_text()
+
+    def test_settings_page_has_agent_state_section(self, client):
+        html = client.get("/settings").text
+        assert "Agent-state pills" in html
+        assert 'id="agent-state-hooks"' in html
+
+
+class TestAgentStateConsentBanner:
+    """The /api/agent-state-hooks status + consent-choice state machine."""
+
+    @pytest.fixture
+    def settings_json(self, tmp_path, monkeypatch):
+        from lib import skills
+
+        # load_config_env's setdefault can leak AGENT_STATE_HOOKS into os.environ
+        # across tests in-process; clear it so config.env stays the source.
+        monkeypatch.delenv("AGENT_STATE_HOOKS", raising=False)
+        p = tmp_path / "dot-claude" / "settings.json"
+        monkeypatch.setattr(skills, "claude_settings_path", lambda: p)
+        return p
+
+    def test_status_pending_when_ask_and_not_installed(
+        self, client, tmp_path, settings_json, monkeypatch
+    ):
+        monkeypatch.delenv("AGENT_STATE_HOOKS", raising=False)
+        (tmp_path / "config.env").write_text("")
+        assert client.get("/api/agent-state-hooks").json() == {
+            "mode": "ask",
+            "pending": True,
+        }
+
+    def test_status_not_pending_in_auto(self, client, tmp_path, settings_json):
+        (tmp_path / "config.env").write_text("AGENT_STATE_HOOKS=auto\n")
+        data = client.get("/api/agent-state-hooks").json()
+        assert data["mode"] == "auto"
+        assert data["pending"] is False  # auto never nags via the banner
+
+    def test_always_sets_auto_and_installs(self, client, tmp_path, settings_json):
+        (tmp_path / "config.env").write_text("")
+        data = client.post("/api/agent-state-hooks", json={"choice": "always"}).json()
+        assert data["mode"] == "auto"
+        assert data["pending"] is False
+        assert data["changed"] is True
+        assert settings_json.exists()
+        assert "AGENT_STATE_HOOKS=auto" in (tmp_path / "config.env").read_text()
+
+    def test_once_installs_but_stays_ask(self, client, tmp_path, settings_json):
+        (tmp_path / "config.env").write_text("")
+        data = client.post("/api/agent-state-hooks", json={"choice": "once"}).json()
+        assert data["mode"] == "ask"  # not promoted to auto
+        assert settings_json.exists()  # but installed now
+        assert data["pending"] is False  # no drift -> banner won't re-show
+        assert "AGENT_STATE_HOOKS=auto" not in (tmp_path / "config.env").read_text()
+
+    def test_not_now_does_nothing(self, client, tmp_path, settings_json):
+        (tmp_path / "config.env").write_text("")
+        data = client.post("/api/agent-state-hooks", json={"choice": "not_now"}).json()
+        assert data["mode"] == "ask"
+        assert data["changed"] is False
+        assert not settings_json.exists()
+        assert data["pending"] is True  # still drift; may re-ask next session
+
+    def test_never_sets_off_and_removes(self, client, tmp_path, settings_json):
+        (tmp_path / "config.env").write_text("")
+        client.post("/api/agent-state-hooks", json={"choice": "always"})
+        assert settings_json.exists()
+        data = client.post("/api/agent-state-hooks", json={"choice": "never"}).json()
+        assert data["mode"] == "off"
+        assert data["pending"] is False
+        assert "hooks" not in json.loads(settings_json.read_text())
+        assert "AGENT_STATE_HOOKS=off" in (tmp_path / "config.env").read_text()
+
+    def test_invalid_choice_422(self, client, tmp_path, settings_json):
+        (tmp_path / "config.env").write_text("")
+        resp = client.post("/api/agent-state-hooks", json={"choice": "maybe"})
+        assert resp.status_code == 422
+
+    def test_base_shell_carries_the_banner(self, client):
+        html = client.get("/settings").text
+        assert 'id="agent-state-consent"' in html
+        assert 'data-choice="always"' in html
+        assert 'data-choice="never"' in html

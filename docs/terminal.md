@@ -35,11 +35,62 @@ are one continuous workspace.
 Each tmux window is a separate shell. F2 creates a window, F3/F4 switch
 to the previous/next one, F5 kills the current one. On mobile the
 toolbar shows them in the order `◀`, `+`, `▶`, `✕` (previous, new,
-next, kill). The tmux status bar shows windows
-as dots: `●` active, `○` inactive.
+next, kill). The active window is shown by a background highlight in the
+status bar.
 
 The key toolbar is visible by default on touch devices and hidden on
 desktop; the keyboard icon in the status bar toggles it.
+
+## Agent-state pills
+
+When you run [Claude Code](agents.md) in a window, its pill in the tmux
+status bar encodes what that session is doing, so one glance at the tab
+bar tells you which session is working, which just finished, and which
+you have already looked at:
+
+- `○` idle (grey): nothing is running.
+- `◐` working (amber): the agent is mid-turn.
+- `●` done (green): the turn finished and it is waiting on you.
+
+The green `●` is an *unread* marker. It clears when you switch to that
+window, or when you switch away after watching it finish. A window that
+finishes in the background stays green until you visit it, so nothing
+that wants your attention is lost while you work elsewhere.
+
+Windows that are not running Claude Code (a plain shell, or another
+agent) keep the classic `●` active / `○` inactive dots, so nothing
+changes for them.
+
+### Turn the pills on or off
+
+The pills need a small state hook in your Claude Code config
+(`~/.claude/settings.json`), so Merlin asks before installing it. The
+first time there is something to install, a banner appears at the top of
+the dashboard with four choices:
+
+- **Always**: install it and keep it updated automatically.
+- **Just once**: install it now, but ask again next time it changes.
+- **Not now**: skip for now, ask again later.
+- **Never**: remove Merlin's hook and stop asking.
+
+You can change your mind any time from **Settings -> Agent-state pills**,
+or from the CLI:
+
+```bash
+merlin config agent-state-hooks         # show the current choice
+merlin config agent-state-hooks auto    # always install and keep updated
+merlin config agent-state-hooks ask     # ask via the dashboard banner
+merlin config agent-state-hooks off     # remove Merlin's hook, stop asking
+```
+
+Merlin only ever touches its own entry: any hooks, model, or theme you
+have set in `settings.json` are left alone.
+
+> **Already-open sessions need a restart.** Claude Code reads its hooks
+> once, when a session starts. A `claude` session that was already
+> running when the hook was installed or updated will not show pills
+> until you restart it (exit and relaunch `claude` in that window). New
+> sessions pick it up right away.
 
 ## Copy and paste
 

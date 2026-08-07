@@ -593,10 +593,10 @@ def build_parser(include_extension_help: bool = True) -> argparse.ArgumentParser
     # config
     config_parser = subparsers.add_parser(
         "config",
-        help="Print resolved config values",
-        description="Print resolved configuration values. Reads from config.env, environment, and defaults.",
+        help="Print or set config values",
+        description="Print resolved configuration values, or set a settable key. Reads from config.env, environment, and defaults.",
         epilog="""
-Available keys:
+Read-only keys (resolved paths / info):
   notes-dir       Notes directory (notes, KB, user.md, logs)
   skills-user-dir Personal skill home (always-active, per-environment)
   home            Merlin home directory (~/.merlin)
@@ -609,15 +609,25 @@ Available keys:
   extensions-dir  User extensions directory
   version         Current version
 
+Settable keys:
+  agent-state-hooks   Consent for installing the tmux agent-state pill hook
+                      into ~/.claude/settings.json: auto | ask | off (default ask)
+
 Examples:
   merlin config notes-dir                        # Print notes directory
   cat "$(merlin config notes-dir)/kb/topic.md"   # Use in shell commands
   merlin config                                  # List all config values
+  merlin config agent-state-hooks                # Print current consent mode
+  merlin config agent-state-hooks auto           # Always install the pill hook
+  merlin config agent-state-hooks off            # Remove it and stop asking
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     config_parser.add_argument(
         "key", nargs="?", help="Config key to print (omit to list all)"
+    )
+    config_parser.add_argument(
+        "value", nargs="?", help="New value (only for settable keys)"
     )
 
     # skills
@@ -655,8 +665,14 @@ def _get_config_values() -> dict[str, str]:
         "sessions-dir": str(paths.sessions_dir()),
         "jobs-dir": str(paths.jobs_dir()),
         "extensions-dir": str(paths.extensions_dir()),
+        "agent-state-hooks": skills.agent_state_hooks_mode(),
         "version": get_version(),
     }
+
+
+# Config keys the CLI can write (everything else in _get_config_values is a
+# resolved path / read-only info).
+_SETTABLE_CONFIG_KEYS = ("agent-state-hooks",)
 
 
 def run_agent(personality: bool = False, user: bool = False) -> None:
@@ -721,8 +737,12 @@ def run_dashboard_url() -> None:
     print(urlunsplit(parts))
 
 
-def run_config(key: str | None) -> None:
-    """Print resolved config values."""
+def run_config(key: str | None, value: str | None = None) -> None:
+    """Print resolved config values, or set a settable key."""
+    if value is not None:
+        _set_config(key, value)
+        return
+
     values = _get_config_values()
     if key is None:
         # List all
@@ -735,6 +755,24 @@ def run_config(key: str | None) -> None:
         print(f"Unknown config key: {key}", file=sys.stderr)
         print(f"Available keys: {', '.join(sorted(values))}", file=sys.stderr)
         sys.exit(1)
+
+
+def _set_config(key: str | None, value: str) -> None:
+    """Write a settable config key, validating the value."""
+    from lib import skills
+
+    if key not in _SETTABLE_CONFIG_KEYS:
+        print(f"Config key is not settable: {key}", file=sys.stderr)
+        print(f"Settable keys: {', '.join(_SETTABLE_CONFIG_KEYS)}", file=sys.stderr)
+        sys.exit(1)
+
+    if key == "agent-state-hooks":
+        try:
+            normalized = skills.set_agent_state_hooks_mode(value)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"agent-state-hooks = {normalized}")
 
 
 def _skills_use_color() -> bool:
@@ -952,7 +990,7 @@ def cli_main(argv: list[str] | None = None) -> None:
         run_update()
 
     elif command == "config":
-        run_config(getattr(args, "key", None))
+        run_config(getattr(args, "key", None), getattr(args, "value", None))
 
     elif command == "skills":
         run_skills()

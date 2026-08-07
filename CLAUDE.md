@@ -45,6 +45,7 @@ merlin/
 ├── terminal/                  # Web terminal module (xterm.js + tmux)
 ├── commits/                   # Git commit browser module
 ├── sessions/                  # Session transcript viewer (core module, /session/{file})
+├── board/                     # Sessions board — 2D overview of parallel agent sessions (/board)
 ├── notes/                     # Notes editor module (markdown)
 │   └── commands/              # merlin notes search / kb / remember commands
 ├── skills/                    # Core operational skills (jobs/, notes/, dashboard/, self-awareness/) — always active, aggregated regardless of the bot
