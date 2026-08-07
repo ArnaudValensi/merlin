@@ -475,18 +475,23 @@ job/
 
 ```
 board/
-├── __init__.py            # Exports api_router, page_router, STATIC_DIR, URL_SLUG
+├── __init__.py            # Exports api_router, STATIC_DIR, URL_SLUG
 ├── sweep.py               # tmux sweep: parse `list-windows -a -F` into Window records
 ├── store.py               # Durable per-session metadata (~/.merlin/board.json)
 ├── model.py               # reconcile() + build_view() — pure, tested without tmux
-├── routes.py              # /board page + /api/board (GET view; POST name/order/dismiss/focus)
-├── templates/board.html
+├── routes.py              # /api/board only (GET view; POST name/order/dismiss/focus)
 └── static/board.css, board.js
 ```
 
-**Pages:** `/board` (nav item "Sessions"). A 2D overview of parallel agent
-sessions, built on the `@agent_state` tmux pills (see the archived
-`session-status-signals` epic and `terminal/hooks/`).
+**Surface:** there is no page of its own. The board renders as a **drawer inside
+the web terminal** (`terminal/templates/terminal.html`), where the sessions
+actually live. A "Sessions" button sits in the terminal's persistent status bar
+next to the mic; its badge shows the "waiting on you" count; tapping it opens a
+right-side drawer (wide on mobile) that `board.js` mounts itself into via
+`window.SessionsBoard.init({container, onAttention, onJump, onClose})`. Tapping a
+session focuses its tmux window (`POST /api/board/focus`) and closes the drawer.
+Built on the `@agent_state` tmux pills (see the archived `session-status-signals`
+epic and `terminal/hooks/`).
 
 **Data flow.** The board never owns the live signal — tmux does. `GET /api/board`
 runs one `tmux list-windows -a -F` sweep (`sweep.py`), joins it with durable
@@ -502,8 +507,8 @@ pills — `lib/skills.py`, hook v2). Family links `@agent_parent` (the parent's
 
 - **Stable position.** Cards never reorder by state. Order is the user's (manual
   reorder persisted as `order`), falling back to first-seen. Attention is an
-  in-place glow on `done` cards, never movement; a count badge (also the global
-  `.board-fab` in `base.html`) and a jump-to-next action surface it without reflow.
+  in-place glow on `done` cards, never movement; the count rides the toolbar
+  button badge, and a jump-to-next action surfaces it without reflow.
 - **Pinned cwd.** Grouped by project = `basename(@agent_cwd)`, captured at launch
   and never moved when the agent `cd`s.
 - **Families.** `child` nests one indent under its parent (hierarchy wins over

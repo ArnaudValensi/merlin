@@ -99,50 +99,6 @@
 
     {% block scripts %}{% endblock %}
 
-    <a href="/board" class="board-fab" id="board-fab" hidden aria-label="Sessions waiting on you">
-        <span class="board-fab-dot">&#9679;</span>
-        <span class="board-fab-count" id="board-fab-count">0</span>
-        <span class="board-fab-label">waiting</span>
-    </a>
-    <style>
-    /* Global attention badge: on any page, a tap-target that opens the Sessions
-       board and shows how many sessions are waiting on you. In-view notification,
-       no third-party push. Hidden at zero and while on the board itself. */
-    .board-fab {
-        position: fixed; right: 16px; bottom: 16px; z-index: 60;
-        display: inline-flex; align-items: center; gap: 7px;
-        padding: 9px 14px; border-radius: 999px;
-        background: var(--bg-card); color: var(--accent-green);
-        border: 1px solid rgba(52, 211, 153, 0.4);
-        box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.2), 0 4px 16px rgba(0,0,0,0.35);
-        font-size: 13px; font-weight: 600; text-decoration: none;
-    }
-    .board-fab:hover { background: var(--bg-hover); }
-    .board-fab-dot { font-size: 11px; line-height: 1; }
-    .board-fab-label { color: var(--text-secondary); font-weight: 500; }
-    </style>
-    <script>
-    // Poll the board's attention count and surface it as the floating badge on
-    // every page except the board itself. Plain fetch — a hiccup never disrupts.
-    (function () {
-        var fab = document.getElementById('board-fab');
-        if (!fab || location.pathname.indexOf('/board') === 0) return;
-        var count = document.getElementById('board-fab-count');
-        function poll() {
-            fetch('/api/board', { headers: { Accept: 'application/json' } })
-                .then(function (r) { return r.ok ? r.json() : null; })
-                .then(function (d) {
-                    if (!d) return;
-                    if (d.attention > 0) { count.textContent = d.attention; fab.hidden = false; }
-                    else { fab.hidden = true; }
-                })
-                .catch(function () {});
-        }
-        poll();
-        setInterval(poll, 5000);
-    })();
-    </script>
-
     <script>
     // Agent-state pill consent banner: shown only when the server reports
     // ask-mode drift. Plain fetch (no auto-reload on error) so a hiccup never

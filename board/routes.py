@@ -1,7 +1,9 @@
-"""Sessions board — a 2D overview of every parallel agent session.
+"""Sessions board — the data + assets behind the terminal's Sessions drawer.
 
-The framework mounts ``api_router`` at ``/api/board`` and ``page_router`` at
-``/board`` (``URL_SLUG = "board"``). See ``docs/dev/dashboard-architecture.md``.
+The framework mounts ``api_router`` at ``/api/board`` and serves ``STATIC_DIR``
+at ``/static/board`` (``board.css`` / ``board.js``). There is no page of its
+own: the board renders as a drawer inside the web terminal (``terminal.html``),
+where the sessions actually live. See ``docs/dev/dashboard-architecture.md``.
 
 The board reads the live agent-state signal from tmux (``sweep``) and joins it
 with durable per-session metadata (``store``): user names, manual order, pinned
@@ -15,9 +17,6 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.requests import Request
-from fastapi.responses import HTMLResponse
-from merlin_ext import make_templates
 from pydantic import BaseModel
 
 from . import model, store, sweep
@@ -40,15 +39,8 @@ URL_SLUG = "board"
 
 BOARD_DIR = Path(__file__).parent.resolve()
 STATIC_DIR = BOARD_DIR / "static"
-templates = make_templates(BOARD_DIR / "templates")
 
 api_router = APIRouter()
-page_router = APIRouter()
-
-
-@page_router.get("", response_class=HTMLResponse)
-def board_page(request: Request):
-    return templates.TemplateResponse(request, "board.html", {})
 
 
 @api_router.get("")

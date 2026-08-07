@@ -1,5 +1,5 @@
-"""Sessions board core module — 2D overview of parallel agent sessions."""
+"""Sessions board — data + assets for the terminal's Sessions drawer."""
 
-from .routes import STATIC_DIR, URL_SLUG, api_router, page_router
+from .routes import STATIC_DIR, URL_SLUG, api_router
 
-__all__ = ["STATIC_DIR", "URL_SLUG", "api_router", "page_router"]
+__all__ = ["STATIC_DIR", "URL_SLUG", "api_router"]

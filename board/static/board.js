@@ -1,15 +1,18 @@
-/* Sessions board — client. Vanilla JS, IIFE (design-system convention).
-   Fetches /api/board, renders stable-position cards, and drives the rename /
-   reorder / focus / dismiss mutations. Never reorders cards by state: the server
-   owns order and returns it stable, and attention is shown as an in-place glow. */
-(function () {
+/* Sessions board — the content of the terminal's Sessions drawer.
+   Vanilla JS, IIFE. Exposes window.SessionsBoard.init({container, onAttention,
+   onJump}): it builds its own shell inside `container`, polls /api/board, renders
+   stable-position cards, and drives rename / reorder / focus / dismiss. Never
+   reorders cards by state — the server owns order; attention is reported to the
+   host (the toolbar badge) and shown as an in-place glow, never movement. */
+window.SessionsBoard = (function () {
   'use strict';
 
-  var GLYPH = { idle: '○', busy: '◐', done: '●' }; // ○ ◐ ●
+  var GLYPH = { idle: '○', busy: '◐', done: '●' };
   var POLL_MS = 4000;
-  var view = null;      // last rendered view model
-  var reordering = false;
-  var paused = false;   // true while a rename input is open (don't clobber it)
+
+  var S = { root: null, body: null, att: null, next: null, reorderBtn: null,
+            view: null, reordering: false, paused: false,
+            onAttention: function () {}, onJump: function () {}, onClose: null };
 
   function api(path, body) {
     var opts = { headers: { Accept: 'application/json' } };
@@ -21,7 +24,7 @@
     return fetch('/api/board' + path, opts).then(function (r) {
       if (r.status === 401) { location.reload(); return null; }
       return r.ok ? r.json() : null;
-    });
+    }).catch(function () { return null; });
   }
 
   function el(tag, cls, text) {
@@ -30,7 +33,6 @@
     if (text != null) e.textContent = text;
     return e;
   }
-
   function icon(paths) {
     return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" ' +
       'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
@@ -41,8 +43,6 @@
   var IC_DOWN = icon('<path d="m6 9 6 6 6-6"/>');
   var IC_X = icon('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
 
-  // Preorder walk of the tree to a flat list of sids (display order) — used to
-  // send a full manual-order list to the server after a reorder.
   function flatten(v) {
     var out = [];
     (v.projects || []).forEach(function (p) {
@@ -53,11 +53,21 @@
     });
     return out;
   }
+  function firstWaiting(v) {
+    var found = null;
+    (v.projects || []).forEach(function (p) {
+      (p.sessions || []).forEach(function walk(n) {
+        if (!found && n.waiting) found = n.sid;
+        (n.children || []).forEach(walk);
+      });
+    });
+    return found;
+  }
 
   function renameCard(node, cardEl) {
     var nameEl = cardEl.querySelector('.session-name');
     if (!nameEl || cardEl.querySelector('.session-name-input')) return;
-    paused = true;
+    S.paused = true;
     var input = el('input', 'session-name-input');
     input.value = node.custom_name || '';
     input.placeholder = node.auto_name;
@@ -68,7 +78,7 @@
     function commit(save) {
       if (done) return;
       done = true;
-      paused = false;
+      S.paused = false;
       if (save) api('/name', { sid: node.sid, name: input.value }).then(load);
       else load();
     }
@@ -80,16 +90,14 @@
     input.addEventListener('click', function (e) { e.stopPropagation(); });
   }
 
-  // Move a top-level (root) session within its project, then persist the whole
-  // display order. Children keep first-seen order (reorder is root-level).
   function moveRoot(projectIndex, sid, dir) {
-    var arr = view.projects[projectIndex].sessions;
+    var arr = S.view.projects[projectIndex].sessions;
     var i = arr.findIndex(function (n) { return n.sid === sid; });
     var j = i + dir;
     if (i < 0 || j < 0 || j >= arr.length) return;
     var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-    render(view); // optimistic
-    api('/order', { sids: flatten(view) }).then(load);
+    render(S.view);
+    api('/order', { sids: flatten(S.view) }).then(load);
   }
 
   function makeCard(node, projectIndex) {
@@ -109,15 +117,14 @@
     nameRow.appendChild(el('span', 'session-short-id', node.short_id));
     body.appendChild(nameRow);
 
-    var metaBits = [];
-    if (node.tombstone) metaBits.push('died while working');
-    if (node.relation) metaBits.push(node.relation);
     var meta = el('div', 'session-meta');
     meta.textContent = node.project || '~';
-    metaBits.forEach(function (b) {
+    var bits = [];
+    if (node.tombstone) bits.push(['died while working', false]);
+    if (node.relation) bits.push([node.relation, true]);
+    bits.forEach(function (b) {
       meta.appendChild(document.createTextNode(' · '));
-      var s = el('span', b === node.relation ? 'session-relation' : null, b);
-      meta.appendChild(s);
+      meta.appendChild(el('span', b[1] ? 'session-relation' : null, b[0]));
     });
     body.appendChild(meta);
     card.appendChild(body);
@@ -138,7 +145,6 @@
       edit.title = 'Rename';
       edit.addEventListener('click', function (e) { e.stopPropagation(); renameCard(node, card); });
       actions.appendChild(edit);
-
       if (node.depth === 0) {
         var up = el('button', 'card-btn reorder-btn', null);
         up.innerHTML = IC_UP; up.title = 'Move up';
@@ -154,24 +160,26 @@
 
     if (!node.tombstone) {
       card.addEventListener('click', function () {
-        if (reordering) return;
-        api('/focus', { sid: node.sid });
+        if (S.reordering) return;
+        api('/focus', { sid: node.sid }).then(function (r) { if (r) S.onJump(); });
       });
     }
     return card;
   }
 
   function render(v) {
-    view = v;
-    var body = document.getElementById('board-body');
-    var empty = document.getElementById('board-empty');
-    // Clear everything except the empty-state placeholder.
-    Array.prototype.slice.call(body.children).forEach(function (c) {
-      if (c !== empty) body.removeChild(c);
-    });
+    S.view = v;
+    var body = S.body;
+    body.textContent = '';
 
     var hasSessions = (v.projects || []).some(function (p) { return p.sessions.length; });
-    empty.hidden = hasSessions;
+    if (!hasSessions) {
+      var empty = el('div', 'empty-state');
+      empty.appendChild(el('p', null, 'No agent sessions yet.'));
+      empty.appendChild(el('p', 'empty-hint',
+        'Run claude in a terminal window and it appears here.'));
+      body.appendChild(empty);
+    }
 
     v.projects.forEach(function (p, pi) {
       var group = el('div', 'board-project');
@@ -200,47 +208,75 @@
       body.appendChild(det);
     }
 
-    // Attention badge + jump-to-next (in place; never reorders the cards).
-    var att = document.getElementById('board-attention');
-    var next = document.getElementById('board-next');
     if (v.attention > 0) {
-      att.textContent = v.attention + ' waiting on you';
-      att.hidden = false;
-      next.hidden = false;
+      S.att.textContent = v.attention + ' waiting';
+      S.att.hidden = false;
+      S.next.hidden = false;
     } else {
-      att.hidden = true;
-      next.hidden = true;
+      S.att.hidden = true;
+      S.next.hidden = true;
     }
+    S.onAttention(v.attention || 0);
   }
 
   function load() {
-    if (paused) return Promise.resolve();
+    if (S.paused) return Promise.resolve();
     return api('').then(function (v) { if (v) render(v); });
   }
 
-  function firstWaitingSid(v) {
-    var found = null;
-    (v.projects || []).forEach(function (p) {
-      (p.sessions || []).forEach(function walk(n) {
-        if (!found && n.waiting) found = n.sid;
-        (n.children || []).forEach(walk);
-      });
+  function buildShell(root) {
+    root.classList.add('board-body-wrap');
+    var header = el('div', 'board-header');
+    var title = el('div', 'board-title');
+    title.appendChild(el('h2', null, 'Sessions'));
+    S.att = el('span', 'board-attention');
+    S.att.hidden = true;
+    title.appendChild(S.att);
+    header.appendChild(title);
+
+    var toolbar = el('div', 'board-toolbar');
+    S.next = el('button', 'btn-icon', null);
+    S.next.innerHTML = icon('<path d="m6 9 6 6 6-6"/>');
+    S.next.title = 'Jump to next waiting';
+    S.next.hidden = true;
+    S.next.addEventListener('click', function () {
+      if (!S.view) return;
+      var sid = firstWaiting(S.view);
+      if (sid) api('/focus', { sid: sid }).then(function (r) { if (r) S.onJump(); });
     });
-    return found;
+    S.reorderBtn = el('button', 'btn-icon board-reorder-toggle', null);
+    S.reorderBtn.innerHTML = icon('<path d="m18 8-4-4-4 4"/><path d="M14 4v8"/><path d="m6 16 4 4 4-4"/><path d="M10 20v-8"/>');
+    S.reorderBtn.title = 'Reorder sessions';
+    S.reorderBtn.addEventListener('click', function () {
+      S.reordering = !S.reordering;
+      S.reorderBtn.classList.toggle('active', S.reordering);
+      S.body.classList.toggle('reordering', S.reordering);
+    });
+    toolbar.appendChild(S.next);
+    toolbar.appendChild(S.reorderBtn);
+    if (S.onClose) {
+      var close = el('button', 'btn-icon', null);
+      close.innerHTML = icon('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
+      close.title = 'Close';
+      close.addEventListener('click', function () { S.onClose(); });
+      toolbar.appendChild(close);
+    }
+    header.appendChild(toolbar);
+
+    S.body = el('div', 'board-body');
+    root.appendChild(header);
+    root.appendChild(S.body);
   }
 
-  document.addEventListener('DOMContentLoaded', function () {
-    document.getElementById('board-reorder').addEventListener('click', function () {
-      reordering = !reordering;
-      this.classList.toggle('active', reordering);
-      document.getElementById('board-body').classList.toggle('reordering', reordering);
-    });
-    document.getElementById('board-next').addEventListener('click', function () {
-      if (!view) return;
-      var sid = firstWaitingSid(view);
-      if (sid) api('/focus', { sid: sid });
-    });
+  function init(opts) {
+    S.root = opts.container;
+    S.onAttention = opts.onAttention || function () {};
+    S.onJump = opts.onJump || function () {};
+    S.onClose = opts.onClose || null;
+    buildShell(S.root);
     load();
     setInterval(load, POLL_MS);
-  });
+  }
+
+  return { init: init, refresh: load };
 })();

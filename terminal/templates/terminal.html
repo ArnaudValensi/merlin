@@ -60,18 +60,66 @@
         <svg id="mic-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
         <span id="mic-warn-badge">!</span>
     </button>
+    <button id="sessions-btn" title="Sessions — your parallel agent windows">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+        <span id="sessions-badge" hidden></span>
+    </button>
     <button id="toolbar-toggle" title="Toggle keyboard toolbar">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M6 16h12"/></svg>
     </button>
 </div>
+
+<!-- Sessions drawer: the board, in the terminal where the sessions live. -->
+<div id="sessions-overlay" class="sessions-overlay"></div>
+<aside id="sessions-drawer" class="sessions-drawer" aria-label="Sessions"></aside>
 {% endblock %}
 
 {% block scripts %}
 <link rel="stylesheet" href="/static/vendor/geistmono-nerd-font.css">
 <link rel="stylesheet" href="/static/vendor/xterm.min.css">
+<link rel="stylesheet" href="/static/board/board.css">
 <script src="/static/vendor/xterm.min.js"></script>
 <script src="/static/vendor/xterm-addon-fit.min.js"></script>
 <script src="/static/vendor/xterm-addon-web-links.min.js"></script>
+<script src="/static/board/board.js"></script>
+<style>
+/* Sessions toolbar button badge (mirrors the mic/clipboard badge pattern). */
+#sessions-btn { position: relative; }
+#sessions-btn.has-waiting { color: var(--accent-green); }
+#sessions-badge {
+    position: absolute; top: -3px; right: -3px;
+    min-width: 15px; height: 15px; padding: 0 3px;
+    border-radius: 999px; background: var(--accent-green); color: #0b1411;
+    font-size: 9px; font-weight: 700; line-height: 15px; text-align: center;
+}
+</style>
+<script>
+// Sessions drawer: mount the board (board.js) into the drawer, wire the
+// toolbar button + overlay to open/close, and reflect the waiting-count on the
+// button badge. The board lives in the terminal, next to the mic.
+(function () {
+    var btn = document.getElementById('sessions-btn');
+    var drawer = document.getElementById('sessions-drawer');
+    var overlay = document.getElementById('sessions-overlay');
+    var badge = document.getElementById('sessions-badge');
+    if (!btn || !drawer || !overlay) return;
+    function open() { drawer.classList.add('open'); overlay.classList.add('open'); }
+    function close() { drawer.classList.remove('open'); overlay.classList.remove('open'); }
+    function toggle() { drawer.classList.contains('open') ? close() : open(); }
+    btn.addEventListener('click', toggle);
+    overlay.addEventListener('click', close);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+    window.SessionsBoard.init({
+        container: drawer,
+        onJump: close,          // tapping a session jumps to its window, then closes
+        onClose: close,
+        onAttention: function (n) {
+            if (n > 0) { badge.textContent = n; badge.hidden = false; btn.classList.add('has-waiting'); }
+            else { badge.hidden = true; btn.classList.remove('has-waiting'); }
+        },
+    });
+})();
+</script>
 <style>
     /* Prevent iOS rubber-band bounce — no position:fixed (breaks keyboard) */
     html, body {

@@ -137,12 +137,9 @@ ICON_EXTENSIONS = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" s
 
 ICON_JOBS = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'
 
-ICON_BOARD = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>'
-
 CORE_NAV_ITEMS = [
     {"url": "/files", "icon": ICON_FILES, "label": "Files"},
     {"url": "/terminal", "icon": ICON_TERMINAL, "label": "Terminal"},
-    {"url": "/board", "icon": ICON_BOARD, "label": "Sessions"},
     {"url": "/commits", "icon": ICON_COMMITS, "label": "Commits"},
     {"url": "/jobs", "icon": ICON_JOBS, "label": "Jobs"},
 ]
