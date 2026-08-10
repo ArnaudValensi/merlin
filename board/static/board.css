@@ -20,7 +20,7 @@
   z-index: 200;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg-primary);
+  background: var(--bg-secondary);  /* match the left sidebar rail, not the page */
 }
 .sessions-panel.open { display: flex; }
 
@@ -81,7 +81,7 @@
   font-family: 'Geist Mono', monospace;
   font-size: 12px;
   color: var(--text-primary);
-  background: var(--bg-secondary);
+  background: var(--bg-primary);  /* recessed against the bg-secondary panel */
   border: 1px solid var(--border);
   border-radius: 6px;
 }
