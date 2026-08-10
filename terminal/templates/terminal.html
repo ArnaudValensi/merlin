@@ -1548,7 +1548,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     try {
                         const data = JSON.parse(xhr.responseText);
                         if (data.text) {
-                            sendToTerminal(data.text + (autoEnter ? '\r' : ''));
+                            // Send Enter as a separate keystroke after a brief
+                            // gap. Concatenating text + '\r' makes Claude Code's
+                            // TUI read the trailing CR as a newline inside the
+                            // paste instead of a submit.
+                            sendToTerminal(data.text);
+                            if (autoEnter) {
+                                setTimeout(() => sendToTerminal('\r'), 150);
+                            }
                         } else if (data.error) {
                             term.write(`\r\n\x1b[31m[Voice error: ${data.error}]\x1b[0m\r\n`);
                         }

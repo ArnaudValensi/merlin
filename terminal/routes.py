@@ -170,9 +170,17 @@ async def _transcribe_and_inject(
             None, transcribe, tmp_path, language
         )
         if text:
-            payload = text.encode("utf-8") + (b"\r" if auto_enter else b"")
-            if not await bridge.write(payload):
+            if not await bridge.write(text.encode("utf-8")):
                 logger.warning("PTY write failed (terminal may be closed)")
+            elif auto_enter:
+                # Send Enter as a separate keystroke, after a brief gap.
+                # Concatenating text + "\r" in a single write makes Claude
+                # Code's TUI treat the trailing CR as a newline inside the
+                # pasted blob instead of a submit. Letting the text flush
+                # first makes the CR land as a standalone Enter.
+                await asyncio.sleep(0.15)
+                if not await bridge.write(b"\r"):
+                    logger.warning("PTY write failed (terminal may be closed)")
     except Exception:
         logger.exception("Background transcription failed")
     finally:
