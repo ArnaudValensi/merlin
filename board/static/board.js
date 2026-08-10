@@ -43,9 +43,26 @@ window.SessionsBoard = (function () {
   }
   var IC_EDIT = svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>');
   var IC_KILL = svg('<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>');
+  var IC_CHECK = svg('<path d="M20 6 9 17l-5-5"/>');
   var IC_DISMISS = svg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
   var IC_COLLAPSE = svg('<path d="m9 18 6-6-6-6"/>');
   var IC_GRIP = svg('<circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/>', { fill: 'currentColor', stroke: 'none' });
+
+  function isDesktop() { return window.matchMedia('(min-width: 769px)').matches; }
+
+  // Inline arm-then-confirm for the destructive close (no native dialog). First
+  // tap arms (turns red, becomes a check); a second tap within the window kills;
+  // anything else (timeout / another arm) disarms.
+  var armed = null;
+  function disarm() {
+    if (!armed) return;
+    if (armed._t) clearTimeout(armed._t);
+    armed.classList.remove('armed');
+    armed.innerHTML = IC_KILL;
+    armed.title = 'Close session';
+    armed = null;
+    S.paused = false;
+  }
 
   function sigOf(v) {
     return JSON.stringify({ s: v.sessions, c: v.counts });
@@ -84,9 +101,11 @@ window.SessionsBoard = (function () {
       if (done) return;
       done = true;
       S.paused = false;
-      if (save) api('/name', { sid: node.sid, name: input.value }).then(load);
+      S.lastSig = null;  // force a re-render: a no-op rename leaves the sig unchanged,
+      if (save) api('/name', { sid: node.sid, name: input.value }).then(load);  // so load() would skip and the input would linger
       else load();
     }
+    input._commit = commit;  // so the pencil can toggle it closed
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') commit(true);
       else if (e.key === 'Escape') commit(false);
@@ -140,16 +159,29 @@ window.SessionsBoard = (function () {
       var edit = el('button', 'srow-btn', null);
       edit.innerHTML = IC_EDIT;
       edit.title = 'Rename';
-      edit.addEventListener('click', function (e) { e.stopPropagation(); renameRow(node, row); });
+      edit.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var inp = row.querySelector('.srow-name-input');
+        if (inp && inp._commit) inp._commit(true);  // toggle: tap again to finish
+        else renameRow(node, row);
+      });
       actions.appendChild(edit);
       var kill = el('button', 'srow-btn srow-btn-danger', null);
       kill.innerHTML = IC_KILL;
       kill.title = 'Close session';
       kill.addEventListener('click', function (e) {
         e.stopPropagation();
-        var label2 = node.custom_name || node.auto_name;
-        if (window.confirm('Close session "' + label2 + '"? Its agent window will be killed.')) {
-          api('/kill', { sid: node.sid }).then(load);
+        if (kill === armed) {                        // second tap: confirm
+          if (kill._t) clearTimeout(kill._t);
+          api('/kill', { sid: node.sid }).then(function () { armed = null; S.paused = false; load(); });
+        } else {                                     // first tap: arm
+          disarm();
+          kill.classList.add('armed');
+          kill.innerHTML = IC_CHECK;
+          kill.title = 'Tap again to close';
+          armed = kill;
+          S.paused = true;                           // hold the poll so the arm survives
+          kill._t = setTimeout(disarm, 3000);
         }
       });
       actions.appendChild(kill);
@@ -226,7 +258,24 @@ window.SessionsBoard = (function () {
   }
 
   // --- shell -------------------------------------------------------------
+  // Swipe down on an element (mobile) to dismiss the sheet.
+  function attachSwipeDown(elm) {
+    var y0 = null;
+    elm.addEventListener('pointerdown', function (e) { if (!isDesktop()) y0 = e.clientY; });
+    elm.addEventListener('pointermove', function (e) {
+      if (y0 != null && e.clientY - y0 > 60) { y0 = null; if (S.onClose) S.onClose(); }
+    });
+    elm.addEventListener('pointerup', function () { y0 = null; });
+    elm.addEventListener('pointercancel', function () { y0 = null; });
+  }
+
   function buildShell(root) {
+    // Grabber: swipe-down affordance (mobile only, hidden on desktop via CSS).
+    var grabber = el('div', 'board-grabber');
+    grabber.appendChild(el('span', 'board-grabber-bar'));
+    root.appendChild(grabber);
+    attachSwipeDown(grabber);
+
     var head = el('div', 'board-head');
     S.status = el('div', 'board-status');
     head.appendChild(S.status);
@@ -236,6 +285,7 @@ window.SessionsBoard = (function () {
     collapse.addEventListener('click', function () { if (S.onClose) S.onClose(); });
     head.appendChild(collapse);
     root.appendChild(head);
+    attachSwipeDown(head);
 
     var fwrap = el('div', 'board-filter-wrap');
     S.filter = el('input', 'board-filter');

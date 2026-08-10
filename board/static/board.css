@@ -226,6 +226,8 @@
 }
 .srow-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
 .srow-btn.srow-btn-danger:hover { color: var(--accent-red); background: rgba(248, 113, 113, 0.1); }
+/* Armed: the destructive close, first tap. Solid red = "tap again to confirm". */
+.srow-btn.armed, .srow-btn.armed:hover { color: #0b1411; background: var(--accent-red); }
 
 /* Tombstone: died while working. Muted, holds its slot until dismissed. */
 .srow.tombstone { opacity: 0.55; cursor: default; }
@@ -239,6 +241,37 @@
   font-family: 'Geist Mono', monospace;
   font-size: 12px;
 }
+
+/* ---- Mobile ergonomics (base): thumb-first, bottom-oriented -------------
+   The panel is a sheet that leaves the terminal's bottom bar visible (its
+   `bottom` offset is set to the bar height in terminal.html), so the far-right
+   Sessions button toggles it in place. Controls sit at the bottom (thumb zone):
+   status line at top, list bottom-anchored, filter just above the bar. A grabber
+   affords swipe-down to dismiss. */
+
+.board-grabber {
+  order: 0;
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 4px;
+  touch-action: none;
+}
+.board-grabber-bar {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.board-head { order: 1; }
+.board-list { order: 2; display: flex; flex-direction: column; }
+.board-list::before { content: ''; margin-top: auto; }  /* short lists hug the bottom */
+.board-filter-wrap { order: 3; border-bottom: none; border-top: 1px solid var(--border); }
+
+/* On mobile the terminal's bottom-bar button is the reduce control, so the
+   in-sheet collapse chevron is redundant. */
+.board-head-btn { display: none; }
 
 /* ---- Desktop: docked, in-flow panel + draggable divider ----------------- */
 
@@ -269,6 +302,15 @@
 
   #terminal-status #sessions-btn { display: none; }
   .main.panel-collapsed #terminal-status #sessions-btn { display: flex; }
+
+  /* Undo the mobile bottom-orientation: normal top-down, no grabber, the
+     collapse chevron is the reduce control here. */
+  .board-grabber { display: none; }
+  .board-head-btn { display: inline-flex; }
+  .board-head { order: 0; }
+  .board-list { order: 0; }
+  .board-list::before { content: none; }
+  .board-filter-wrap { order: 0; border-top: none; border-bottom: 1px solid var(--border); }
 
   .srow[data-depth="1"] { margin-left: 18px; }
   .srow[data-depth="2"] { margin-left: 36px; }

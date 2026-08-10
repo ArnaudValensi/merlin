@@ -137,6 +137,18 @@
     var mq = window.matchMedia('(min-width: 769px)');
     function desktop() { return mq.matches; }
 
+    // Mobile: the sheet stops above the terminal's bottom bar so that bar (with
+    // the Sessions button) stays visible — you toggle the sheet from the same
+    // spot. Desktop: the panel is in-flow, no offset.
+    var statusBar = document.getElementById('terminal-status');
+    function applyMobileOffset() {
+        if (desktop() || !statusBar) { panel.style.bottom = ''; }
+        else { panel.style.bottom = statusBar.offsetHeight + 'px'; }
+    }
+    applyMobileOffset();
+    mq.addEventListener('change', applyMobileOffset);
+    window.addEventListener('resize', applyMobileOffset);
+
     var storedW = parseInt(localStorage.getItem('sessions-w'), 10);
     if (storedW) main.style.setProperty('--sessions-w', storedW + 'px');
     if (localStorage.getItem('sessions-collapsed') === '1') main.classList.add('panel-collapsed');
