@@ -2,6 +2,20 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.24.0 (2026-08-10)
+
+### Added
+- **Sessions board in the terminal** — A Sessions panel lives beside the web terminal (a docked, resizable panel on desktop, a thumb-first fullscreen sheet on mobile) listing your agent sessions with a filter, drag to reorder, and the current session called out unmistakably.
+- **Knowledge base in agent context** — The KB index is injected into the agent's context, so the agent can draw on your notes.
+
+### Changed
+- **Keyboard toolbar shown by default** — The web terminal's secondary keyboard toolbar (Esc, Tab, Ctrl, Alt, arrows, paste, upload) is now visible by default on every device, not just touch screens. Toggle it off anytime.
+- **Notes redesigned around the OKF format** — The knowledge base uses typed, OKF-style notes without auto-links. Notes docs and the notes skill were rewritten to match.
+
+### Fixed
+- **Voice auto-enter submits reliably** — Voice input now sends Enter as its own keystroke, so an auto-entered message actually submits.
+- **Mobile Sessions sheet polish** — Fixed the first-open offset, kept the desktop button present when the panel is open, fixed the header buttons, and dropped the backdrop that greyed out the toolbar.
+
 ## v0.23.0 (2026-07-14)
 
 ### Added
