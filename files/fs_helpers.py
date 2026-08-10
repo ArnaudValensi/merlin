@@ -212,7 +212,7 @@ def list_directory(path: Path) -> dict[str, Any]:
     entries.sort(
         key=lambda e: (
             0 if e["type"] == "dir" else 1,
-            e["name"].lower(),
+            str(e["name"]).lower(),
         )
     )
 
