@@ -125,17 +125,20 @@
 .srow[data-depth="2"] { margin-left: 28px; }
 .srow[data-depth="3"] { margin-left: 36px; }
 
-/* Drag handle: hidden on mobile (drag is long-press on the row there, so the
-   left stays flush with the dot — even padding); a hover handle on desktop. */
+/* Drag handle: on the right, always visible (SortableJS handle), both platforms.
+   Subtle until touched/hovered. */
 .srow-grip {
-  display: none;
   flex: 0 0 auto;
-  width: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
   color: var(--text-muted);
   cursor: grab;
-  opacity: 0;
   touch-action: none;
+  opacity: 0.5;
 }
+.srow-grip:hover { opacity: 1; }
 .srow-grip:active { cursor: grabbing; }
 
 .srow-dot {
@@ -307,9 +310,4 @@
   .srow[data-depth="1"] { margin-left: 18px; }
   .srow[data-depth="2"] { margin-left: 36px; }
   .srow[data-depth="3"] { margin-left: 48px; }
-
-  /* Desktop: the drag handle is a hover affordance. */
-  .srow-grip { display: inline-flex; align-items: center; }
-  .srow:hover .srow-grip { opacity: 0.7; }
-  .board-list.sorting .srow-grip { opacity: 0.7; }
 }

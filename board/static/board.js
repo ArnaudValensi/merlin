@@ -121,10 +121,6 @@ window.SessionsBoard = (function () {
     if (node.active) row.classList.add('current');
     if (node.tombstone) row.classList.add('tombstone');
 
-    var grip = el('span', 'srow-grip');
-    grip.innerHTML = IC_GRIP;
-    row.appendChild(grip);
-
     row.appendChild(Object.assign(el('span', 'srow-dot'), {
       textContent: node.tombstone ? '✕' : (DOT[node.state] || DOT.idle),
     }));
@@ -187,6 +183,15 @@ window.SessionsBoard = (function () {
     }
     row.appendChild(actions);
 
+    // Drag handle on the right, always visible (SortableJS handle). A tap on it
+    // shouldn't jump — only a drag reorders.
+    if (!node.tombstone) {
+      var grip = el('span', 'srow-grip');
+      grip.innerHTML = IC_GRIP;
+      grip.addEventListener('click', function (e) { e.stopPropagation(); });
+      row.appendChild(grip);
+    }
+
     if (!node.tombstone) {
       row.addEventListener('click', function () {
         api('/focus', { sid: node.sid }).then(function (r) { if (r) S.onJump(); });
@@ -225,13 +230,8 @@ window.SessionsBoard = (function () {
     // Drag-to-reorder by the grip. Disabled while filtering (a filtered subset
     // has no meaningful global order). Persists the full new order on drop.
     if (!S.query && typeof Sortable !== 'undefined') {
-      // Desktop: drag from the grip handle. Mobile: no grip, so long-press any
-      // row to reorder (a short tap still jumps) — keeps the row left flush.
-      var dsk = isDesktop();
       S.sortable = Sortable.create(list, {
-        handle: dsk ? '.srow-grip' : undefined,
-        delay: dsk ? 0 : 200,
-        delayOnTouchOnly: true,
+        handle: '.srow-grip',   // always-visible handle on the right, both platforms
         animation: 120,
         ghostClass: 'srow-ghost',
         onStart: function () { S.paused = true; list.classList.add('sorting'); },
