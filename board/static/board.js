@@ -274,12 +274,6 @@ window.SessionsBoard = (function () {
   }
 
   function buildShell(root) {
-    // Grabber: swipe-down affordance (mobile only, hidden on desktop via CSS).
-    var grabber = el('div', 'board-grabber');
-    grabber.appendChild(el('span', 'board-grabber-bar'));
-    root.appendChild(grabber);
-    attachSwipeDown(grabber);
-
     var head = el('div', 'board-head');
     S.status = el('div', 'board-status');
     head.appendChild(S.status);
