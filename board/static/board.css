@@ -8,14 +8,10 @@
 
 /* ---- Shell: modal on mobile, docked panel on desktop -------------------- */
 
-.sessions-backdrop {
-  display: none;
-  position: fixed;
-  inset: 0;
-  z-index: 190;
-  background: rgba(0, 0, 0, 0.7);
-}
-.sessions-backdrop.open { display: block; }
+/* No backdrop: on mobile the sheet fills everything above the terminal bar, so
+   there is no "outside" to dim — and a dark overlay here only sat on top of the
+   bar and greyed out the Sessions icon. Close via the icon, swipe-down, or Esc. */
+.sessions-backdrop { display: none !important; }
 
 .sessions-panel {
   display: none;

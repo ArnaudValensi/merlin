@@ -92,6 +92,9 @@
 /* Terminal column wraps the terminal + toolbars so the panel sits beside it on
    desktop; fills its slot in both the mobile column and the desktop row. */
 .terminal-col { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+/* Keep the bottom status bar above the sessions sheet (z-index 200) on mobile,
+   so its Sessions button is crisp and directly tappable to toggle in place. */
+#terminal-status { position: relative; z-index: 210; }
 /* body .main out-specifies the terminal's own `.main { flex-direction: column }`
    so the desktop split wins regardless of source order. */
 @media (min-width: 769px) { body .main { flex-direction: row; } }
