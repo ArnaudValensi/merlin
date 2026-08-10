@@ -125,7 +125,6 @@ window.SessionsBoard = (function () {
     grip.innerHTML = IC_GRIP;
     row.appendChild(grip);
 
-    row.appendChild(el('span', 'srow-caret', '▸'));
     row.appendChild(Object.assign(el('span', 'srow-dot'), {
       textContent: node.tombstone ? '✕' : (DOT[node.state] || DOT.idle),
     }));
@@ -226,8 +225,13 @@ window.SessionsBoard = (function () {
     // Drag-to-reorder by the grip. Disabled while filtering (a filtered subset
     // has no meaningful global order). Persists the full new order on drop.
     if (!S.query && typeof Sortable !== 'undefined') {
+      // Desktop: drag from the grip handle. Mobile: no grip, so long-press any
+      // row to reorder (a short tap still jumps) — keeps the row left flush.
+      var dsk = isDesktop();
       S.sortable = Sortable.create(list, {
-        handle: '.srow-grip',
+        handle: dsk ? '.srow-grip' : undefined,
+        delay: dsk ? 0 : 200,
+        delayOnTouchOnly: true,
         animation: 120,
         ghostClass: 'srow-ghost',
         onStart: function () { S.paused = true; list.classList.add('sorting'); },

@@ -111,27 +111,24 @@
 }
 .srow:hover { background: var(--bg-hover); color: var(--text-primary); }
 
-/* Current window (the one the terminal is showing): a caret + tint, the vim
-   "you are here" idiom — replaces the old chip. */
+/* Current window (the one the terminal is showing): a left accent bar + tint.
+   The bar lives inside the padding, so it costs no inline width (a reserved
+   caret slot was making every row's left look over-padded). */
 .srow.current {
   background: var(--bg-card);
   color: var(--text-primary);
+  box-shadow: inset 2px 0 0 var(--accent-blue);
 }
-.srow-caret {
-  flex: 0 0 auto;
-  width: 8px;
-  color: var(--accent-blue);
-  font-family: 'Geist Mono', monospace;
-  visibility: hidden;
-}
-.srow.current .srow-caret { visibility: visible; }
 
 /* Nesting: a child indents one step under its parent; capped for phones. */
 .srow[data-depth="1"] { margin-left: 14px; }
 .srow[data-depth="2"] { margin-left: 28px; }
 .srow[data-depth="3"] { margin-left: 36px; }
 
+/* Drag handle: hidden on mobile (drag is long-press on the row there, so the
+   left stays flush with the dot — even padding); a hover handle on desktop. */
 .srow-grip {
+  display: none;
   flex: 0 0 auto;
   width: 16px;
   color: var(--text-muted);
@@ -139,8 +136,6 @@
   opacity: 0;
   touch-action: none;
 }
-.srow:hover .srow-grip { opacity: 0.7; }
-.board-list.sorting .srow-grip { opacity: 0.7; }  /* keep visible while dragging */
 .srow-grip:active { cursor: grabbing; }
 
 .srow-dot {
@@ -312,4 +307,9 @@
   .srow[data-depth="1"] { margin-left: 18px; }
   .srow[data-depth="2"] { margin-left: 36px; }
   .srow[data-depth="3"] { margin-left: 48px; }
+
+  /* Desktop: the drag handle is a hover affordance. */
+  .srow-grip { display: inline-flex; align-items: center; }
+  .srow:hover .srow-grip { opacity: 0.7; }
+  .board-list.sorting .srow-grip { opacity: 0.7; }
 }
