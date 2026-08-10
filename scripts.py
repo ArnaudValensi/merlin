@@ -10,6 +10,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent
 
+# Pin the linters/typechecker so `validate` is reproducible. An unpinned
+# `uvx ruff` / `uvx ty` resolves to whatever is latest, and newer releases
+# change formatting (e.g. Python blocks inside markdown) or tighten type
+# inference, breaking validate on unrelated files. Bump these deliberately.
+RUFF = "ruff@0.16.2"
+TY = "ty@0.0.69"
+
 
 def run(cmd: list[str]) -> subprocess.CompletedProcess:
     print(f"  → {' '.join(cmd)}")
@@ -57,18 +64,18 @@ def cmd_test_e2e(args):
 
 def cmd_lint(args):
     """Run ruff lint + format check + ty."""
-    lint = run(["uvx", "ruff", "check", "."])
-    fmt = run(["uvx", "ruff", "format", "--check", "."])
-    types = run(["uvx", "ty", "check"])
+    lint = run(["uvx", RUFF, "check", "."])
+    fmt = run(["uvx", RUFF, "format", "--check", "."])
+    types = run(["uvx", TY, "check"])
     sys.exit(max(lint.returncode, fmt.returncode, types.returncode))
 
 
 def cmd_validate(args):
     """Full validation: lint + format + typecheck + tests. Fails fast."""
     for cmd in [
-        ["uvx", "ruff", "check", "."],
-        ["uvx", "ruff", "format", "--check", "."],
-        ["uvx", "ty", "check"],
+        ["uvx", RUFF, "check", "."],
+        ["uvx", RUFF, "format", "--check", "."],
+        ["uvx", TY, "check"],
         ["uv", "run", "pytest", "tests/unit/", "merlin-bot/tests/", "-v"],
     ]:
         result = run(cmd)
