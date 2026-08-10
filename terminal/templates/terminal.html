@@ -1266,11 +1266,9 @@ document.addEventListener('DOMContentLoaded', () => {
         return true;
     });
 
-    // Show toolbar on touch devices by default, hidden on desktop
-    if (isTouchDevice) {
-        toolbar.classList.add('visible');
-        toolbarToggle.classList.add('active');
-    }
+    // Show the keyboard toolbar by default on all devices
+    toolbar.classList.add('visible');
+    toolbarToggle.classList.add('active');
 
     toolbarToggle.addEventListener('click', () => {
         toolbar.classList.toggle('visible');
