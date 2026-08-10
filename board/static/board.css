@@ -1,11 +1,12 @@
-/* Sessions board — lives in the web terminal.
-   Uses the CLI dashboard design-system variables (dashboard.css); no hardcoded
-   colors. Mobile-first: base = a fullscreen modal (same family as the jobs
-   modal); at >=769px it becomes a persistent panel docked on the right, always
-   visible next to the terminal. Stable slots: cards are never reordered by
-   state, only by the user's manual order. Attention is an in-place glow. */
+/* Sessions board — lives in the web terminal. CLI dashboard design system
+   (dashboard.css vars: Geist, 6px radius, #0f1117 palette). Dense and nav-like,
+   built to hold many parallel agent instances.
 
-/* Panel shell (markup lives in terminal.html) ------------------------- */
+   Layout: mobile-first. Base = a fullscreen modal. At >=769px the panel is an
+   in-flow flex child docked on the right of .main (a draggable divider between
+   it and the terminal), always open until collapsed. No margin hacks. */
+
+/* ---- Shell: modal on mobile, docked panel on desktop -------------------- */
 
 .sessions-backdrop {
   display: none;
@@ -27,323 +28,249 @@
 }
 .sessions-panel.open { display: flex; }
 
-.board-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
+/* The draggable divider only exists on desktop (see media query). */
+.sessions-divider { display: none; }
+
+/* ---- Header: a tmux-style status line, not a title+pill ----------------- */
+
+.board-head {
   flex: 0 0 auto;
-  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
 }
 
-.board-body {
+.board-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: 'Geist Mono', monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.board-status .st-total { color: var(--text-secondary); }
+.board-status .st-working { color: var(--accent-yellow); }
+.board-status .st-waiting { color: var(--accent-green); }
+
+.board-head-btn {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+}
+.board-head-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+/* ---- Filter (fzf-style) ------------------------------------------------- */
+
+.board-filter-wrap {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.board-filter {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  font-family: 'Geist Mono', monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.board-filter::placeholder { color: var(--text-muted); }
+.board-filter:focus { outline: none; border-color: var(--accent-blue); }
+
+/* ---- The list ----------------------------------------------------------- */
+
+.board-list {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 12px 16px 20px;
+  padding: 6px;
 }
 
-.board-title {
+/* One instance = one dense, borderless row (like .sidebar-nav a). The whole
+   row is the tap target (jump to that window). */
+.srow {
   display: flex;
   align-items: center;
-  gap: 12px;
-}
-
-.board-title h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  font-family: 'Geist Mono', monospace;
-  color: var(--text-primary);
-}
-
-/* "N waiting" — green count pill. Never causes a reflow of cards. */
-.board-attention {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent-green);
-  background: rgba(52, 211, 153, 0.12);
-  border: 1px solid rgba(52, 211, 153, 0.3);
-}
-
-/* Desktop: docked, persistent panel. The terminal makes room via .main
-   margin-right (terminal.html), and its ResizeObserver refits xterm. */
-@media (min-width: 769px) {
-  .sessions-panel {
-    display: flex;
-    left: auto;
-    width: 360px;
-    border-left: 1px solid var(--border);
-  }
-  .sessions-backdrop { display: none !important; }
-  .board-panel-close { display: none; }
-}
-
-.board-toolbar {
-  display: flex;
   gap: 8px;
-}
-
-/* Header icon buttons (next / reorder / close). The design system's icon button:
-   34x34, bordered, bg-card, subtle until hovered. These had no style before —
-   `.btn-icon` is not global — so they fell back to default browser buttons. */
-.board-header .btn-icon {
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border);
+  padding: 7px 8px;
   border-radius: 6px;
-  background: var(--bg-card);
+  cursor: pointer;
   color: var(--text-secondary);
-  cursor: pointer;
 }
+.srow:hover { background: var(--bg-hover); color: var(--text-primary); }
 
-.board-header .btn-icon:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.board-reorder-toggle.active {
-  color: var(--accent-blue);
-  border-color: var(--accent-blue);
-}
-
-/* Project groups ------------------------------------------------------- */
-
-.board-project {
-  margin-bottom: 24px;
-}
-
-.board-project-head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 10px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border);
-}
-
-.board-project-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.board-project-path {
-  font-family: 'Geist Mono', monospace;
-  font-size: 11px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Session cards -------------------------------------------------------- */
-
-.session-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  margin-bottom: 8px;
+/* Current window (the one the terminal is showing): a caret + tint, the vim
+   "you are here" idiom — replaces the old chip. */
+.srow.current {
   background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
+  color: var(--text-primary);
 }
-
-.session-card:hover {
-  background: var(--bg-hover);
-}
-
-/* The window the terminal is currently showing: unmistakable, not a faint
-   border. A left accent bar + tint, plus a "current" chip in the name row. */
-.session-card.active {
-  border-color: var(--accent-blue);
-  background: rgba(74, 158, 255, 0.08);
-  box-shadow: inset 3px 0 0 var(--accent-blue);
-}
-
-.session-current {
-  font-family: 'Geist Mono', monospace;
-  font-size: 10px;
-  font-weight: 600;
+.srow-caret {
+  flex: 0 0 auto;
+  width: 8px;
   color: var(--accent-blue);
-  border: 1px solid rgba(74, 158, 255, 0.4);
-  border-radius: 999px;
-  padding: 1px 7px;
-  flex: 0 0 auto;
+  font-family: 'Geist Mono', monospace;
+  visibility: hidden;
 }
+.srow.current .srow-caret { visibility: visible; }
 
-/* Depth: children nest one indent under their parent; capped so a deep chain
-   can't march off a phone screen (hierarchy is kept in data, flattened in px).
-   Mobile-first: tight indents by default, roomier from 769px up. */
-.session-card[data-depth="1"] { margin-left: 12px; }
-.session-card[data-depth="2"] { margin-left: 24px; }
-.session-card[data-depth="3"] { margin-left: 32px; }
+/* Nesting: a child indents one step under its parent; capped for phones. */
+.srow[data-depth="1"] { margin-left: 14px; }
+.srow[data-depth="2"] { margin-left: 28px; }
+.srow[data-depth="3"] { margin-left: 36px; }
 
-.session-glyph {
-  font-size: 15px;
-  line-height: 1;
+.srow-grip {
+  flex: 0 0 auto;
   width: 16px;
-  text-align: center;
+  color: var(--text-muted);
+  cursor: grab;
+  opacity: 0;
+  touch-action: none;
+}
+.srow:hover .srow-grip { opacity: 0.7; }
+.board-list.sorting .srow-grip { opacity: 0.7; }  /* keep visible while dragging */
+.srow-grip:active { cursor: grabbing; }
+
+.srow-dot {
   flex: 0 0 auto;
+  width: 12px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1;
 }
+.st-idle .srow-dot { color: var(--text-muted); }
+.st-busy .srow-dot { color: var(--accent-yellow); }
+.st-done .srow-dot { color: var(--accent-green); }
 
-.state-idle .session-glyph { color: var(--text-muted); }
-.state-busy .session-glyph { color: var(--accent-yellow); }
-.state-done .session-glyph { color: var(--accent-green); }
-
-/* Done = waiting on you: a steady in-place glow. It draws the eye without
-   moving the card out of its slot. */
-.session-card.waiting {
-  border-color: rgba(52, 211, 153, 0.4);
-  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.25), 0 0 12px rgba(52, 211, 153, 0.15);
+/* Working = a slow breath, so a room full of running agents feels alive. */
+@media (prefers-reduced-motion: no-preference) {
+  .st-busy .srow-dot { animation: srow-pulse 1.6s ease-in-out infinite; }
 }
+@keyframes srow-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-.session-body {
+.srow-label {
   flex: 1 1 auto;
   min-width: 0;
-}
-
-.session-name-row {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
+  overflow: hidden;
 }
-
-.session-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
+.srow-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.session-short-id {
+.srow-meta {
+  flex: 0 0 auto;
   font-family: 'Geist Mono', monospace;
   font-size: 10px;
   color: var(--text-muted);
-  flex: 0 0 auto;
-}
-
-.session-meta {
-  font-size: 11px;
-  color: var(--text-secondary);
-  margin-top: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
+.srow-meta .srow-rel { color: var(--accent-purple); }
 
-.session-relation {
-  color: var(--accent-purple);
+.srow-name-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
   font-weight: 500;
-}
-
-.session-name-input {
-  font-size: 14px;
-  font-weight: 600;
   color: var(--text-primary);
   background: var(--bg-primary);
   border: 1px solid var(--accent-blue);
   border-radius: 4px;
-  padding: 2px 6px;
-  width: 100%;
-  max-width: 240px;
+  padding: 1px 6px;
 }
 
-/* Per-card actions ----------------------------------------------------- */
-
-.session-actions {
-  display: flex;
-  gap: 4px;
+/* Row actions: hidden until the row is hovered (desktop). On touch they stay
+   visible since there is no hover — see the coarse-pointer rule below. */
+.srow-actions {
   flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
 }
+.srow:hover .srow-actions { opacity: 1; }
+@media (pointer: coarse) { .srow-actions { opacity: 1; } }
 
-.session-actions .card-btn {
-  width: 34px;
-  height: 34px;
+.srow-btn {
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.session-actions .card-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-/* Close-session (kill) button: neutral until hovered/pressed, then danger. */
-.session-actions .card-btn-danger:hover {
-  color: var(--accent-red);
-  border-color: rgba(248, 113, 113, 0.5);
-}
-
-/* Reorder controls are hidden until reorder mode is on. */
-.board-body:not(.reordering) .reorder-btn { display: none; }
-.board-body.reordering .session-card { cursor: default; }
-
-/* Tombstone: died while working. Greyed, dashed, holds its slot until dismissed. */
-.session-card.tombstone {
-  opacity: 0.6;
-  border-style: dashed;
-  cursor: default;
-}
-
-.session-card.tombstone .session-glyph { color: var(--accent-red); }
-
-/* Plain (non-agent) windows: a demoted, collapsed courtesy tier. */
-.board-other {
-  margin-top: 28px;
-}
-
-.board-other summary {
-  cursor: pointer;
-  font-size: 12px;
+  border: none;
+  background: none;
   color: var(--text-muted);
-  padding: 4px 0;
-}
-
-.other-window {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 12px;
-  font-size: 12px;
-  color: var(--text-secondary);
+  cursor: pointer;
   border-radius: 6px;
 }
+.srow-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+.srow-btn.srow-btn-danger:hover { color: var(--accent-red); background: rgba(248, 113, 113, 0.1); }
 
-.other-window:hover { background: var(--bg-hover); }
-.other-window .ow-session { color: var(--text-muted); font-family: 'Geist Mono', monospace; font-size: 10px; }
+/* Tombstone: died while working. Muted, holds its slot until dismissed. */
+.srow.tombstone { opacity: 0.55; cursor: default; }
+.srow.tombstone .srow-dot { color: var(--accent-red); }
+.srow.tombstone:hover { background: none; }
 
-.empty-hint {
+.board-empty {
+  padding: 28px 16px;
+  text-align: center;
   color: var(--text-muted);
-  font-size: 13px;
-  max-width: 420px;
-  margin: 6px auto 0;
+  font-family: 'Geist Mono', monospace;
+  font-size: 12px;
 }
+
+/* ---- Desktop: docked, in-flow panel + draggable divider ----------------- */
 
 @media (min-width: 769px) {
-  .session-card[data-depth="1"] { margin-left: 20px; }
-  .session-card[data-depth="2"] { margin-left: 40px; }
-  .session-card[data-depth="3"] { margin-left: 56px; }
+  /* .main becomes flex-row in terminal.html (must win the cascade over the
+     terminal's own .main rule); the panel is an in-flow child here. */
+  .sessions-panel {
+    position: static;
+    display: flex;
+    flex: 0 0 var(--sessions-w, 360px);
+    border-left: 1px solid var(--border);
+    z-index: auto;
+  }
+  .sessions-backdrop { display: none !important; }
+
+  .sessions-divider {
+    display: block;
+    flex: 0 0 4px;
+    cursor: col-resize;
+    background: var(--border);
+  }
+  .sessions-divider:hover { background: var(--accent-blue); }
+
+  /* Collapsed: hide the panel + divider, terminal reclaims the width, and the
+     far-right Sessions button reappears to bring it back. */
+  .main.panel-collapsed .sessions-panel,
+  .main.panel-collapsed .sessions-divider { display: none; }
+
+  #terminal-status #sessions-btn { display: none; }
+  .main.panel-collapsed #terminal-status #sessions-btn { display: flex; }
+
+  .srow[data-depth="1"] { margin-left: 18px; }
+  .srow[data-depth="2"] { margin-left: 36px; }
+  .srow[data-depth="3"] { margin-left: 48px; }
 }

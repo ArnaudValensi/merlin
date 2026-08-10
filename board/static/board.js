@@ -1,25 +1,19 @@
-/* Sessions board — the content of the terminal's Sessions drawer.
-   Vanilla JS, IIFE. Exposes window.SessionsBoard.init({container, onAttention,
-   onJump}): it builds its own shell inside `container`, polls /api/board, renders
-   stable-position cards, and drives rename / reorder / focus / dismiss. Never
-   reorders cards by state — the server owns order; attention is reported to the
-   host (the toolbar badge) and shown as an in-place glow, never movement. */
+/* Sessions board — the content of the terminal's Sessions panel.
+   Vanilla JS, IIFE. window.SessionsBoard.init({container, onAttention, onJump,
+   onClose}) builds its own shell into `container`, polls /api/board, and renders
+   a flat, dense, nav-like list of agent instances. Filter (fuse.js), drag-to-
+   reorder (SortableJS, by the grip), rename and close per row. Never reorders by
+   state — the server owns order; the current window is marked with a caret. */
 window.SessionsBoard = (function () {
   'use strict';
 
-  var GLYPH = { idle: '○', busy: '◐', done: '●' };
+  var DOT = { idle: '○', busy: '◐', done: '●' };
   var POLL_MS = 4000;
 
-  var S = { root: null, body: null, att: null, reorderBtn: null,
-            view: null, lastSig: null, reordering: false, paused: false,
+  var S = { root: null, list: null, status: null, filter: null,
+            rows: [], counts: { total: 0, working: 0, waiting: 0 },
+            query: '', lastSig: null, paused: false, sortable: null,
             onAttention: function () {}, onJump: function () {}, onClose: null };
-
-  // Signature of everything we render (excludes the per-poll timestamp), so the
-  // 4s poll only rebuilds the DOM when something actually changed. Without this
-  // the constant rebuild ate taps — a reorder press often had to be made twice.
-  function sigOf(v) {
-    return JSON.stringify({ p: v.projects, o: v.other_windows, a: v.attention });
-  }
 
   function api(path, body) {
     var opts = { headers: { Accept: 'application/json' } };
@@ -40,32 +34,46 @@ window.SessionsBoard = (function () {
     if (text != null) e.textContent = text;
     return e;
   }
-  function icon(paths) {
-    return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" ' +
-      'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
-      'stroke-linejoin="round">' + paths + '</svg>';
+  function svg(paths, opts) {
+    opts = opts || {};
+    return '<svg width="14" height="14" viewBox="0 0 24 24" fill="' +
+      (opts.fill || 'none') + '" stroke="' + (opts.stroke || 'currentColor') +
+      '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      paths + '</svg>';
   }
-  var IC_EDIT = icon('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>');
-  var IC_UP = icon('<path d="m18 15-6-6-6 6"/>');
-  var IC_DOWN = icon('<path d="m6 9 6 6 6-6"/>');
-  var IC_X = icon('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
-  var IC_KILL = icon('<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>');
+  var IC_EDIT = svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>');
+  var IC_KILL = svg('<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>');
+  var IC_DISMISS = svg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
+  var IC_COLLAPSE = svg('<path d="m9 18 6-6-6-6"/>');
+  var IC_GRIP = svg('<circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/>', { fill: 'currentColor', stroke: 'none' });
 
-  function flatten(v) {
-    var out = [];
-    (v.projects || []).forEach(function (p) {
-      (p.sessions || []).forEach(function walk(n) {
-        out.push(n.sid);
-        (n.children || []).forEach(walk);
-      });
-    });
-    return out;
+  function sigOf(v) {
+    return JSON.stringify({ s: v.sessions, c: v.counts });
   }
-  function renameCard(node, cardEl) {
-    var nameEl = cardEl.querySelector('.session-name');
-    if (!nameEl || cardEl.querySelector('.session-name-input')) return;
+
+  // --- status line -------------------------------------------------------
+  function renderStatus() {
+    var c = S.counts;
+    var st = S.status;
+    st.textContent = '';
+    st.appendChild(document.createTextNode('sessions · '));
+    st.appendChild(el('span', 'st-total', String(c.total)));
+    if (c.working) {
+      st.appendChild(document.createTextNode(' · '));
+      st.appendChild(el('span', 'st-working', c.working + ' working'));
+    }
+    if (c.waiting) {
+      st.appendChild(document.createTextNode(' · '));
+      st.appendChild(el('span', 'st-waiting', c.waiting + ' waiting'));
+    }
+  }
+
+  // --- one row -----------------------------------------------------------
+  function renameRow(node, rowEl) {
+    var nameEl = rowEl.querySelector('.srow-name');
+    if (!nameEl || rowEl.querySelector('.srow-name-input')) return;
     S.paused = true;
-    var input = el('input', 'session-name-input');
+    var input = el('input', 'srow-name-input');
     input.value = node.custom_name || '';
     input.placeholder = node.auto_name;
     nameEl.replaceWith(input);
@@ -87,50 +95,41 @@ window.SessionsBoard = (function () {
     input.addEventListener('click', function (e) { e.stopPropagation(); });
   }
 
-  function moveRoot(projectIndex, sid, dir) {
-    var arr = S.view.projects[projectIndex].sessions;
-    var i = arr.findIndex(function (n) { return n.sid === sid; });
-    var j = i + dir;
-    if (i < 0 || j < 0 || j >= arr.length) return;
-    var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-    render(S.view);  // optimistic + updates lastSig, so the next poll is a no-op
-    api('/order', { sids: flatten(S.view) });
-  }
+  function makeRow(node) {
+    var row = el('div', 'srow st-' + node.state);
+    row.setAttribute('data-sid', node.sid);
+    row.setAttribute('data-depth', String(Math.min(node.depth, 3)));
+    if (node.active) row.classList.add('current');
+    if (node.tombstone) row.classList.add('tombstone');
 
-  function makeCard(node, projectIndex) {
-    var card = el('div', 'session-card state-' + node.state);
-    card.setAttribute('data-depth', String(Math.min(node.depth, 3)));
-    if (node.waiting) card.classList.add('waiting');
-    if (node.active) card.classList.add('active');
-    if (node.tombstone) card.classList.add('tombstone');
+    var grip = el('span', 'srow-grip');
+    grip.innerHTML = IC_GRIP;
+    row.appendChild(grip);
 
-    card.appendChild(Object.assign(el('span', 'session-glyph'), {
-      textContent: node.tombstone ? '✕' : (GLYPH[node.state] || GLYPH.idle),
+    row.appendChild(el('span', 'srow-caret', '▸'));
+    row.appendChild(Object.assign(el('span', 'srow-dot'), {
+      textContent: node.tombstone ? '✕' : (DOT[node.state] || DOT.idle),
     }));
 
-    var body = el('div', 'session-body');
-    var nameRow = el('div', 'session-name-row');
-    nameRow.appendChild(el('span', 'session-name', node.name));
-    if (node.active) nameRow.appendChild(el('span', 'session-current', 'current'));
-    else nameRow.appendChild(el('span', 'session-short-id', node.short_id));
-    body.appendChild(nameRow);
-
-    var meta = el('div', 'session-meta');
-    meta.textContent = node.project || '~';
-    var bits = [];
-    if (node.tombstone) bits.push(['died while working', false]);
-    if (node.relation) bits.push([node.relation, true]);
-    bits.forEach(function (b) {
+    var label = el('div', 'srow-label');
+    label.appendChild(el('span', 'srow-name', node.name));
+    var metaBits = [node.project || '~'];
+    var meta = el('span', 'srow-meta');
+    meta.textContent = metaBits[0];
+    if (node.relation === 'child') {
       meta.appendChild(document.createTextNode(' · '));
-      meta.appendChild(el('span', b[1] ? 'session-relation' : null, b[0]));
-    });
-    body.appendChild(meta);
-    card.appendChild(body);
-
-    var actions = el('div', 'session-actions');
+      meta.appendChild(el('span', 'srow-rel', 'child'));
+    }
     if (node.tombstone) {
-      var dismiss = el('button', 'card-btn', null);
-      dismiss.innerHTML = IC_X;
+      meta.appendChild(document.createTextNode(' · died'));
+    }
+    label.appendChild(meta);
+    row.appendChild(label);
+
+    var actions = el('div', 'srow-actions');
+    if (node.tombstone) {
+      var dismiss = el('button', 'srow-btn', null);
+      dismiss.innerHTML = IC_DISMISS;
       dismiss.title = 'Dismiss';
       dismiss.addEventListener('click', function (e) {
         e.stopPropagation();
@@ -138,93 +137,84 @@ window.SessionsBoard = (function () {
       });
       actions.appendChild(dismiss);
     } else {
-      if (node.depth === 0) {
-        var up = el('button', 'card-btn reorder-btn', null);
-        up.innerHTML = IC_UP; up.title = 'Move up';
-        up.addEventListener('click', function (e) { e.stopPropagation(); moveRoot(projectIndex, node.sid, -1); });
-        var down = el('button', 'card-btn reorder-btn', null);
-        down.innerHTML = IC_DOWN; down.title = 'Move down';
-        down.addEventListener('click', function (e) { e.stopPropagation(); moveRoot(projectIndex, node.sid, 1); });
-        actions.appendChild(up);
-        actions.appendChild(down);
-      }
-      var edit = el('button', 'card-btn', null);
+      var edit = el('button', 'srow-btn', null);
       edit.innerHTML = IC_EDIT;
       edit.title = 'Rename';
-      edit.addEventListener('click', function (e) { e.stopPropagation(); renameCard(node, card); });
+      edit.addEventListener('click', function (e) { e.stopPropagation(); renameRow(node, row); });
       actions.appendChild(edit);
-      // Close the session (kill its tmux window). Destructive -> confirm first.
-      var kill = el('button', 'card-btn card-btn-danger', null);
+      var kill = el('button', 'srow-btn srow-btn-danger', null);
       kill.innerHTML = IC_KILL;
       kill.title = 'Close session';
       kill.addEventListener('click', function (e) {
         e.stopPropagation();
-        var label = node.custom_name || node.auto_name;
-        if (window.confirm('Close session "' + label + '"? Its agent window will be killed.')) {
+        var label2 = node.custom_name || node.auto_name;
+        if (window.confirm('Close session "' + label2 + '"? Its agent window will be killed.')) {
           api('/kill', { sid: node.sid }).then(load);
         }
       });
       actions.appendChild(kill);
     }
-    card.appendChild(actions);
+    row.appendChild(actions);
 
     if (!node.tombstone) {
-      card.addEventListener('click', function () {
-        if (S.reordering) return;
+      row.addEventListener('click', function () {
         api('/focus', { sid: node.sid }).then(function (r) { if (r) S.onJump(); });
       });
     }
-    return card;
+    return row;
+  }
+
+  // --- list (with filter + drag) -----------------------------------------
+  function filtered() {
+    var q = S.query.trim();
+    if (!q || typeof Fuse === 'undefined') {
+      if (!q) return S.rows;
+    }
+    if (typeof Fuse === 'undefined') {
+      return S.rows.filter(function (n) {
+        return (n.name + ' ' + (n.project || '')).toLowerCase().indexOf(q.toLowerCase()) >= 0;
+      });
+    }
+    var fuse = new Fuse(S.rows, { keys: ['name', 'project'], threshold: 0.4, ignoreLocation: true });
+    return fuse.search(q).map(function (r) { return r.item; });
+  }
+
+  function renderList() {
+    var list = S.list;
+    if (S.sortable) { S.sortable.destroy(); S.sortable = null; }
+    list.textContent = '';
+    var rows = filtered();
+    if (!rows.length) {
+      list.appendChild(el('div', 'board-empty',
+        S.query ? 'no match' : '$ no agents running'));
+      return;
+    }
+    rows.forEach(function (n) { list.appendChild(makeRow(n)); });
+
+    // Drag-to-reorder by the grip. Disabled while filtering (a filtered subset
+    // has no meaningful global order). Persists the full new order on drop.
+    if (!S.query && typeof Sortable !== 'undefined') {
+      S.sortable = Sortable.create(list, {
+        handle: '.srow-grip',
+        animation: 120,
+        ghostClass: 'srow-ghost',
+        onStart: function () { S.paused = true; list.classList.add('sorting'); },
+        onEnd: function () {
+          list.classList.remove('sorting');
+          var order = Array.prototype.map.call(
+            list.querySelectorAll('.srow'), function (r) { return r.getAttribute('data-sid'); });
+          api('/order', { sids: order }).then(function () { S.paused = false; load(); });
+        },
+      });
+    }
   }
 
   function render(v) {
-    S.view = v;
+    S.rows = v.sessions || [];
+    S.counts = v.counts || { total: 0, working: 0, waiting: 0 };
     S.lastSig = sigOf(v);
-    var body = S.body;
-    body.textContent = '';
-
-    var hasSessions = (v.projects || []).some(function (p) { return p.sessions.length; });
-    if (!hasSessions) {
-      var empty = el('div', 'empty-state');
-      empty.appendChild(el('p', null, 'No agent sessions yet.'));
-      empty.appendChild(el('p', 'empty-hint',
-        'Run claude in a terminal window and it appears here.'));
-      body.appendChild(empty);
-    }
-
-    v.projects.forEach(function (p, pi) {
-      var group = el('div', 'board-project');
-      var head = el('div', 'board-project-head');
-      head.appendChild(el('span', 'board-project-name', p.project || '~'));
-      if (p.cwd) head.appendChild(el('span', 'board-project-path', p.cwd));
-      group.appendChild(head);
-      p.sessions.forEach(function (n) {
-        (function place(node) {
-          group.appendChild(makeCard(node, pi));
-          (node.children || []).forEach(place);
-        })(n);
-      });
-      body.appendChild(group);
-    });
-
-    if (v.other_windows && v.other_windows.length) {
-      var det = el('details', 'board-other');
-      det.appendChild(el('summary', null, 'Other windows (' + v.other_windows.length + ')'));
-      v.other_windows.forEach(function (w) {
-        var row = el('div', 'other-window' + (w.active ? ' active' : ''));
-        row.appendChild(el('span', null, w.name || '(shell)'));
-        row.appendChild(el('span', 'ow-session', w.session));
-        det.appendChild(row);
-      });
-      body.appendChild(det);
-    }
-
-    if (v.attention > 0) {
-      S.att.textContent = v.attention + ' waiting';
-      S.att.hidden = false;
-    } else {
-      S.att.hidden = true;
-    }
+    renderStatus();
+    renderList();
     S.onAttention(v.attention || 0);
   }
 
@@ -235,37 +225,31 @@ window.SessionsBoard = (function () {
     });
   }
 
+  // --- shell -------------------------------------------------------------
   function buildShell(root) {
-    var header = el('div', 'board-header');
-    var title = el('div', 'board-title');
-    title.appendChild(el('h2', null, 'Sessions'));
-    S.att = el('span', 'board-attention');
-    S.att.hidden = true;
-    title.appendChild(S.att);
-    header.appendChild(title);
+    var head = el('div', 'board-head');
+    S.status = el('div', 'board-status');
+    head.appendChild(S.status);
+    var collapse = el('button', 'board-head-btn', null);
+    collapse.innerHTML = IC_COLLAPSE;
+    collapse.title = 'Hide panel';
+    collapse.addEventListener('click', function () { if (S.onClose) S.onClose(); });
+    head.appendChild(collapse);
+    root.appendChild(head);
 
-    var toolbar = el('div', 'board-toolbar');
-    S.reorderBtn = el('button', 'btn-icon board-reorder-toggle', null);
-    S.reorderBtn.innerHTML = icon('<path d="m18 8-4-4-4 4"/><path d="M14 4v8"/><path d="m6 16 4 4 4-4"/><path d="M10 20v-8"/>');
-    S.reorderBtn.title = 'Reorder sessions';
-    S.reorderBtn.addEventListener('click', function () {
-      S.reordering = !S.reordering;
-      S.reorderBtn.classList.toggle('active', S.reordering);
-      S.body.classList.toggle('reordering', S.reordering);
-    });
-    toolbar.appendChild(S.reorderBtn);
-    if (S.onClose) {
-      var close = el('button', 'btn-icon board-panel-close', null);
-      close.innerHTML = icon('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
-      close.title = 'Close';
-      close.addEventListener('click', function () { S.onClose(); });
-      toolbar.appendChild(close);
-    }
-    header.appendChild(toolbar);
+    var fwrap = el('div', 'board-filter-wrap');
+    S.filter = el('input', 'board-filter');
+    S.filter.type = 'text';
+    S.filter.placeholder = 'filter…';
+    S.filter.setAttribute('autocomplete', 'off');
+    S.filter.addEventListener('input', function () { S.query = S.filter.value; renderList(); });
+    S.filter.addEventListener('focus', function () { S.paused = true; });
+    S.filter.addEventListener('blur', function () { S.paused = false; });
+    fwrap.appendChild(S.filter);
+    root.appendChild(fwrap);
 
-    S.body = el('div', 'board-body');
-    root.appendChild(header);
-    root.appendChild(S.body);
+    S.list = el('div', 'board-list');
+    root.appendChild(S.list);
   }
 
   function init(opts) {

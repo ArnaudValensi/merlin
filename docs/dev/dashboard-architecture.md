@@ -478,25 +478,32 @@ board/
 ├── __init__.py            # Exports api_router, STATIC_DIR, URL_SLUG
 ├── sweep.py               # tmux sweep: parse `list-windows -a -F` into Window records
 ├── store.py               # Durable per-session metadata (~/.merlin/board.json)
-├── model.py               # reconcile() + build_view() — pure, tested without tmux
-├── routes.py              # /api/board only (GET view; POST name/order/dismiss/focus)
+├── model.py               # reconcile() + build_view() — a flat ordered list; pure
+├── routes.py              # /api/board (GET view; POST name/order/dismiss/focus/kill)
 └── static/board.css, board.js
 ```
 
 **Surface:** there is no page of its own. The board renders **inside the web
 terminal** (`terminal/templates/terminal.html`), where the sessions actually
-live — a **fullscreen modal on mobile, a persistent docked panel on desktop**
-(same responsive family as the jobs modal). A "Sessions" button sits in the
-terminal's status bar next to the mic (styled to match it; hidden on desktop
-where the panel is always open); its badge shows the "waiting on you" count.
-`board.js` mounts itself into the panel via
-`window.SessionsBoard.init({container, onAttention, onJump, onClose})`. On desktop
-`.main` reserves `margin-right` for the panel so the terminal shrinks and its
-`ResizeObserver` refits xterm. Per-card actions: rename, reorder (root-level),
-and close-session (`POST /api/board/kill` — kills the tmux window and drops the
-record so an intentional close vanishes rather than tombstoning). Tapping a card
-focuses its window (`POST /api/board/focus`). Built on the `@agent_state` tmux
-pills (see the archived `session-status-signals` epic and `terminal/hooks/`).
+live — a **fullscreen modal on mobile, a resizable docked panel on desktop**
+(the terminal + panel are flex siblings under `.main`; a `#sessions-divider`
+drags the boundary, persisted in `localStorage`, and the terminal's
+`ResizeObserver` refits xterm). A "Sessions" button sits at the far-right of the
+terminal status bar (mirroring the far-left nav-menu button), styled like the
+mic; on desktop it is hidden unless the panel is collapsed. Its badge shows the
+waiting count. `board.js` mounts into the panel via
+`window.SessionsBoard.init({container, onAttention, onJump, onClose})`; `onClose`
+collapses on desktop / closes the modal on mobile (both persisted).
+
+The list is a **flat, dense, nav-like list** (like `.sidebar-nav a`) built to
+hold many instances: a `fuse.js` filter, drag-to-reorder by a grip handle
+(`SortableJS`, vendored, disabled while filtering), a `tmux`-style status line
+(`sessions · N · N working · N waiting`), a `▸` caret marking the current window,
+and a pulsing dot for `busy`. Per-row: rename, and close-session (`POST
+/api/board/kill` — kills the tmux window and drops the record so an intentional
+close vanishes rather than tombstoning). Tapping a row focuses its window (`POST
+/api/board/focus`). Built on the `@agent_state` tmux pills (see the archived
+`session-status-signals` epic and `terminal/hooks/`).
 
 **Data flow.** The board never owns the live signal — tmux does. `GET /api/board`
 runs one `tmux list-windows -a -F` sweep (`sweep.py`), joins it with durable
@@ -510,19 +517,20 @@ pills — `lib/skills.py`, hook v2). Family links `@agent_parent` (the parent's
 
 **Design invariants** (from the `sessions-board` epic):
 
-- **Stable position.** Cards never reorder by state. Order is the user's (manual
-  reorder persisted as `order`), falling back to first-seen. Attention is an
-  in-place glow on `done` cards, never movement; the count rides the toolbar
-  button badge, and a jump-to-next action surfaces it without reflow.
-- **Pinned cwd.** Grouped by project = `basename(@agent_cwd)`, captured at launch
-  and never moved when the agent `cd`s.
+- **Stable position.** Rows never reorder by state — `build_view` returns a flat
+  preorder list ordered by the user's manual `order` (drag-to-reorder), falling
+  back to first-seen. The current window is marked with a `▸` caret, not movement.
+- **Pinned cwd.** Project = `basename(@agent_cwd)`, captured at launch and never
+  moved when the agent `cd`s; shown inline on each row (no section headers), so
+  the flat list scales to many instances.
 - **Families.** `child` nests one indent under its parent (hierarchy wins over
   project placement); `sibling` (the default) stays flat as a peer. Visual indent
   is depth-capped in CSS.
 - **Stop policy.** A session gone from the sweep while `idle`/`done` vanishes; gone
-  while `busy` leaves a dismissible tombstone ("died while working").
-- **Two tiers.** `@agent_state`-carrying windows are rich cards; plain windows are a
-  collapsed "other windows" list. The tmux tab bar stays the fast switcher.
+  while `busy` leaves a dismissible tombstone ("died"). An explicit close (`/kill`)
+  drops the record first, so it vanishes rather than tombstoning.
+- **Agents only.** Plain (non-agent) windows are not listed. The tmux tab bar
+  stays the fast switcher for everything else.
 
 **Known limit:** in-session Task sub-agents (spawned inside one session, no tmux
 window) do not surface separately — only the parent window's aggregate state does.

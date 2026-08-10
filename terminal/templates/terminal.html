@@ -2,6 +2,7 @@
 {% block title %}Terminal — Merlin{% endblock %}
 
 {% block content %}
+<div class="terminal-col">
 <div id="terminal-container">
     <div id="touch-overlay"></div>
     <button id="copy-toast">Copy</button>
@@ -69,8 +70,10 @@
     </button>
 </div>
 
-<!-- Sessions board, in the terminal where the sessions live: a fullscreen modal
-     on mobile, a persistent docked panel on desktop. -->
+</div><!-- /.terminal-col -->
+<!-- Sessions board: fullscreen modal on mobile, a docked resizable panel on
+     desktop (the divider drags the boundary; collapse hides it). -->
+<div id="sessions-divider" class="sessions-divider" title="Drag to resize"></div>
 <div id="sessions-backdrop" class="sessions-backdrop"></div>
 <aside id="sessions-panel" class="sessions-panel" aria-label="Sessions"></aside>
 {% endblock %}
@@ -82,10 +85,20 @@
 <script src="/static/vendor/xterm.min.js"></script>
 <script src="/static/vendor/xterm-addon-fit.min.js"></script>
 <script src="/static/vendor/xterm-addon-web-links.min.js"></script>
+<script src="/static/vendor/fuse.min.js"></script>
+<script src="/static/vendor/sortable.min.js"></script>
 <script src="/static/board/board.js"></script>
 <style>
-/* Sessions toolbar button: a sibling of the mic button — same shape, border,
-   and size so the bar stays consistent. Green when a session is waiting. */
+/* Terminal column wraps the terminal + toolbars so the panel sits beside it on
+   desktop; fills its slot in both the mobile column and the desktop row. */
+.terminal-col { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+/* body .main out-specifies the terminal's own `.main { flex-direction: column }`
+   so the desktop split wins regardless of source order. */
+@media (min-width: 769px) { body .main { flex-direction: row; } }
+
+/* Sessions toolbar button: a sibling of the mic button — same shape/size so the
+   bar stays consistent. Hidden on desktop unless the panel is collapsed (see
+   board.css). Green when a session is waiting. */
 #sessions-btn {
     position: relative;
     background: none;
@@ -106,34 +119,74 @@
     border-radius: 999px; background: var(--accent-green); color: #0b1411;
     font-size: 9px; font-weight: 700; line-height: 14px; text-align: center;
 }
-/* Desktop: the board is a persistent panel docked on the right. Reserve room
-   for it on .main so the terminal shrinks (its ResizeObserver refits xterm),
-   and hide the toggle button since the panel is always there. */
-@media (min-width: 769px) {
-    .main { margin-right: 360px; }
-    #terminal-status #sessions-btn { display: none; }
-}
 </style>
 <script>
-// Sessions board: mount board.js into the panel. On mobile the button opens it
-// as a fullscreen modal; on desktop CSS keeps it docked and always visible (the
-// .open toggle is a no-op there). The waiting-count rides the button badge.
+// Sessions board wiring. Mobile: the button opens a fullscreen modal. Desktop:
+// the panel is docked and always open; the button (shown only when collapsed)
+// and the header control toggle a collapse, and the divider resizes it — both
+// persisted. board.js renders the list into the panel.
 (function () {
     var btn = document.getElementById('sessions-btn');
     var panel = document.getElementById('sessions-panel');
     var backdrop = document.getElementById('sessions-backdrop');
     var badge = document.getElementById('sessions-badge');
-    if (!btn || !panel || !backdrop) return;
-    function open() { panel.classList.add('open'); backdrop.classList.add('open'); }
-    function close() { panel.classList.remove('open'); backdrop.classList.remove('open'); }
-    function toggle() { panel.classList.contains('open') ? close() : open(); }
+    var divider = document.getElementById('sessions-divider');
+    var main = document.querySelector('.main');
+    if (!btn || !panel || !backdrop || !main) return;
+
+    var mq = window.matchMedia('(min-width: 769px)');
+    function desktop() { return mq.matches; }
+
+    var storedW = parseInt(localStorage.getItem('sessions-w'), 10);
+    if (storedW) main.style.setProperty('--sessions-w', storedW + 'px');
+    if (localStorage.getItem('sessions-collapsed') === '1') main.classList.add('panel-collapsed');
+
+    function open() {
+        if (desktop()) { main.classList.remove('panel-collapsed'); localStorage.setItem('sessions-collapsed', '0'); }
+        else { panel.classList.add('open'); backdrop.classList.add('open'); }
+    }
+    function close() {
+        if (desktop()) { main.classList.add('panel-collapsed'); localStorage.setItem('sessions-collapsed', '1'); }
+        else { panel.classList.remove('open'); backdrop.classList.remove('open'); }
+    }
+    function toggle() {
+        if (desktop()) { main.classList.contains('panel-collapsed') ? open() : close(); }
+        else { panel.classList.contains('open') ? close() : open(); }
+    }
     btn.addEventListener('click', toggle);
     backdrop.addEventListener('click', close);
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !desktop()) close(); });
+
+    // Divider: drag the terminal/panel boundary on desktop. The terminal's
+    // ResizeObserver refits xterm as the panel width changes.
+    if (divider) {
+        var dragging = false, lastW = 0;
+        divider.addEventListener('pointerdown', function (e) {
+            if (!desktop()) return;
+            dragging = true; lastW = 0;
+            try { divider.setPointerCapture(e.pointerId); } catch (x) {}
+            e.preventDefault();
+        });
+        divider.addEventListener('pointermove', function (e) {
+            if (!dragging) return;
+            var w = window.innerWidth - e.clientX;
+            lastW = Math.max(280, Math.min(w, Math.round(window.innerWidth * 0.5)));
+            main.style.setProperty('--sessions-w', lastW + 'px');
+        });
+        function endDrag(e) {
+            if (!dragging) return;
+            dragging = false;
+            try { divider.releasePointerCapture(e.pointerId); } catch (x) {}
+            if (lastW) localStorage.setItem('sessions-w', lastW);
+        }
+        divider.addEventListener('pointerup', endDrag);
+        divider.addEventListener('pointercancel', endDrag);
+    }
+
     window.SessionsBoard.init({
         container: panel,
-        onJump: close,          // tapping a session jumps to its window, then closes (mobile)
-        onClose: close,
+        onJump: function () { if (!desktop()) close(); },   // jumping closes the modal (mobile)
+        onClose: close,                                     // the header collapse control
         onAttention: function (n) {
             if (n > 0) { badge.textContent = n; badge.hidden = false; btn.classList.add('has-waiting'); }
             else { badge.hidden = true; btn.classList.remove('has-waiting'); }

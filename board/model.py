@@ -82,7 +82,7 @@ def _sort_key(rec: Session) -> tuple[float, float]:
     return (order, rec.first_seen)
 
 
-def _node(rec: Session, active_win: str, depth: int, children: list[dict]) -> dict:
+def _node(rec: Session, active_win: str, depth: int) -> dict:
     return {
         "sid": rec.sid,
         "name": _display_name(rec),
@@ -102,21 +102,24 @@ def _node(rec: Session, active_win: str, depth: int, children: list[dict]) -> di
         "session": rec.session,
         "window_id": rec.window_id,
         "depth": depth,
-        "children": children,
     }
 
 
 def build_view(store: Store, windows: list[Window], now: float) -> dict:
-    """Build the board's JSON view model from the reconciled store + sweep."""
+    """Build the board's JSON view model: a single flat, ordered list of rows.
+
+    Rows are laid out preorder (a root, then its children, then the next root),
+    so a `--child` still sits under its parent (one indent via ``depth``), while
+    siblings — the fork/handoff default — are flat peers. Order is the user's
+    manual order, falling back to first-seen; never by state. Project rides on
+    each row rather than as a section header, so the list scales to many
+    instances. Counts drive the status line.
+    """
     shown = {
         sid: rec for sid, rec in store.sessions.items() if rec.live or rec.tombstone
     }
     active_win = next((w.window_id for w in windows if w.active and w.is_agent), "")
 
-    # Only a `child` relation nests under its parent (one indent). Siblings (the
-    # fork/handoff default) stay flat as peers — they are roots, grouped by their
-    # own project, exactly like the session they were spawned from. A `child`
-    # whose parent we are not showing falls back to a root.
     children_of: dict[str, list[Session]] = {}
     roots: list[Session] = []
     for rec in shown.values():
@@ -125,36 +128,26 @@ def build_view(store: Store, windows: list[Window], now: float) -> dict:
         else:
             roots.append(rec)
 
-    def subtree(rec: Session, depth: int) -> dict:
-        kids = sorted(children_of.get(rec.sid, []), key=_sort_key)
-        return _node(rec, active_win, depth, [subtree(k, depth + 1) for k in kids])
+    rows: list[dict] = []
 
-    # Group roots by project, preserving a stable project order (first appearance
-    # by sort key), and stable session order within each project.
-    projects: dict[str, dict] = {}
+    def emit(rec: Session, depth: int) -> None:
+        rows.append(_node(rec, active_win, depth))
+        for kid in sorted(children_of.get(rec.sid, []), key=_sort_key):
+            emit(kid, depth + 1)
+
     for rec in sorted(roots, key=_sort_key):
-        key = rec.project or "~"
-        bucket = projects.setdefault(
-            key, {"project": rec.project, "cwd": rec.cwd, "sessions": []}
-        )
-        bucket["sessions"].append(subtree(rec, 0))
+        emit(rec, 0)
 
-    other = [
-        {
-            "window_id": w.window_id,
-            "session": w.session,
-            "name": w.name,
-            "active": w.active,
-        }
-        for w in windows
-        if not w.is_agent
-    ]
-
-    attention = sum(1 for rec in shown.values() if rec.live and rec.state == _DONE)
+    live = [rec for rec in shown.values() if rec.live]
+    counts = {
+        "total": len(live),
+        "working": sum(1 for rec in live if rec.state == _BUSY),
+        "waiting": sum(1 for rec in live if rec.state == _DONE),
+    }
 
     return {
         "generated_at": now,
-        "attention": attention,
-        "projects": list(projects.values()),
-        "other_windows": other,
+        "attention": counts["waiting"],
+        "counts": counts,
+        "sessions": rows,
     }

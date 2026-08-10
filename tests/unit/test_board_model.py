@@ -164,7 +164,11 @@ class TestBuildView:
         model.reconcile(store, windows, now)
         return model.build_view(store, windows, now)
 
-    def test_groups_by_project(self):
+    @staticmethod
+    def _sids(v):
+        return [s["sid"] for s in v["sessions"]]
+
+    def test_flat_list_carries_project_on_each_row(self):
         st = Store()
         v = self._view(
             st,
@@ -174,10 +178,12 @@ class TestBuildView:
                 win(sid="c", cwd="/x/beta"),
             ],
         )
-        names = {p["project"]: len(p["sessions"]) for p in v["projects"]}
-        assert names == {"alpha": 2, "beta": 1}
+        assert set(self._sids(v)) == {"a", "b", "c"}  # one flat list, no groups
+        projects = {s["sid"]: s["project"] for s in v["sessions"]}
+        assert projects == {"a": "alpha", "b": "alpha", "c": "beta"}
+        assert v["counts"]["total"] == 3
 
-    def test_child_nests_under_parent(self):
+    def test_child_nests_after_parent_with_depth(self):
         st = Store()
         v = self._view(
             st,
@@ -186,15 +192,11 @@ class TestBuildView:
                 win(sid="kid", cwd="/x/alpha", parent="root", relation="child"),
             ],
         )
-        proj = v["projects"][0]
-        assert len(proj["sessions"]) == 1  # only the root at top level
-        root = proj["sessions"][0]
-        assert [c["sid"] for c in root["children"]] == ["kid"]
-        assert root["children"][0]["depth"] == 1
+        assert self._sids(v) == ["root", "kid"]  # child immediately after parent
+        depth = {s["sid"]: s["depth"] for s in v["sessions"]}
+        assert depth == {"root": 0, "kid": 1}
 
-    def test_sibling_stays_flat(self):
-        # The fork/handoff default: a sibling is a peer, NOT nested under its
-        # parent, even though it carries a parent link for the family record.
+    def test_sibling_is_flat_depth_zero(self):
         st = Store()
         v = self._view(
             st,
@@ -203,13 +205,10 @@ class TestBuildView:
                 win(sid="twin", cwd="/x/alpha", parent="root", relation="sibling"),
             ],
         )
-        proj = v["projects"][0]
-        assert len(proj["sessions"]) == 2  # both at top level
-        assert all(not s["children"] for s in proj["sessions"])
+        assert all(s["depth"] == 0 for s in v["sessions"])
 
-    def test_hierarchy_wins_over_project_placement(self):
-        # A child launched in a DIFFERENT project still nests under its parent,
-        # and does not spawn its own project bucket.
+    def test_hierarchy_wins_over_project(self):
+        # A child launched in a DIFFERENT project still nests under its parent.
         st = Store()
         v = self._view(
             st,
@@ -218,80 +217,40 @@ class TestBuildView:
                 win(sid="kid", cwd="/y/other", parent="root", relation="child"),
             ],
         )
-        assert [p["project"] for p in v["projects"]] == ["alpha"]
-        root = v["projects"][0]["sessions"][0]
-        assert root["children"][0]["sid"] == "kid"
+        assert self._sids(v) == ["root", "kid"]
+        assert v["sessions"][1]["depth"] == 1
 
-    def test_orphan_child_becomes_root(self):
-        # parent link points at a session that isn't shown -> child is a root.
+    def test_orphan_child_is_depth_zero(self):
         st = Store()
         v = self._view(
-            st,
-            [
-                win(sid="kid", cwd="/x/alpha", parent="ghost", relation="child"),
-            ],
+            st, [win(sid="kid", cwd="/x/alpha", parent="ghost", relation="child")]
         )
-        assert v["projects"][0]["sessions"][0]["sid"] == "kid"
+        assert v["sessions"][0]["sid"] == "kid"
+        assert v["sessions"][0]["depth"] == 0
 
     def test_stable_order_not_by_state(self):
-        # s1 idle with order 0, s2 done with order 1. A state-sorting board would
-        # float the done one up; ours must keep 0,1 regardless of state.
         st = store_with(
-            Session(
-                sid="s1",
-                cwd="/x/a",
-                project="a",
-                state="idle",
-                live=True,
-                first_seen=1.0,
-                order=0.0,
-            ),
-            Session(
-                sid="s2",
-                cwd="/x/a",
-                project="a",
-                state="done",
-                live=True,
-                first_seen=2.0,
-                order=1.0,
-            ),
+            Session(sid="s1", cwd="/x/a", project="a", state="idle", live=True,
+                    first_seen=1.0, order=0.0),
+            Session(sid="s2", cwd="/x/a", project="a", state="done", live=True,
+                    first_seen=2.0, order=1.0),
         )
-        v = model.build_view(
-            st,
-            [
-                win(sid="s1", state="idle", cwd="/x/a"),
-                win(sid="s2", state="done", cwd="/x/a"),
-            ],
-            now=3.0,
-        )
-        order = [s["sid"] for s in v["projects"][0]["sessions"]]
-        assert order == ["s1", "s2"]
+        v = model.build_view(st, [win(sid="s1", state="idle", cwd="/x/a"),
+                                  win(sid="s2", state="done", cwd="/x/a")], now=3.0)
+        assert self._sids(v) == ["s1", "s2"]  # not floated by state
 
     def test_manual_order_overrides_first_seen(self):
         st = store_with(
-            Session(
-                sid="early",
-                cwd="/x/a",
-                project="a",
-                live=True,
-                first_seen=1.0,
-                order=5.0,
-            ),
-            Session(
-                sid="late",
-                cwd="/x/a",
-                project="a",
-                live=True,
-                first_seen=9.0,
-                order=1.0,
-            ),
+            Session(sid="early", cwd="/x/a", project="a", live=True,
+                    first_seen=1.0, order=5.0),
+            Session(sid="late", cwd="/x/a", project="a", live=True,
+                    first_seen=9.0, order=1.0),
         )
-        v = model.build_view(
-            st, [win(sid="early", cwd="/x/a"), win(sid="late", cwd="/x/a")], now=10.0
-        )
-        assert [s["sid"] for s in v["projects"][0]["sessions"]] == ["late", "early"]
+        v = model.build_view(st, [win(sid="early", cwd="/x/a"),
+                                  win(sid="late", cwd="/x/a")], now=10.0)
+        assert self._sids(v) == ["late", "early"]
 
-    def test_attention_counts_live_done_only(self):
+    def test_counts_and_attention(self):
         st = Store()
         v = self._view(
             st,
@@ -299,41 +258,23 @@ class TestBuildView:
                 win(sid="a", state="done"),
                 win(sid="b", state="done"),
                 win(sid="c", state="busy"),
+                win(sid="d", state="idle"),
             ],
         )
+        assert v["counts"] == {"total": 4, "working": 1, "waiting": 2}
         assert v["attention"] == 2
 
-    def test_waiting_flag_and_active_flag(self):
+    def test_active_flag(self):
         st = Store()
         v = self._view(st, [win(sid="a", state="done", active=True, window_id="@3")])
-        node = v["projects"][0]["sessions"][0]
-        assert node["waiting"] is True
-        assert node["active"] is True
+        assert v["sessions"][0]["active"] is True
+        assert v["sessions"][0]["waiting"] is True
 
-    def test_plain_windows_listed_separately(self):
-        st = Store()
-        v = self._view(
-            st,
-            [
-                win(sid="a", state="busy"),
-                win(sid="", state="", name="vim", session="t"),
-            ],
-        )
-        assert len(v["other_windows"]) == 1
-        assert v["other_windows"][0]["name"] == "vim"
-
-    def test_tombstone_still_shown(self):
+    def test_tombstone_still_shown_not_counted(self):
         st = store_with(
-            Session(
-                sid="s1",
-                state="busy",
-                cwd="/x/a",
-                project="a",
-                live=False,
-                tombstone=True,
-                first_seen=1.0,
-            )
+            Session(sid="s1", state="busy", cwd="/x/a", project="a", live=False,
+                    tombstone=True, first_seen=1.0)
         )
         v = model.build_view(st, [], now=5.0)
-        node = v["projects"][0]["sessions"][0]
-        assert node["tombstone"] is True
+        assert v["sessions"][0]["tombstone"] is True
+        assert v["counts"]["total"] == 0  # tombstones are dead, not in the count
