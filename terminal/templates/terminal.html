@@ -158,11 +158,11 @@
 
     function open() {
         if (desktop()) { main.classList.remove('panel-collapsed'); localStorage.setItem('sessions-collapsed', '0'); }
-        else { panel.classList.add('open'); backdrop.classList.add('open'); }
+        else { applyMobileOffset(); panel.classList.add('open'); }  // recompute: bar height is settled now
     }
     function close() {
         if (desktop()) { main.classList.add('panel-collapsed'); localStorage.setItem('sessions-collapsed', '1'); }
-        else { panel.classList.remove('open'); backdrop.classList.remove('open'); }
+        else { panel.classList.remove('open'); }
     }
     function toggle() {
         if (desktop()) { main.classList.contains('panel-collapsed') ? open() : close(); }

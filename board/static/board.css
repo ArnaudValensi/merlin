@@ -296,8 +296,9 @@
   .main.panel-collapsed .sessions-panel,
   .main.panel-collapsed .sessions-divider { display: none; }
 
-  #terminal-status #sessions-btn { display: none; }
-  .main.panel-collapsed #terminal-status #sessions-btn { display: flex; }
+  /* The Sessions button stays visible on desktop even when the panel is open
+     (it toggles collapse), alongside the panel's own collapse chevron — both
+     work. It only ever hides when there's no panel concept, which isn't here. */
 
   /* Undo the mobile bottom-orientation: normal top-down, no grabber, the
      collapse chevron is the reduce control here. */
