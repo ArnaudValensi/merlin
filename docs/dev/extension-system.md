@@ -52,6 +52,7 @@ page_router = APIRouter()
 # serving /scenes → URL_SLUG = "scenes").
 URL_SLUG = "scenes"
 
+
 # Optional — escape hatch for anything the two routers can't express
 # (WebSockets, SSE, unforeseen paths). Receives the full FastAPI app; the
 # module OWNS the path AND the auth for whatever it registers. Its use is
@@ -60,9 +61,10 @@ URL_SLUG = "scenes"
 def register_routes(app):
     app.add_api_websocket_route("/ws/thing", thing_ws)
 
+
 # Optional — sidebar entry (list, can have multiple)
 NAV_ITEMS = [
-    {"url": "/scenes", "icon": '<svg .../>', "label": "Scenes"},
+    {"url": "/scenes", "icon": "<svg .../>", "label": "Scenes"},
 ]
 
 # Optional — static files directory, mounted at /static/{id} (keyed by the
@@ -73,7 +75,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 EXTENSION_META = {
     "name": "Video Scenes",
     "description": "Browse and select scene candidates",
-    "icon": '<svg .../>',
+    "icon": "<svg .../>",
     "config_fields": [
         {
             "key": "DISCORD_BOT_TOKEN",
@@ -85,10 +87,12 @@ EXTENSION_META = {
     ],
 }
 
+
 # Optional — lifecycle hooks
 def validate():
     """Check config. Raise SystemExit on error."""
     ...
+
 
 async def start():
     """Async startup (e.g., Discord client)."""
@@ -118,6 +122,7 @@ page_router = APIRouter()
 # logger is injected by Merlin — no import needed
 # It will be: logging.getLogger("merlin.ext.my_extension")
 
+
 @page_router.get("")  # → /my-extension
 def my_page():
     logger.info("Page loaded")  # writes to merlin.log as [merlin.ext.my_extension]
@@ -138,9 +143,11 @@ The syntax is the same everywhere — main module or submodule:
 ```python
 from merlin_ext import get_logger
 
-logger = get_logger("my-extension")              # → merlin.ext.my_extension
-logger = get_logger("my-extension.renderer")     # → merlin.ext.my_extension.renderer
-logger = get_logger("my-extension.renderer.pdf") # → merlin.ext.my_extension.renderer.pdf
+logger = get_logger("my-extension")  # → merlin.ext.my_extension
+logger = get_logger("my-extension.renderer")  # → merlin.ext.my_extension.renderer
+logger = get_logger(
+    "my-extension.renderer.pdf"
+)  # → merlin.ext.my_extension.renderer.pdf
 ```
 
 Dashes are converted to underscores automatically. All loggers inherit the file handler from `merlin`, so they appear in `merlin.log` and respect the same rotation settings.
@@ -160,6 +167,7 @@ EXT_DIR = Path(__file__).parent.resolve()
 templates = make_templates(EXT_DIR / "templates")
 
 page_router = APIRouter()
+
 
 @page_router.get("")  # → /my-extension
 def my_page(request: Request):
@@ -202,14 +210,14 @@ A fresh install has an empty `{}`. The file only grows as users toggle things.
 ```python
 @dataclass
 class ExtensionInfo:
-    id: str               # Folder name (e.g., "video-scenes")
-    tier: str             # "core" | "built-in" | "installed"
-    enabled: bool         # User's choice (or default)
-    loaded: bool          # Successfully imported?
-    error: str | None     # Import/validate error message
-    meta: dict            # EXTENSION_META (or generated defaults)
-    has_start: bool       # Has async start() hook
-    module: object | None # The imported module (if loaded)
+    id: str  # Folder name (e.g., "video-scenes")
+    tier: str  # "core" | "built-in" | "installed"
+    enabled: bool  # User's choice (or default)
+    loaded: bool  # Successfully imported?
+    error: str | None  # Import/validate error message
+    meta: dict  # EXTENSION_META (or generated defaults)
+    has_start: bool  # Has async start() hook
+    module: object | None  # The imported module (if loaded)
 ```
 
 The registry is used by:
@@ -242,14 +250,20 @@ Example minimal extension (folder `my-tool/` → mounted at `/my-tool`):
 
 ```python
 """My Tool — a custom Merlin extension."""
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 page_router = APIRouter()
 
 NAV_ITEMS = [
-    {"url": "/my-tool", "icon": '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>', "label": "My Tool"},
+    {
+        "url": "/my-tool",
+        "icon": '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>',
+        "label": "My Tool",
+    },
 ]
+
 
 @page_router.get("", response_class=HTMLResponse)  # → /my-tool
 def my_tool_page(request: Request):
@@ -319,10 +333,20 @@ The merlin-bot extension is a good example of a full-featured built-in extension
 EXTENSION_META = {
     "name": "Merlin Bot",
     "description": "Discord AI assistant powered by Claude Code",
-    "icon": '<svg .../>',
+    "icon": "<svg .../>",
     "config_fields": [
-        {"key": "DISCORD_BOT_TOKEN", "label": "Discord Bot Token", "secret": True, "required": True},
-        {"key": "DISCORD_CHANNEL_IDS", "label": "Discord Channel IDs (comma-separated)", "secret": False, "required": True},
+        {
+            "key": "DISCORD_BOT_TOKEN",
+            "label": "Discord Bot Token",
+            "secret": True,
+            "required": True,
+        },
+        {
+            "key": "DISCORD_CHANNEL_IDS",
+            "label": "Discord Channel IDs (comma-separated)",
+            "secret": False,
+            "required": True,
+        },
     ],
 }
 ```

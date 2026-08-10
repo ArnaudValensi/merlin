@@ -210,7 +210,9 @@ class TestSweepIntegration:
         s, w = srv
         s.set_wopt(w["a"], "@agent_sid", "sid-a")
         s.set_wopt(w["a"], "@agent_state", "busy")
-        s.set_wopt(w["a"], "@agent_cwd", "/tmp/proj one")  # space survives (tab-delimited)
+        s.set_wopt(
+            w["a"], "@agent_cwd", "/tmp/proj one"
+        )  # space survives (tab-delimited)
         monkeypatch.setenv("TMUX", s._tmux_var())
         from board import sweep
 

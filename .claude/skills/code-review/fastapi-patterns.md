@@ -12,14 +12,15 @@ async def get_current_user(request: Request) -> User:
         raise HTTPException(401, "Not authenticated")
     return session.user
 
+
 async def require_admin(user: User = Depends(get_current_user)) -> User:
     if not user.is_admin:
         raise HTTPException(403, "Not an admin")
     return user
 
+
 @app.get("/admin/stats")
-async def admin_stats(user: User = Depends(require_admin)):
-    ...
+async def admin_stats(user: User = Depends(require_admin)): ...
 ```
 
 **Anti-pattern: Auth logic inline in handlers**
@@ -33,6 +34,7 @@ async def dashboard(request: Request):
         return RedirectResponse("/login")
     user = session.user
     ...
+
 
 @app.get("/settings")
 async def settings(request: Request):
@@ -49,6 +51,7 @@ async def settings(request: Request):
 def get_settings():
     return Settings()  # no I/O, pure computation
 
+
 # GOOD — async, runs on event loop (no threadpool overhead)
 async def get_settings():
     return Settings()
@@ -62,6 +65,7 @@ Rule: use `async def` for dependencies unless they do actual blocking I/O (in wh
 # GOOD — modern lifespan context manager
 from contextlib import asynccontextmanager
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # STARTUP
@@ -69,6 +73,7 @@ async def lifespan(app: FastAPI):
     yield
     # SHUTDOWN
     await app.state.http_client.aclose()
+
 
 app = FastAPI(lifespan=lifespan)
 ```
@@ -91,11 +96,11 @@ async def startup():
 ```python
 templates = Jinja2Templates(directory="templates")
 
+
 @app.get("/dashboard")
 async def dashboard(request: Request, user: User = Depends(get_current_user)):
     return templates.TemplateResponse(
-        "dashboard.html",
-        {"request": request, "user": user, "stats": await get_stats()}
+        "dashboard.html", {"request": request, "user": user, "stats": await get_stats()}
     )
 ```
 
@@ -126,6 +131,7 @@ class AppError(Exception):
         self.status_code = status_code
         self.detail = detail
 
+
 @app.exception_handler(AppError)
 async def app_error_handler(request: Request, exc: AppError):
     return templates.TemplateResponse(
@@ -134,11 +140,10 @@ async def app_error_handler(request: Request, exc: AppError):
         status_code=exc.status_code,
     )
 
+
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
-    return templates.TemplateResponse(
-        "404.html", {"request": request}, status_code=404
-    )
+    return templates.TemplateResponse("404.html", {"request": request}, status_code=404)
 ```
 
 **Anti-pattern: Scattered try/except in every handler**
@@ -177,9 +182,11 @@ raise AppError(500, "Something went wrong. Please try again.")
 # routes/dashboard.py
 router = APIRouter(prefix="", tags=["dashboard"])
 
+
 @router.get("/")
 async def dashboard(request: Request, user: User = Depends(get_current_user)):
     return templates.TemplateResponse("dashboard.html", {...})
+
 
 # main.py
 app.include_router(dashboard_router)

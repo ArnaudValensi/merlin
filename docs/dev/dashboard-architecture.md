@@ -319,6 +319,7 @@ Registration in `main.py` — the framework owns namespacing and auth via one
 helper (`mount_module`), used for both core modules and extensions:
 ```python
 import module
+
 mount_module(module, "module")
 # api_router  → /api/{slug}  (authed)
 # page_router → /{slug}      (authed)

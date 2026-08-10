@@ -74,7 +74,9 @@ Requirements, all enforced at dispatch:
 The first docstring line above is the one-line help shown by
 `merlin --help`. The rest is yours.
 """
+
 import argparse
+
 ...
 ```
 

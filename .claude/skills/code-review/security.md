@@ -7,6 +7,7 @@ Jinja2 autoescaping prevents XSS (user input in context is escaped). But SSTI ha
 ```python
 # CRITICAL — RCE vulnerability
 from jinja2 import Template
+
 template = Template(f"Hello {user_input}!")  # user_input IS the template
 result = template.render()
 # Attacker: user_input = "{{config}}" → leaks app config
@@ -39,7 +40,9 @@ subprocess.run(["convert", user_file, "output.png"], check=True, timeout=30)
 
 # GOOD — async equivalent
 proc = await asyncio.create_subprocess_exec(
-    "convert", user_file, "output.png",
+    "convert",
+    user_file,
+    "output.png",
     stdout=asyncio.subprocess.PIPE,
     stderr=asyncio.subprocess.PIPE,
 )
@@ -61,6 +64,7 @@ stdout, stderr = await proc.communicate()
 async def get_file(filename: str):
     return FileResponse(f"/app/uploads/{filename}")  # ../../../etc/passwd
 
+
 # BAD — os.path.join doesn't prevent traversal
 path = os.path.join("/app/uploads", user_input)  # "../../etc/passwd" works
 
@@ -72,6 +76,7 @@ if ".." in filename:  # URL encoding, double encoding, etc. bypass this
 from pathlib import Path
 
 BASE_DIR = Path("/app/uploads").resolve()
+
 
 def safe_path(filename: str) -> Path:
     requested = (BASE_DIR / filename).resolve()
@@ -89,10 +94,10 @@ def safe_path(filename: str) -> Path:
 response.set_cookie(
     key="session_id",
     value=session_token,
-    httponly=True,    # prevents JavaScript access (XSS mitigation)
-    secure=True,      # HTTPS only
-    samesite="lax",   # CSRF mitigation
-    max_age=1800,     # 30-minute expiry
+    httponly=True,  # prevents JavaScript access (XSS mitigation)
+    secure=True,  # HTTPS only
+    samesite="lax",  # CSRF mitigation
+    max_age=1800,  # 30-minute expiry
     path="/",
 )
 
@@ -145,6 +150,7 @@ import uuid
 ALLOWED_MIMES = {"image/png", "image/jpeg", "image/gif"}
 MAX_SIZE = 10 * 1024 * 1024  # 10 MB
 
+
 @app.post("/upload")
 async def upload(file: UploadFile):
     content = await file.read()
@@ -177,10 +183,10 @@ async def get_current_user(request: Request) -> User:
         raise HTTPException(status_code=401)
     return user
 
+
 # Apply to routes
 @app.get("/dashboard")
-async def dashboard(request: Request, user: User = Depends(get_current_user)):
-    ...
+async def dashboard(request: Request, user: User = Depends(get_current_user)): ...
 ```
 
 **Anti-pattern: Auth check missing on routes**

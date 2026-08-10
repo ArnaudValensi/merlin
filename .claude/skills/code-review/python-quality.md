@@ -9,8 +9,11 @@
 def process(value: int | str) -> list[str]: ...
 def maybe(x: str | None = None) -> dict[str, int]: ...
 
+
 # BAD — old typing imports (unnecessary on 3.10+)
 from typing import Union, Optional, List, Dict
+
+
 def process(value: Union[int, str]) -> List[str]: ...
 ```
 
@@ -19,9 +22,11 @@ def process(value: Union[int, str]) -> List[str]: ...
 ```python
 from collections.abc import Iterable, Mapping, Sequence
 
+
 # GOOD — flexible input, specific output
 def process_items(items: Iterable[str]) -> list[str]:
     return [item.upper() for item in items]
+
 
 def merge(base: Mapping[str, str], overrides: Mapping[str, str]) -> dict[str, str]:
     return {**base, **overrides}
@@ -32,6 +37,7 @@ def merge(base: Mapping[str, str], overrides: Mapping[str, str]) -> dict[str, st
 ```python
 # BAD — Any disables type checking entirely
 def log_value(v: Any) -> None: ...
+
 
 # GOOD — object accepts anything but preserves type safety
 def log_value(v: object) -> None:
@@ -45,16 +51,20 @@ Use `Any` only when the type system genuinely cannot express the type. Use `obje
 ```python
 from typing import Protocol
 
+
 class Renderable(Protocol):
     def render(self) -> str: ...
 
+
 def display(item: Renderable) -> None:
     print(item.render())
+
 
 # Any class with render() -> str works — no inheritance needed
 class Widget:
     def render(self) -> str:
         return "<widget/>"
+
 
 display(Widget())  # works
 ```
@@ -72,10 +82,12 @@ class User(BaseModel):
     email: str
     password_hash: str  # accidentally exposed in responses!
 
+
 # GOOD — separate schemas
 class UserCreate(BaseModel):
     email: EmailStr
     username: str = Field(min_length=3, max_length=32)
+
 
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -104,8 +116,9 @@ class Config:                 # → model_config = ConfigDict(...)
 from typing import Annotated
 from pydantic import Field
 
-Slug = Annotated[str, Field(min_length=1, max_length=64, pattern=r'^[a-z0-9-]+$')]
+Slug = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-z0-9-]+$")]
 PositiveInt = Annotated[int, Field(gt=0)]
+
 
 class CreateProject(BaseModel):
     name: str
@@ -118,6 +131,7 @@ class CreateProject(BaseModel):
 ```python
 from pydantic import field_validator, model_validator
 
+
 class DateRange(BaseModel):
     start: date
     end: date
@@ -127,6 +141,7 @@ class DateRange(BaseModel):
         if self.end <= self.start:
             raise ValueError("end must be after start")
         return self
+
 
 class User(BaseModel):
     name: str
@@ -281,6 +296,7 @@ if len(content) > 10485760:  # what is this number?
 def add_item(item: str, items: list[str] = []) -> list[str]:
     items.append(item)  # mutates the default!
     return items
+
 
 # GOOD — None sentinel
 def add_item(item: str, items: list[str] | None = None) -> list[str]:

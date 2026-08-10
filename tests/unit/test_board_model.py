@@ -230,24 +230,57 @@ class TestBuildView:
 
     def test_stable_order_not_by_state(self):
         st = store_with(
-            Session(sid="s1", cwd="/x/a", project="a", state="idle", live=True,
-                    first_seen=1.0, order=0.0),
-            Session(sid="s2", cwd="/x/a", project="a", state="done", live=True,
-                    first_seen=2.0, order=1.0),
+            Session(
+                sid="s1",
+                cwd="/x/a",
+                project="a",
+                state="idle",
+                live=True,
+                first_seen=1.0,
+                order=0.0,
+            ),
+            Session(
+                sid="s2",
+                cwd="/x/a",
+                project="a",
+                state="done",
+                live=True,
+                first_seen=2.0,
+                order=1.0,
+            ),
         )
-        v = model.build_view(st, [win(sid="s1", state="idle", cwd="/x/a"),
-                                  win(sid="s2", state="done", cwd="/x/a")], now=3.0)
+        v = model.build_view(
+            st,
+            [
+                win(sid="s1", state="idle", cwd="/x/a"),
+                win(sid="s2", state="done", cwd="/x/a"),
+            ],
+            now=3.0,
+        )
         assert self._sids(v) == ["s1", "s2"]  # not floated by state
 
     def test_manual_order_overrides_first_seen(self):
         st = store_with(
-            Session(sid="early", cwd="/x/a", project="a", live=True,
-                    first_seen=1.0, order=5.0),
-            Session(sid="late", cwd="/x/a", project="a", live=True,
-                    first_seen=9.0, order=1.0),
+            Session(
+                sid="early",
+                cwd="/x/a",
+                project="a",
+                live=True,
+                first_seen=1.0,
+                order=5.0,
+            ),
+            Session(
+                sid="late",
+                cwd="/x/a",
+                project="a",
+                live=True,
+                first_seen=9.0,
+                order=1.0,
+            ),
         )
-        v = model.build_view(st, [win(sid="early", cwd="/x/a"),
-                                  win(sid="late", cwd="/x/a")], now=10.0)
+        v = model.build_view(
+            st, [win(sid="early", cwd="/x/a"), win(sid="late", cwd="/x/a")], now=10.0
+        )
         assert self._sids(v) == ["late", "early"]
 
     def test_counts_and_attention(self):
@@ -272,8 +305,15 @@ class TestBuildView:
 
     def test_tombstone_still_shown_not_counted(self):
         st = store_with(
-            Session(sid="s1", state="busy", cwd="/x/a", project="a", live=False,
-                    tombstone=True, first_seen=1.0)
+            Session(
+                sid="s1",
+                state="busy",
+                cwd="/x/a",
+                project="a",
+                live=False,
+                tombstone=True,
+                first_seen=1.0,
+            )
         )
         v = model.build_view(st, [], now=5.0)
         assert v["sessions"][0]["tombstone"] is True

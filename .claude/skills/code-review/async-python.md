@@ -19,9 +19,10 @@ The cardinal sin of async Python. The event loop is single-threaded — if any c
 ```python
 # BAD — freezes ALL concurrent requests
 async def get_data():
-    time.sleep(5)           # blocks event loop
-    data = requests.get(url) # blocks event loop
+    time.sleep(5)  # blocks event loop
+    data = requests.get(url)  # blocks event loop
     return data.json()
+
 
 # GOOD — properly async
 async def get_data():
@@ -43,6 +44,7 @@ def get_data():
     time.sleep(5)  # only blocks this thread, not the event loop
     return requests.get(url).json()
 
+
 # DANGEROUS — async handler with blocking call
 @app.get("/data")
 async def get_data():
@@ -60,9 +62,7 @@ result_b = await fetch_b()  # 2s
 result_c = await fetch_c()  # 1s
 
 # GOOD — concurrent with gather (3 seconds total)
-result_a, result_b, result_c = await asyncio.gather(
-    fetch_a(), fetch_b(), fetch_c()
-)
+result_a, result_b, result_c = await asyncio.gather(fetch_a(), fetch_b(), fetch_c())
 ```
 
 ### gather Error Handling
@@ -116,6 +116,7 @@ async def worker():
     except Exception:  # catches CancelledError too!
         pass  # task can never be cancelled
 
+
 # GOOD — be specific
 async def worker():
     try:
@@ -137,10 +138,12 @@ asyncio.create_task(long_running_work())
 # GOOD — track tasks, handle errors
 active_tasks: dict[str, asyncio.Task] = {}
 
+
 async def start_task(task_id: str, coro):
     task = asyncio.create_task(coro)
     active_tasks[task_id] = task
     task.add_done_callback(lambda t: _handle_done(task_id, t))
+
 
 def _handle_done(task_id: str, task: asyncio.Task):
     active_tasks.pop(task_id, None)
@@ -160,6 +163,7 @@ async def do_action(background_tasks: BackgroundTasks):
     background_tasks.add_task(send_notification_safe, result)
     return result
 
+
 # Always wrap with error handling
 async def send_notification_safe(result):
     try:
@@ -178,11 +182,13 @@ async def read_config():
     with open("config.json") as f:
         return json.load(f)
 
+
 # GOOD — aiofiles
 async def read_config():
     async with aiofiles.open("config.json") as f:
         content = await f.read()
     return json.loads(content)
+
 
 # ALSO GOOD — explicit threadpool
 async def read_config():
@@ -196,6 +202,7 @@ async def read_config():
 async def fetch():
     async with httpx.AsyncClient() as client:
         return await client.get(url)
+
 
 # GOOD — shared client with connection pooling
 @asynccontextmanager
@@ -213,10 +220,10 @@ async def lifespan(app: FastAPI):
 ```python
 client = httpx.AsyncClient(
     timeout=httpx.Timeout(
-        connect=5.0,   # establish connection
-        read=30.0,     # wait for response
-        write=10.0,    # send request
-        pool=5.0,      # wait for pool slot
+        connect=5.0,  # establish connection
+        read=30.0,  # wait for response
+        write=10.0,  # send request
+        pool=5.0,  # wait for pool slot
     )
 )
 
