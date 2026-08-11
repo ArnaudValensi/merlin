@@ -1052,6 +1052,20 @@ document.addEventListener('DOMContentLoaded', () => {
     })();
 
     let ws = null;
+    let currentSession = '';
+
+    // Bridge for the Sessions panel (board.js). Switching sessions is per-client
+    // and only the WebSocket knows which tmux client this browser is, so the
+    // switch rides the socket (not an HTTP call). The server replies with a
+    // {type:'session'} control frame naming the client's current session.
+    window.MerlinTerminal = {
+        switchSession: function (target) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'switch', target: target }));
+            }
+        },
+        currentSession: function () { return currentSession; },
+    };
 
     function sendToTerminal(data) {
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -1780,7 +1794,22 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         ws.onmessage = (e) => {
-            term.write(e.data);
+            var d = e.data;
+            // Control frames are a separate WS message prefixed with NUL, which
+            // never leads a normal terminal chunk. Everything else is PTY output.
+            if (typeof d === 'string' && d.charCodeAt(0) === 0) {
+                try {
+                    var ctl = JSON.parse(d.slice(1));
+                    if (ctl && ctl.type === 'session') {
+                        currentSession = ctl.name || '';
+                        if (window.SessionsBoard && window.SessionsBoard.setCurrentSession) {
+                            window.SessionsBoard.setCurrentSession(currentSession);
+                        }
+                    }
+                } catch (x) { /* ignore malformed control frame */ }
+                return;
+            }
+            term.write(d);
         };
 
         ws.onclose = (e) => {

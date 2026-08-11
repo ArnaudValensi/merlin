@@ -26,6 +26,7 @@ from fastapi import (
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from auth import verify_ws_cookie
+from board import sweep as board_sweep
 from merlin_ext import make_templates
 from terminal.pty_bridge import PtyBridge, terminate_client
 
@@ -54,6 +55,49 @@ CLIPBOARD_MAX_AGE = 3600  # 1 hour
 
 # CWD — set by main.py at startup, determines terminal starting directory
 _cwd: str | None = None
+
+
+def _client_tty(pid: int) -> str:
+    """The tty of this browser's tmux client, read from its process fd 0.
+
+    pty.fork() made ``pid`` (the tmux client) own the pts as its controlling
+    terminal, so ``/proc/<pid>/fd/0`` is that pts path — exactly tmux's
+    ``client_tty``. This is what lets a switch target *this* client only, so one
+    browser tab switching sessions never moves another. Empty string if the
+    process or /proc is gone (then a switch simply no-ops).
+    """
+    try:
+        return os.readlink(f"/proc/{pid}/fd/0")
+    except OSError:
+        return ""
+
+
+async def _report_current_session(websocket: WebSocket, pid: int) -> None:
+    """Tell the browser which tmux session its client is on, as a NUL-prefixed
+    control frame the terminal JS intercepts (never written to the screen)."""
+    tty = _client_tty(pid)
+    if not tty:
+        return
+    loop = asyncio.get_running_loop()
+    cur = await loop.run_in_executor(None, board_sweep.client_session, tty)
+    if cur:
+        with contextlib.suppress(Exception):
+            await websocket.send_text(
+                "\x00" + json.dumps({"type": "session", "name": cur})
+            )
+
+
+async def _switch_session(websocket: WebSocket, pid: int, target: str) -> None:
+    """Per-client switch to ``target`` (``session`` or ``session:window``), then
+    report the client's new current session back to the browser."""
+    if not target:
+        return
+    tty = _client_tty(pid)
+    if not tty:
+        return
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, board_sweep.switch_client, tty, target)
+    await _report_current_session(websocket, pid)
 
 
 def _voice_available() -> bool:
@@ -436,6 +480,11 @@ async def terminal_ws(websocket: WebSocket):
                         if msg_type == "clipboard_sync":
                             _sync_clipboard(parsed.get("text", ""))
                             continue
+                        if msg_type == "switch":
+                            await _switch_session(
+                                websocket, pid, str(parsed.get("target", ""))
+                            )
+                            continue
                     except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                         pass
                 # Regular input — write to PTY
@@ -447,8 +496,27 @@ async def terminal_ws(websocket: WebSocket):
         except Exception:
             logger.exception("ws_to_pty error")
 
+    async def push_initial_session():
+        """Once the client has attached, tell the browser which session it is on
+        (the bottom bar and switcher key off this). Retries briefly because
+        ``client_session`` is empty until the attach settles."""
+        for _ in range(20):
+            await asyncio.sleep(0.25)
+            tty = _client_tty(pid)
+            if not tty:
+                continue
+            loop = asyncio.get_running_loop()
+            cur = await loop.run_in_executor(None, board_sweep.client_session, tty)
+            if cur:
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(
+                        "\x00" + json.dumps({"type": "session", "name": cur})
+                    )
+                return
+
     pty_reader = asyncio.create_task(pty_to_ws())
     ws_reader = asyncio.create_task(ws_to_pty())
+    session_pusher = asyncio.create_task(push_initial_session())
 
     try:
         done, pending = await asyncio.wait(
@@ -464,10 +532,12 @@ async def terminal_ws(websocket: WebSocket):
         # handler is itself cancelled (server shutdown).
         unregister_pty("terminal")
         bridge.close()
-        for task in (pty_reader, ws_reader):
+        for task in (pty_reader, ws_reader, session_pusher):
             task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await asyncio.gather(pty_reader, ws_reader, return_exceptions=True)
+            await asyncio.gather(
+                pty_reader, ws_reader, session_pusher, return_exceptions=True
+            )
         logger.info("Cleanup: PTY closed fd=%d, terminating pid=%d", master_fd, pid)
         # Terminate the tmux client process (NOT the session) and reap it,
         # escalating to SIGKILL if it lingers.
