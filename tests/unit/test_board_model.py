@@ -1,320 +1,138 @@
-"""Tests for the Sessions board reconcile + view model (board/model.py).
-
-Pure functions, no tmux: we hand-build Window records and a Store and assert the
-reconcile (stop policy, identity pinning) and build_view (project grouping,
-family nesting, stable order, attention) behavior.
-"""
+"""Tests for the session switcher view model (board/model.py). Pure functions,
+no tmux: feed Window/TmuxSession records to build_tree and assert the tree."""
 
 from board import model
-from board.store import Session, Store
-from board.sweep import Window
+from board.sweep import TmuxSession, Window
 
 
-def win(
-    sid="",
-    state="idle",
-    cwd="/home/u/proj",
-    parent="",
-    relation="",
-    session="t",
-    window_id="@1",
-    active=False,
-    activity=0,
-    name="claude",
-):
-    return Window(
-        sid=sid,
+def win(session="alpha", wid="@1", index=0, state="", name="claude", **over):
+    base = dict(
+        sid="",
         state=state,
-        cwd=cwd,
-        parent=parent,
-        relation=relation,
+        cwd="",
+        parent="",
+        relation="",
         session=session,
-        window_id=window_id,
-        active=active,
-        activity=activity,
+        window_id=wid,
+        index=index,
+        active=False,
+        activity=0,
         name=name,
+    )
+    base.update(over)
+    return Window(**base)
+
+
+def sess(name="alpha", attached=True, windows=1):
+    return TmuxSession(
+        name=name, session_id="$" + name, attached=attached, windows=windows, activity=0
     )
 
 
-def store_with(*recs):
-    return Store(sessions={r.sid: r for r in recs})
+class TestBuildTree:
+    def test_groups_windows_under_their_session(self):
+        sessions = [sess("alpha"), sess("beta")]
+        windows = [
+            win(session="alpha", wid="@1", index=1),
+            win(session="alpha", wid="@2", index=2),
+            win(session="beta", wid="@3", index=1),
+        ]
+        tree = model.build_tree(sessions, windows, "alpha", 0.0)
+        by_name = {s["name"]: s for s in tree["sessions"]}
+        assert [w["window_id"] for w in by_name["alpha"]["windows"]] == ["@1", "@2"]
+        assert [w["window_id"] for w in by_name["beta"]["windows"]] == ["@3"]
 
+    def test_shows_plain_windows_not_only_agents(self):
+        # The reversal of the old board: a window with no @agent_state still shows.
+        windows = [
+            win(wid="@1", index=1, state="busy"),
+            win(wid="@2", index=2, state="", name="shell"),
+        ]
+        tree = model.build_tree([sess("alpha")], windows, "alpha", 0.0)
+        nodes = tree["sessions"][0]["windows"]
+        assert len(nodes) == 2
+        plain = next(n for n in nodes if n["window_id"] == "@2")
+        assert plain["is_agent"] is False
+        assert plain["state"] == ""
 
-# ---------------------------------------------------------------------------
-# reconcile: upsert + identity pinning
-# ---------------------------------------------------------------------------
-class TestReconcileUpsert:
-    def test_new_session_is_recorded_and_pinned(self):
-        st = Store()
-        model.reconcile(
-            st,
-            [
-                win(
-                    sid="s1",
-                    state="busy",
-                    cwd="/a/myproj",
-                    parent="p1",
-                    relation="child",
-                )
-            ],
-            now=100.0,
+    def test_windows_ordered_by_index(self):
+        windows = [
+            win(wid="@a", index=3),
+            win(wid="@b", index=1),
+            win(wid="@c", index=2),
+        ]
+        tree = model.build_tree([sess("alpha")], windows, "alpha", 0.0)
+        assert [w["window_id"] for w in tree["sessions"][0]["windows"]] == [
+            "@b",
+            "@c",
+            "@a",
+        ]
+
+    def test_child_window_nests_under_parent(self):
+        parent = win(wid="@1", index=1, sid="p", state="idle")
+        child = win(
+            wid="@2", index=2, sid="c", parent="p", relation="child", state="idle"
         )
-        rec = st.sessions["s1"]
-        assert rec.first_seen == 100.0
-        assert rec.last_seen == 100.0
-        assert rec.state == "busy"
-        assert rec.live is True
-        assert rec.cwd == "/a/myproj"
-        assert rec.project == "myproj"
-        assert rec.parent == "p1"
-        assert rec.relation == "child"
+        tree = model.build_tree([sess("alpha")], [parent, child], "alpha", 0.0)
+        nodes = tree["sessions"][0]["windows"]
+        assert nodes[0]["window_id"] == "@1" and nodes[0]["depth"] == 0
+        assert nodes[1]["window_id"] == "@2" and nodes[1]["depth"] == 1
 
-    def test_pinned_cwd_survives_a_later_different_sweep(self):
-        st = store_with(
-            Session(
-                sid="s1", cwd="/a/launch", project="launch", first_seen=1.0, live=True
-            )
+    def test_sibling_windows_stay_flat(self):
+        a = win(wid="@1", index=1, sid="a", relation="sibling", state="idle")
+        b = win(
+            wid="@2", index=2, sid="b", parent="a", relation="sibling", state="idle"
         )
-        # A later sweep reports a different cwd (should never happen since it's
-        # pinned in tmux, but the model must not move it regardless).
-        model.reconcile(st, [win(sid="s1", cwd="/a/elsewhere")], now=2.0)
-        assert st.sessions["s1"].cwd == "/a/launch"
-        assert st.sessions["s1"].project == "launch"
+        tree = model.build_tree([sess("alpha")], [a, b], "alpha", 0.0)
+        nodes = tree["sessions"][0]["windows"]
+        assert all(n["depth"] == 0 for n in nodes)
 
-    def test_live_fields_refresh(self):
-        st = store_with(Session(sid="s1", state="busy", live=True, first_seen=1.0))
-        model.reconcile(
-            st, [win(sid="s1", state="done", window_id="@9", session="work")], now=5.0
-        )
-        rec = st.sessions["s1"]
-        assert rec.state == "done"
-        assert rec.window_id == "@9"
-        assert rec.session == "work"
-        assert rec.last_seen == 5.0
+    def test_per_session_counts(self):
+        windows = [
+            win(wid="@1", index=1, state="busy"),
+            win(wid="@2", index=2, state="done"),
+            win(wid="@3", index=3, state=""),
+        ]
+        tree = model.build_tree([sess("alpha")], windows, "alpha", 0.0)
+        counts = tree["sessions"][0]["counts"]
+        assert counts == {"total": 3, "working": 1, "waiting": 1}
 
-    def test_windows_without_sid_are_ignored(self):
-        st = Store()
-        model.reconcile(st, [win(sid="", state="busy")], now=1.0)
-        assert st.sessions == {}
+    def test_attention_totals_across_all_sessions(self):
+        sessions = [sess("alpha"), sess("beta")]
+        windows = [
+            win(session="alpha", wid="@1", index=1, state="done"),
+            win(session="beta", wid="@2", index=1, state="done"),
+            win(session="beta", wid="@3", index=2, state="busy"),
+        ]
+        tree = model.build_tree(sessions, windows, "alpha", 0.0)
+        assert tree["attention"] == 2  # two waiting, across both sessions
+        assert tree["counts"] == {"sessions": 2, "waiting": 2, "working": 1}
 
-    def test_plain_windows_are_ignored(self):
-        st = Store()
-        model.reconcile(st, [win(sid="s1", state="")], now=1.0)  # no @agent_state
-        assert st.sessions == {}
+    def test_current_session_flag(self):
+        tree = model.build_tree([sess("alpha"), sess("beta")], [], "beta", 0.0)
+        flags = {s["name"]: s["current"] for s in tree["sessions"]}
+        assert flags == {"alpha": False, "beta": True}
+        assert tree["current_session"] == "beta"
 
+    def test_session_order_follows_tmux_not_activity(self):
+        # Input order is preserved (tmux order), never re-sorted by state/activity.
+        sessions = [sess("zeta"), sess("alpha")]
+        tree = model.build_tree(sessions, [], "", 0.0)
+        assert [s["name"] for s in tree["sessions"]] == ["zeta", "alpha"]
 
-# ---------------------------------------------------------------------------
-# reconcile: the stop policy (vanish vs tombstone)
-# ---------------------------------------------------------------------------
-class TestStopPolicy:
-    def test_idle_session_vanishes_on_disappearance(self):
-        st = store_with(Session(sid="s1", state="idle", live=True, first_seen=1.0))
-        model.reconcile(st, [], now=2.0)  # gone from sweep
-        assert "s1" not in st.sessions
+    def test_active_window_marked(self):
+        windows = [win(wid="@1", index=1, active=True), win(wid="@2", index=2)]
+        tree = model.build_tree([sess("alpha")], windows, "alpha", 0.0)
+        nodes = {n["window_id"]: n for n in tree["sessions"][0]["windows"]}
+        assert nodes["@1"]["active"] is True
+        assert nodes["@2"]["active"] is False
 
-    def test_done_session_vanishes_on_disappearance(self):
-        st = store_with(Session(sid="s1", state="done", live=True, first_seen=1.0))
-        model.reconcile(st, [], now=2.0)
-        assert "s1" not in st.sessions
+    def test_project_derived_from_cwd(self):
+        windows = [win(wid="@1", index=1, cwd="/home/u/my-proj")]
+        tree = model.build_tree([sess("alpha")], windows, "alpha", 0.0)
+        assert tree["sessions"][0]["windows"][0]["project"] == "my-proj"
 
-    def test_busy_session_becomes_a_tombstone(self):
-        st = store_with(Session(sid="s1", state="busy", live=True, first_seen=1.0))
-        model.reconcile(st, [], now=2.0)
-        rec = st.sessions["s1"]
-        assert rec.live is False
-        assert rec.tombstone is True
-        assert rec.closed_at == 2.0
-
-    def test_existing_tombstone_is_left_alone(self):
-        st = store_with(
-            Session(
-                sid="s1",
-                state="busy",
-                live=False,
-                tombstone=True,
-                closed_at=1.0,
-                first_seen=1.0,
-            )
-        )
-        model.reconcile(st, [], now=9.0)
-        assert st.sessions["s1"].tombstone is True
-        assert st.sessions["s1"].closed_at == 1.0  # not re-stamped
-
-    def test_reappearance_clears_tombstone(self):
-        st = store_with(
-            Session(
-                sid="s1",
-                state="busy",
-                live=False,
-                tombstone=True,
-                closed_at=1.0,
-                first_seen=1.0,
-            )
-        )
-        model.reconcile(st, [win(sid="s1", state="busy")], now=3.0)
-        assert st.sessions["s1"].live is True
-        assert st.sessions["s1"].tombstone is False
-
-
-# ---------------------------------------------------------------------------
-# build_view: grouping, hierarchy, order, attention
-# ---------------------------------------------------------------------------
-class TestBuildView:
-    def _view(self, store, windows, now=1.0):
-        model.reconcile(store, windows, now)
-        return model.build_view(store, windows, now)
-
-    @staticmethod
-    def _sids(v):
-        return [s["sid"] for s in v["sessions"]]
-
-    def test_flat_list_carries_project_on_each_row(self):
-        st = Store()
-        v = self._view(
-            st,
-            [
-                win(sid="a", cwd="/x/alpha"),
-                win(sid="b", cwd="/x/alpha"),
-                win(sid="c", cwd="/x/beta"),
-            ],
-        )
-        assert set(self._sids(v)) == {"a", "b", "c"}  # one flat list, no groups
-        projects = {s["sid"]: s["project"] for s in v["sessions"]}
-        assert projects == {"a": "alpha", "b": "alpha", "c": "beta"}
-        assert v["counts"]["total"] == 3
-
-    def test_child_nests_after_parent_with_depth(self):
-        st = Store()
-        v = self._view(
-            st,
-            [
-                win(sid="root", cwd="/x/alpha"),
-                win(sid="kid", cwd="/x/alpha", parent="root", relation="child"),
-            ],
-        )
-        assert self._sids(v) == ["root", "kid"]  # child immediately after parent
-        depth = {s["sid"]: s["depth"] for s in v["sessions"]}
-        assert depth == {"root": 0, "kid": 1}
-
-    def test_sibling_is_flat_depth_zero(self):
-        st = Store()
-        v = self._view(
-            st,
-            [
-                win(sid="root", cwd="/x/alpha"),
-                win(sid="twin", cwd="/x/alpha", parent="root", relation="sibling"),
-            ],
-        )
-        assert all(s["depth"] == 0 for s in v["sessions"])
-
-    def test_hierarchy_wins_over_project(self):
-        # A child launched in a DIFFERENT project still nests under its parent.
-        st = Store()
-        v = self._view(
-            st,
-            [
-                win(sid="root", cwd="/x/alpha"),
-                win(sid="kid", cwd="/y/other", parent="root", relation="child"),
-            ],
-        )
-        assert self._sids(v) == ["root", "kid"]
-        assert v["sessions"][1]["depth"] == 1
-
-    def test_orphan_child_is_depth_zero(self):
-        st = Store()
-        v = self._view(
-            st, [win(sid="kid", cwd="/x/alpha", parent="ghost", relation="child")]
-        )
-        assert v["sessions"][0]["sid"] == "kid"
-        assert v["sessions"][0]["depth"] == 0
-
-    def test_stable_order_not_by_state(self):
-        st = store_with(
-            Session(
-                sid="s1",
-                cwd="/x/a",
-                project="a",
-                state="idle",
-                live=True,
-                first_seen=1.0,
-                order=0.0,
-            ),
-            Session(
-                sid="s2",
-                cwd="/x/a",
-                project="a",
-                state="done",
-                live=True,
-                first_seen=2.0,
-                order=1.0,
-            ),
-        )
-        v = model.build_view(
-            st,
-            [
-                win(sid="s1", state="idle", cwd="/x/a"),
-                win(sid="s2", state="done", cwd="/x/a"),
-            ],
-            now=3.0,
-        )
-        assert self._sids(v) == ["s1", "s2"]  # not floated by state
-
-    def test_manual_order_overrides_first_seen(self):
-        st = store_with(
-            Session(
-                sid="early",
-                cwd="/x/a",
-                project="a",
-                live=True,
-                first_seen=1.0,
-                order=5.0,
-            ),
-            Session(
-                sid="late",
-                cwd="/x/a",
-                project="a",
-                live=True,
-                first_seen=9.0,
-                order=1.0,
-            ),
-        )
-        v = model.build_view(
-            st, [win(sid="early", cwd="/x/a"), win(sid="late", cwd="/x/a")], now=10.0
-        )
-        assert self._sids(v) == ["late", "early"]
-
-    def test_counts_and_attention(self):
-        st = Store()
-        v = self._view(
-            st,
-            [
-                win(sid="a", state="done"),
-                win(sid="b", state="done"),
-                win(sid="c", state="busy"),
-                win(sid="d", state="idle"),
-            ],
-        )
-        assert v["counts"] == {"total": 4, "working": 1, "waiting": 2}
-        assert v["attention"] == 2
-
-    def test_active_flag(self):
-        st = Store()
-        v = self._view(st, [win(sid="a", state="done", active=True, window_id="@3")])
-        assert v["sessions"][0]["active"] is True
-        assert v["sessions"][0]["waiting"] is True
-
-    def test_tombstone_still_shown_not_counted(self):
-        st = store_with(
-            Session(
-                sid="s1",
-                state="busy",
-                cwd="/x/a",
-                project="a",
-                live=False,
-                tombstone=True,
-                first_seen=1.0,
-            )
-        )
-        v = model.build_view(st, [], now=5.0)
-        assert v["sessions"][0]["tombstone"] is True
-        assert v["counts"]["total"] == 0  # tombstones are dead, not in the count
+    def test_empty_session_has_no_windows(self):
+        tree = model.build_tree([sess("alpha", windows=0)], [], "alpha", 0.0)
+        assert tree["sessions"][0]["windows"] == []
+        assert tree["sessions"][0]["counts"] == {"total": 0, "working": 0, "waiting": 0}

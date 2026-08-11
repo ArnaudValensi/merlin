@@ -1,14 +1,16 @@
-"""Sessions board — the data + assets behind the terminal's Sessions drawer.
+"""Session switcher — the data + mutations behind the terminal's Sessions panel.
 
 The framework mounts ``api_router`` at ``/api/board`` and serves ``STATIC_DIR``
 at ``/static/board`` (``board.css`` / ``board.js``). There is no page of its
-own: the board renders as a drawer inside the web terminal (``terminal.html``),
+own: the switcher renders as a panel inside the web terminal (``terminal.html``),
 where the sessions actually live. See ``docs/dev/dashboard-architecture.md``.
 
-The board reads the live agent-state signal from tmux (``sweep``) and joins it
-with durable per-session metadata (``store``): user names, manual order, pinned
-launch cwd, family links, tombstones. GET returns the reconciled view; the POST
-endpoints are the user-owned mutations (name, reorder, dismiss, focus).
+The switcher is a faithful view of tmux's session -> window tree plus an
+agent-activity overlay (``sweep`` + ``model.build_tree``). GET returns the tree;
+the POST endpoints are the **global** tmux mutations (create/rename/kill a
+session, rename/kill a window). Switching and jump-to-window are *per-client* and
+so live on the terminal WebSocket (``terminal/routes.py``), not here: only the
+socket knows which tmux client this browser is.
 """
 
 from __future__ import annotations
@@ -19,20 +21,32 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import model, store, sweep
+from . import model, sweep
 
 
-class NameReq(BaseModel):
-    sid: str
+class NewSessionReq(BaseModel):
+    dir: str
     name: str | None = None
 
 
-class OrderReq(BaseModel):
-    sids: list[str]
+class RenameSessionReq(BaseModel):
+    name: str
+    new: str
 
 
-class SidReq(BaseModel):
-    sid: str
+class SessionReq(BaseModel):
+    name: str
+
+
+class RenameWindowReq(BaseModel):
+    session: str
+    window_id: str
+    name: str
+
+
+class WindowReq(BaseModel):
+    session: str
+    window_id: str
 
 
 URL_SLUG = "board"
@@ -44,73 +58,61 @@ api_router = APIRouter()
 
 
 @api_router.get("")
-def api_board():
-    """The reconciled board view. Runs a sweep, folds it into the store (which
-    applies the vanish/tombstone stop policy), and returns the view model."""
+def api_board(current: str = ""):
+    """The session -> window tree. Runs the session and window sweeps and builds
+    the view. ``current`` is the session this client is on (the browser learns it
+    over the terminal WebSocket and passes it back), used only to mark the
+    current session; it never affects another client."""
     now = time.time()
-    with store.transaction() as st:
-        windows = sweep.run_sweep()
-        model.reconcile(st, windows, now)
-        return model.build_view(st, windows, now)
-
-
-@api_router.post("/name")
-def api_set_name(req: NameReq):
-    """Set (or clear, with an empty/blank name) a session's custom name."""
-    cleaned = (req.name or "").strip()
-    with store.transaction() as st:
-        rec = st.sessions.get(req.sid)
-        if rec is None:
-            raise HTTPException(status_code=404, detail="Unknown session")
-        rec.name = cleaned or None
-    return {"ok": True, "name": cleaned or None}
-
-
-@api_router.post("/order")
-def api_reorder(req: OrderReq):
-    """Assign manual order from a full ordered list of sids. Position in the
-    list becomes the sort key, so the board keeps this arrangement across
-    refreshes and never reorders on its own."""
-    with store.transaction() as st:
-        for index, sid in enumerate(req.sids):
-            rec = st.sessions.get(sid)
-            if rec is not None:
-                rec.order = float(index)
-    return {"ok": True}
-
-
-@api_router.post("/dismiss")
-def api_dismiss(req: SidReq):
-    """Dismiss a tombstone (a session that died mid-work), removing its slot."""
-    with store.transaction() as st:
-        st.sessions.pop(req.sid, None)
-    return {"ok": True}
-
-
-@api_router.post("/focus")
-def api_focus(req: SidReq):
-    """Jump to a session's tmux window. Uses a fresh sweep so a just-moved
-    window is still found."""
+    sessions = sweep.run_session_sweep()
     windows = sweep.run_sweep()
-    target = next((w for w in windows if w.sid == req.sid and w.is_agent), None)
-    if target is None:
-        raise HTTPException(status_code=404, detail="Session is not live")
-    if not sweep.focus_window(target.session, target.window_id):
-        raise HTTPException(status_code=502, detail="Could not focus window")
+    return model.build_tree(sessions, windows, current, now)
+
+
+@api_router.post("/session/new")
+def api_new_session(req: NewSessionReq):
+    """Create-or-switch by directory: ensure a detached session rooted at
+    ``dir`` exists and return its name. The browser then attaches to it with a
+    per-client switch over the WebSocket."""
+    name = sweep.create_or_get_session(req.dir, req.name or "")
+    if name is None:
+        raise HTTPException(status_code=502, detail="Could not create session")
+    return {"ok": True, "name": name}
+
+
+@api_router.post("/session/rename")
+def api_rename_session(req: RenameSessionReq):
+    """Rename a tmux session."""
+    if not sweep.rename_session(req.name, req.new):
+        raise HTTPException(status_code=502, detail="Could not rename session")
+    return {"ok": True, "name": sweep.sanitize_session_name(req.new)}
+
+
+@api_router.post("/session/kill")
+def api_kill_session(req: SessionReq):
+    """Kill an entire tmux session. Refuses to kill the last remaining session so
+    a client is never left with nowhere to attach."""
+    sessions = sweep.run_session_sweep()
+    if len(sessions) <= 1:
+        raise HTTPException(status_code=409, detail="Cannot close the last session")
+    if req.name not in {s.name for s in sessions}:
+        raise HTTPException(status_code=404, detail="Unknown session")
+    if not sweep.kill_session(req.name):
+        raise HTTPException(status_code=502, detail="Could not close session")
     return {"ok": True}
 
 
-@api_router.post("/kill")
-def api_kill(req: SidReq):
-    """Close a session: kill its tmux window and drop its record. Dropping it
-    first marks the close as intentional, so it vanishes rather than leaving a
-    'died while working' tombstone even if it was busy."""
-    windows = sweep.run_sweep()
-    target = next((w for w in windows if w.sid == req.sid and w.is_agent), None)
-    with store.transaction() as st:
-        st.sessions.pop(req.sid, None)
-    if target is None:
-        raise HTTPException(status_code=404, detail="Session is not live")
-    if not sweep.kill_window(target.session, target.window_id):
+@api_router.post("/window/rename")
+def api_rename_window(req: RenameWindowReq):
+    """Rename a tmux window (its tab title)."""
+    if not sweep.rename_window(req.session, req.window_id, req.name):
+        raise HTTPException(status_code=502, detail="Could not rename window")
+    return {"ok": True}
+
+
+@api_router.post("/window/kill")
+def api_kill_window(req: WindowReq):
+    """Close a single tmux window."""
+    if not sweep.kill_window(req.session, req.window_id):
         raise HTTPException(status_code=502, detail="Could not close window")
     return {"ok": True}

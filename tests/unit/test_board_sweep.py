@@ -12,12 +12,25 @@ def line(**over):
         "@agent_relation": "",
         "session_name": "t",
         "window_id": "@1",
+        "window_index": "1",
         "window_active": "0",
         "window_activity": "1700",
         "window_name": "claude",
     }
     fields.update(over)
     return "\t".join(str(fields[f]) for f in sweep._FIELDS)
+
+
+def sline(**over):
+    fields = {
+        "session_name": "alpha",
+        "session_id": "$1",
+        "session_attached": "1",
+        "session_windows": "3",
+        "session_activity": "1700",
+    }
+    fields.update(over)
+    return "\t".join(str(fields[f]) for f in sweep._SESSION_FIELDS)
 
 
 class TestParseSweep:
@@ -27,8 +40,17 @@ class TestParseSweep:
         assert w.state == "busy"
         assert w.cwd == "/home/u/proj"
         assert w.window_id == "@1"
+        assert w.index == 1
         assert w.activity == 1700
         assert w.is_agent is True
+
+    def test_window_index_parsed(self):
+        (w,) = sweep.parse_sweep(line(window_index="7"))
+        assert w.index == 7
+
+    def test_non_numeric_index_defaults_zero(self):
+        (w,) = sweep.parse_sweep(line(window_index="x"))
+        assert w.index == 0
 
     def test_active_flag(self):
         (w,) = sweep.parse_sweep(line(window_active="1"))
@@ -68,3 +90,43 @@ class TestParseSweep:
 
     def test_empty_input(self):
         assert sweep.parse_sweep("") == []
+
+
+class TestParseSessions:
+    def test_parses_a_session_row(self):
+        (s,) = sweep.parse_sessions(sline())
+        assert s.name == "alpha"
+        assert s.session_id == "$1"
+        assert s.attached is True
+        assert s.windows == 3
+        assert s.activity == 1700
+
+    def test_detached_session(self):
+        (s,) = sweep.parse_sessions(sline(session_attached="0"))
+        assert s.attached is False
+
+    def test_multiple_sessions(self):
+        raw = sline(session_name="a") + "\n" + sline(session_name="b")
+        assert [s.name for s in sweep.parse_sessions(raw)] == ["a", "b"]
+
+    def test_wrong_field_count_skipped(self):
+        assert sweep.parse_sessions("only\ttwo") == []
+
+    def test_name_with_spaces_survives(self):
+        (s,) = sweep.parse_sessions(sline(session_name="my project"))
+        assert s.name == "my project"
+
+    def test_empty_input(self):
+        assert sweep.parse_sessions("") == []
+
+
+class TestSanitizeSessionName:
+    def test_dots_and_colons_become_underscores(self):
+        assert sweep.sanitize_session_name("v1.2:beta") == "v1_2_beta"
+
+    def test_trims_whitespace(self):
+        assert sweep.sanitize_session_name("  proj  ") == "proj"
+
+    def test_empty_falls_back(self):
+        assert sweep.sanitize_session_name("") == "session"
+        assert sweep.sanitize_session_name("  ") == "session"

@@ -1,24 +1,27 @@
-"""Reconcile the tmux sweep with the durable store, then build the view model.
+"""Build the session switcher's view model from a live tmux sweep.
 
-Two pure functions, both easy to test without a real tmux:
+One pure function, easy to test without a real tmux: ``build_tree`` turns the
+session sweep + window sweep into the JSON the switcher renders. The model is a
+**faithful view of tmux** plus an agent-activity overlay:
 
-- ``reconcile(store, windows, now)`` folds a fresh sweep into the store: it
-  upserts live agent sessions, and decides what happens to sessions that
-  vanished — the stop policy. Intentional close (idle/done at disappearance) ->
-  the record is dropped (vanish). Died while busy -> a dismissible tombstone.
+- Every tmux **session** is shown, grouped over every tmux **window** it holds
+  (not only windows running an agent). A window that carries ``@agent_state``
+  gets an activity dot (○ idle / ◐ busy / ● done); a plain window shows without
+  one. This is the deliberate reversal of the old board, which surfaced only
+  agent windows.
+- Windows keep tmux's own order (window index). ``--child`` fork/handoff windows
+  nest one indent under their parent within the same session; siblings are flat.
+- Per-session counts and a global attention total drive the badges.
 
-- ``build_view(store, windows, now)`` turns the reconciled store + sweep into
-  the JSON the board renders: sessions grouped by project, families nested by
-  parent (hierarchy wins placement), stable order, plus the plain-window tier
-  and the attention count. It never reorders by state.
+Names come from tmux (``session_name`` / ``window_name``), so there is no
+durable store to reconcile: the switcher renders what tmux actually holds.
 """
 
 from __future__ import annotations
 
 import os
 
-from .store import Session, Store
-from .sweep import Window
+from .sweep import TmuxSession, Window
 
 _DONE = "done"
 _BUSY = "busy"
@@ -28,126 +31,96 @@ def _project_of(cwd: str) -> str:
     return os.path.basename(cwd.rstrip("/")) if cwd else ""
 
 
-def reconcile(store: Store, windows: list[Window], now: float) -> None:
-    """Fold a sweep into the store in place (see module docstring)."""
-    live_agents = {w.sid: w for w in windows if w.is_agent and w.sid}
-
-    for sid, w in live_agents.items():
-        rec = store.sessions.get(sid)
-        if rec is None:
-            rec = Session(sid=sid, first_seen=now)
-            store.sessions[sid] = rec
-        # Pin identity fields on first sight; never let a later sweep move them.
-        if not rec.cwd and w.cwd:
-            rec.cwd = w.cwd
-            rec.project = _project_of(w.cwd)
-        if not rec.parent and w.parent:
-            rec.parent = w.parent
-        if not rec.relation and w.relation:
-            rec.relation = w.relation
-        # Live fields: always refreshed from the sweep.
-        rec.last_seen = now
-        rec.state = w.state or "idle"
-        rec.live = True
-        rec.session = w.session
-        rec.window_id = w.window_id
-        rec.closed_at = None
-        rec.tombstone = False
-
-    # Sessions that were live last time but are gone now: apply the stop policy.
-    for sid, rec in list(store.sessions.items()):
-        if sid in live_agents:
-            continue
-        if not rec.live:
-            continue  # already closed / already a tombstone
-        rec.live = False
-        rec.session = ""
-        rec.window_id = ""
-        rec.closed_at = now
-        if rec.state == _BUSY:
-            rec.tombstone = True  # died mid-work -> keep a mark
-        else:
-            del store.sessions[sid]  # idle/done -> intentional close -> vanish
-
-
-def _display_name(rec: Session) -> str:
-    if rec.name:
-        return rec.name
-    return rec.project or "session"
-
-
-def _sort_key(rec: Session) -> tuple[float, float]:
-    # Stable position: explicit manual order first, else first-seen. Never state.
-    order = rec.order if rec.order is not None else rec.first_seen
-    return (order, rec.first_seen)
-
-
-def _node(rec: Session, active_win: str, depth: int) -> dict:
+def _window_node(w: Window, depth: int) -> dict:
     return {
-        "sid": rec.sid,
-        "name": _display_name(rec),
-        "custom_name": rec.name,
-        "auto_name": rec.project or "session",
-        "short_id": rec.sid[:4],
-        "state": rec.state,
-        "waiting": rec.live and rec.state == _DONE,
-        "busy": rec.live and rec.state == _BUSY,
-        "live": rec.live,
-        "tombstone": rec.tombstone,
-        "closed_at": rec.closed_at,
-        "cwd": rec.cwd,
-        "project": rec.project,
-        "relation": rec.relation,
-        "active": bool(rec.live and rec.window_id and rec.window_id == active_win),
-        "session": rec.session,
-        "window_id": rec.window_id,
+        "sid": w.sid,
+        "window_id": w.window_id,
+        "index": w.index,
+        "session": w.session,
+        "name": w.name,
+        "state": w.state,  # "" when the window runs no agent
+        "is_agent": w.is_agent,
+        "waiting": w.state == _DONE,
+        "busy": w.state == _BUSY,
+        "active": w.active,
+        "project": _project_of(w.cwd),
+        "cwd": w.cwd,
+        "relation": w.relation,
         "depth": depth,
     }
 
 
-def build_view(store: Store, windows: list[Window], now: float) -> dict:
-    """Build the board's JSON view model: a single flat, ordered list of rows.
-
-    Rows are laid out preorder (a root, then its children, then the next root),
-    so a `--child` still sits under its parent (one indent via ``depth``), while
-    siblings — the fork/handoff default — are flat peers. Order is the user's
-    manual order, falling back to first-seen; never by state. Project rides on
-    each row rather than as a section header, so the list scales to many
-    instances. Counts drive the status line.
-    """
-    shown = {
-        sid: rec for sid, rec in store.sessions.items() if rec.live or rec.tombstone
-    }
-    active_win = next((w.window_id for w in windows if w.active and w.is_agent), "")
-
-    children_of: dict[str, list[Session]] = {}
-    roots: list[Session] = []
-    for rec in shown.values():
-        if rec.relation == "child" and rec.parent and rec.parent in shown:
-            children_of.setdefault(rec.parent, []).append(rec)
+def _window_nodes(wins: list[Window]) -> list[dict]:
+    """Order a session's windows by tmux index, nesting ``--child`` windows one
+    indent under their parent (preorder). Siblings stay flat peers."""
+    shown_sids = {w.sid for w in wins if w.sid}
+    children_of: dict[str, list[Window]] = {}
+    roots: list[Window] = []
+    for w in wins:
+        if w.relation == "child" and w.parent and w.parent in shown_sids:
+            children_of.setdefault(w.parent, []).append(w)
         else:
-            roots.append(rec)
+            roots.append(w)
 
     rows: list[dict] = []
 
-    def emit(rec: Session, depth: int) -> None:
-        rows.append(_node(rec, active_win, depth))
-        for kid in sorted(children_of.get(rec.sid, []), key=_sort_key):
+    def emit(w: Window, depth: int) -> None:
+        rows.append(_window_node(w, depth))
+        for kid in sorted(children_of.get(w.sid, []), key=lambda k: k.index):
             emit(kid, depth + 1)
 
-    for rec in sorted(roots, key=_sort_key):
-        emit(rec, 0)
+    for w in sorted(roots, key=lambda w: w.index):
+        emit(w, 0)
+    return rows
 
-    live = [rec for rec in shown.values() if rec.live]
-    counts = {
-        "total": len(live),
-        "working": sum(1 for rec in live if rec.state == _BUSY),
-        "waiting": sum(1 for rec in live if rec.state == _DONE),
-    }
+
+def build_tree(
+    sessions: list[TmuxSession],
+    windows: list[Window],
+    current_session: str,
+    now: float,
+) -> dict:
+    """Build the switcher's JSON: sessions in tmux order, each with its windows.
+
+    ``current_session`` is the session *this* client is attached to (the browser
+    passes it, learned over the terminal WebSocket); it flags the current session
+    so the UI can mark it without affecting any other client. Session order is
+    tmux's own (typically by name), never by activity, so slots stay put.
+    """
+    by_session: dict[str, list[Window]] = {}
+    for w in windows:
+        by_session.setdefault(w.session, []).append(w)
+
+    session_rows: list[dict] = []
+    total_waiting = 0
+    total_working = 0
+    for s in sessions:
+        wins = by_session.get(s.name, [])
+        counts = {
+            "total": len(wins),
+            "working": sum(1 for w in wins if w.state == _BUSY),
+            "waiting": sum(1 for w in wins if w.state == _DONE),
+        }
+        total_waiting += counts["waiting"]
+        total_working += counts["working"]
+        session_rows.append(
+            {
+                "name": s.name,
+                "attached": s.attached,
+                "current": s.name == current_session,
+                "counts": counts,
+                "windows": _window_nodes(wins),
+            }
+        )
 
     return {
         "generated_at": now,
-        "attention": counts["waiting"],
-        "counts": counts,
-        "sessions": rows,
+        "current_session": current_session,
+        "attention": total_waiting,
+        "counts": {
+            "sessions": len(sessions),
+            "waiting": total_waiting,
+            "working": total_working,
+        },
+        "sessions": session_rows,
     }
