@@ -472,69 +472,79 @@ job/
 
 **Dependency:** `cron-descriptor` (in `pyproject.toml`) powers `cron_to_human()`.
 
-### Sessions Board
+### Session Switcher
 
 ```
 board/
 ├── __init__.py            # Exports api_router, STATIC_DIR, URL_SLUG
-├── sweep.py               # tmux sweep: parse `list-windows -a -F` into Window records
-├── store.py               # Durable per-session metadata (~/.merlin/board.json)
-├── model.py               # reconcile() + build_view() — a flat ordered list; pure
-├── routes.py              # /api/board (GET view; POST name/order/dismiss/focus/kill)
+├── sweep.py               # tmux sweeps (list-sessions + list-windows -a) and the
+│                          #   command layer (switch-client, create/rename/kill)
+├── model.py               # build_tree() — sessions -> windows, pure
+├── routes.py              # /api/board (GET tree; POST session/window mutations)
 └── static/board.css, board.js
 ```
 
-**Surface:** there is no page of its own. The board renders **inside the web
-terminal** (`terminal/templates/terminal.html`), where the sessions actually
-live — a **fullscreen modal on mobile, a resizable docked panel on desktop**
-(the terminal + panel are flex siblings under `.main`; a `#sessions-divider`
-drags the boundary, persisted in `localStorage`, and the terminal's
-`ResizeObserver` refits xterm). A "Sessions" button sits at the far-right of the
-terminal status bar (mirroring the far-left nav-menu button), styled like the
-mic; on desktop it is hidden unless the panel is collapsed. Its badge shows the
-waiting count. `board.js` mounts into the panel via
-`window.SessionsBoard.init({container, onAttention, onJump, onClose})`; `onClose`
-collapses on desktop / closes the modal on mobile (both persisted).
+The switcher is a **faithful view of tmux's session -> window tree** plus an
+agent-activity overlay. It uses tmux's own words: **sessions** (organised by the
+user, often one per project) each holding **windows** (tabs). Every session and
+every window is shown, agent-running or not; a window carrying `@agent_state`
+gets an activity dot (○ idle / ◐ busy / ● done), a plain window a faint marker.
+This is the deliberate reversal of the old agents-only board (see the archived
+`sessions-board` epic, superseded by `session-switcher`).
 
-The list is a **flat, dense, nav-like list** (like `.sidebar-nav a`) built to
-hold many instances: a `fuse.js` filter, drag-to-reorder by a grip handle
-(`SortableJS`, vendored, disabled while filtering), a `tmux`-style status line
-(`sessions · N · N working · N waiting`), a `▸` caret marking the current window,
-and a pulsing dot for `busy`. Per-row: rename, and close-session (`POST
-/api/board/kill` — kills the tmux window and drops the record so an intentional
-close vanishes rather than tombstoning). Tapping a row focuses its window (`POST
-/api/board/focus`). Built on the `@agent_state` tmux pills (see the archived
-`session-status-signals` epic and `terminal/hooks/`).
+**Surface:** there is no page of its own. It renders **inside the web terminal**
+(`terminal/templates/terminal.html`) — a **fullscreen modal on mobile, a
+resizable docked panel on desktop** (terminal + panel are flex siblings under
+`.main`; a `#sessions-divider` drags the boundary, persisted in `localStorage`;
+the terminal's `ResizeObserver` refits xterm). A "Sessions" button sits far-right
+of the terminal status bar; its badge shows the waiting count **aggregated across
+all sessions**. `board.js` mounts via `window.SessionsBoard.init({container,
+onAttention, onJump, onClose})`. The bottom row of window tabs is tmux's own
+status line — `switch-client` makes it follow the current session for free.
 
-**Data flow.** The board never owns the live signal — tmux does. `GET /api/board`
-runs one `tmux list-windows -a -F` sweep (`sweep.py`), joins it with durable
-metadata keyed by a stable session id (`store.py`), reconciles (`model.reconcile`),
-and returns the view (`model.build_view`). The stable id `@agent_sid` and the
-pinned launch cwd `@agent_cwd` are stamped once by the SessionStart hook
-(`terminal/hooks/agent-session-init.sh`, installed by the same reconciler as the
-pills — `lib/skills.py`, hook v2). Family links `@agent_parent` (the parent's
-`@agent_sid`) and `@agent_relation` (`sibling`|`child`) are stamped by the spawner
-(`terminal/hooks/agent-relate.sh`, used by the fork/handoff skills).
+**Switching is per-client, over the WebSocket — not HTTP.** Only the terminal
+socket knows which tmux client this browser is (it resolves the client tty from
+`/proc/<pid>/fd/0`, the pts `pty.fork()` gave the tmux client). Tapping a session
+sends `{type:"switch", target:"<session>"}`; tapping a window sends
+`target:"<session>:<window_id>"` (switch + select in one call). The server runs
+`tmux switch-client -c <tty> -t <target>` so one browser tab never moves another,
+then replies with a NUL-prefixed `{type:"session"}` control frame naming the
+client's current session. The terminal JS intercepts that frame (never writes it
+to the screen) and calls `SessionsBoard.setCurrentSession()`. The board polls
+`GET /api/board?current=<name>` so the tree can mark the current session.
+`window.MerlinTerminal.switchSession(target)` is the bridge board.js calls.
 
-**Design invariants** (from the `sessions-board` epic):
+**Data flow.** The switcher never owns the live signal — tmux does. `GET
+/api/board` runs `tmux list-sessions -F` + `tmux list-windows -a -F` (`sweep.py`)
+and returns `model.build_tree(...)`: sessions in tmux order, each grouping its
+windows by tmux index, with per-session counts and a global attention total. No
+durable store — names come from tmux (`rename-session` / `rename-window`), order
+is tmux's own. The `@agent_state` overlay, the stable `@agent_sid`, the pinned
+launch cwd `@agent_cwd`, and family links `@agent_parent` / `@agent_relation` are
+still stamped by the tmux hooks (`terminal/hooks/`), used here for the activity
+dot, project label, and child nesting.
 
-- **Stable position.** Rows never reorder by state — `build_view` returns a flat
-  preorder list ordered by the user's manual `order` (drag-to-reorder), falling
-  back to first-seen. The current window is marked with a `▸` caret, not movement.
-- **Pinned cwd.** Project = `basename(@agent_cwd)`, captured at launch and never
-  moved when the agent `cd`s; shown inline on each row (no section headers), so
-  the flat list scales to many instances.
-- **Families.** `child` nests one indent under its parent (hierarchy wins over
-  project placement); `sibling` (the default) stays flat as a peer. Visual indent
-  is depth-capped in CSS.
-- **Stop policy.** A session gone from the sweep while `idle`/`done` vanishes; gone
-  while `busy` leaves a dismissible tombstone ("died"). An explicit close (`/kill`)
-  drops the record first, so it vanishes rather than tombstoning.
-- **Agents only.** Plain (non-agent) windows are not listed. The tmux tab bar
-  stays the fast switcher for everything else.
+**Mutations.** Session/window edits are **global** tmux ops (any client): `POST
+/api/board/session/new` (create-or-switch by directory — reuses an existing
+session with that basename), `/session/rename`, `/session/kill` (refuses the last
+session), `/window/rename`, `/window/kill`. Switching and jump-to-window are
+**per-client** and live on the terminal WebSocket, as above.
 
-**Known limit:** in-session Task sub-agents (spawned inside one session, no tmux
-window) do not surface separately — only the parent window's aggregate state does.
+**Design invariants** (from the `session-switcher` epic):
+
+- **Honest tmux mapping.** Sessions and windows are real tmux objects; the counts
+  match what a tmux user sees. Names/order are tmux's, not a separate store.
+- **Show the whole tree.** All windows appear (not only agent windows); the agent
+  state is an annotation, not the gate for showing a window.
+- **Stable position.** Sessions and windows keep tmux's order (session name,
+  window index); nothing reorders by state. Current session/window is marked in
+  place, per-client.
+- **Families.** `child` nests one indent under its parent within a session;
+  `sibling` (the default) stays flat. Depth-capped in CSS.
+
+**Known limits:** in-session Task sub-agents (no tmux window) do not surface
+separately. SSH clients attach to `merlin-dev` and use the tmux status line to
+switch windows; the web switcher is a browser feature.
 
 ## Adding a New Page
 

@@ -41,6 +41,31 @@ status bar.
 The key toolbar is visible by default on touch devices and hidden on
 desktop; the keyboard icon in the status bar toggles it.
 
+## Sessions
+
+Windows live inside a tmux **session**. You can have several sessions and
+organise them however you like, one per project or one per group of
+projects that go together. The **Sessions** button (far right of the
+status bar) opens the switcher: a docked panel on desktop, a full-screen
+sheet on mobile.
+
+The switcher mirrors tmux exactly. It lists every session, and under each
+one every window it holds, with the same `○` / `◐` / `●` activity dot a
+window shows in the status bar. Tap a session to switch to it; tap a
+window to jump straight to it. Switching only moves the tab you are on:
+your phone and your laptop each stay where you left them.
+
+- **New session** — the `+` button. Type a project directory and it opens
+  a session there (or switches to it if one already exists for that
+  directory).
+- **Rename / close** — the pencil and `×` on a session or a window. Close
+  asks for a second tap to confirm. You cannot close your last session.
+- The Sessions button badge counts windows **waiting on you across all
+  sessions**, so a background session that finishes still reaches you.
+
+The bottom row of window tabs in the terminal is tmux's own status line,
+so it always shows the windows of whichever session you are currently on.
+
 ## Agent-state pills
 
 When you run [Claude Code](agents.md) in a window, its pill in the tmux
