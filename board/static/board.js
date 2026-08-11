@@ -203,7 +203,12 @@ window.SessionsBoard = (function () {
     edit.addEventListener('click', function (e) {
       e.stopPropagation();
       editInline(nameEl, sess.name, sess.name, function (val) {
-        return api('/session/rename', { name: sess.name, new: val });
+        return api('/session/rename', { name: sess.name, new: val }).then(function (r) {
+          // Renaming the session you're on: keep the "current" highlight by
+          // adopting the new name (the WS still knows the old one until a switch).
+          if (r && r.name && sess.current) S.current = r.name;
+          return r;
+        });
       });
     });
     actions.appendChild(edit);
