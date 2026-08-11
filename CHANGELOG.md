@@ -2,6 +2,11 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.24.1 (2026-08-11)
+
+### Fixed
+- **No scrollbar on the web terminal** — The terminal no longer shows a scrollbar or reserves an empty gutter beside the Sessions panel; its cells fill the full width. Scrollback still works through tmux (mouse wheel and touch).
+
 ## v0.24.0 (2026-08-10)
 
 ### Added
