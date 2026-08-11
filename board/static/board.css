@@ -88,7 +88,7 @@
 .board-filter::placeholder { color: var(--text-muted); }
 .board-filter:focus { outline: none; border-color: var(--accent-blue); }
 
-/* ---- The list ----------------------------------------------------------- */
+/* ---- The list: sessions, each grouping its windows ---------------------- */
 
 .board-list {
   flex: 1 1 auto;
@@ -98,67 +98,93 @@
   padding: 6px;
 }
 
-/* One instance = one dense, borderless row (like .sidebar-nav a). The whole
-   row is the tap target (jump to that window). */
-.srow {
+.sgroup { margin-bottom: 8px; }
+
+/* Session header: the switch target for the whole session. Bold-ish, a touch
+   larger than a window row so the two tiers read at a glance. */
+.sgroup-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
   padding: 7px 8px;
   border-radius: 6px;
   cursor: pointer;
   color: var(--text-secondary);
 }
-.srow:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sgroup-head:hover { background: var(--bg-hover); color: var(--text-primary); }
 
-/* Current window (the one the terminal is showing): a left accent bar + tint.
-   The bar lives inside the padding, so it costs no inline width (a reserved
-   caret slot was making every row's left look over-padded). */
-.srow.current {
+/* Current session (the one this client is attached to): left accent bar + tint,
+   so "you are here" reads without moving any slot. */
+.sgroup.current > .sgroup-head {
   background: var(--bg-card);
   color: var(--text-primary);
   box-shadow: inset 2px 0 0 var(--accent-blue);
 }
 
-/* Nesting: a child indents one step under its parent; capped for phones. */
-.srow[data-depth="1"] { margin-left: 14px; }
-.srow[data-depth="2"] { margin-left: 28px; }
-.srow[data-depth="3"] { margin-left: 36px; }
-
-/* Drag handle: on the right, always visible (SortableJS handle), both platforms.
-   Subtle until touched/hovered. */
-.srow-grip {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  color: var(--text-muted);
-  cursor: grab;
-  touch-action: none;
-  opacity: 0.5;
+.sgroup-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.srow-grip:hover { opacity: 1; }
-.srow-grip:active { cursor: grabbing; }
+.sgroup-meta {
+  flex: 0 0 auto;
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
 
-.srow-dot {
+.sgroup-wins { margin-top: 2px; }
+
+/* One window = one dense, borderless row (like .sidebar-nav a). The whole row is
+   the tap target (switch + jump to that window). Indented under its session. */
+.wrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.wrow:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* Active window in its session (the one tmux is showing there). */
+.wrow.active {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: inset 2px 0 0 var(--accent-purple);
+}
+
+/* Nesting: a --child window indents one step under its parent; capped for phones. */
+.wrow[data-depth="1"] { margin-left: 14px; }
+.wrow[data-depth="2"] { margin-left: 28px; }
+.wrow[data-depth="3"] { margin-left: 36px; }
+
+.wrow-dot {
   flex: 0 0 auto;
   width: 12px;
   text-align: center;
   font-size: 13px;
   line-height: 1;
+  color: var(--text-muted);
 }
-.st-idle .srow-dot { color: var(--text-muted); }
-.st-busy .srow-dot { color: var(--accent-yellow); }
-.st-done .srow-dot { color: var(--accent-green); }
+.wrow.st-idle .wrow-dot { color: var(--text-muted); }
+.wrow.st-busy .wrow-dot { color: var(--accent-yellow); }
+.wrow.st-done .wrow-dot { color: var(--accent-green); }
+.wrow.st-plain .wrow-dot { color: var(--text-muted); opacity: 0.5; }
 
 /* Working = a slow breath, so a room full of running agents feels alive. */
 @media (prefers-reduced-motion: no-preference) {
-  .st-busy .srow-dot { animation: srow-pulse 1.6s ease-in-out infinite; }
+  .wrow.st-busy .wrow-dot { animation: wrow-pulse 1.6s ease-in-out infinite; }
 }
-@keyframes srow-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes wrow-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-.srow-label {
+.wrow-label {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
@@ -166,28 +192,24 @@
   gap: 8px;
   overflow: hidden;
 }
-.srow-name {
+.wrow-name {
   font-size: 13px;
-  font-weight: 500;
   color: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.srow-meta {
+.wrow-rel {
   flex: 0 0 auto;
   font-family: 'Geist Mono', monospace;
   font-size: 10px;
-  color: var(--text-muted);
-  white-space: nowrap;
+  color: var(--accent-purple);
 }
-.srow-meta .srow-rel { color: var(--accent-purple); }
 
 .srow-name-input {
   flex: 1 1 auto;
   min-width: 0;
   font-size: 13px;
-  font-weight: 500;
   color: var(--text-primary);
   background: var(--bg-primary);
   border: 1px solid var(--accent-blue);
@@ -195,15 +217,31 @@
   padding: 1px 6px;
 }
 
-/* Row actions: hidden until the row is hovered (desktop). On touch they stay
-   visible since there is no hover — see the coarse-pointer rule below. */
+/* New-session input: a transient row at the top of the list. */
+.board-new { padding: 2px 4px 8px; }
+.board-new-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  font-family: 'Geist Mono', monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--accent-blue);
+  border-radius: 6px;
+}
+.board-new-input::placeholder { color: var(--text-muted); }
+.board-new-input:focus { outline: none; }
+
+/* Row actions: hidden until hovered (desktop); always visible on touch. */
 .srow-actions {
   flex: 0 0 auto;
   display: flex;
   gap: 2px;
   opacity: 0;
 }
-.srow:hover .srow-actions { opacity: 1; }
+.sgroup-head:hover .srow-actions,
+.wrow:hover .srow-actions { opacity: 1; }
 @media (pointer: coarse) { .srow-actions { opacity: 1; } }
 
 .srow-btn {
@@ -222,11 +260,6 @@
 .srow-btn.srow-btn-danger:hover { color: var(--accent-red); background: rgba(248, 113, 113, 0.1); }
 /* Armed: the destructive close, first tap. Solid red = "tap again to confirm". */
 .srow-btn.armed, .srow-btn.armed:hover { color: #0b1411; background: var(--accent-red); }
-
-/* Tombstone: died while working. Muted, holds its slot until dismissed. */
-.srow.tombstone { opacity: 0.55; cursor: default; }
-.srow.tombstone .srow-dot { color: var(--accent-red); }
-.srow.tombstone:hover { background: none; }
 
 .board-empty {
   padding: 28px 16px;
@@ -249,8 +282,8 @@
 .board-filter-wrap { order: 3; border-bottom: none; border-top: 1px solid var(--border); }
 
 /* On mobile the terminal's bottom-bar button is the reduce control, so the
-   in-sheet collapse chevron is redundant. */
-.board-head-btn { display: none; }
+   in-sheet collapse chevron is redundant. The new-session (+) button stays. */
+.board-collapse { display: none; }
 
 /* ---- Desktop: docked, in-flow panel + draggable divider ----------------- */
 
@@ -291,7 +324,7 @@
   .board-list::before { content: none; }
   .board-filter-wrap { order: 0; border-top: none; border-bottom: 1px solid var(--border); }
 
-  .srow[data-depth="1"] { margin-left: 18px; }
-  .srow[data-depth="2"] { margin-left: 36px; }
-  .srow[data-depth="3"] { margin-left: 48px; }
+  .wrow[data-depth="1"] { margin-left: 18px; }
+  .wrow[data-depth="2"] { margin-left: 36px; }
+  .wrow[data-depth="3"] { margin-left: 48px; }
 }
