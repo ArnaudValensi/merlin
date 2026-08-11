@@ -256,6 +256,15 @@
         padding: 4px 0 0 4px;
     }
 
+    /* xterm's vendored CSS hardcodes overflow-y: scroll on the viewport, so a
+       classic-scrollbar browser paints a scrollbar track even though we never
+       scroll xterm (scrollback: 0 — tmux owns history). Override the overflow to
+       match reality: the viewport does not scroll, so no scrollbar is drawn.
+       This is a genuine disable, not a cosmetic hide of a still-scrollable bar —
+       if content ever exceeded the viewport it would clip visibly rather than
+       silently mask a scrollbar. */
+    #terminal-container .xterm-viewport { overflow-y: hidden; }
+
     /* --- Toolbar --- */
     #terminal-toolbar {
         display: none;
@@ -617,7 +626,12 @@ document.addEventListener('DOMContentLoaded', () => {
         fontSize: 11,
         fontFamily: "'GeistMono Nerd Font', 'Geist Mono', monospace",
         lineHeight: 1.2,
-        scrollback: 5000,
+        // tmux owns scrollback (history-limit 50000) and the wheel/touch scroll
+        // gestures forward mouse events to tmux copy-mode, so xterm's own buffer
+        // is never scrolled. scrollback: 0 disables it, which also makes FitAddon
+        // reserve zero scrollbar width so the cells fill the full terminal width
+        // (no leftover gutter beside the sessions panel).
+        scrollback: 0,
         theme: {
             background: '#282a36',
             foreground: '#f8f8f2',
