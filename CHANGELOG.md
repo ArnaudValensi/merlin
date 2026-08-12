@@ -2,6 +2,17 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.26.0 (2026-08-12)
+
+### Added
+- **Reorder windows by dragging** — Drag a window within its session in the Sessions panel to reorder it; the order is applied to tmux itself.
+
+### Changed
+- **Picking a window focuses the terminal** — Selecting a window in the Sessions panel moves the cursor straight into the terminal, so you can type without clicking in first.
+
+### Fixed
+- **Cleaner window reordering** — Dragging to reorder no longer selects the labels as text, and the window you picked stays selected afterward.
+
 ## v0.25.0 (2026-08-12)
 
 ### Added
