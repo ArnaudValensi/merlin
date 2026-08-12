@@ -98,28 +98,39 @@
   padding: 6px;
 }
 
-.sgroup { margin-bottom: 8px; }
+/* Two tiers, made visually distinct so a session never reads like a window:
+   the SESSION is a raised header band with a stack icon; its WINDOWS are plain
+   rows nested under a tree line. Same-looking rows were the core confusion. */
+.sgroup { margin-bottom: 12px; }
 
-/* Session header: the switch target for the whole session. Bold-ish, a touch
-   larger than a window row so the two tiers read at a glance. */
 .sgroup-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  padding: 7px 8px;
+  padding: 8px 8px;
   border-radius: 6px;
   cursor: pointer;
-  color: var(--text-secondary);
-}
-.sgroup-head:hover { background: var(--bg-hover); color: var(--text-primary); }
-
-/* Current session (the one this client is attached to): left accent bar + tint,
-   so "you are here" reads without moving any slot. */
-.sgroup.current > .sgroup-head {
-  background: var(--bg-card);
   color: var(--text-primary);
-  box-shadow: inset 2px 0 0 var(--accent-blue);
+  background: var(--bg-card);       /* raised band = "this is a container" */
+  border: 1px solid var(--border);
 }
+.sgroup-head:hover { border-color: var(--text-muted); }
+
+/* The stack glyph marks the session tier at a glance (windows have a dot). */
+.sgroup-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+/* Current session (this client is attached to it): a green accent on the whole
+   group — a different channel from the active-window fill, so the two never
+   read the same. */
+.sgroup.current > .sgroup-head {
+  border-color: var(--accent-green);
+  box-shadow: inset 3px 0 0 var(--accent-green);
+}
+.sgroup.current > .sgroup-head .sgroup-icon { color: var(--accent-green); }
 
 .sgroup-name {
   flex: 1 1 auto;
@@ -138,26 +149,35 @@
   white-space: nowrap;
 }
 
-.sgroup-wins { margin-top: 2px; }
+/* Windows nest under their session, bound by a left tree line so the grouping
+   is unmistakable. The line turns green under the current session. */
+.sgroup-wins {
+  margin: 3px 0 0 15px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+}
+.sgroup.current .sgroup-wins { border-left-color: var(--accent-green); }
 
 /* One window = one dense, borderless row (like .sidebar-nav a). The whole row is
-   the tap target (switch + jump to that window). Indented under its session. */
+   the tap target (switch + jump to that window). */
 .wrow {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 8px 5px 16px;
+  padding: 5px 8px;
   border-radius: 6px;
   cursor: pointer;
   color: var(--text-secondary);
 }
 .wrow:hover { background: var(--bg-hover); color: var(--text-primary); }
 
-/* Active window in its session (the one tmux is showing there). */
-.wrow.active {
-  background: var(--bg-card);
+/* Active window — only in the CURRENT session (each session has its own active
+   window; showing all of them was confusing). A subtle fill, not a coloured bar
+   that would compete with the session's green accent. */
+.sgroup.current .wrow.active {
+  background: var(--bg-hover);
   color: var(--text-primary);
-  box-shadow: inset 2px 0 0 var(--accent-purple);
+  font-weight: 500;
 }
 
 /* Nesting: a --child window indents one step under its parent; capped for phones. */

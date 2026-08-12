@@ -15,6 +15,7 @@ socket knows which tmux client this browser is.
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -25,8 +26,8 @@ from . import model, sweep
 
 
 class NewSessionReq(BaseModel):
-    dir: str
     name: str | None = None
+    dir: str | None = None  # optional; defaults to the portal's working directory
 
 
 class RenameSessionReq(BaseModel):
@@ -71,10 +72,11 @@ def api_board(current: str = ""):
 
 @api_router.post("/session/new")
 def api_new_session(req: NewSessionReq):
-    """Create-or-switch by directory: ensure a detached session rooted at
-    ``dir`` exists and return its name. The browser then attaches to it with a
-    per-client switch over the WebSocket."""
-    name = sweep.create_or_get_session(req.dir, req.name or "")
+    """Create-or-switch: ensure a detached session named ``name`` (rooted at
+    ``dir``, defaulting to the portal's cwd) exists and return its name. The
+    browser then attaches to it with a per-client switch over the WebSocket."""
+    directory = (req.dir or "").strip() or os.getcwd()
+    name = sweep.create_or_get_session(directory, req.name or "")
     if name is None:
         raise HTTPException(status_code=502, detail="Could not create session")
     return {"ok": True, "name": name}

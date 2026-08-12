@@ -154,9 +154,13 @@
     if (storedW) main.style.setProperty('--sessions-w', storedW + 'px');
     if (localStorage.getItem('sessions-collapsed') === '1') main.classList.add('panel-collapsed');
 
+    function refreshBoard() {
+        if (window.SessionsBoard && window.SessionsBoard.refresh) window.SessionsBoard.refresh();
+    }
     function open() {
         if (desktop()) { main.classList.remove('panel-collapsed'); localStorage.setItem('sessions-collapsed', '0'); }
         else { applyMobileOffset(); panel.classList.add('open'); }  // recompute: bar height is settled now
+        refreshBoard();  // show fresh state the instant the panel opens, not on the next poll
     }
     function close() {
         if (desktop()) { main.classList.add('panel-collapsed'); localStorage.setItem('sessions-collapsed', '1'); }
@@ -169,6 +173,13 @@
     btn.addEventListener('click', toggle);
     backdrop.addEventListener('click', close);
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !desktop()) close(); });
+
+    // Keep the panel fresh on the events that change tmux state, so it never
+    // shows a stale slice: coming back to the tab, and window-nav keys (which
+    // flip pill state as you arrive at / leave a window). The 2s poll is the
+    // backstop for state that changes with no browser action (an agent turn).
+    window.addEventListener('focus', refreshBoard);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshBoard(); });
 
     // Divider: drag the terminal/panel boundary on desktop. The terminal's
     // ResizeObserver refits xterm as the panel width changes.
@@ -1126,6 +1137,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
             sendToTerminal(seq);
+        }
+
+        // Window-nav keys change the active window (and its pill state), so
+        // nudge the Sessions panel to re-read shortly after, rather than waiting
+        // for the next poll.
+        if (key === 'F2' || key === 'F3' || key === 'F4' || key === 'F5') {
+            if (window.SessionsBoard && window.SessionsBoard.refresh) {
+                setTimeout(function () { window.SessionsBoard.refresh(); }, 300);
+            }
         }
 
         // Clear modifiers after keypress

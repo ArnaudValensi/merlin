@@ -11,7 +11,7 @@ window.SessionsBoard = (function () {
   'use strict';
 
   var DOT = { idle: '○', busy: '◐', done: '●' };
-  var POLL_MS = 4000;
+  var POLL_MS = 2000;
 
   var S = { root: null, list: null, status: null, filter: null, newBtn: null,
             sessions: [], counts: { sessions: 0, waiting: 0, working: 0 },
@@ -49,6 +49,8 @@ window.SessionsBoard = (function () {
   var IC_CHECK = svg('<path d="M20 6 9 17l-5-5"/>');
   var IC_COLLAPSE = svg('<path d="m9 18 6-6-6-6"/>');
   var IC_PLUS = svg('<path d="M12 5v14"/><path d="M5 12h14"/>');
+  // Layers glyph: marks the session tier (windows carry a state dot instead).
+  var IC_SESSION = svg('<path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>');
 
   function isDesktop() { return window.matchMedia('(min-width: 769px)').matches; }
 
@@ -188,6 +190,9 @@ window.SessionsBoard = (function () {
     if (sess.current) group.classList.add('current');
 
     var head = el('div', 'sgroup-head');
+    var icon = el('span', 'sgroup-icon');
+    icon.innerHTML = IC_SESSION;
+    head.appendChild(icon);
     var nameEl = el('span', 'sgroup-name', sess.name);
     head.appendChild(nameEl);
 
@@ -235,8 +240,10 @@ window.SessionsBoard = (function () {
     if (window.MerlinTerminal && window.MerlinTerminal.switchSession) {
       window.MerlinTerminal.switchSession(target);
       S.onJump();
-      // Optimistic: the server will confirm via a session control frame.
+      // The server confirms via a session control frame; also poll twice so the
+      // visit-cleared done pill (tmux clears it on window-change) syncs promptly.
       setTimeout(load, 250);
+      setTimeout(load, 800);
     }
   }
 
@@ -289,7 +296,7 @@ window.SessionsBoard = (function () {
     var wrap = el('div', 'board-new');
     var input = el('input', 'board-new-input');
     input.type = 'text';
-    input.placeholder = 'new session: /path/to/project';
+    input.placeholder = 'session name…';
     input.setAttribute('autocomplete', 'off');
     wrap.appendChild(input);
     S.list.insertBefore(wrap, S.list.firstChild);
@@ -299,9 +306,11 @@ window.SessionsBoard = (function () {
       if (done) return;
       done = true;
       S.paused = false;
-      var dir = input.value.trim();
-      if (create && dir) {
-        api('/session/new', { dir: dir }).then(function (r) {
+      var name = input.value.trim();
+      if (create && name) {
+        // Name only: the server roots the new session at a sensible default dir
+        // (a directory path is a power-user detail, not required to make one).
+        api('/session/new', { name: name }).then(function (r) {
           if (r && r.name) switchTo(r.name);
           else load();
         });
