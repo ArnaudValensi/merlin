@@ -123,6 +123,16 @@
   color: var(--text-muted);
 }
 
+/* Fold caret: points right when folded, rotates down when expanded. Click the
+   session header to toggle (switching happens at the window level). */
+.sgroup-caret {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--text-muted);
+  transition: transform 0.12s ease;
+}
+.sgroup:not(.folded) > .sgroup-head .sgroup-caret { transform: rotate(90deg); }
+
 /* Current session (this client is attached to it): a green accent on the whole
    group — a different channel from the active-window fill, so the two never
    read the same. */
@@ -263,6 +273,51 @@
 }
 .board-new-input::placeholder { color: var(--text-muted); }
 .board-new-input:focus { outline: none; }
+
+/* "+ new session" (top of list) and "+ new window" (foot of each session):
+   quiet dashed/plus affordances that read as "add", not as a real item. */
+.board-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  margin-bottom: 10px;
+  border-radius: 6px;
+  border: 1px dashed var(--border);
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.board-add:hover { color: var(--text-primary); border-color: var(--text-muted); }
+.board-add-icon { flex: 0 0 auto; display: inline-flex; }
+.board-add-label { font-size: 13px; }
+
+.wrow-add { color: var(--text-muted); }
+.wrow-add:hover { color: var(--text-primary); }
+.wrow-add-label { opacity: 0.75; }
+
+/* ---- Rail: dragged narrow -> a column of dots with hover tooltips -------- */
+.rail .board-filter-wrap { display: none; }
+.rail .board-list { padding: 4px 0; }
+.rail .board-add {
+  justify-content: center;
+  gap: 0;
+  padding: 6px 0;
+  margin-bottom: 6px;
+  border: none;
+}
+.rail .sgroup { margin-bottom: 6px; }
+.rail .sgroup-head { justify-content: center; gap: 0; padding: 5px 0; }
+.rail .sgroup-caret,
+.rail .sgroup-name,
+.rail .sbadge,
+.rail .srow-actions,
+.rail .wrow-label,
+.rail .wrow-name,
+.rail .wrow-add-label,
+.rail .board-add-label { display: none; }
+.rail .sgroup-wins { margin: 2px 0 0; padding-left: 0; border-left: none; }
+.rail .wrow { justify-content: center; gap: 0; padding: 4px 0; }
+.rail .wrow[data-depth] { margin-left: 0; }
 
 /* Row actions: hidden until hovered (desktop); always visible on touch. */
 .srow-actions {

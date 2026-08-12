@@ -267,6 +267,15 @@ def kill_session(name: str) -> bool:
     return _run_ok(["kill-session", "-t", name])
 
 
+def new_window(session: str) -> str | None:
+    """Create a new window in ``session`` and return its window id, so the
+    caller can jump to it. Returns None if tmux is unavailable or it fails."""
+    if not shutil.which("tmux") or not session:
+        return None
+    out = _tmux_capture(["new-window", "-t", session, "-P", "-F", "#{window_id}"])
+    return out.strip() if out else None
+
+
 def create_or_get_session(directory: str, name: str = "") -> str | None:
     """Create-or-switch by directory: return the name of a detached session
     rooted at ``directory``, creating it if one does not already exist.

@@ -104,6 +104,16 @@ def api_kill_session(req: SessionReq):
     return {"ok": True}
 
 
+@api_router.post("/window/new")
+def api_new_window(req: SessionReq):
+    """Open a new window in ``name`` (a session) and return its id, so the
+    browser can jump to it with a per-client switch."""
+    wid = sweep.new_window(req.name)
+    if wid is None:
+        raise HTTPException(status_code=502, detail="Could not open window")
+    return {"ok": True, "window_id": wid}
+
+
 @api_router.post("/window/rename")
 def api_rename_window(req: RenameWindowReq):
     """Rename a tmux window (its tab title)."""

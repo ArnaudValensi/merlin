@@ -89,6 +89,15 @@ def test_kill_session(tmux_server):
     assert "beta" not in {s.name for s in sweep.run_session_sweep()}
 
 
+def test_new_window(tmux_server):
+    before = _tmux("list-windows", "-t", "alpha", "-F", "#{window_id}").stdout.split()
+    wid = sweep.new_window("alpha")
+    assert wid and wid.startswith("@")
+    after = _tmux("list-windows", "-t", "alpha", "-F", "#{window_id}").stdout.split()
+    assert len(after) == len(before) + 1
+    assert wid in after
+
+
 def test_rename_window(tmux_server):
     win = _tmux("list-windows", "-t", "alpha", "-F", "#{window_id}").stdout.split()[0]
     assert sweep.rename_window("alpha", win, "editor") is True
