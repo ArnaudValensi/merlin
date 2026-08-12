@@ -280,26 +280,34 @@ def reorder_windows(session: str, ordered_ids: list[str]) -> bool:
     """Reorder ``session``'s windows to match ``ordered_ids`` (a full list of the
     session's window ids in the desired order), using real ``swap-window`` moves
     so tmux's own order — and the status-bar tab strip — changes with it. Bails
-    without touching anything if the list is stale (count mismatch). ``-d`` keeps
-    the active window put."""
+    without touching anything if the list is stale (count mismatch). The window
+    that was selected stays selected (re-selected at the end)."""
     if not shutil.which("tmux") or not session or not ordered_ids:
         return False
     out = _tmux_capture(
-        ["list-windows", "-t", session, "-F", "#{window_index}\t#{window_id}"]
+        [
+            "list-windows",
+            "-t",
+            session,
+            "-F",
+            "#{window_active}\t#{window_index}\t#{window_id}",
+        ]
     )
     if out is None:
         return False
     at: dict[int, str] = {}  # index -> window id
     idx_of: dict[str, int] = {}  # window id -> index
+    active_id = ""  # the selected window, to keep it selected after the reorder
     for line in out.splitlines():
-        if "\t" not in line:
+        parts = line.split("\t")
+        if len(parts) != 3 or not parts[1].lstrip("-").isdigit():
             continue
-        i_s, wid = line.split("\t", 1)
-        if not i_s.lstrip("-").isdigit():
-            continue
+        act, i_s, wid = parts
         i = int(i_s)
         at[i] = wid
         idx_of[wid] = i
+        if act == "1":
+            active_id = wid
     order = sorted(at)  # the session's window indices, ascending
     if set(ordered_ids) != set(idx_of):
         return False  # stale request (windows added/removed): do not half-apply
@@ -324,6 +332,11 @@ def reorder_windows(session: str, ordered_ids: list[str]) -> bool:
             return False
         at[target_idx], at[want_idx] = want, have
         idx_of[want], idx_of[have] = target_idx, want_idx
+    # Reordering must never change which window is selected. swap-window can move
+    # the session's active pointer by index (especially with a client attached),
+    # so re-select the window that was active before.
+    if active_id:
+        _run_ok(["select-window", "-t", f"{session}:{active_id}"])
     return True
 
 

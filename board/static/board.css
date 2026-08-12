@@ -96,6 +96,15 @@
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 6px;
+  /* The list is UI, not content: never let a press-drag select row text (it
+     hijacked the drag, especially on touch / in the rail). Inputs re-enable it. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.srow-name-input, .board-new-input {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Two tiers, made visually distinct so a session never reads like a window:

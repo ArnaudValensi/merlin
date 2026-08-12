@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import pty
+import re
 import shutil
 import subprocess
 import time
@@ -31,10 +32,12 @@ def _tmux(*args: str) -> subprocess.CompletedProcess:
 
 
 @pytest.fixture
-def tmux_server(monkeypatch):
-    """A private tmux server with two detached sessions. All board.sweep tmux
-    calls are redirected onto the private ``-L boardtest`` socket so the test
-    never touches the developer's real tmux."""
+def tmux_server(monkeypatch, request):
+    """A private tmux server with two detached sessions. Each test gets its OWN
+    socket (``-L boardtest_<test>``) so tests can't contaminate each other under
+    random ordering, and none touch the developer's real tmux."""
+    global _SOCK
+    _SOCK = "boardtest_" + re.sub(r"[^A-Za-z0-9]+", "_", request.node.name)
     real_run = subprocess.run
 
     def routed(cmd, *a, **kw):
