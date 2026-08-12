@@ -299,7 +299,15 @@
 }
 .board-add:hover { color: var(--text-primary); border-color: var(--text-muted); }
 .board-add-icon { flex: 0 0 auto; display: inline-flex; align-items: center; }
-.board-add-label { font-size: 13px; }
+/* Ellipsize the label when the button is too narrow, instead of wrapping. */
+.board-add-label {
+  font-size: 13px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* "new window": mobile matches a window row (.wrow 5px, minus 1px for the border
    = 4px). No extra bottom margin (the .sgroup-wins gap spaces it). Two classes
