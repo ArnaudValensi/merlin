@@ -381,6 +381,13 @@
     transform: none;
     background: none;
   }
+  /* A row's height on touch is set by its always-visible 28px action button.
+     The add-buttons have no such button, so they'd come out shorter — give them
+     a matching min-height: new-session to the session header (28px button + its
+     8px padding + 1px border), new-window to the window row (28px + 5px padding).
+     Keep these in step with .srow-btn / row padding above. */
+  .board-add { min-height: 46px; }
+  .board-add.board-add-sub { min-height: 38px; }
 }
 
 .srow-btn {
