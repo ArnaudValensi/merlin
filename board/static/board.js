@@ -86,21 +86,17 @@ window.SessionsBoard = (function () {
     return JSON.stringify({ s: v.sessions, c: v.counts, cur: v.current_session });
   }
 
-  // --- status line -------------------------------------------------------
+  // A small round count badge (green = waiting on you), mirroring the Sessions
+  // button badge. Compact on purpose so the panel can be dragged narrow.
+  function badge(n, cls) {
+    return el('span', 'sbadge' + (cls ? ' ' + cls : ''), String(n));
+  }
+
+  // --- status line: just a waiting badge, so the header stays tiny ----------
   function renderStatus() {
-    var c = S.counts;
     var st = S.status;
     st.textContent = '';
-    st.appendChild(document.createTextNode('sessions · '));
-    st.appendChild(el('span', 'st-total', String(c.sessions || 0)));
-    if (c.working) {
-      st.appendChild(document.createTextNode(' · '));
-      st.appendChild(el('span', 'st-working', c.working + ' working'));
-    }
-    if (c.waiting) {
-      st.appendChild(document.createTextNode(' · '));
-      st.appendChild(el('span', 'st-waiting', c.waiting + ' waiting'));
-    }
+    if (S.counts.waiting) st.appendChild(badge(S.counts.waiting));
   }
 
   // --- inline rename -----------------------------------------------------
@@ -196,12 +192,9 @@ window.SessionsBoard = (function () {
     var nameEl = el('span', 'sgroup-name', sess.name);
     head.appendChild(nameEl);
 
-    var meta = el('span', 'sgroup-meta');
-    var bits = [sess.counts.total + (sess.counts.total === 1 ? ' win' : ' wins')];
-    if (sess.counts.waiting) bits.push(sess.counts.waiting + ' waiting');
-    else if (sess.counts.working) bits.push(sess.counts.working + ' working');
-    meta.textContent = bits.join(' · ');
-    head.appendChild(meta);
+    // No window count (it just ate width). Only a waiting badge when this
+    // session has a window finished and waiting on you.
+    if (sess.counts.waiting) head.appendChild(badge(sess.counts.waiting));
 
     var actions = el('div', 'srow-actions');
     var edit = iconBtn(IC_EDIT, 'Rename session');

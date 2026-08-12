@@ -141,12 +141,23 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sgroup-meta {
+
+/* Round count badge (same look as the Sessions button badge). Green = a window
+   in this session finished and is waiting on you. Kept tiny so a narrow panel
+   still reads at a glance. */
+.sbadge {
   flex: 0 0 auto;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent-green);
+  color: #0b1411;
   font-family: 'Geist Mono', monospace;
   font-size: 10px;
-  color: var(--text-muted);
-  white-space: nowrap;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
 }
 
 /* Windows nest under their session, bound by a left tree line so the grouping

@@ -7,6 +7,7 @@ def line(**over):
     fields = {
         "@agent_sid": "s1",
         "@agent_state": "busy",
+        "@claude": "",
         "@agent_cwd": "/home/u/proj",
         "@agent_parent": "",
         "@agent_relation": "",
@@ -68,6 +69,21 @@ class TestParseSweep:
     def test_relation_is_lowercased(self):
         (w,) = sweep.parse_sweep(line(**{"@agent_relation": "Sibling"}))
         assert w.relation == "sibling"
+
+    def test_claude_var_overrides_agent_state(self):
+        # A custom pill system driving @claude wins, so the board tracks the
+        # variable that is actually cleared on visit (prevents a stuck "done").
+        (w,) = sweep.parse_sweep(line(**{"@agent_state": "done", "@claude": "idle"}))
+        assert w.state == "idle"
+
+    def test_agent_state_used_when_claude_unset(self):
+        (w,) = sweep.parse_sweep(line(**{"@agent_state": "done", "@claude": ""}))
+        assert w.state == "done"
+
+    def test_claude_var_alone_makes_an_agent(self):
+        (w,) = sweep.parse_sweep(line(**{"@agent_state": "", "@claude": "busy"}))
+        assert w.state == "busy"
+        assert w.is_agent is True
 
     def test_multiple_rows(self):
         raw = line(**{"@agent_sid": "a"}) + "\n" + line(**{"@agent_sid": "b"})
