@@ -8,6 +8,7 @@ var FolderPicker = (function() {
     let currentPath = '/';
     let currentRepoRoot = null; // git root for current browse path
     let mode = 'browse'; // 'browse' or 'search'
+    let selectMode = 'repo'; // 'repo' (confirm returns git root) or 'folder' (confirm returns current path)
     let searchTimeout = null;
     let onSelect = null; // callback(repoPath)
     let homeDir = '/';
@@ -23,6 +24,7 @@ var FolderPicker = (function() {
         useBtn = document.getElementById('picker-use-btn');
         closeBtn = document.getElementById('picker-close');
         homeDir = opts.homeDir || '/';
+        selectMode = opts.selectMode === 'folder' ? 'folder' : 'repo';
         onSelect = opts.onSelect || function() {};
 
         closeBtn.addEventListener('click', close);
@@ -104,7 +106,11 @@ var FolderPicker = (function() {
 
         // Track git root for "Use this folder" button
         currentRepoRoot = data.repo_root || null;
-        if (currentRepoRoot) {
+        if (selectMode === 'folder') {
+            // Any directory is selectable — always offer the current path.
+            useBtn.textContent = 'Use ' + shortenPath(currentPath);
+            footer.style.display = '';
+        } else if (currentRepoRoot) {
             useBtn.textContent = 'Use ' + shortenPath(currentRepoRoot);
             footer.style.display = '';
         } else {
@@ -197,9 +203,14 @@ var FolderPicker = (function() {
     }
 
     function selectCurrentDir() {
-        // Use the resolved git root (same as file browser git button behavior)
         close();
-        onSelect(currentRepoRoot || currentPath);
+        if (selectMode === 'folder') {
+            // Plain navigation: return exactly where the user is.
+            onSelect(currentPath);
+        } else {
+            // Repo mode: snap to the resolved git root (file browser git button behavior).
+            onSelect(currentRepoRoot || currentPath);
+        }
     }
 
     // Search mode

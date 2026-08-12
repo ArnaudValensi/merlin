@@ -1,0 +1,214 @@
+/* Folder picker modal — shared component styles (paired with folder-picker.js).
+   Used by the commits page (select repo) and the terminal page (change dir). */
+.picker-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+}
+
+.picker-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.picker-container {
+    position: relative;
+    width: 100%;
+    max-width: 500px;
+    height: 100dvh;
+    height: 100vh; /* fallback */
+    background: var(--bg-secondary);
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.picker-drag-handle {
+    display: none;
+}
+
+.picker-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.picker-header h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+/* Self-contained close button (mirrors the dashboard .back-btn look) so the
+   picker renders correctly on pages that don't load commits.css. */
+#picker-close {
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+#picker-close:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.picker-search-wrap {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.picker-search {
+    width: 100%;
+    padding: 8px 12px;
+    min-height: 40px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 16px;
+    font-family: inherit;
+    outline: none;
+    box-sizing: border-box;
+}
+.picker-search:focus {
+    border-color: var(--accent-blue);
+}
+.picker-search::placeholder {
+    color: var(--text-muted);
+}
+
+.picker-breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 16px;
+    font-size: 13px;
+    overflow-x: auto;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border);
+}
+
+.picker-crumb {
+    color: var(--accent-blue);
+    text-decoration: none;
+    cursor: pointer;
+}
+.picker-crumb:hover {
+    text-decoration: underline;
+}
+.picker-crumb-current {
+    color: var(--text-primary);
+    pointer-events: none;
+}
+.picker-crumb-sep {
+    color: var(--text-muted);
+    margin: 0 2px;
+}
+
+.picker-content {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.picker-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    cursor: pointer;
+    min-height: 44px;
+}
+.picker-item:hover {
+    background: var(--bg-hover);
+}
+.picker-item:active {
+    background: var(--bg-card);
+}
+.picker-item:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: -2px;
+    background: var(--bg-hover);
+}
+
+.picker-item-icon {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+}
+.picker-item-icon.icon-git {
+    color: var(--accent-green);
+}
+
+.picker-item-name {
+    font-size: 14px;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.picker-loading,
+.picker-empty {
+    padding: 32px 16px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.picker-footer {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.picker-use-btn {
+    width: 100%;
+    padding: 10px;
+    background: var(--accent-blue);
+    border: none;
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    min-height: 44px;
+}
+.picker-use-btn:hover {
+    opacity: 0.9;
+}
+
+@media (min-width: 769px) {
+    .picker-modal {
+        align-items: center;
+    }
+    .picker-container {
+        height: auto;
+        max-height: 80vh;
+        border-radius: 6px;
+    }
+    .picker-content {
+        max-height: 50vh;
+    }
+    .picker-drag-handle {
+        display: none;
+    }
+}

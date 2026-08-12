@@ -181,7 +181,12 @@ def terminal_page(request: Request):
             status_code=503,
         )
     return templates.TemplateResponse(
-        request, "terminal.html", {"voice_available": _voice_available()}
+        request,
+        "terminal.html",
+        {
+            "voice_available": _voice_available(),
+            "home_dir": os.path.expanduser("~"),
+        },
     )
 
 
