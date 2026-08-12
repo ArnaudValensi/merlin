@@ -329,24 +329,29 @@
 .rail .wrow { justify-content: center; gap: 0; padding: 4px 0; }
 .rail .wrow[data-depth] { margin-left: 0; }
 
-/* Instant hover tooltip for the rail — same look as the collapsed sidebar's
-   nav/env tooltips, but a body-level element (positioned in JS) so the panel's
-   scroll container can't clip it. It sits to the LEFT of the item, since the
-   panel hugs the right screen edge. */
-.board-tip {
+/* Rail fly-out — the hover popover to the LEFT of a dot (a body-level element,
+   positioned in JS, so the panel's scroll can't clip it). Same look as the
+   collapsed sidebar's tooltips, but interactive: it holds the item's name and,
+   for a session/window, its rename/close buttons. Never covers the dot, so the
+   dot's tap stays a clean switch. */
+.board-flyout {
   position: fixed;
   display: none;
+  align-items: center;
+  gap: 2px;
   background: var(--bg-card);
   color: var(--text-primary);
   border: 1px solid var(--border);
-  padding: 4px 10px;
+  padding: 2px 4px 2px 10px;
   border-radius: 6px;
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
-  pointer-events: none;
   z-index: 300;
 }
+.board-flyout-label { margin-right: 4px; }
+.board-flyout .srow-btn { width: 24px; height: 24px; }
+.board-flyout .srow-name-input { min-width: 90px; }
 
 
 /* Row actions: hidden until hovered (desktop); always visible on touch. */

@@ -99,22 +99,94 @@ window.SessionsBoard = (function () {
 
   function badge(n) { return el('span', 'sbadge', String(n)); }
 
-  // Instant hover tooltip for the rail. A single body-level element (so the
-  // panel's scroll container can't clip it), positioned to the left of the
-  // hovered item — the panel hugs the right screen edge.
-  var tip = null;
-  function showTip(target) {
-    var text = target.getAttribute('data-tooltip');
-    if (!text) return;
-    if (!tip) { tip = el('div', 'board-tip'); document.body.appendChild(tip); }
-    tip.textContent = text;
-    tip.style.display = 'block';
-    var r = target.getBoundingClientRect();
-    var tr = tip.getBoundingClientRect();
-    tip.style.top = (r.top + r.height / 2 - tr.height / 2) + 'px';
-    tip.style.left = (r.left - tr.width - 8) + 'px';
+  // Rail fly-out: the hover popover to the LEFT of a dot. A body-level element
+  // (so the panel's scroll can't clip it), it shows the item's name and — for a
+  // session or window — its rename/close actions. This is the rail's management
+  // surface: the actions live in the fly-out, never over the dot, so the dot's
+  // tap stays a clean switch. Rail is a desktop-narrow mode, so hover is the
+  // trigger (a tap also opens it, for a touchscreen desktop).
+  var fly = null, flyItem = null, flyHideT = null;
+  function ensureFly() {
+    if (fly) return fly;
+    fly = el('div', 'board-flyout');
+    fly.addEventListener('mouseenter', function () { clearTimeout(flyHideT); });
+    fly.addEventListener('mouseleave', scheduleHideFly);
+    document.body.appendChild(fly);
+    return fly;
   }
-  function hideTip() { if (tip) tip.style.display = 'none'; }
+  function showFly(item) {
+    if (item === flyItem && fly && fly.style.display !== 'none') { clearTimeout(flyHideT); return; }
+    clearTimeout(flyHideT);
+    flyItem = item;
+    S.paused = true;  // hold the poll so a re-render can't yank the fly-out mid-hover
+    var f = ensureFly();
+    f.textContent = '';
+    var lbl = el('span', 'board-flyout-label', item.getAttribute('data-tooltip') || '');
+    f.appendChild(lbl);
+    var kind = item.getAttribute('data-fly-kind');
+    if (kind === 'session' || kind === 'window') {
+      var t = {
+        kind: kind,
+        session: item.getAttribute('data-fly-session') || '',
+        window: item.getAttribute('data-fly-window') || '',
+        name: item.getAttribute('data-fly-name') || '',
+      };
+      var edit = iconBtn(IC_EDIT, 'Rename');
+      edit.addEventListener('click', function (e) { e.stopPropagation(); renameInFly(lbl, t); });
+      f.appendChild(edit);
+      var kill = iconBtn(IC_KILL, 'Close', 'srow-btn-danger');
+      kill.addEventListener('click', function (e) { e.stopPropagation(); armConfirm(kill, function () { killFly(t); }); });
+      f.appendChild(kill);
+    }
+    f.style.display = 'flex';
+    var r = item.getBoundingClientRect();
+    var fr = f.getBoundingClientRect();
+    f.style.top = Math.max(4, r.top + r.height / 2 - fr.height / 2) + 'px';
+    f.style.left = (r.left - fr.width - 8) + 'px';
+  }
+  function scheduleHideFly() { clearTimeout(flyHideT); flyHideT = setTimeout(hideFly, 220); }
+  function hideFly() {
+    if (fly) fly.style.display = 'none';
+    flyItem = null;
+    disarm();
+    S.paused = false;
+  }
+  function renameInFly(lblEl, t) {
+    clearTimeout(flyHideT);
+    var input = el('input', 'srow-name-input');
+    input.value = t.name || '';
+    input.placeholder = t.name || '';
+    lblEl.replaceWith(input);
+    input.focus();
+    input.select();
+    var done = false;
+    function commit(save) {
+      if (done) return;
+      done = true;
+      var val = input.value.trim();
+      var after = function () { hideFly(); load(); };
+      if (save && val && t.kind === 'session') {
+        api('/session/rename', { name: t.session, new: val }).then(function (r) {
+          if (r && r.name && t.session === S.current) S.current = r.name;
+          after();
+        });
+      } else if (save && val) {
+        api('/window/rename', { session: t.session, window_id: t.window, name: val }).then(after);
+      } else { after(); }
+    }
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') commit(true);
+      else if (e.key === 'Escape') commit(false);
+    });
+    input.addEventListener('blur', function () { commit(true); });
+    input.addEventListener('click', function (e) { e.stopPropagation(); });
+  }
+  function killFly(t) {
+    var p = t.kind === 'session'
+      ? api('/session/kill', { name: t.session })
+      : api('/window/kill', { session: t.session, window_id: t.window });
+    p.then(function () { hideFly(); load(); });
+  }
 
   // Swap a label for an input; commit(save) writes via onSave(value).
   function editInline(labelEl, initial, placeholder, onSave) {
@@ -187,8 +259,12 @@ window.SessionsBoard = (function () {
     var row = el('div', 'wrow st-' + (w.state || 'plain'));
     row.setAttribute('data-depth', String(Math.min(w.depth, 3)));
     if (w.active) row.classList.add('active');
-    // Instant hover tooltip (sidebar-style ::after) for the rail/compact modes.
+    // Rail fly-out: label + (kind/session/window) so it can offer rename/close.
     row.setAttribute('data-tooltip', sessionName + ' · ' + (w.name || 'window'));
+    row.setAttribute('data-fly-kind', 'window');
+    row.setAttribute('data-fly-session', sessionName);
+    row.setAttribute('data-fly-window', w.window_id);
+    row.setAttribute('data-fly-name', w.name || 'window');
 
     var dot = el('span', 'wrow-dot');
     dot.textContent = w.is_agent ? (DOT[w.state] || DOT.idle) : '·';
@@ -256,6 +332,9 @@ window.SessionsBoard = (function () {
 
     var head = el('div', 'sgroup-head');
     head.setAttribute('data-tooltip', sess.name);
+    head.setAttribute('data-fly-kind', 'session');
+    head.setAttribute('data-fly-session', sess.name);
+    head.setAttribute('data-fly-name', sess.name);
     var caret = el('span', 'sgroup-caret');
     caret.innerHTML = IC_CHEVRON;
     head.appendChild(caret);
@@ -416,19 +495,27 @@ window.SessionsBoard = (function () {
     S.list = el('div', 'board-list');
     root.appendChild(S.list);
 
-    // Rail hover tooltips (delegated). Only in rail mode; wider modes show names.
+    // Rail fly-out (delegated). Only in rail mode; wider modes show names inline.
     S.list.addEventListener('mouseover', function (e) {
       if (!S.root.classList.contains('rail')) return;
-      var t = e.target.closest('[data-tooltip]');
-      if (t) showTip(t);
+      var item = e.target.closest('[data-tooltip]');
+      if (item) showFly(item);
     });
-    S.list.addEventListener('mouseout', function (e) {
-      if (e.target.closest('[data-tooltip]')) hideTip();
+    S.list.addEventListener('mouseleave', scheduleHideFly);
+    S.list.addEventListener('click', function (e) {
+      if (!S.root.classList.contains('rail')) return;
+      var item = e.target.closest('[data-tooltip]');
+      if (item) showFly(item);  // touchscreen desktop: a tap opens the fly-out too
     });
-    S.list.addEventListener('scroll', hideTip);
+    S.list.addEventListener('scroll', hideFly);
+    // A click anywhere else dismisses an open fly-out (e.g. after a touch tap).
+    document.addEventListener('click', function (e) {
+      if (fly && fly.style.display !== 'none' &&
+          !fly.contains(e.target) && !e.target.closest('[data-tooltip]')) hideFly();
+    });
 
     if (window.ResizeObserver) {
-      new ResizeObserver(function () { hideTip(); applyMode(); }).observe(root);
+      new ResizeObserver(function () { hideFly(); applyMode(); }).observe(root);
     } else {
       window.addEventListener('resize', applyMode);
     }
