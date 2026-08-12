@@ -159,6 +159,13 @@ window.SessionsBoard = (function () {
     lblEl.replaceWith(input);
     input.focus();
     input.select();
+    // The input is wider than the label, so re-anchor the fly-out to the left of
+    // the dot again; its right edge stays 8px off the dot so the buttons never
+    // get pushed off-screen.
+    if (fly && flyItem) {
+      var r = flyItem.getBoundingClientRect();
+      fly.style.left = (r.left - fly.getBoundingClientRect().width - 8) + 'px';
+    }
     var done = false;
     function commit(save) {
       if (done) return;

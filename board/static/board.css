@@ -351,7 +351,9 @@
 }
 .board-flyout-label { margin-right: 4px; }
 .board-flyout .srow-btn { width: 24px; height: 24px; }
-.board-flyout .srow-name-input { min-width: 90px; }
+/* Fixed, modest width so renaming doesn't balloon the fly-out and shove the
+   rename/close buttons off-screen. */
+.board-flyout .srow-name-input { flex: 0 0 auto; width: 84px; min-width: 0; }
 
 
 /* Row actions: hidden until hovered (desktop); always visible on touch. */
