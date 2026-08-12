@@ -2,6 +2,21 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.25.0 (2026-08-12)
+
+### Added
+- **Session switcher** — The web terminal's Sessions panel is now a full tmux session and window switcher. It shows every session and every window (not only ones running an agent), grouped as a tree, with the same ○ idle / ◐ busy / ● done activity dot on windows that carry an agent.
+- **New sessions and windows from the panel** — A "new session" row at the top and a "new window" row inside each session, so you can spin up either without leaving the panel.
+- **Rail mode** — Drag the panel narrow and it collapses to a column of dots. Hover a dot for a fly-out with the name and its rename/close actions; tap to switch.
+
+### Changed
+- **Per-client switching** — Tapping a session or window switches only the browser tab you are on; your phone and laptop stay where you left them. Selection is optimistic, so it feels instant.
+- **Fold, rename, and close inline** — Click a session to fold it; rename or close any session or window from the panel. Sessions and windows keep tmux's own order and names.
+- **Waiting reaches you across sessions** — The Sessions button badge counts windows finished and waiting on you across every session.
+
+### Fixed
+- **Panel activity stays in sync** — A window's dot now clears in the panel when you visit it, matching the tmux status bar even with a custom pill setup.
+
 ## v0.24.1 (2026-08-11)
 
 ### Fixed
