@@ -281,14 +281,16 @@
 
 /* "+ new session" (top of list) and "+ new window" (foot of each session):
    quiet dashed/plus affordances that read as "add", not as a real item. */
-/* The add-buttons match a WINDOW ROW's height: same content (label with the
-   rows' default line-height) and 1px-less vertical padding to offset the dashed
-   border, so total height lines up with a borderless row. */
+/* Each add-button matches the row it creates: "new session" is as tall as a
+   SESSION HEADER, "new window" (.board-add-sub) as tall as a WINDOW ROW. Both
+   carry a 1px dashed border, so their padding matches the corresponding row's
+   padding (borderless rows get 1px more padding to compensate). Label uses the
+   rows' default line-height so the text box matches too. */
 .board-add {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 8px;
+  padding: 8px 8px;           /* mobile: matches .sgroup-head */
   margin-bottom: 8px;
   border-radius: 6px;
   border: 1px dashed var(--border);
@@ -299,10 +301,10 @@
 .board-add-icon { flex: 0 0 auto; display: inline-flex; align-items: center; }
 .board-add-label { font-size: 13px; }
 
-/* The nested "new window" add-button is the same as "new session"; it only drops
-   the extra bottom margin (the .sgroup-wins gap already spaces it below the last
-   window). Two classes so it wins over the desktop .board-add margin. */
-.board-add.board-add-sub { margin-bottom: 0; }
+/* "new window": mobile matches a window row (.wrow 5px, minus 1px for the border
+   = 4px). No extra bottom margin (the .sgroup-wins gap spaces it). Two classes
+   so it wins over the plain .board-add rules. */
+.board-add.board-add-sub { padding: 4px 8px; margin-bottom: 0; }
 
 /* ---- Rail: dragged narrow -> a column of dots with hover tooltips -------- */
 .rail .board-filter-wrap { display: none; }
@@ -470,11 +472,13 @@
      (.sgroup-wins gap). Mobile keeps its comfortable touch sizing. */
   .board-list { padding: 5px; }
   .sgroup { margin-bottom: 6px; }
-  /* Header + add-buttons carry a 1px border, so they get 1px-less padding than
+  /* Desktop: sessions and windows are one height, so both add-buttons are too.
+     Header + add-buttons carry a 1px border, so they get 1px-less padding than
      the borderless window rows to end up the same height. */
   .sgroup-head { padding: 2px 8px; }
   .wrow { padding: 3px 8px; }
   .board-add { padding: 2px 8px; margin-bottom: 6px; }
+  .board-add.board-add-sub { padding: 2px 8px; }
   /* Overlay buttons a touch smaller so they never exceed the dense row height. */
   .srow-btn { width: 24px; height: 24px; }
 }
