@@ -1073,6 +1073,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'switch', target: target }));
             }
+            // Move focus into the terminal so the user can type right away,
+            // without having to click into it after picking a window.
+            term.focus();
         },
         currentSession: function () { return currentSession; },
     };
