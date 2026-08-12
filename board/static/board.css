@@ -362,6 +362,12 @@
 .sgroup-head:hover .srow-actions,
 .wrow:hover .srow-actions { display: flex; }
 
+/* In the rail, a row is a tiny switch target — the overlay would cover the dot
+   and steal the tap. No row actions here (rename/close live in the wider view);
+   this must beat the :hover rule above, so it is scoped and comes after it. */
+.rail .sgroup-head:hover .srow-actions,
+.rail .wrow:hover .srow-actions { display: none; }
+
 /* Touch: the sheet is wide, so keep the buttons inline and always visible. */
 @media (pointer: coarse) {
   .srow-actions {
