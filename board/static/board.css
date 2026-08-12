@@ -293,12 +293,15 @@
   color: var(--text-muted);
 }
 .board-add:hover { color: var(--text-primary); border-color: var(--text-muted); }
-.board-add-icon { flex: 0 0 auto; display: inline-flex; }
-.board-add-label { font-size: 13px; }
+/* align-items:center + line-height:1 keep the + glyph and the label centered on
+   the same line (the icon is an inline-flex box around the SVG). */
+.board-add-icon { flex: 0 0 auto; display: inline-flex; align-items: center; }
+.board-add-label { font-size: 13px; line-height: 1; }
 
-.wrow-add { color: var(--text-muted); }
-.wrow-add:hover { color: var(--text-primary); }
-.wrow-add-label { opacity: 0.75; }
+/* The nested "new window" add-button is the same as "new session"; it only drops
+   the extra bottom margin (the .sgroup-wins gap already spaces it below the last
+   window). Two classes so it wins over the desktop .board-add margin. */
+.board-add.board-add-sub { margin-bottom: 0; }
 
 /* ---- Rail: dragged narrow -> a column of dots with hover tooltips -------- */
 .rail .board-filter-wrap { display: none; }
@@ -318,7 +321,6 @@
 .rail .srow-actions,
 .rail .wrow-label,
 .rail .wrow-name,
-.rail .wrow-add-label,
 .rail .board-add-label { display: none; }
 .rail .sgroup-wins { margin: 2px 0 0; padding-left: 0; border-left: none; }
 .rail .wrow { justify-content: center; gap: 0; padding: 4px 0; }

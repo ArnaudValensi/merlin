@@ -222,21 +222,27 @@ window.SessionsBoard = (function () {
     return row;
   }
 
+  // A "+ add" button: the shared markup/style for both "new session" (top of
+  // the list) and "new window" (foot of a session), so they match exactly.
+  function makeAdd(label, extraCls, onClick) {
+    var row = el('div', 'board-add' + (extraCls ? ' ' + extraCls : ''));
+    row.setAttribute('data-tooltip', label);
+    var icon = el('span', 'board-add-icon');
+    icon.innerHTML = IC_PLUS;
+    row.appendChild(icon);
+    row.appendChild(el('span', 'board-add-label', label));
+    row.addEventListener('click', onClick);
+    return row;
+  }
+
   // The "+ new window" row at the foot of a session (Tree-Style-Tab "New Tab").
   function makeNewWindow(sessionName) {
-    var row = el('div', 'wrow wrow-add');
-    row.setAttribute('data-tooltip', 'New window in ' + sessionName);
-    var dot = el('span', 'wrow-dot');
-    dot.innerHTML = IC_PLUS;
-    row.appendChild(dot);
-    row.appendChild(el('span', 'wrow-name wrow-add-label', 'new window'));
-    row.addEventListener('click', function () {
+    return makeAdd('new window', 'board-add-sub', function () {
       api('/window/new', { name: sessionName }).then(function (r) {
         if (r && r.window_id) switchTo(sessionName + ':' + r.window_id);
         else load();
       });
     });
-    return row;
   }
 
   // --- a session group ---------------------------------------------------
@@ -295,14 +301,7 @@ window.SessionsBoard = (function () {
 
   // The "+ new session" row at the top of the list.
   function makeNewSession() {
-    var row = el('div', 'board-add');
-    row.setAttribute('data-tooltip', 'New session');
-    var icon = el('span', 'board-add-icon');
-    icon.innerHTML = IC_PLUS;
-    row.appendChild(icon);
-    row.appendChild(el('span', 'board-add-label', 'new session'));
-    row.addEventListener('click', function () { openNewSession(row); });
-    return row;
+    return makeAdd('new session', '', function (e) { openNewSession(e.currentTarget); });
   }
 
   // --- filtering (substring over session + window names / projects) ------
