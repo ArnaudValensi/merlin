@@ -24,7 +24,6 @@ from dataclasses import dataclass
 _FIELDS = (
     "@agent_sid",
     "@agent_state",
-    "@claude",
     "@agent_cwd",
     "@agent_parent",
     "@agent_relation",
@@ -103,7 +102,6 @@ def parse_sweep(raw: str) -> list[Window]:
         (
             sid,
             state,
-            claude,
             cwd,
             parent,
             relation,
@@ -114,16 +112,10 @@ def parse_sweep(raw: str) -> list[Window]:
             activity,
             name,
         ) = parts
-        # Coalesce the state variable. Vanilla Merlin drives `@agent_state`; a
-        # custom pill system (e.g. the maintainer's dotfiles) may drive `@claude`
-        # instead and be the one actually cleared on visit. Prefer `@claude` when
-        # set so the board tracks whichever variable is live, and never shows a
-        # stale "done" that the tmux status bar has already cleared.
-        effective = (claude.strip() or state.strip()).lower()
         windows.append(
             Window(
                 sid=sid,
-                state=effective,
+                state=state.strip().lower(),
                 cwd=cwd,
                 parent=parent,
                 relation=relation.strip().lower(),
