@@ -76,7 +76,7 @@
 }
 .board-filter {
   width: 100%;
-  height: 30px;
+  height: 37px;              /* mobile: matches a session header (see overrides) */
   padding: 0 10px;
   font-family: 'Geist Mono', monospace;
   font-size: 12px;
@@ -388,6 +388,7 @@
      Keep these in step with .srow-btn / row padding above. */
   .board-add { min-height: 46px; }
   .board-add.board-add-sub { min-height: 38px; }
+  .board-filter { height: 46px; }   /* matches the session header on touch */
 }
 
 .srow-btn {
@@ -486,6 +487,7 @@
   .wrow { padding: 3px 8px; }
   .board-add { padding: 2px 8px; margin-bottom: 6px; }
   .board-add.board-add-sub { padding: 2px 8px; }
+  .board-filter { height: 25px; }   /* matches the session header on desktop */
   /* Overlay buttons a touch smaller so they never exceed the dense row height. */
   .srow-btn { width: 24px; height: 24px; }
 }
