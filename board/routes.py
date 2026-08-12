@@ -50,6 +50,11 @@ class WindowReq(BaseModel):
     window_id: str
 
 
+class ReorderReq(BaseModel):
+    session: str
+    order: list[str]
+
+
 URL_SLUG = "board"
 
 BOARD_DIR = Path(__file__).parent.resolve()
@@ -112,6 +117,14 @@ def api_new_window(req: SessionReq):
     if wid is None:
         raise HTTPException(status_code=502, detail="Could not open window")
     return {"ok": True, "window_id": wid}
+
+
+@api_router.post("/window/reorder")
+def api_reorder_windows(req: ReorderReq):
+    """Reorder a session's windows to the given order (real tmux swap-window)."""
+    if not sweep.reorder_windows(req.session, req.order):
+        raise HTTPException(status_code=502, detail="Could not reorder windows")
+    return {"ok": True}
 
 
 @api_router.post("/window/rename")

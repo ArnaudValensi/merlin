@@ -65,6 +65,7 @@ window.SessionsBoard = (function () {
   var IC_PLUS = svg('<path d="M12 5v14"/><path d="M5 12h14"/>');
   var IC_CHEVRON = svg('<path d="m9 18 6-6-6-6"/>');  // rotates to ▾ when expanded
   var IC_SESSION = svg('<path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>');
+  var IC_GRIP = svg('<circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/>', { fill: 'currentColor', stroke: 'none' });
 
   // Inline arm-then-confirm for destructive actions. First tap arms (red check);
   // a second tap acts; anything else disarms.
@@ -271,10 +272,11 @@ window.SessionsBoard = (function () {
   }
 
   // --- a window row ------------------------------------------------------
-  function makeWindow(sessionName, w) {
+  function makeWindow(sessionName, w, canReorder) {
     var row = el('div', 'wrow st-' + (w.state || 'plain'));
     row.setAttribute('data-depth', String(Math.min(w.depth, 3)));
     if (w.active) row.classList.add('active');
+    row.setAttribute('data-window', w.window_id);  // for drag-reorder
     // Rail fly-out: label + (kind/session/window) so it can offer rename/close.
     row.setAttribute('data-tooltip', sessionName + ' · ' + (w.name || 'window'));
     row.setAttribute('data-fly-kind', 'window');
@@ -309,7 +311,17 @@ window.SessionsBoard = (function () {
     });
     actions.appendChild(kill);
     row.appendChild(actions);
-
+    // Drag handle: always visible on the right (full view), rename/close overlay
+    // to its left on hover. Only when there's more than one window to reorder. A
+    // click on it must not switch. The rail hides it and drags the whole dot.
+    if (canReorder) {
+      row.classList.add('has-grip');
+      var grip = el('span', 'srow-grip');
+      grip.innerHTML = IC_GRIP;
+      grip.title = 'Drag to reorder';
+      grip.addEventListener('click', function (e) { e.stopPropagation(); });
+      row.appendChild(grip);
+    }
     row.addEventListener('click', function () { switchTo(sessionName + ':' + w.window_id); });
     return row;
   }
@@ -387,7 +399,9 @@ window.SessionsBoard = (function () {
 
     if (!folded) {
       var wins = el('div', 'sgroup-wins');
-      sess.windows.forEach(function (w) { wins.appendChild(makeWindow(sess.name, w)); });
+      wins.setAttribute('data-session', sess.name);  // drag-reorder target
+      var canReorder = sess.windows.length > 1;
+      sess.windows.forEach(function (w) { wins.appendChild(makeWindow(sess.name, w, canReorder)); });
       wins.appendChild(makeNewWindow(sess.name));
       group.appendChild(wins);
     }
@@ -420,9 +434,44 @@ window.SessionsBoard = (function () {
     var sessions = filteredSessions();
     if (!sessions.length) {
       list.appendChild(el('div', 'board-empty', S.query ? 'no match' : '$ no sessions'));
+      setupSortables();
       return;
     }
     sessions.forEach(function (s) { list.appendChild(makeSession(s)); });
+    setupSortables();
+  }
+
+  // Drag-to-reorder windows within a session, applied to the real tmux order
+  // (POST /window/reorder -> swap-window). One Sortable per session's window
+  // list. Full view drags by the grip handle; the rail has no room for a grip,
+  // so the whole dot drags (a small delay keeps a tap-to-switch from starting a
+  // drag). Disabled while filtering (a filtered subset has no real order).
+  function setupSortables() {
+    (S.sortables || []).forEach(function (s) { try { s.destroy(); } catch (e) {} });
+    S.sortables = [];
+    if (typeof Sortable === 'undefined' || S.query.trim()) return;
+    var rail = S.root.classList.contains('rail');
+    Array.prototype.forEach.call(S.list.querySelectorAll('.sgroup-wins'), function (wins) {
+      var opts = {
+        draggable: '.wrow',           // window rows only; the +new-window is a .board-add
+        animation: 120,
+        ghostClass: 'wrow-ghost',
+        onStart: function () { S.paused = true; hideFly(); },
+        onEnd: function () {
+          var session = wins.getAttribute('data-session');
+          var order = Array.prototype.map.call(
+            wins.querySelectorAll('.wrow'), function (r) { return r.getAttribute('data-window'); });
+          api('/window/reorder', { session: session, order: order }).then(function () {
+            S.paused = false;
+            S.lastSig = null;
+            load();
+          });
+        },
+      };
+      if (rail) { opts.delay = 130; opts.delayOnTouchOnly = false; }
+      else { opts.handle = '.srow-grip'; }
+      S.sortables.push(Sortable.create(wins, opts));
+    });
   }
 
   function render(v) {
@@ -492,7 +541,11 @@ window.SessionsBoard = (function () {
   function applyMode() {
     var w = S.root.clientWidth;
     if (!w) return;
-    S.root.classList.toggle('rail', w < RAIL_W);
+    var rail = w < RAIL_W;
+    if (rail !== S.root.classList.contains('rail')) {
+      S.root.classList.toggle('rail', rail);
+      setupSortables();  // full drags by the grip; the rail drags the whole dot
+    }
   }
 
   function buildShell(root) {

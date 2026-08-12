@@ -276,6 +276,57 @@ def new_window(session: str) -> str | None:
     return out.strip() if out else None
 
 
+def reorder_windows(session: str, ordered_ids: list[str]) -> bool:
+    """Reorder ``session``'s windows to match ``ordered_ids`` (a full list of the
+    session's window ids in the desired order), using real ``swap-window`` moves
+    so tmux's own order — and the status-bar tab strip — changes with it. Bails
+    without touching anything if the list is stale (count mismatch). ``-d`` keeps
+    the active window put."""
+    if not shutil.which("tmux") or not session or not ordered_ids:
+        return False
+    out = _tmux_capture(
+        ["list-windows", "-t", session, "-F", "#{window_index}\t#{window_id}"]
+    )
+    if out is None:
+        return False
+    at: dict[int, str] = {}  # index -> window id
+    idx_of: dict[str, int] = {}  # window id -> index
+    for line in out.splitlines():
+        if "\t" not in line:
+            continue
+        i_s, wid = line.split("\t", 1)
+        if not i_s.lstrip("-").isdigit():
+            continue
+        i = int(i_s)
+        at[i] = wid
+        idx_of[wid] = i
+    order = sorted(at)  # the session's window indices, ascending
+    if set(ordered_ids) != set(idx_of):
+        return False  # stale request (windows added/removed): do not half-apply
+    # Selection-swap: for each slot (in index order), swap the wanted window in.
+    for slot, target_idx in enumerate(order):
+        want = ordered_ids[slot]
+        have = at[target_idx]
+        if want == have:
+            continue
+        want_idx = idx_of[want]
+        moved = _run_ok(
+            [
+                "swap-window",
+                "-d",
+                "-s",
+                f"{session}:{want_idx}",
+                "-t",
+                f"{session}:{target_idx}",
+            ]
+        )
+        if not moved:
+            return False
+        at[target_idx], at[want_idx] = want, have
+        idx_of[want], idx_of[have] = target_idx, want_idx
+    return True
+
+
 def create_or_get_session(directory: str, name: str = "") -> str | None:
     """Create-or-switch by directory: return the name of a detached session
     rooted at ``directory``, creating it if one does not already exist.

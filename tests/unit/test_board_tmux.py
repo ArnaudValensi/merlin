@@ -98,6 +98,23 @@ def test_new_window(tmux_server):
     assert wid in after
 
 
+def test_reorder_windows(tmux_server):
+    sweep.new_window("alpha")
+    sweep.new_window("alpha")
+    ids = _tmux("list-windows", "-t", "alpha", "-F", "#{window_id}").stdout.split()
+    assert len(ids) == 3
+    rev = list(reversed(ids))
+    assert sweep.reorder_windows("alpha", rev) is True
+    after = _tmux("list-windows", "-t", "alpha", "-F", "#{window_id}").stdout.split()
+    assert after == rev
+
+
+def test_reorder_windows_stale_is_noop(tmux_server):
+    ids = _tmux("list-windows", "-t", "alpha", "-F", "#{window_id}").stdout.split()
+    # Wrong count -> refuse rather than half-apply.
+    assert sweep.reorder_windows("alpha", ids + ["@999"]) is False
+
+
 def test_rename_window(tmux_server):
     win = _tmux("list-windows", "-t", "alpha", "-F", "#{window_id}").stdout.split()[0]
     assert sweep.rename_window("alpha", win, "editor") is True

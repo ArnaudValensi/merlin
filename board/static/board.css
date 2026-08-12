@@ -381,6 +381,9 @@
 }
 .sgroup-head:hover .srow-actions,
 .wrow:hover .srow-actions { display: flex; }
+/* When a window row shows an always-visible grip, the hover actions sit to its
+   left so they don't cover it. */
+.wrow.has-grip .srow-actions { right: 34px; }
 
 /* In the rail, a row is a tiny switch target — the overlay would cover the dot
    and steal the tap. No row actions here (rename/close live in the wider view);
@@ -422,6 +425,25 @@
 .srow-btn.srow-btn-danger:hover { color: var(--accent-red); background: rgba(248, 113, 113, 0.1); }
 /* Armed: the destructive close, first tap. Solid red = "tap again to confirm". */
 .srow-btn.armed, .srow-btn.armed:hover { color: #0b1411; background: var(--accent-red); }
+
+/* Drag handle for window reorder (full view). touch-action:none so a touch-drag
+   is captured for reordering instead of scrolling the list. In the rail it is
+   hidden with the rest of .srow-actions and the whole dot drags instead. */
+.srow-grip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  color: var(--text-muted);
+  cursor: grab;
+  touch-action: none;
+}
+.srow-grip:active { cursor: grabbing; }
+/* Rail: no grip (no room); the whole dot drags instead. */
+.rail .srow-grip { display: none; }
+/* The item being dragged (SortableJS ghost placeholder). */
+.wrow-ghost { opacity: 0.4; }
 
 .board-empty {
   padding: 28px 16px;
