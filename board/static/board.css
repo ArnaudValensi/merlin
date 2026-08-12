@@ -338,33 +338,19 @@
   z-index: 300;
 }
 
-/* ---- Compact (RAIL_W..COMPACT_W): denser, never broken mid-shrink -------
-   Drop the session stack icon (the caret still marks a session and folds it),
-   tighten spacing, and shrink type a step so names get the width. */
-.compact .board-list { padding: 5px; }
-.compact .sgroup { margin-bottom: 8px; }
-.compact .sgroup-icon { display: none; }
-.compact .sgroup-head { gap: 6px; padding: 6px; }
-.compact .sgroup-name { font-size: 12px; }
-.compact .board-add { padding: 6px; margin-bottom: 8px; }
-.compact .board-add-label { font-size: 12px; }
-.compact .wrow { padding: 4px 6px; }
-.compact .wrow-name { font-size: 12px; }
-.compact .sgroup-wins { margin-left: 10px; padding-left: 5px; }
-.compact .wrow[data-depth="1"] { margin-left: 10px; }
-.compact .wrow[data-depth="2"] { margin-left: 20px; }
-.compact .wrow[data-depth="3"] { margin-left: 26px; }
 
 /* Row actions: hidden until hovered (desktop); always visible on touch. */
+/* Hidden until hover with display:none (not opacity) so the buttons reserve NO
+   width when idle — otherwise they starve the session/window name at narrow
+   widths (it truncated to a single letter). Always shown on touch. */
 .srow-actions {
   flex: 0 0 auto;
-  display: flex;
+  display: none;
   gap: 2px;
-  opacity: 0;
 }
 .sgroup-head:hover .srow-actions,
-.wrow:hover .srow-actions { opacity: 1; }
-@media (pointer: coarse) { .srow-actions { opacity: 1; } }
+.wrow:hover .srow-actions { display: flex; }
+@media (pointer: coarse) { .srow-actions { display: flex; } }
 
 .srow-btn {
   width: 28px;
@@ -449,4 +435,14 @@
   .wrow[data-depth="1"] { margin-left: 18px; }
   .wrow[data-depth="2"] { margin-left: 36px; }
   .wrow[data-depth="3"] { margin-left: 48px; }
+
+  /* Desktop density: a session row is as compact as a window row (same height),
+     so the whole tree is tighter. Window rows are contiguous (no gap between
+     them). Mobile keeps its comfortable touch sizing. */
+  .board-list { padding: 5px; }
+  .sgroup { margin-bottom: 6px; }
+  .sgroup-head { padding: 4px 8px; }
+  .wrow { padding: 2px 8px; }
+  .sgroup-wins { margin-top: 0; }
+  .board-add { padding: 4px 8px; margin-bottom: 6px; }
 }

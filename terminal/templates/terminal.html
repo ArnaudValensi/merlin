@@ -194,7 +194,7 @@
         divider.addEventListener('pointermove', function (e) {
             if (!dragging) return;
             var w = window.innerWidth - e.clientX;
-            lastW = Math.max(64, Math.min(w, Math.round(window.innerWidth * 0.6)));
+            lastW = Math.max(44, Math.min(w, Math.round(window.innerWidth * 0.6)));
             main.style.setProperty('--sessions-w', lastW + 'px');
         });
         function endDrag(e) {

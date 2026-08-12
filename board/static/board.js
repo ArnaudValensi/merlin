@@ -15,8 +15,7 @@ window.SessionsBoard = (function () {
 
   var DOT = { idle: '○', busy: '◐', done: '●' };
   var POLL_MS = 2000;
-  var RAIL_W = 140;           // below this width: rail of dots
-  var COMPACT_W = 205;        // below this width (down to RAIL_W): compact view
+  var RAIL_W = 130;           // below this width: rail of dots; above: full view
   var FOLD_KEY = 'board-folded';
 
   var S = { root: null, list: null, filter: null, fwrap: null,
@@ -394,15 +393,12 @@ window.SessionsBoard = (function () {
     elm.addEventListener('pointercancel', function () { y0 = null; });
   }
 
-  // Three width tiers so the panel never looks broken mid-shrink:
-  //   >= COMPACT_W : full view
-  //   RAIL_W..COMPACT_W : compact (tighter, icons/labels dropped, names kept)
-  //   < RAIL_W : rail of dots with instant hover tooltips
+  // Two tiers: the full view (dense on desktop), and — below RAIL_W — a rail of
+  // dots with instant hover tooltips.
   function applyMode() {
     var w = S.root.clientWidth;
     if (!w) return;
     S.root.classList.toggle('rail', w < RAIL_W);
-    S.root.classList.toggle('compact', w >= RAIL_W && w < COMPACT_W);
   }
 
   function buildShell(root) {
