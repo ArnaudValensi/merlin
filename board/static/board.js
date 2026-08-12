@@ -15,12 +15,13 @@ window.SessionsBoard = (function () {
 
   var DOT = { idle: '○', busy: '◐', done: '●' };
   var POLL_MS = 2000;
-  var RAIL_W = 120;           // below this panel width, switch to the dot rail
+  var RAIL_W = 140;           // below this width: rail of dots
+  var COMPACT_W = 205;        // below this width (down to RAIL_W): compact view
   var FOLD_KEY = 'board-folded';
 
   var S = { root: null, list: null, filter: null, fwrap: null,
             sessions: [], counts: { sessions: 0, waiting: 0, working: 0 },
-            current: '', query: '', lastSig: null, paused: false, rail: false,
+            current: '', query: '', lastSig: null, paused: false,
             folded: loadFolded(),
             onAttention: function () {}, onJump: function () {}, onClose: null };
 
@@ -99,6 +100,23 @@ window.SessionsBoard = (function () {
 
   function badge(n) { return el('span', 'sbadge', String(n)); }
 
+  // Instant hover tooltip for the rail. A single body-level element (so the
+  // panel's scroll container can't clip it), positioned to the left of the
+  // hovered item — the panel hugs the right screen edge.
+  var tip = null;
+  function showTip(target) {
+    var text = target.getAttribute('data-tooltip');
+    if (!text) return;
+    if (!tip) { tip = el('div', 'board-tip'); document.body.appendChild(tip); }
+    tip.textContent = text;
+    tip.style.display = 'block';
+    var r = target.getBoundingClientRect();
+    var tr = tip.getBoundingClientRect();
+    tip.style.top = (r.top + r.height / 2 - tr.height / 2) + 'px';
+    tip.style.left = (r.left - tr.width - 8) + 'px';
+  }
+  function hideTip() { if (tip) tip.style.display = 'none'; }
+
   // Swap a label for an input; commit(save) writes via onSave(value).
   function editInline(labelEl, initial, placeholder, onSave) {
     if (labelEl.parentNode.querySelector('.srow-name-input')) return;
@@ -135,6 +153,21 @@ window.SessionsBoard = (function () {
   }
 
   function switchTo(target) {
+    var idx = target.indexOf(':');
+    var sname = idx >= 0 ? target.slice(0, idx) : target;
+    var wid = idx >= 0 ? target.slice(idx + 1) : '';
+    // Optimistic: reflect the selection in the UI immediately, before tmux
+    // confirms over the WebSocket, so a tap feels instant. load() reconciles.
+    S.current = sname;
+    if (wid) {
+      S.sessions.forEach(function (s) {
+        if (s.name === sname) {
+          s.windows.forEach(function (w) { w.active = w.window_id === wid; });
+        }
+      });
+    }
+    S.lastSig = null;
+    renderList();
     if (window.MerlinTerminal && window.MerlinTerminal.switchSession) {
       window.MerlinTerminal.switchSession(target);
       S.onJump();
@@ -155,7 +188,8 @@ window.SessionsBoard = (function () {
     var row = el('div', 'wrow st-' + (w.state || 'plain'));
     row.setAttribute('data-depth', String(Math.min(w.depth, 3)));
     if (w.active) row.classList.add('active');
-    row.title = sessionName + ' · ' + (w.name || 'window');  // rail tooltip
+    // Instant hover tooltip (sidebar-style ::after) for the rail/compact modes.
+    row.setAttribute('data-tooltip', sessionName + ' · ' + (w.name || 'window'));
 
     var dot = el('span', 'wrow-dot');
     dot.textContent = w.is_agent ? (DOT[w.state] || DOT.idle) : '·';
@@ -192,7 +226,7 @@ window.SessionsBoard = (function () {
   // The "+ new window" row at the foot of a session (Tree-Style-Tab "New Tab").
   function makeNewWindow(sessionName) {
     var row = el('div', 'wrow wrow-add');
-    row.title = 'New window in ' + sessionName;
+    row.setAttribute('data-tooltip', 'New window in ' + sessionName);
     var dot = el('span', 'wrow-dot');
     dot.innerHTML = IC_PLUS;
     row.appendChild(dot);
@@ -209,12 +243,14 @@ window.SessionsBoard = (function () {
   // --- a session group ---------------------------------------------------
   function makeSession(sess) {
     var group = el('div', 'sgroup');
-    if (sess.current) group.classList.add('current');
+    // Use the client's own current session (optimistic) for the highlight, so a
+    // switch lands instantly rather than waiting for the server's echo.
+    if (sess.name === S.current) group.classList.add('current');
     var folded = S.folded.has(sess.name);
     if (folded) group.classList.add('folded');
 
     var head = el('div', 'sgroup-head');
-    head.title = sess.name;
+    head.setAttribute('data-tooltip', sess.name);
     var caret = el('span', 'sgroup-caret');
     caret.innerHTML = IC_CHEVRON;
     head.appendChild(caret);
@@ -261,7 +297,7 @@ window.SessionsBoard = (function () {
   // The "+ new session" row at the top of the list.
   function makeNewSession() {
     var row = el('div', 'board-add');
-    row.title = 'New session';
+    row.setAttribute('data-tooltip', 'New session');
     var icon = el('span', 'board-add-icon');
     icon.innerHTML = IC_PLUS;
     row.appendChild(icon);
@@ -358,13 +394,15 @@ window.SessionsBoard = (function () {
     elm.addEventListener('pointercancel', function () { y0 = null; });
   }
 
-  // Below RAIL_W the panel becomes a rail of dots (CSS keys off the .rail class);
-  // the filter is meaningless there, so it's hidden.
-  function applyRail() {
-    var narrow = S.root.clientWidth > 0 && S.root.clientWidth < RAIL_W;
-    if (narrow === S.rail) return;
-    S.rail = narrow;
-    S.root.classList.toggle('rail', narrow);
+  // Three width tiers so the panel never looks broken mid-shrink:
+  //   >= COMPACT_W : full view
+  //   RAIL_W..COMPACT_W : compact (tighter, icons/labels dropped, names kept)
+  //   < RAIL_W : rail of dots with instant hover tooltips
+  function applyMode() {
+    var w = S.root.clientWidth;
+    if (!w) return;
+    S.root.classList.toggle('rail', w < RAIL_W);
+    S.root.classList.toggle('compact', w >= RAIL_W && w < COMPACT_W);
   }
 
   function buildShell(root) {
@@ -383,10 +421,21 @@ window.SessionsBoard = (function () {
     S.list = el('div', 'board-list');
     root.appendChild(S.list);
 
+    // Rail hover tooltips (delegated). Only in rail mode; wider modes show names.
+    S.list.addEventListener('mouseover', function (e) {
+      if (!S.root.classList.contains('rail')) return;
+      var t = e.target.closest('[data-tooltip]');
+      if (t) showTip(t);
+    });
+    S.list.addEventListener('mouseout', function (e) {
+      if (e.target.closest('[data-tooltip]')) hideTip();
+    });
+    S.list.addEventListener('scroll', hideTip);
+
     if (window.ResizeObserver) {
-      new ResizeObserver(applyRail).observe(root);
+      new ResizeObserver(function () { hideTip(); applyMode(); }).observe(root);
     } else {
-      window.addEventListener('resize', applyRail);
+      window.addEventListener('resize', applyMode);
     }
   }
 
@@ -402,7 +451,7 @@ window.SessionsBoard = (function () {
     S.onJump = opts.onJump || function () {};
     S.onClose = opts.onClose || null;
     buildShell(S.root);
-    applyRail();
+    applyMode();
     if (window.MerlinTerminal && window.MerlinTerminal.currentSession) {
       S.current = window.MerlinTerminal.currentSession() || '';
     }

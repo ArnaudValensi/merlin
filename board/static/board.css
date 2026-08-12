@@ -319,6 +319,42 @@
 .rail .wrow { justify-content: center; gap: 0; padding: 4px 0; }
 .rail .wrow[data-depth] { margin-left: 0; }
 
+/* Instant hover tooltip for the rail — same look as the collapsed sidebar's
+   nav/env tooltips, but a body-level element (positioned in JS) so the panel's
+   scroll container can't clip it. It sits to the LEFT of the item, since the
+   panel hugs the right screen edge. */
+.board-tip {
+  position: fixed;
+  display: none;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 300;
+}
+
+/* ---- Compact (RAIL_W..COMPACT_W): denser, never broken mid-shrink -------
+   Drop the session stack icon (the caret still marks a session and folds it),
+   tighten spacing, and shrink type a step so names get the width. */
+.compact .board-list { padding: 5px; }
+.compact .sgroup { margin-bottom: 8px; }
+.compact .sgroup-icon { display: none; }
+.compact .sgroup-head { gap: 6px; padding: 6px; }
+.compact .sgroup-name { font-size: 12px; }
+.compact .board-add { padding: 6px; margin-bottom: 8px; }
+.compact .board-add-label { font-size: 12px; }
+.compact .wrow { padding: 4px 6px; }
+.compact .wrow-name { font-size: 12px; }
+.compact .sgroup-wins { margin-left: 10px; padding-left: 5px; }
+.compact .wrow[data-depth="1"] { margin-left: 10px; }
+.compact .wrow[data-depth="2"] { margin-left: 20px; }
+.compact .wrow[data-depth="3"] { margin-left: 26px; }
+
 /* Row actions: hidden until hovered (desktop); always visible on touch. */
 .srow-actions {
   flex: 0 0 auto;
