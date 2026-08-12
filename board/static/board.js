@@ -105,7 +105,7 @@ window.SessionsBoard = (function () {
   // surface: the actions live in the fly-out, never over the dot, so the dot's
   // tap stays a clean switch. Rail is a desktop-narrow mode, so hover is the
   // trigger (a tap also opens it, for a touchscreen desktop).
-  var fly = null, flyItem = null, flyHideT = null;
+  var fly = null, flyItem = null, flyHideT = null, flyEditing = false;
   function ensureFly() {
     if (fly) return fly;
     fly = el('div', 'board-flyout');
@@ -144,15 +144,24 @@ window.SessionsBoard = (function () {
     f.style.top = Math.max(4, r.top + r.height / 2 - fr.height / 2) + 'px';
     f.style.left = (r.left - fr.width - 8) + 'px';
   }
-  function scheduleHideFly() { clearTimeout(flyHideT); flyHideT = setTimeout(hideFly, 220); }
+  // While renaming, the mouse leaving the fly-out must NOT dismiss it (you'd lose
+  // the edit). Only committing, Escape, or a click away (which blurs the input)
+  // closes it then.
+  function scheduleHideFly() {
+    if (flyEditing) return;
+    clearTimeout(flyHideT);
+    flyHideT = setTimeout(hideFly, 220);
+  }
   function hideFly() {
     if (fly) fly.style.display = 'none';
     flyItem = null;
+    flyEditing = false;
     disarm();
     S.paused = false;
   }
   function renameInFly(lblEl, t) {
     clearTimeout(flyHideT);
+    flyEditing = true;  // pin the fly-out open while the input has focus
     var input = el('input', 'srow-name-input');
     input.value = t.name || '';
     input.placeholder = t.name || '';
