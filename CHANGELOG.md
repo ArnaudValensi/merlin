@@ -2,15 +2,20 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
-## Unreleased
+## v0.28.0 (2026-08-14)
 
 ### Added
 - **Agent-state pills for Codex:** Codex windows now use the same `○` idle, `◐` working, `?` asking, and `●` done states as Claude Code in both the tmux status bar and the Sessions panel. Merlin installs marked lifecycle hooks in `~/.codex/hooks.json` alongside the existing Claude Code hooks, while preserving every user-owned entry.
-- **A pill for "the agent is asking you something"** — A window whose agent has stopped mid-turn to ask a question now shows a sky `?` in the tmux tab bar and the Sessions panel, instead of sitting on the amber `◐` as if it were still working. It covers the multiple-choice dialog, the plan-approval screen, and permission prompts. Unlike the green `●`, looking at the window does not clear it: only answering does.
-- **Asking outranks waiting in the Sessions panel** — The Sessions button and the per-session badges turn blue when any window is blocked on a question, so a live turn waiting on you is distinguishable from a finished one you have not read yet.
+- **A pill for "the agent is asking you something":** A window whose agent has stopped mid-turn to ask a question now shows a sky `?` in the tmux tab bar and the Sessions panel, instead of sitting on the amber `◐` as if it were still working. It covers the multiple-choice dialog, the plan-approval screen, and permission prompts. Unlike the green `●`, looking at the window does not clear it: only answering does.
+- **Asking outranks waiting in the Sessions panel:** The Sessions button and the per-session badges turn blue when any window is blocked on a question, so a live turn waiting on you is distinguishable from a finished one you have not read yet.
+
+### Changed
+- **Context-aware new terminal windows:** New windows opened from the toolbar start in the active pane's directory, while windows opened from the Sessions panel start in the selected window's directory.
 
 ### Fixed
-- **Agent-state consent banner on the Terminal page** — The banner stretched to fill the whole height of the terminal area instead of sitting as a strip at the top, squashing the terminal beside it. It now floats over the top of the page as intended. Other pages and mobile were never affected.
+- **Renamed tmux session reconnects:** Browser and SSH terminals reconnect to renamed sessions instead of silently creating a duplicate default session.
+- **Terminal environment after restart:** Restarting Merlin from tmux or a non-interactive shell no longer causes browser terminals to fail with "terminal does not support clear."
+- **Agent-state consent banner on the Terminal page:** The banner stretched to fill the whole height of the terminal area instead of sitting as a strip at the top, squashing the terminal beside it. It now floats over the top of the page as intended. Other pages and mobile were never affected.
 
 ## v0.27.0 (2026-08-13)
 
