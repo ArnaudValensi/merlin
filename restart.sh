@@ -6,6 +6,11 @@ set -e
 
 PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+# Merlin is a daemon, so it must not inherit terminal-client metadata from
+# whichever interactive tmux pane or non-interactive shell restarted it.
+unset TMUX TMUX_PANE
+export TERM=xterm-256color
+
 # Kill existing processes
 for proc in "uv run cli.py" "uv run main.py" "python main.py" "uv run merlin_bot.py" "python merlin_bot.py"; do
     if pgrep -f "$proc" > /dev/null 2>&1; then

@@ -24,7 +24,7 @@ from pathlib import Path
 import asyncssh
 
 from board import sweep as board_sweep
-from terminal.tmux import reconnect_argv
+from terminal.tmux import reconnect_argv, terminal_process_env
 
 logger = logging.getLogger("merlin.ssh")
 
@@ -111,8 +111,7 @@ async def _handle_session(process: asyncssh.SSHServerProcess) -> None:
         if term_size:
             _set_winsize(slave_fd, term_size[0], term_size[1])
 
-        env = os.environ.copy()
-        env["TERM"] = term_type
+        env = terminal_process_env(os.environ, term=term_type)
 
         proc = await asyncio.create_subprocess_exec(
             *process_args,

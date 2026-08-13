@@ -29,7 +29,7 @@ from auth import verify_ws_cookie
 from board import sweep as board_sweep
 from merlin_ext import make_templates
 from terminal.pty_bridge import PtyBridge, terminate_client
-from terminal.tmux import DEFAULT_SESSION_NAME, reconnect_argv
+from terminal.tmux import DEFAULT_SESSION_NAME, reconnect_argv, terminal_process_env
 
 logger = logging.getLogger("merlin.terminal")
 
@@ -395,6 +395,11 @@ async def terminal_ws(websocket: WebSocket):
     tmux_conf = TERMINAL_DIR / "tmux.conf"
     if tmux_conf.exists():
         tmux_args[1:1] = ["-f", str(tmux_conf)]
+    tmux_env = terminal_process_env(os.environ, term="xterm-256color")
+    # tmux.conf's agent-state switch-clear hook resolves this to find
+    # terminal/hooks/agent-state-switch.sh. Keep it in the tmux client's
+    # environment so a newly created server captures it for run-shell hooks.
+    tmux_env["MERLIN_TERMINAL_HOOKS"] = str(TERMINAL_DIR / "hooks")
 
     # Fork a PTY running tmux. Nothing but exec-prep may run in the child:
     # its stdio IS the pty, so e.g. logging would leak into the terminal
@@ -404,12 +409,7 @@ async def terminal_ws(websocket: WebSocket):
     if pid == 0:
         # Child process — start in CWD (or project root)
         os.chdir(_cwd or str(PROJECT_ROOT))
-        # tmux.conf's agent-state switch-clear hook resolves this to find
-        # terminal/hooks/agent-state-switch.sh. Exported here (child only,
-        # pre-exec) so tmux captures it into its global environment when it
-        # creates the merlin-dev server; run-shell children then inherit it.
-        os.environ["MERLIN_TERMINAL_HOOKS"] = str(TERMINAL_DIR / "hooks")
-        os.execvp("tmux", tmux_args)
+        os.execvpe("tmux", tmux_args, tmux_env)
         os._exit(1)
 
     # Parent process — bridge WebSocket <-> PTY. All PTY I/O goes through
