@@ -50,7 +50,7 @@ status bar) opens the switcher: a docked panel on desktop, a full-screen
 sheet on mobile.
 
 The switcher mirrors tmux exactly. It lists every session, and under each
-one every window it holds, with the same `○` / `◐` / `●` activity dot a
+one every window it holds, with the same `○` / `◐` / `?` / `●` activity dot a
 window shows in the status bar. Tap a session to switch to it; tap a
 window to jump straight to it. Switching only moves the tab you are on:
 your phone and your laptop each stay where you left them.
@@ -70,17 +70,24 @@ so it always shows the windows of whichever session you are currently on.
 
 When you run [Claude Code](agents.md) in a window, its pill in the tmux
 status bar encodes what that session is doing, so one glance at the tab
-bar tells you which session is working, which just finished, and which
-you have already looked at:
+bar tells you which session is working, which is stuck on a question,
+which just finished, and which you have already looked at:
 
 - `○` idle (grey): nothing is running.
 - `◐` working (amber): the agent is mid-turn.
+- `?` asking (sky): the agent has stopped mid-turn and needs an answer.
 - `●` done (green): the turn finished and it is waiting on you.
 
 The green `●` is an *unread* marker. It clears when you switch to that
 window, or when you switch away after watching it finish. A window that
 finishes in the background stays green until you visit it, so nothing
 that wants your attention is lost while you work elsewhere.
+
+The sky `?` is different: it means a dialog is open and the agent cannot
+continue without you. That happens when it asks you to choose between
+several approaches, when it presents a plan for approval, or when it
+needs permission to run something. Looking at the window does **not**
+clear it, because the question is still unanswered. Answering does.
 
 Windows that are not running Claude Code (a plain shell, or another
 agent) keep the classic `●` active / `○` inactive dots, so nothing

@@ -204,6 +204,8 @@ class TestAgentStateHooksSetting:
         assert client.get("/api/settings").json()["agent_state_hooks"] == "ask"
 
     def test_set_auto_persists_and_installs(self, client, tmp_path, settings_json):
+        from lib import skills
+
         (tmp_path / "config.env").write_text("")
         resp = client.post("/api/settings", json={"AGENT_STATE_HOOKS": "auto"})
         assert resp.status_code == 200
@@ -211,7 +213,7 @@ class TestAgentStateHooksSetting:
         # auto triggers an immediate install
         assert settings_json.exists()
         data = json.loads(settings_json.read_text())
-        assert set(data["hooks"]) == {"UserPromptSubmit", "Stop", "SessionStart"}
+        assert set(data["hooks"]) == set(skills._HOOK_EVENTS)
 
     def test_set_off_removes(self, client, tmp_path, settings_json):
         (tmp_path / "config.env").write_text("")

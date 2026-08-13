@@ -13,13 +13,13 @@
 window.SessionsBoard = (function () {
   'use strict';
 
-  var DOT = { idle: '○', busy: '◐', done: '●' };
+  var DOT = { idle: '○', busy: '◐', ask: '?', done: '●' };
   var POLL_MS = 2000;
   var RAIL_W = 130;           // below this width: rail of dots; above: full view
   var FOLD_KEY = 'board-folded';
 
   var S = { root: null, list: null, filter: null, fwrap: null,
-            sessions: [], counts: { sessions: 0, waiting: 0, working: 0 },
+            sessions: [], counts: { sessions: 0, waiting: 0, working: 0, asking: 0 },
             current: '', query: '', lastSig: null, paused: false,
             folded: loadFolded(),
             onAttention: function () {}, onJump: function () {}, onClose: null };
@@ -98,7 +98,9 @@ window.SessionsBoard = (function () {
     return JSON.stringify({ s: v.sessions, cur: v.current_session });
   }
 
-  function badge(n) { return el('span', 'sbadge', String(n)); }
+  function badge(n, asking) {
+    return el('span', asking ? 'sbadge asking' : 'sbadge', String(n));
+  }
 
   // Rail fly-out: the hover popover to the LEFT of a dot. A body-level element
   // (so the panel's scroll can't clip it), it shows the item's name and — for a
@@ -371,7 +373,9 @@ window.SessionsBoard = (function () {
     head.appendChild(icon);
     var nameEl = el('span', 'sgroup-name', sess.name);
     head.appendChild(nameEl);
-    if (sess.counts.waiting) head.appendChild(badge(sess.counts.waiting));
+    // Both states want you: 'asking' blocks a live turn, 'waiting' is unread.
+    var wants = (sess.counts.waiting || 0) + (sess.counts.asking || 0);
+    if (wants) head.appendChild(badge(wants, sess.counts.asking > 0));
 
     var actions = el('div', 'srow-actions');
     var edit = iconBtn(IC_EDIT, 'Rename session');
@@ -476,11 +480,14 @@ window.SessionsBoard = (function () {
 
   function render(v) {
     S.sessions = v.sessions || [];
-    S.counts = v.counts || { sessions: 0, waiting: 0, working: 0 };
+    S.counts = v.counts || { sessions: 0, waiting: 0, working: 0, asking: 0 };
     if (v.current_session) S.current = v.current_session;
     S.lastSig = sigOf(v);
     renderList();
-    S.onAttention(v.attention || 0);
+    // Second arg: how many of those are blocked on a question. The button is
+    // the only signal visible with the panel closed, so it needs to tell an
+    // unanswered dialog apart from a merely unread finish.
+    S.onAttention(v.attention || 0, S.counts.asking || 0);
   }
 
   function load() {

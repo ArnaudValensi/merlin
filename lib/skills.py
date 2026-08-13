@@ -474,8 +474,9 @@ def set_agent_state_hooks_mode(mode: str) -> str:
 # The interactive `claude` command line is the user's, not Merlin's, so the
 # state hook has to be pre-registered where Claude Code reads it on every
 # launch: the `hooks` key of ~/.claude/settings.json (--plugin-dir is CLI-only,
-# so it cannot help the interactive path). This reconciler owns exactly three
-# entries there and nothing else, the same idempotent, drift-only shape as
+# so it cannot help the interactive path). This reconciler owns exactly the
+# entries listed in _HOOK_EVENTS and nothing else, the same idempotent,
+# drift-only shape as
 # sync_interactive_shims(): it re-writes them whenever what Merlin ships drifts
 # from what is installed, so an 'auto' user never re-runs setup after an update.
 #
@@ -487,12 +488,34 @@ def set_agent_state_hooks_mode(mode: str) -> str:
 # ---------------------------------------------------------------------------
 
 _HOOK_MARKER = "merlin:agent-state-pill"
-_HOOK_VERSION = 2  # v2: SessionStart also runs agent-session-init.sh (board sid/cwd)
-# Claude Code event -> agent-state.sh argument.
+_HOOK_VERSION = 3  # v3: the 'ask' state (question / permission dialogs)
+
+# Tools that open a BLOCKING dialog mid-turn: the agent has stopped and needs an
+# answer from you. Neither ends the turn, so `Stop` never fires and the pill
+# would otherwise sit on 'busy' for as long as the dialog is open.
+_ASK_TOOLS = "AskUserQuestion|ExitPlanMode"
+
+# Claude Code event -> (agent-state.sh argument, matcher or None). The matcher
+# field is the tool name for Pre/PostToolUse and `notification_type` for
+# Notification; events without one fire unconditionally.
+#
+# Ordering hazard: PreToolUse fires BEFORE the permission check and
+# Notification/permission_prompt after it, so a matcher-less PreToolUse -> busy
+# would stomp the 'ask' state. Do not add one.
+#
+# Reset is PostToolBatch (once per resolved batch, any tool) rather than a
+# matcher-less PostToolUse (once per tool call): a permission prompt can attach
+# to any tool, so the reset cannot be tool-matched, and the batch event costs one
+# process instead of N. The matched PostToolUse is kept alongside it as the
+# direct, near-free reset for the dialog tools themselves.
 _HOOK_EVENTS = {
-    "UserPromptSubmit": "busy",  # you submitted a prompt: the agent is working
-    "Stop": "done",  # the agent finished a turn: waiting on you
-    "SessionStart": "idle",  # a session started / resumed: nothing running yet
+    "UserPromptSubmit": ("busy", None),  # you submitted a prompt: agent working
+    "Stop": ("done", None),  # the agent finished a turn: waiting on you
+    "SessionStart": ("idle", None),  # a session started / resumed: nothing yet
+    "PreToolUse": ("ask", _ASK_TOOLS),  # a dialog opened: blocked on you
+    "PostToolUse": ("busy", _ASK_TOOLS),  # you answered it: back to work
+    "Notification": ("ask", "permission_prompt"),  # permission dialog shown
+    "PostToolBatch": ("busy", None),  # any batch resolved: clear a stale 'ask'
 }
 
 
@@ -529,13 +552,18 @@ def _is_merlin_group(group: object) -> bool:
     return False
 
 
-def _merlin_group(event: str, state: str) -> dict:
+def _merlin_group(event: str, state: str, matcher: str | None = None) -> dict:
     """The hook entries Merlin owns for one event. SessionStart carries a second
-    command (the board session-init) in the same group."""
+    command (the board session-init) in the same group. A matcher, when the
+    event scopes on one, is emitted first so the group reads like Claude Code's
+    own documented shape."""
     entries = [{"type": "command", "command": _hook_command(state)}]
     if event == "SessionStart":
         entries.append({"type": "command", "command": _session_init_command()})
-    return {"hooks": entries}
+    group: dict = {"hooks": entries}
+    if matcher is not None:
+        group = {"matcher": matcher, **group}
+    return group
 
 
 def _read_claude_settings() -> dict | None:
@@ -567,14 +595,14 @@ def _hooks_shape_ok(settings: dict) -> bool:
 
 
 def _reconcile_install(settings: dict) -> dict:
-    """Desired settings with Merlin's three groups fresh: strip any existing
+    """Desired settings with Merlin's own groups fresh: strip any existing
     Merlin groups (stale version / old path) and append the shipped ones.
     Foreign groups keep their place and order."""
     out = copy.deepcopy(settings)
     hooks = out.setdefault("hooks", {})
-    for event, state in _HOOK_EVENTS.items():
+    for event, (state, matcher) in _HOOK_EVENTS.items():
         groups = [g for g in hooks.get(event, []) if not _is_merlin_group(g)]
-        groups.append(_merlin_group(event, state))
+        groups.append(_merlin_group(event, state, matcher))
         hooks[event] = groups
     return out
 

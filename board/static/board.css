@@ -51,6 +51,7 @@
 .board-status .st-total { color: var(--text-secondary); }
 .board-status .st-working { color: var(--accent-yellow); }
 .board-status .st-waiting { color: var(--accent-green); }
+.board-status .st-asking { color: var(--accent-blue); }
 
 .board-head-btn {
   flex: 0 0 auto;
@@ -164,7 +165,8 @@
 
 /* Round count badge (same look as the Sessions button badge). Green = a window
    in this session finished and is waiting on you. Kept tiny so a narrow panel
-   still reads at a glance. */
+   still reads at a glance. Blue (.asking) = at least one of the counted windows
+   is blocked on an unanswered dialog, which outranks a merely unread finish. */
 .sbadge {
   flex: 0 0 auto;
   min-width: 16px;
@@ -179,6 +181,7 @@
   line-height: 16px;
   text-align: center;
 }
+.sbadge.asking { background: var(--accent-blue); color: #08111f; }
 
 /* Windows nest under their session, bound by a left tree line so the grouping
    is unmistakable. The line turns green under the current session. */
@@ -230,8 +233,14 @@
 }
 .wrow.st-idle .wrow-dot { color: var(--text-muted); }
 .wrow.st-busy .wrow-dot { color: var(--accent-yellow); }
+.wrow.st-ask  .wrow-dot { color: var(--accent-blue); }
 .wrow.st-done .wrow-dot { color: var(--accent-green); }
 .wrow.st-plain .wrow-dot { color: var(--text-muted); opacity: 0.5; }
+
+/* Asking = blocked on you mid-turn. Bolder than the other dots because '?' is
+   a thinner glyph than ○ ◐ ●, so it needs the weight to hold the same visual
+   presence in the column. */
+.wrow.st-ask .wrow-dot { font-weight: 700; }
 
 /* Working = a slow breath, so a room full of running agents feels alive. */
 @media (prefers-reduced-motion: no-preference) {

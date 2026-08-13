@@ -488,7 +488,7 @@ The switcher is a **faithful view of tmux's session -> window tree** plus an
 agent-activity overlay. It uses tmux's own words: **sessions** (organised by the
 user, often one per project) each holding **windows** (tabs). Every session and
 every window is shown, agent-running or not; a window carrying `@agent_state`
-gets an activity dot (○ idle / ◐ busy / ● done), a plain window a faint marker.
+gets an activity dot (○ idle / ◐ busy / ? ask / ● done), a plain window a faint marker.
 This is the deliberate reversal of the old agents-only board (see the archived
 `sessions-board` epic, superseded by `session-switcher`).
 

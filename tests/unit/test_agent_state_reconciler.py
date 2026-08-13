@@ -74,10 +74,10 @@ class TestConsentConfig:
 # install_interactive_hooks
 # ---------------------------------------------------------------------------
 class TestInstall:
-    def test_creates_three_events_in_empty(self, settings_file):
+    def test_creates_every_event_in_empty(self, settings_file):
         assert skills.install_interactive_hooks() is True
         data = read(settings_file)
-        assert set(data["hooks"]) == {"UserPromptSubmit", "Stop", "SessionStart"}
+        assert set(data["hooks"]) == set(skills._HOOK_EVENTS)
         # exactly one Merlin command per event, with the right state
         cmds = {ev: g[0]["hooks"][0]["command"] for ev, g in data["hooks"].items()}
         assert " busy " in cmds["UserPromptSubmit"]
@@ -85,6 +85,66 @@ class TestInstall:
         assert " idle " in cmds["SessionStart"]
         for c in cmds.values():
             assert skills._HOOK_MARKER in c
+
+    def test_ask_state_events_carry_their_matchers(self, settings_file):
+        """The dialog hooks are tool-scoped; the permission one is type-scoped.
+        A missing matcher would fire them on every tool and stomp 'busy'."""
+        skills.install_interactive_hooks()
+        hooks = read(settings_file)["hooks"]
+        groups = {ev: hooks[ev][0] for ev in hooks}
+
+        assert groups["PreToolUse"]["matcher"] == "AskUserQuestion|ExitPlanMode"
+        assert " ask " in groups["PreToolUse"]["hooks"][0]["command"]
+        assert groups["PostToolUse"]["matcher"] == "AskUserQuestion|ExitPlanMode"
+        assert " busy " in groups["PostToolUse"]["hooks"][0]["command"]
+        assert groups["Notification"]["matcher"] == "permission_prompt"
+        assert " ask " in groups["Notification"]["hooks"][0]["command"]
+
+    def test_reset_events_are_unmatched(self, settings_file):
+        """PostToolBatch must fire for ANY batch: a permission prompt can attach
+        to any tool, so the reset cannot be tool-name scoped."""
+        skills.install_interactive_hooks()
+        hooks = read(settings_file)["hooks"]
+        assert "matcher" not in hooks["PostToolBatch"][0]
+        assert " busy " in hooks["PostToolBatch"][0]["hooks"][0]["command"]
+        for event in ("UserPromptSubmit", "Stop", "SessionStart"):
+            assert "matcher" not in hooks[event][0]
+
+    def test_no_unmatched_pretooluse_hook(self, settings_file):
+        """Ordering hazard guard: PreToolUse fires BEFORE the permission check
+        and Notification/permission_prompt after it, so an unmatched
+        PreToolUse -> busy would stomp 'ask' on every permission dialog."""
+        skills.install_interactive_hooks()
+        merlin_groups = [
+            g for g in read(settings_file)["hooks"]["PreToolUse"] if "matcher" in g
+        ]
+        assert len(merlin_groups) == 1
+        assert merlin_groups[0]["matcher"] == "AskUserQuestion|ExitPlanMode"
+
+    def test_upgrade_from_v2_replaces_old_groups(self, settings_file):
+        """A user installed at v2 has three unmatched groups. Reconciling must
+        strip them by marker and leave exactly one Merlin group per event."""
+        settings_file.parent.mkdir(parents=True, exist_ok=True)
+        v2 = f"bash /old/path/agent-state.sh busy  # {skills._HOOK_MARKER}:v2"
+        settings_file.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "UserPromptSubmit": [
+                            {"hooks": [{"type": "command", "command": v2}]}
+                        ]
+                    }
+                }
+            )
+        )
+        assert skills.interactive_hooks_drift() is True
+        assert skills.install_interactive_hooks() is True
+        hooks = read(settings_file)["hooks"]
+        assert len(hooks["UserPromptSubmit"]) == 1
+        cmd = hooks["UserPromptSubmit"][0]["hooks"][0]["command"]
+        assert "/old/path" not in cmd
+        assert f"{skills._HOOK_MARKER}:v{skills._HOOK_VERSION}" in cmd
+        assert set(hooks) == set(skills._HOOK_EVENTS)
 
     def test_is_idempotent(self, settings_file):
         assert skills.install_interactive_hooks() is True

@@ -3,6 +3,7 @@
 # status-bar pill (see terminal/tmux.conf window-status-format). Arg $1 = state:
 #   idle  -> ○  (grey)     no turn running / waiting on nothing
 #   busy  -> ◐  (amber)    the agent is working
+#   ask   -> ?  (sky)      blocked on you: a dialog is open mid-turn
 #   done  -> ●  (green)    finished, waiting on you
 # No-op outside tmux or if tmux is unavailable, so it can never block a session.
 #

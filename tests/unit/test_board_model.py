@@ -92,10 +92,11 @@ class TestBuildTree:
             win(wid="@1", index=1, state="busy"),
             win(wid="@2", index=2, state="done"),
             win(wid="@3", index=3, state=""),
+            win(wid="@4", index=4, state="ask"),
         ]
         tree = model.build_tree([sess("alpha")], windows, "alpha", 0.0)
         counts = tree["sessions"][0]["counts"]
-        assert counts == {"total": 3, "working": 1, "waiting": 1}
+        assert counts == {"total": 4, "working": 1, "waiting": 1, "asking": 1}
 
     def test_attention_totals_across_all_sessions(self):
         sessions = [sess("alpha"), sess("beta")]
@@ -106,7 +107,49 @@ class TestBuildTree:
         ]
         tree = model.build_tree(sessions, windows, "alpha", 0.0)
         assert tree["attention"] == 2  # two waiting, across both sessions
-        assert tree["counts"] == {"sessions": 2, "waiting": 2, "working": 1}
+        assert tree["counts"] == {
+            "sessions": 2,
+            "waiting": 2,
+            "working": 1,
+            "asking": 0,
+        }
+
+    def test_asking_counts_toward_attention(self):
+        """A window blocked on a question wants you just as much as a finished
+        one, so the badge must include it, from any session."""
+        sessions = [sess("alpha"), sess("beta")]
+        windows = [
+            win(session="alpha", wid="@1", index=1, state="ask"),
+            win(session="beta", wid="@2", index=1, state="done"),
+            win(session="beta", wid="@3", index=2, state="ask"),
+            win(session="beta", wid="@4", index=3, state="busy"),
+        ]
+        tree = model.build_tree(sessions, windows, "alpha", 0.0)
+        assert tree["attention"] == 3  # two asking + one waiting
+        assert tree["counts"] == {
+            "sessions": 2,
+            "waiting": 1,
+            "working": 1,
+            "asking": 2,
+        }
+
+    def test_asking_is_kept_apart_from_waiting_and_busy(self):
+        """'ask' is its own state: it is neither unread-finished nor working, so
+        a UI can rank it above 'done' rather than merging the two."""
+        windows = [
+            win(wid="@1", index=1, state="ask"),
+            win(wid="@2", index=2, state="done"),
+            win(wid="@3", index=3, state="busy"),
+        ]
+        tree = model.build_tree([sess("alpha")], windows, "alpha", 0.0)
+        nodes = {n["window_id"]: n for n in tree["sessions"][0]["windows"]}
+        assert nodes["@1"]["asking"] is True
+        assert nodes["@1"]["waiting"] is False
+        assert nodes["@1"]["busy"] is False
+        assert nodes["@2"]["asking"] is False
+        assert nodes["@2"]["waiting"] is True
+        assert nodes["@3"]["asking"] is False
+        assert nodes["@3"]["busy"] is True
 
     def test_current_session_flag(self):
         tree = model.build_tree([sess("alpha"), sess("beta")], [], "beta", 0.0)
@@ -135,4 +178,9 @@ class TestBuildTree:
     def test_empty_session_has_no_windows(self):
         tree = model.build_tree([sess("alpha", windows=0)], [], "alpha", 0.0)
         assert tree["sessions"][0]["windows"] == []
-        assert tree["sessions"][0]["counts"] == {"total": 0, "working": 0, "waiting": 0}
+        assert tree["sessions"][0]["counts"] == {
+            "total": 0,
+            "working": 0,
+            "waiting": 0,
+            "asking": 0,
+        }

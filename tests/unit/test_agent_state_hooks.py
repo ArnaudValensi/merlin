@@ -256,6 +256,27 @@ class TestSwitchClear:
         s.run_switch()
         assert s.state(w["b"]) == "busy"
 
+    def test_ask_survives_arriving_at_the_window(self, srv):
+        """Load-bearing: 'done' means unread, so looking at it is enough to
+        clear it. 'ask' means an unanswered dialog is still open, so looking at
+        it must NOT clear it. Only answering (PostToolUse/PostToolBatch -> busy)
+        does. The switch script gets this right by only ever touching 'done',
+        but that is easy to break, hence this regression test."""
+        s, w = srv
+        s.set_state(w["b"], "ask")
+        s.select(w["b"])
+        s.run_switch()
+        assert s.state(w["b"]) == "ask"
+
+    def test_ask_survives_leaving_the_window(self, srv):
+        s, w = srv
+        s.set_state(w["b"], "ask")
+        s.select(w["b"])
+        s.run_switch()
+        s.select(w["c"])
+        s.run_switch()
+        assert s.state(w["b"]) == "ask"
+
     def test_idle_is_left_alone(self, srv):
         s, w = srv
         s.set_state(w["b"], "idle")

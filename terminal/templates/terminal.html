@@ -145,12 +145,16 @@
 }
 #sessions-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
 #sessions-btn.has-waiting { color: var(--accent-green); border-color: rgba(52, 211, 153, 0.4); }
+/* Asking wins over waiting: a blocked turn is more urgent than an unread one,
+   so it takes the button colour whenever both are present. */
+#sessions-btn.has-asking { color: var(--accent-blue); border-color: rgba(74, 158, 255, 0.45); }
 #sessions-badge {
     position: absolute; top: -6px; right: -6px;
     min-width: 14px; height: 14px; padding: 0 3px;
     border-radius: 999px; background: var(--accent-green); color: #0b1411;
     font-size: 9px; font-weight: 700; line-height: 14px; text-align: center;
 }
+#sessions-btn.has-asking #sessions-badge { background: var(--accent-blue); color: #08111f; }
 </style>
 <script>
 // Sessions board wiring. Mobile: the button opens a fullscreen modal. Desktop:
@@ -242,9 +246,11 @@
         container: panel,
         onJump: function () { if (!desktop()) close(); },   // jumping closes the modal (mobile)
         onClose: close,                                     // the header collapse control
-        onAttention: function (n) {
+        onAttention: function (n, asking) {
             if (n > 0) { badge.textContent = n; badge.hidden = false; btn.classList.add('has-waiting'); }
             else { badge.hidden = true; btn.classList.remove('has-waiting'); }
+            // Asking outranks waiting: a live turn is blocked, not just unread.
+            btn.classList.toggle('has-asking', asking > 0);
         },
     });
 })();

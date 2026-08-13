@@ -6,9 +6,9 @@ session sweep + window sweep into the JSON the switcher renders. The model is a
 
 - Every tmux **session** is shown, grouped over every tmux **window** it holds
   (not only windows running an agent). A window that carries ``@agent_state``
-  gets an activity dot (○ idle / ◐ busy / ● done); a plain window shows without
-  one. This is the deliberate reversal of the old board, which surfaced only
-  agent windows.
+  gets an activity dot (○ idle / ◐ busy / ? ask / ● done); a plain window shows
+  without one. This is the deliberate reversal of the old board, which surfaced
+  only agent windows.
 - Windows keep tmux's own order (window index). ``--child`` fork/handoff windows
   nest one indent under their parent within the same session; siblings are flat.
 - Per-session counts and a global attention total drive the badges.
@@ -25,6 +25,7 @@ from .sweep import TmuxSession, Window
 
 _DONE = "done"
 _BUSY = "busy"
+_ASK = "ask"
 
 
 def _project_of(cwd: str) -> str:
@@ -42,6 +43,7 @@ def _window_node(w: Window, depth: int) -> dict:
         "is_agent": w.is_agent,
         "waiting": w.state == _DONE,
         "busy": w.state == _BUSY,
+        "asking": w.state == _ASK,
         "active": w.active,
         "project": _project_of(w.cwd),
         "cwd": w.cwd,
@@ -94,15 +96,18 @@ def build_tree(
     session_rows: list[dict] = []
     total_waiting = 0
     total_working = 0
+    total_asking = 0
     for s in sessions:
         wins = by_session.get(s.name, [])
         counts = {
             "total": len(wins),
             "working": sum(1 for w in wins if w.state == _BUSY),
             "waiting": sum(1 for w in wins if w.state == _DONE),
+            "asking": sum(1 for w in wins if w.state == _ASK),
         }
         total_waiting += counts["waiting"]
         total_working += counts["working"]
+        total_asking += counts["asking"]
         session_rows.append(
             {
                 "name": s.name,
@@ -116,11 +121,15 @@ def build_tree(
     return {
         "generated_at": now,
         "current_session": current_session,
-        "attention": total_waiting,
+        # Both states want you, so both count. They are kept apart below because
+        # they are not equally urgent: 'asking' blocks a live turn (the agent has
+        # stopped mid-work and cannot continue), 'waiting' is merely unread.
+        "attention": total_waiting + total_asking,
         "counts": {
             "sessions": len(sessions),
             "waiting": total_waiting,
             "working": total_working,
+            "asking": total_asking,
         },
         "sessions": session_rows,
     }
