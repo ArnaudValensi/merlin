@@ -65,6 +65,11 @@
 <div class="paste-area" id="paste-target" tabindex="0">Click here and press Ctrl+V</div>
 <div id="paste-log" class="log">Waiting for paste event...</div>
 
+{# The terminal's own paste ladder, included verbatim. The trace below drives
+   it directly, so this page cannot report a different outcome than a real
+   paste in the terminal. #}
+<script>{% include "clipboard-core.js" %}</script>
+
 <script>
 // ---------------------------------------------------------------
 // Helpers
@@ -139,79 +144,33 @@ cap('writeText()', cb?.writeText ? 'Yes' : 'No', !!cb?.writeText);
 // ---------------------------------------------------------------
 const traceLog = document.getElementById('trace-log');
 
+// Drives the terminal's real ladder (MerlinClipboard.readClipboard from
+// clipboard-core.js) and prints every rung it walks. Nothing is reimplemented
+// here — that duplication is what let this page and the terminal drift apart.
 async function runTrace() {
   traceLog.innerHTML = '';
   addLog(traceLog, '', '=== handlePaste() trace ===');
 
-  // Step 1: try clipboard.read()
-  addLog(traceLog, '', '[1] clipboard.read()...');
-  try {
-    const clipItems = await navigator.clipboard.read();
-    addLog(traceLog, 'ok', `    OK: ${clipItems.length} item(s)`);
+  const result = await MerlinClipboard.readClipboard({
+    trace: (level, message) => addLog(traceLog, level, `    ${message}`),
+  });
 
-    // Step 2a: check for images
-    for (let i = 0; i < clipItems.length; i++) {
-      const item = clipItems[i];
-      addLog(traceLog, '', `    item[${i}].types: ${JSON.stringify(item.types)}`);
-      const imgType = item.types.find(t => t.startsWith('image/'));
-      if (imgType) {
-        try {
-          const blob = await item.getType(imgType);
-          addLog(traceLog, 'path', `    >>> IMAGE FOUND: ${imgType}, ${blob.size} bytes`);
-          addLog(traceLog, 'path', `    >>> Path taken: read() -> image`);
-          addLog(traceLog, 'ok', '=== Result: IMAGE would be uploaded ===');
-        } catch (e) {
-          addLog(traceLog, 'err', `    getType(${imgType}) failed: ${e.message}`);
-        }
-        return;
-      }
-    }
-
-    addLog(traceLog, 'skip', '    No image items found');
-
-    // Step 2b: check for text
-    for (let i = 0; i < clipItems.length; i++) {
-      const item = clipItems[i];
-      if (item.types.includes('text/plain')) {
-        try {
-          const blob = await item.getType('text/plain');
-          const text = await blob.text();
-          if (text) {
-            addLog(traceLog, 'path', `    >>> TEXT FOUND: ${JSON.stringify(text.slice(0, 100))} (${text.length} chars)`);
-            addLog(traceLog, 'path', `    >>> Path taken: read() -> text`);
-            addLog(traceLog, 'ok', '=== Result: TEXT would be pasted ===');
-            return;
-          }
-        } catch (e) {
-          addLog(traceLog, 'err', `    getType('text/plain') failed: ${e.message}`);
-        }
-      }
-    }
-
-    addLog(traceLog, 'warn', '    read() returned items but no image or text found');
-
-  } catch (err) {
-    addLog(traceLog, 'err', `    FAILED: ${err.name}: ${err.message}`);
+  if (result.kind === 'image') {
+    addLog(traceLog, 'path', `>>> IMAGE via ${result.via}: ${result.type}, ${result.blob.size} bytes`);
+    addLog(traceLog, 'ok', '=== Result: IMAGE would be uploaded ===');
+    return;
   }
 
-  // Step 3: fallback to readText()
-  addLog(traceLog, '', '[2] readText() fallback...');
-  try {
-    const text = await navigator.clipboard.readText();
-    if (text) {
-      addLog(traceLog, 'path', `    >>> TEXT FOUND: ${JSON.stringify(text.slice(0, 100))} (${text.length} chars)`);
-      addLog(traceLog, 'path', `    >>> Path taken: readText() fallback`);
-      addLog(traceLog, 'ok', '=== Result: TEXT would be pasted ===');
-      return;
-    }
-    addLog(traceLog, 'warn', '    readText() returned empty string');
-  } catch (err) {
-    addLog(traceLog, 'err', `    FAILED: ${err.name}: ${err.message}`);
+  if (result.kind === 'text') {
+    const preview = JSON.stringify(result.text.slice(0, 100));
+    addLog(traceLog, 'path', `>>> TEXT via ${result.via} (${result.type}): ${preview} (${result.text.length} chars)`);
+    addLog(traceLog, 'ok', '=== Result: TEXT would be pasted ===');
+    return;
   }
 
-  // Step 4: all failed
-  addLog(traceLog, 'err', '[3] All clipboard APIs failed');
-  addLog(traceLog, 'err', '=== Result: BLOCKED (would show "Clipboard blocked") ===');
+  addLog(traceLog, 'err', `>>> reason: ${result.reason} — ${result.detail}`);
+  addLog(traceLog, 'err', `=== Result: terminal would show "${MerlinClipboard.statusFor(result.reason)}" ===`);
+  addLog(traceLog, 'warn', '    (unless an OSC 52 copy was made earlier, which the terminal pastes instead)');
 }
 
 document.getElementById('btn-trace').addEventListener('click', runTrace);

@@ -4,6 +4,7 @@ Usage: uv run scripts.py <command>
 """
 
 import argparse
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -23,13 +24,24 @@ def run(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=ROOT)
 
 
+def run_js_tests() -> int:
+    """Run the browser-side unit tests with node's built-in runner (no deps).
+
+    Covers logic that only runs in the browser and so cannot be reached from
+    pytest — today the terminal's clipboard ladder (``tests/js/``). node is not
+    needed to run Merlin, only to check this, so a machine without it gets a
+    notice instead of a failure. node expands the glob itself; no shell needed.
+    """
+    if shutil.which("node") is None:
+        print("  → node not found, skipping JS tests (tests/js/)")
+        return 0
+    return run(["node", "--test", "tests/js/*.test.js"]).returncode
+
+
 def cmd_test(args):
     """Run unit and integration tests (~4s)."""
-    sys.exit(
-        run(
-            ["uv", "run", "pytest", "tests/unit/", "merlin-bot/tests/", "-v"]
-        ).returncode
-    )
+    py = run(["uv", "run", "pytest", "tests/unit/", "merlin-bot/tests/", "-v"])
+    sys.exit(max(py.returncode, run_js_tests()))
 
 
 def cmd_test_e2e(args):
@@ -81,6 +93,10 @@ def cmd_validate(args):
         result = run(cmd)
         if result.returncode != 0:
             sys.exit(result.returncode)
+
+    js = run_js_tests()
+    if js != 0:
+        sys.exit(js)
 
 
 def main():

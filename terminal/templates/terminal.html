@@ -114,6 +114,9 @@
 <script src="/static/vendor/xterm-addon-web-links.min.js"></script>
 <script src="/static/vendor/sortable.min.js"></script>
 <script src="/static/board/board.js"></script>
+{# Shared clipboard ladder — the same partial /clipboard-test includes, so the
+   diagnostic page and the terminal can never disagree about what a paste does. #}
+<script>{% include "clipboard-core.js" %}</script>
 <style>
 /* Terminal column wraps the terminal + toolbars so the panel sits beside it on
    desktop; fills its slot in both the mobile column and the desktop row. */
@@ -754,9 +757,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Unified paste handler for all paste paths: Ctrl+V, paste button,
     // right-click, Ctrl+Shift+V, and paste toast (mobile long-press).
-    // Uses clipboard.read() first — one call returns both text and image
-    // items, preserving the user gesture (critical on iOS Safari).
-    // Falls back to readText() if read() isn't supported.
+    // The read ladder itself lives in clipboard-core.js (shared with
+    // /terminal/clipboard-test); this function only decides what to do with
+    // what it hands back.
     const isTouchDevice = ('ontouchstart' in window || navigator.maxTouchPoints > 0);
     // On macOS, paste is Cmd+V; we leave Ctrl+V alone so the raw ^V reaches the
     // running terminal app (Claude Code, vim, etc.) to handle itself, rather
@@ -764,50 +767,36 @@ document.addEventListener('DOMContentLoaded', () => {
     // interception below on Mac.
     const isMac = /Mac/.test(navigator.platform) || /Mac/.test(navigator.userAgent);
 
+    // Kept for post-mortems from a phone, where there is no console to read:
+    // `lastPasteResult` on the terminal bridge holds why the last paste went
+    // the way it did.
+    let lastPasteResult = null;
+
     async function handlePaste() {
-        try {
-            const clipItems = await navigator.clipboard.read();
-            // Check for images first
-            for (const item of clipItems) {
-                const imgType = item.types.find(t => t.startsWith('image/'));
-                if (imgType) {
-                    const blob = await item.getType(imgType);
-                    await uploadAndInjectFile(blob, 'clipboard.png');
-                    term.focus();
-                    return;
-                }
-            }
-            // No image — check for text
-            for (const item of clipItems) {
-                if (item.types.includes('text/plain')) {
-                    const blob = await item.getType('text/plain');
-                    const text = await blob.text();
-                    if (text) {
-                        pasteToTerminal(text);
-                        syncClipboard(text);
-                        term.focus();
-                        return;
-                    }
-                }
-            }
-        } catch (_) {
-            // read() not supported or blocked — fall back to readText()
-            try {
-                const text = await navigator.clipboard.readText();
-                if (text) {
-                    pasteToTerminal(text);
-                    syncClipboard(text);
-                    term.focus();
-                    return;
-                }
-            } catch (_) {}
+        const result = await MerlinClipboard.readClipboard();
+        lastPasteResult = result;
+
+        if (result.kind === 'image') {
+            await uploadAndInjectFile(result.blob, 'clipboard.png');
+            term.focus();
+            return;
         }
 
-        // All clipboard APIs failed — last resort
+        if (result.kind === 'text') {
+            pasteToTerminal(result.text);
+            syncClipboard(result.text);
+            term.focus();
+            return;
+        }
+
+        // Nothing came back from the browser clipboard. Last resort: the text
+        // the terminal itself last published over OSC 52, which is usually
+        // what the user copied a moment ago anyway.
         if (lastOsc52Text) {
             pasteToTerminal(lastOsc52Text);
         } else {
-            showStatusFlash('Clipboard blocked', '');
+            console.warn('[merlin] paste failed:', result.reason, '-', result.detail);
+            showStatusFlash(MerlinClipboard.statusFor(result.reason), '');
         }
         term.focus();
     }
@@ -1105,6 +1094,8 @@ document.addEventListener('DOMContentLoaded', () => {
             term.focus();
         },
         currentSession: function () { return currentSession; },
+        // Why the last paste did what it did — see handlePaste().
+        lastPasteResult: function () { return lastPasteResult; },
     };
 
     function sendToTerminal(data) {

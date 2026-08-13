@@ -75,7 +75,9 @@ Gesture detection: after 8px of movement, vertical = scroll, horizontal = select
 
 ### Clipboard Plumbing
 
-All copy operations go through `merlin-clip`, which writes OSC 52 directly to the tmux client TTY. All paste paths use one unified handler (`handlePaste()` via `navigator.clipboard.read()`), supporting text and images. Images upload to `/tmp/merlin-clipboard/` and the path is injected into the terminal.
+All copy operations go through `merlin-clip`, which writes OSC 52 directly to the tmux client TTY. All paste paths use one unified handler (`handlePaste()`), supporting text and images. Images upload to `/tmp/merlin-clipboard/` and the path is injected into the terminal.
+
+The read itself lives in `terminal/templates/clipboard-core.js` — a Jinja partial included by both `terminal.html` and `clipboard-test.html`, so the diagnostic page always runs exactly what the terminal runs. It tries `clipboard.read()` (the only API that returns images), then falls back to `clipboard.readText()` whenever `read()` came back with nothing pasteable. Do not add a second copy of that ladder anywhere: `tests/unit/test_clipboard_core.py` fails if you do, and the last time the logic existed twice the diagnostic page reported success on the path where the terminal was broken. Behaviour is covered by `tests/js/clipboard-core.test.js` (per-browser cases) and `tests/e2e/test_terminal_paste.py` (real browser).
 
 **tmux configuration** (`terminal/tmux.conf`, NOT `~/.tmux.conf`): the web terminal starts tmux with `terminal/tmux.conf`, which loads first and sources `~/.tmux.conf` at the end. Mouse copy is handled by `copy-pipe-and-cancel "merlin-clip copy"` — copy text and send it to the browser clipboard in one step.
 

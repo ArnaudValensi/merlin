@@ -207,7 +207,13 @@ repo" if you are not in one.
 - **Clipboard does nothing / "Clipboard blocked" flash**: the Clipboard
   API requires HTTPS, so use your tunnel URL, not plain http. On mobile,
   use the pills or the toolbar buttons. `/terminal/clipboard-test` is the built-in
-  diagnostic page.
+  diagnostic page; its "trace" button runs the terminal's own paste logic and
+  prints every step, so it shows exactly where a paste stopped.
+- **The paste status tells you which problem you have**: "Clipboard blocked"
+  means the browser refused the read (permission, or a paste prompt you
+  dismissed). "Clipboard empty" means it let us look and there was nothing to
+  paste. "Clipboard unavailable" means the browser exposes no clipboard API at
+  all, which on a normal browser means the page is not on HTTPS.
 - **Clipboard icon with `?` or red `✕` in the status bar**: the browser
   permission is unset or denied. Click the icon to trigger the prompt; if
   red, enable clipboard access in your browser settings. On Safari and
