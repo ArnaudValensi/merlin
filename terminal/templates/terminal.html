@@ -128,6 +128,29 @@
    so the desktop split wins regardless of source order. */
 @media (min-width: 769px) { body .main { flex-direction: row; } }
 
+/* The agent-state consent banner is a direct child of .main (see base.html).
+   Every other page lays .main out as a block, so the banner is a normal strip
+   at the top. This page makes .main a flex ROW, which turned the banner into a
+   third row item that align-items:stretch blew up to full height beside the
+   terminal. Float it instead: it is a prompt, not part of the split. Fixed
+   rather than absolute so it needs no positioning context on .main, whose
+   static positioning the docked panel relies on. Above the panel's z-index 200
+   and the status bar's 210, so it can never be half-covered.
+   Mobile keeps the in-flow strip: .main is a column there and stacks fine. */
+@media (min-width: 769px) {
+    body .main > .consent-banner {
+        position: fixed;
+        top: 16px;
+        left: calc(var(--sidebar-width) + 16px);
+        right: 16px;
+        z-index: 300;
+        margin: 0;
+    }
+    html.sc body .main > .consent-banner {
+        left: calc(var(--sidebar-collapsed-width) + 16px);
+    }
+}
+
 /* Sessions toolbar button: a sibling of the mic button — same shape/size so the
    bar stays consistent. Hidden on desktop unless the panel is collapsed (see
    board.css). Green when a session is waiting. */
