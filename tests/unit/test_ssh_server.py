@@ -1,7 +1,10 @@
 """Tests for ssh_server.py — Container-side SSH server."""
 
 import asyncio
+import contextlib
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import asyncssh
@@ -245,6 +248,91 @@ class TestSFTP:
                     assert stat.size > 0
 
             await ssh_server.stop_ssh_server()
+
+        asyncio.run(_test())
+
+
+# ---------------------------------------------------------------------------
+# Shell reconnect tests
+# ---------------------------------------------------------------------------
+
+
+class TestShellReconnect:
+    """Default SSH shells follow existing tmux sessions across renames."""
+
+    @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed")
+    def test_reconnect_follows_a_renamed_session(self, monkeypatch, tmp_merlin_home):
+        socket = tmp_merlin_home / "tmux.sock"
+
+        def tmux(*args: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                ["tmux", "-S", str(socket), *args],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        def private_capture(args: list[str]) -> str | None:
+            result = tmux(*args)
+            return result.stdout if result.returncode == 0 else None
+
+        real_reconnect_argv = ssh_server.reconnect_argv
+
+        def private_reconnect_argv(sessions):
+            args = real_reconnect_argv(sessions)
+            return [args[0], "-S", str(socket), *args[1:]]
+
+        monkeypatch.delenv("TMUX", raising=False)
+        monkeypatch.setattr(ssh_server.board_sweep, "_tmux_capture", private_capture)
+        monkeypatch.setattr(ssh_server, "reconnect_argv", private_reconnect_argv)
+
+        created = tmux("-f", "/dev/null", "new-session", "-d", "-s", "merlin-dev")
+        assert created.returncode == 0, created.stderr
+        before = len(ssh_server.board_sweep.run_session_sweep())
+        renamed = tmux("rename-session", "-t", "merlin-dev", "renamed-by-user")
+        assert renamed.returncode == 0, renamed.stderr
+
+        async def _test():
+            port = _free_port()
+            client = None
+            conn = None
+            try:
+                acceptor = await ssh_server.start_ssh_server(port=port)
+                assert acceptor is not None
+                conn = await asyncssh.connect(
+                    "127.0.0.1",
+                    port=port,
+                    known_hosts=None,
+                    username="test",
+                    password="",
+                )
+                client = await conn.create_process(term_type="xterm-256color")
+
+                deadline = asyncio.get_running_loop().time() + 5
+                current = ""
+                while asyncio.get_running_loop().time() < deadline:
+                    current = tmux(
+                        "list-clients", "-F", "#{client_session}"
+                    ).stdout.strip()
+                    if current:
+                        break
+                    await asyncio.sleep(0.05)
+                after = len(ssh_server.board_sweep.run_session_sweep())
+
+                tmux("detach-client", "-s", "renamed-by-user")
+                await asyncio.wait_for(client.wait(), timeout=5)
+
+                assert after == before
+                assert current == "renamed-by-user"
+            finally:
+                tmux("kill-server")
+                if client is not None:
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(client.wait(), timeout=5)
+                if conn is not None:
+                    conn.close()
+                    await conn.wait_closed()
+                await ssh_server.stop_ssh_server()
 
         asyncio.run(_test())
 

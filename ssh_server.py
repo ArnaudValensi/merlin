@@ -23,9 +23,10 @@ from pathlib import Path
 
 import asyncssh
 
-logger = logging.getLogger("merlin.ssh")
+from board import sweep as board_sweep
+from terminal.tmux import reconnect_argv
 
-TMUX_SESSION = "merlin-dev"
+logger = logging.getLogger("merlin.ssh")
 
 # Module-level state for cleanup
 _server: asyncssh.SSHAcceptor | None = None
@@ -83,12 +84,12 @@ def _set_winsize(fd: int, width: int, height: int) -> None:
 
 
 async def _handle_session(process: asyncssh.SSHServerProcess) -> None:
-    """Process factory: attach to tmux session merlin-dev via PTY."""
+    """Process factory: attach to the shared tmux server via PTY."""
     command = process.command
     if command:
-        cmd = command
+        process_args = ["/bin/sh", "-c", command]
     else:
-        cmd = f"tmux new-session -A -s {TMUX_SESSION}"
+        process_args = reconnect_argv(board_sweep.run_session_sweep())
 
     term_type = process.get_terminal_type() or "xterm-256color"
     # Fall back if the client's TERM isn't in the container's terminfo.
@@ -114,9 +115,7 @@ async def _handle_session(process: asyncssh.SSHServerProcess) -> None:
         env["TERM"] = term_type
 
         proc = await asyncio.create_subprocess_exec(
-            "/bin/sh",
-            "-c",
-            cmd,
+            *process_args,
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,

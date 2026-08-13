@@ -29,6 +29,7 @@ from auth import verify_ws_cookie
 from board import sweep as board_sweep
 from merlin_ext import make_templates
 from terminal.pty_bridge import PtyBridge, terminate_client
+from terminal.tmux import DEFAULT_SESSION_NAME, reconnect_argv
 
 logger = logging.getLogger("merlin.terminal")
 
@@ -44,8 +45,6 @@ templates = make_templates(TERMINAL_TEMPLATES_DIR)
 # wired through register_routes(app), the escape hatch, instead.
 api_router = APIRouter()
 page_router = APIRouter()
-
-TMUX_SESSION = "merlin-dev"
 
 MAX_AUDIO_SIZE = 25 * 1024 * 1024
 
@@ -348,7 +347,7 @@ async def api_terminal_cwd():
             "display-message",
             "-p",
             "-t",
-            TMUX_SESSION,
+            DEFAULT_SESSION_NAME,
             "#{pane_current_path}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -392,6 +391,11 @@ async def terminal_ws(websocket: WebSocket):
     await websocket.accept()
     logger.info("Terminal WebSocket connected")
 
+    tmux_args = reconnect_argv(board_sweep.run_session_sweep())
+    tmux_conf = TERMINAL_DIR / "tmux.conf"
+    if tmux_conf.exists():
+        tmux_args[1:1] = ["-f", str(tmux_conf)]
+
     # Fork a PTY running tmux. Nothing but exec-prep may run in the child:
     # its stdio IS the pty, so e.g. logging would leak into the terminal
     # stream (and write to merlin.log from a second process).
@@ -405,20 +409,6 @@ async def terminal_ws(websocket: WebSocket):
         # pre-exec) so tmux captures it into its global environment when it
         # creates the merlin-dev server; run-shell children then inherit it.
         os.environ["MERLIN_TERMINAL_HOOKS"] = str(TERMINAL_DIR / "hooks")
-        tmux_conf = TERMINAL_DIR / "tmux.conf"
-        tmux_args = ["tmux"]
-        if tmux_conf.exists():
-            tmux_args += ["-f", str(tmux_conf)]
-        tmux_args += [
-            "new-session",
-            "-A",  # attach if exists, create if not
-            "-s",
-            TMUX_SESSION,
-            "-x",
-            "120",
-            "-y",
-            "40",
-        ]
         os.execvp("tmux", tmux_args)
         os._exit(1)
 
