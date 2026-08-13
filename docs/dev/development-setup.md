@@ -71,3 +71,58 @@ pages), and verify visually with the screenshot skill:
 ```bash
 uv run .claude/skills/screenshot/screenshot.py --all http://localhost:3123 --user admin --pass <pass>
 ```
+
+## Throwaway instance for UI work
+
+Screenshotting a UI state you do not currently have (agent-state pills in
+every state, a populated Sessions panel) means fabricating that state.
+Never fabricate it in your own environment: build a disposable instance
+with its own home, port, and tmux server.
+
+```bash
+TMPHOME=/tmp/merlin-sandbox TT=/tmp/merlin-sandbox-tmux
+rm -rf "$TMPHOME" "$TT"; mkdir -p "$TMPHOME" "$TT"
+printf 'DASHBOARD_USER=admin\nDASHBOARD_PASS=sandbox\n' > "$TMPHOME/config.env"
+
+env -u MERLIN_SAAS_TOKEN -u MERLIN_ENVIRONMENT_SLUG -u TMUX \
+  MERLIN_HOME="$TMPHOME" TMUX_TMPDIR="$TT" MERLIN_DEV=1 \
+  nohup uv run main.py --port 3199 > "$TMPHOME/server.log" 2>&1 &
+echo "PID=$!"    # capture it, you need it to stop the instance
+```
+
+Why each part:
+
+- **`-u MERLIN_SAAS_TOKEN`**: the SaaS tunnel starts whenever the token is
+  set, so a naive run connects your test instance to the real portal and
+  flips auth into SaaS mode. Without the token, local mode requires
+  `config.env` to exist, hence writing one.
+- **A separate port**: 3123 is the live instance. Do not disturb it.
+- **`TMUX_TMPDIR` plus `-u TMUX`**: the web terminal spawns a bare
+  `tmux new-session -A` (see [web-terminal.md](web-terminal.md)), so there
+  is no flag to redirect it. `TMUX_TMPDIR` is the only lever that gives
+  the instance its own tmux server, and it only works with `TMUX` unset,
+  since an inherited `$TMUX` outranks it. Keep the path short: unix
+  sockets cap around 108 characters.
+
+### Tearing it down
+
+Two cleanup traps have each cost a working session. Both look like the
+sandbox misbehaving; both are self-inflicted.
+
+- **Do not `pkill -f "port 3199"`**, or any pattern that appears in your
+  own command line. `pkill -f` matches the shell running your command and
+  kills it mid-way. Use the PID you captured at launch.
+- **Do not aim `kill-server` with an environment variable.** Target the
+  socket, which nothing can redirect:
+
+  ```bash
+  tmux -S "$TT/tmux-$(id -u)/default" kill-server
+  ```
+
+  The tempting `TMUX_TMPDIR=$TT tmux kill-server` does the opposite of
+  what it reads like. With no `-S` or `-L`, tmux resolves its target from
+  `$TMUX`, which is set whenever you are working inside tmux, so it
+  ignores `TMUX_TMPDIR` and kills your real server: every window, every
+  agent session in it. Skipping the kill is not the fix either, since
+  `rm -rf` of the tmpdir strands the server with no socket, reachable
+  only by PID.
