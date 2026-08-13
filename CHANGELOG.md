@@ -2,6 +2,14 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.27.0 (2026-08-13)
+
+### Added
+- **Change directory from the terminal toolbar** — A folder button opens the picker, so you can `cd` by tapping through directories instead of typing the path.
+
+### Fixed
+- **Paste on iOS** — Pasting no longer reports "Clipboard blocked" when the clipboard plainly has text in it, and a paste that really does fail now says whether it was blocked, empty, or unavailable.
+
 ## v0.26.0 (2026-08-12)
 
 ### Added
