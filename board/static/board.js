@@ -342,12 +342,18 @@ window.SessionsBoard = (function () {
   }
 
   // The "+ new window" row at the foot of a session (Tree-Style-Tab "New Tab").
+  function openNewWindow(sessionName) {
+    if (!sessionName) return Promise.resolve(null);
+    return api('/window/new', { name: sessionName }).then(function (r) {
+      if (r && r.window_id) switchTo(sessionName + ':' + r.window_id);
+      else load();
+      return r;
+    });
+  }
+
   function makeNewWindow(sessionName) {
     return makeAdd('new window', 'board-add-sub', function () {
-      api('/window/new', { name: sessionName }).then(function (r) {
-        if (r && r.window_id) switchTo(sessionName + ':' + r.window_id);
-        else load();
-      });
+      openNewWindow(sessionName);
     });
   }
 
@@ -617,5 +623,10 @@ window.SessionsBoard = (function () {
     setInterval(load, POLL_MS);
   }
 
-  return { init: init, refresh: load, setCurrentSession: setCurrentSession };
+  return {
+    init: init,
+    refresh: load,
+    setCurrentSession: setCurrentSession,
+    openNewWindow: openNewWindow,
+  };
 })();

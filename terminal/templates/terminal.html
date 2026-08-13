@@ -19,7 +19,7 @@
         <button class="tk tk-mod" data-mod="Enter">↵</button>
         <span class="toolbar-sep"></span>
         <button class="tk tk-fn" data-key="F3">◀</button>
-        <button class="tk tk-fn" data-key="F2">+</button>
+        <button class="tk" id="new-window-btn" title="New window in current directory">+</button>
         <button class="tk tk-fn" data-key="F4">▶</button>
         <button class="tk tk-fn" data-key="F5">✕</button>
         <span class="toolbar-sep"></span>
@@ -673,6 +673,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const statusText = document.getElementById('status-text');
     const toolbar = document.getElementById('terminal-toolbar');
     const toolbarToggle = document.getElementById('toolbar-toggle');
+    const newWindowBtn = document.getElementById('new-window-btn');
     const mainEl = document.querySelector('.main');
 
     // Menu button opens the sidebar (replaces hidden mobile topbar)
@@ -1146,7 +1147,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ANSI escape sequences for special keys
     const KEY_SEQUENCES = {
-        'F2':         '\x1bOQ',
         'F3':         '\x1bOR',
         'F4':         '\x1bOS',
         'F5':         '\x1b[15~',
@@ -1198,7 +1198,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Window-nav keys change the active window (and its pill state), so
         // nudge the Sessions panel to re-read shortly after, rather than waiting
         // for the next poll.
-        if (key === 'F2' || key === 'F3' || key === 'F4' || key === 'F5') {
+        if (key === 'F3' || key === 'F4' || key === 'F5') {
             if (window.SessionsBoard && window.SessionsBoard.refresh) {
                 setTimeout(function () { window.SessionsBoard.refresh(); }, 300);
             }
@@ -1241,6 +1241,26 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', (e) => {
             e.preventDefault();
             sendKey(btn.dataset.key);
+            term.focus();
+        });
+    });
+
+    // Use the Sessions panel's exact create-and-switch path. Sending F2 through
+    // the PTY would use whatever binding the long-lived tmux server loaded when
+    // it was first created, which can survive a Merlin restart.
+    newWindowBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        clearModifiers();
+        if (!currentSession || !window.SessionsBoard || !window.SessionsBoard.openNewWindow) {
+            showStatusFlash('Waiting for terminal session...', '');
+            term.focus();
+            return;
+        }
+        newWindowBtn.disabled = true;
+        window.SessionsBoard.openNewWindow(currentSession).then((result) => {
+            if (!result || !result.window_id) showStatusFlash('Could not open window', '');
+        }).finally(() => {
+            newWindowBtn.disabled = false;
             term.focus();
         });
     });

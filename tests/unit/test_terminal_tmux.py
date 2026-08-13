@@ -3,15 +3,19 @@
 import contextlib
 import os
 import pty
+import shlex
 import shutil
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
 from board import sweep as board_sweep
 from board.sweep import TmuxSession
 from terminal.tmux import DEFAULT_SESSION_NAME, reconnect_argv
+
+TMUX_CONF = Path(__file__).resolve().parents[2] / "terminal" / "tmux.conf"
 
 
 def _session(name: str = "renamed") -> TmuxSession:
@@ -40,6 +44,108 @@ def test_reconnect_bootstraps_when_no_session_exists():
         "-y",
         "40",
     ]
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed")
+def test_toolbar_new_window_inherits_current_cwd(tmp_path):
+    """The toolbar's F2 sequence opens the new window in the active pane's cwd."""
+    socket = tmp_path / "tmux.sock"
+    home = tmp_path / "home"
+    session_root = tmp_path / "session-root"
+    project = tmp_path / "project"
+    home.mkdir()
+    (home / ".zshrc").touch()  # Skip zsh's first-run prompt in the test pane.
+    session_root.mkdir()
+    project.mkdir()
+    env = os.environ.copy()
+    env.pop("TMUX", None)
+    env.update({"HOME": str(home), "TERM": "xterm-256color"})
+
+    def tmux(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["tmux", "-S", str(socket), "-f", str(TMUX_CONF), *args],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+
+    created = tmux(
+        "new-session",
+        "-d",
+        "-s",
+        "toolbar",
+        "-c",
+        str(session_root),
+        "-x",
+        "120",
+        "-y",
+        "40",
+    )
+    assert created.returncode == 0, created.stderr
+
+    pid = None
+    master_fd = None
+    try:
+        tmux("send-keys", "-t", "toolbar", "-l", f"cd {shlex.quote(str(project))}")
+        tmux("send-keys", "-t", "toolbar", "Enter")
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            cwd = tmux(
+                "display-message", "-p", "-t", "toolbar", "#{pane_current_path}"
+            ).stdout.strip()
+            if os.path.realpath(cwd) == os.path.realpath(project):
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("active pane did not change to the project directory")
+
+        pid, master_fd = pty.fork()
+        if pid == 0:
+            os.execvpe(
+                "tmux",
+                ["tmux", "-S", str(socket), "attach", "-t", "toolbar"],
+                env,
+            )
+            os._exit(1)
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if tmux("list-clients").stdout.strip():
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("tmux client did not attach")
+
+        before = tmux(
+            "list-windows", "-t", "toolbar", "-F", "#{window_id}"
+        ).stdout.split()
+        os.write(master_fd, b"\x1bOQ")  # xterm.js sends this for toolbar F2.
+
+        after = before
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            after = tmux(
+                "list-windows", "-t", "toolbar", "-F", "#{window_id}"
+            ).stdout.split()
+            if len(after) == len(before) + 1:
+                break
+            time.sleep(0.05)
+
+        assert len(after) == len(before) + 1
+        cwd = tmux(
+            "display-message", "-p", "-t", "toolbar", "#{pane_current_path}"
+        ).stdout.strip()
+        assert os.path.realpath(cwd) == os.path.realpath(project)
+    finally:
+        tmux("kill-server")
+        if master_fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(master_fd)
+        if pid is not None:
+            with contextlib.suppress(ChildProcessError):
+                os.waitpid(pid, 0)
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed")
