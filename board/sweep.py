@@ -261,10 +261,25 @@ def kill_session(name: str) -> bool:
 
 def new_window(session: str) -> str | None:
     """Create a new window in ``session`` and return its window id, so the
-    caller can jump to it. Returns None if tmux is unavailable or it fails."""
+    caller can jump to it. Returns None if tmux is unavailable or it fails.
+
+    The new window inherits the live cwd of the session's currently selected
+    window (its active pane's ``pane_current_path``), so "+ new window" opens
+    right where you are rather than at the session's root. We read that path
+    *before* creating the window — ``new-window`` moves the active pointer to
+    the new window. If the path can't be read, tmux falls back to its default
+    start directory.
+    """
     if not shutil.which("tmux") or not session:
         return None
-    out = _tmux_capture(["new-window", "-t", session, "-P", "-F", "#{window_id}"])
+    args = ["new-window", "-t", session, "-P", "-F", "#{window_id}"]
+    cwd = _tmux_capture(
+        ["display-message", "-p", "-t", session, "#{pane_current_path}"]
+    )
+    cwd = cwd.strip() if cwd else ""
+    if cwd:
+        args[1:1] = ["-c", cwd]
+    out = _tmux_capture(args)
     return out.strip() if out else None
 
 

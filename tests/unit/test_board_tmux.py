@@ -101,6 +101,19 @@ def test_new_window(tmux_server):
     assert wid in after
 
 
+def test_new_window_inherits_active_window_cwd(tmux_server, tmp_path):
+    """+ new window opens in the session's currently selected window's live cwd."""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    _tmux("new-session", "-d", "-s", "gamma", "-c", str(proj))
+    wid = sweep.new_window("gamma")
+    assert wid
+    path = _tmux(
+        "display-message", "-p", "-t", f"gamma:{wid}", "#{pane_current_path}"
+    ).stdout.strip()
+    assert os.path.realpath(path) == os.path.realpath(str(proj))
+
+
 def test_reorder_windows(tmux_server):
     sweep.new_window("alpha")
     sweep.new_window("alpha")
