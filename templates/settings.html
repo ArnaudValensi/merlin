@@ -113,16 +113,19 @@
             </div>
             <span class="settings-toast" id="toast-agent-state-hooks"></span>
             <div class="settings-help">
-                Encode each Claude Code session's state in the tmux window tabs of the web
-                terminal: <span class="pill-idle">&#9675;</span> idle,
+                Encode each Claude Code and Codex session's state in the tmux window tabs of the
+                web terminal: <span class="pill-idle">&#9675;</span> idle,
                 <span class="pill-busy">&#9680;</span> working,
+                <span class="pill-ask">?</span> asking,
                 <span class="pill-done">&#9679;</span> done and waiting on you. Installing it adds a
-                small state hook to <code>~/.claude/settings.json</code>.
+                small state hook to <code>~/.claude/settings.json</code> and
+                <code>~/.codex/hooks.json</code>.
                 <strong>Always</strong> keeps it installed and updated,
                 <strong>Ask</strong> prompts you here whenever there is a change to install,
                 <strong>Off</strong> removes it and stops asking. Your own hooks are never touched.
-                Already-open <code>claude</code> sessions pick up a new or updated hook only after a
-                session restart.
+                Codex requires a one-time review in <code>/hooks</code> for each new or changed hook
+                definition. Already-open <code>claude</code> and <code>codex</code> sessions pick up a
+                new or updated hook only after a session restart.
             </div>
         </div>
     </div>

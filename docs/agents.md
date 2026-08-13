@@ -1,7 +1,7 @@
 # Your Agent
 
 Merlin does not ship its own AI. You bring your agent CLI (Claude Code by
-default, OpenCode too) and Merlin gives it a body: open the
+default, OpenCode and Codex too) and Merlin gives it a body: open the
 [web terminal](terminal.md) from anywhere, phone included, run your agent,
 and it already knows Merlin. Its skills are in place, the `merlin` CLI is
 its toolbox, and the [notes system](notes.md) is its memory. One agent,
@@ -12,10 +12,10 @@ same brain doc, so every channel gets sharper together.
 
 ## Run your agent anywhere
 
-Open the terminal (or any shell on the machine) and launch `claude` or
+Open the terminal (or any shell on the machine) and launch `claude`, `codex`, or
 `opencode`. No per-project setup: Merlin mirrors its canonical skill set
 (`~/.merlin/skills`) as symlinks into `~/.claude/skills` (read by Claude
-Code) and `~/.agents/skills` (read by OpenCode and other agent CLIs), so
+Code) and `~/.agents/skills` (read by Codex, OpenCode, and other agent CLIs), so
 your agent finds Merlin's skills from any working directory. The mirror is
 refreshed automatically at every server startup; `merlin setup` refreshes
 it on demand.

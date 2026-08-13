@@ -82,9 +82,11 @@
                 <div class="consent-banner-icon" aria-hidden="true">&#9680;</div>
                 <div class="consent-banner-text">
                     <strong>Show agent state in your terminal tabs?</strong>
-                    <span>Merlin can encode each Claude Code session's state in the tmux window pills
-                        (working / asking you something / done / idle). This adds a small state hook to
-                        <code>~/.claude/settings.json</code>; your own hooks are never touched.</span>
+                    <span>Merlin can encode each Claude Code and Codex session's state in the tmux
+                        window pills (working / asking you something / done / idle). This adds marked
+                        entries to <code>~/.claude/settings.json</code> and
+                        <code>~/.codex/hooks.json</code>; your own hooks are never touched. Codex asks
+                        you to review new or changed hooks in <code>/hooks</code> before running them.</span>
                 </div>
             </div>
             <div class="consent-banner-actions">

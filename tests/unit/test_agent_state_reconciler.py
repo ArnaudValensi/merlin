@@ -1,9 +1,9 @@
-"""Tests for the agent-state hooks config + settings.json reconciler.
+"""Tests for the agent-state hooks config + Claude/Codex reconcilers.
 
 Covers the consent config (auto|ask|off), the collision-safe atomic merge of
-Merlin's three Claude Code hooks into ~/.claude/settings.json, drift detection,
-idempotency, never-clobbers-foreign, clean removal on `off`, and the mode
-dispatch of sync_interactive_hooks().
+Merlin's hooks into ~/.claude/settings.json and ~/.codex/hooks.json, drift
+detection, idempotency, never-clobbers-foreign, clean removal on `off`, and the
+mode dispatch of sync_interactive_hooks().
 """
 
 import json
@@ -16,11 +16,23 @@ from lib import skills
 
 
 @pytest.fixture
-def settings_file(tmp_path, monkeypatch):
-    """Redirect claude_settings_path() to a temp file (never touch ~/.claude)."""
-    p = tmp_path / "dot-claude" / "settings.json"
-    monkeypatch.setattr(skills, "claude_settings_path", lambda: p)
-    return p
+def hook_files(tmp_path, monkeypatch):
+    """Redirect both user hook files so tests never touch the real home."""
+    claude = tmp_path / "dot-claude" / "settings.json"
+    codex = tmp_path / "dot-codex" / "hooks.json"
+    monkeypatch.setattr(skills, "claude_settings_path", lambda: claude)
+    monkeypatch.setattr(skills, "codex_hooks_path", lambda: codex)
+    return claude, codex
+
+
+@pytest.fixture
+def settings_file(hook_files):
+    return hook_files[0]
+
+
+@pytest.fixture
+def codex_file(hook_files):
+    return hook_files[1]
 
 
 def read(p):
@@ -77,7 +89,7 @@ class TestInstall:
     def test_creates_every_event_in_empty(self, settings_file):
         assert skills.install_interactive_hooks() is True
         data = read(settings_file)
-        assert set(data["hooks"]) == set(skills._HOOK_EVENTS)
+        assert set(data["hooks"]) == set(skills._CLAUDE_HOOK_EVENTS)
         # exactly one Merlin command per event, with the right state
         cmds = {ev: g[0]["hooks"][0]["command"] for ev, g in data["hooks"].items()}
         assert " busy " in cmds["UserPromptSubmit"]
@@ -144,7 +156,7 @@ class TestInstall:
         cmd = hooks["UserPromptSubmit"][0]["hooks"][0]["command"]
         assert "/old/path" not in cmd
         assert f"{skills._HOOK_MARKER}:v{skills._HOOK_VERSION}" in cmd
-        assert set(hooks) == set(skills._HOOK_EVENTS)
+        assert set(hooks) == set(skills._CLAUDE_HOOK_EVENTS)
 
     def test_is_idempotent(self, settings_file):
         assert skills.install_interactive_hooks() is True
@@ -245,13 +257,15 @@ class TestInstall:
     def test_bails_on_invalid_json(self, settings_file):
         settings_file.parent.mkdir(parents=True, exist_ok=True)
         settings_file.write_text("{ this is not json")
-        assert skills.install_interactive_hooks() is False
+        # Claude is skipped, but the independent Codex file is still installed.
+        assert skills.install_interactive_hooks() is True
         assert settings_file.read_text() == "{ this is not json"  # untouched
 
     def test_bails_on_bad_hooks_shape(self, settings_file):
         settings_file.parent.mkdir(parents=True, exist_ok=True)
         settings_file.write_text(json.dumps({"hooks": ["not", "a", "dict"]}))
-        assert skills.install_interactive_hooks() is False
+        assert skills.install_interactive_hooks() is True
+        assert read(settings_file) == {"hooks": ["not", "a", "dict"]}
 
     def test_output_is_valid_json_with_trailing_newline(self, settings_file):
         skills.install_interactive_hooks()
@@ -316,6 +330,9 @@ class TestDriftAndSync:
         assert skills.interactive_hooks_drift() is False
 
     def test_drift_false_on_unreadable(self, settings_file):
+        # Keep Codex in sync so this assertion isolates the malformed Claude
+        # file: unsafe files do not create consent-banner drift.
+        skills.install_interactive_hooks()
         settings_file.parent.mkdir(parents=True, exist_ok=True)
         settings_file.write_text("{ broken")
         assert skills.interactive_hooks_drift() is False
@@ -341,6 +358,91 @@ class TestDriftAndSync:
         skills.install_interactive_hooks()  # e.g. installed earlier under auto
         skills.set_agent_state_hooks_mode("ask")
         assert skills.sync_interactive_hooks() == "in-sync"
+
+
+# ---------------------------------------------------------------------------
+# Codex hooks.json mapping
+# ---------------------------------------------------------------------------
+class TestCodexInstall:
+    def test_creates_native_lifecycle_hooks(self, codex_file):
+        assert skills.install_interactive_hooks() is True
+        data = read(codex_file)
+        assert set(data["hooks"]) == set(skills._CODEX_HOOK_EVENTS)
+
+        groups = {event: data["hooks"][event][0] for event in data["hooks"]}
+        commands = {
+            event: group["hooks"][0]["command"] for event, group in groups.items()
+        }
+        assert " busy " in commands["UserPromptSubmit"]
+        assert " done " in commands["Stop"]
+        assert " idle " in commands["SessionStart"]
+        assert " ask " in commands["PermissionRequest"]
+        assert " busy " in commands["PostToolUse"]
+        assert all(skills._HOOK_MARKER in command for command in commands.values())
+
+    def test_question_and_permission_transitions(self, codex_file):
+        skills.install_interactive_hooks()
+        groups = {
+            event: read(codex_file)["hooks"][event][0]
+            for event in skills._CODEX_HOOK_EVENTS
+        }
+
+        assert groups["PreToolUse"]["matcher"] == "^request_user_input$"
+        assert " ask " in groups["PreToolUse"]["hooks"][0]["command"]
+        assert "matcher" not in groups["PermissionRequest"]
+        assert " ask " in groups["PermissionRequest"]["hooks"][0]["command"]
+        # Any completed tool clears a resolved question/approval and returns
+        # the turn to working.
+        assert "matcher" not in groups["PostToolUse"]
+        assert " busy " in groups["PostToolUse"]["hooks"][0]["command"]
+
+    def test_session_start_excludes_mid_turn_compaction(self, codex_file):
+        skills.install_interactive_hooks()
+        group = read(codex_file)["hooks"]["SessionStart"][0]
+        assert group["matcher"] == "startup|resume|clear"
+        commands = [hook["command"] for hook in group["hooks"]]
+        assert any("agent-state.sh" in command for command in commands)
+        assert any("agent-session-init.sh" in command for command in commands)
+
+    def test_preserves_foreign_codex_hooks(self, codex_file):
+        codex_file.parent.mkdir(parents=True, exist_ok=True)
+        codex_file.write_text(
+            json.dumps(
+                {
+                    "description": "mine",
+                    "hooks": {
+                        "Stop": [{"hooks": [{"type": "command", "command": "save.sh"}]}]
+                    },
+                }
+            )
+        )
+        skills.install_interactive_hooks()
+        data = read(codex_file)
+        assert data["description"] == "mine"
+        stop_commands = [
+            hook["command"]
+            for group in data["hooks"]["Stop"]
+            for hook in group["hooks"]
+        ]
+        assert "save.sh" in stop_commands
+        assert sum(skills._HOOK_MARKER in command for command in stop_commands) == 1
+
+    def test_off_removes_only_merlin_codex_groups(self, codex_file):
+        codex_file.parent.mkdir(parents=True, exist_ok=True)
+        codex_file.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "Stop": [{"hooks": [{"type": "command", "command": "save.sh"}]}]
+                    }
+                }
+            )
+        )
+        skills.install_interactive_hooks()
+        assert skills.remove_interactive_hooks() is True
+        assert read(codex_file) == {
+            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "save.sh"}]}]}
+        }
 
 
 # ---------------------------------------------------------------------------

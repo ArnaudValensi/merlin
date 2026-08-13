@@ -1210,10 +1210,10 @@ def _rebuild_skill_registry() -> None:
     except Exception:
         logger.warning("Skill registry rebuild failed", exc_info=True)
 
-    # Agent-state pill hooks: reconcile ~/.claude/settings.json per the consent
-    # mode (auto installs/updates, off removes, ask only detects drift). Kept
-    # separate from the shim sync so a settings.json issue can never stop the
-    # skills from refreshing. Never blocks startup.
+    # Agent-state pill hooks: reconcile Claude Code and Codex's user hook files
+    # per the consent mode (auto installs/updates, off removes, ask only detects
+    # drift). Kept separate from the shim sync so a config issue can never stop
+    # the skills from refreshing. Never blocks startup.
     global _agent_state_hooks_status
     try:
         _agent_state_hooks_status = skills.sync_interactive_hooks()

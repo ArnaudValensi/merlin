@@ -379,9 +379,9 @@ def sync_interactive_shims() -> None:
 # ---------------------------------------------------------------------------
 # Agent-state pill hooks: consent config
 #
-# The tmux window pills (terminal/tmux.conf) need a Claude Code state hook
-# installed into the user's ~/.claude/settings.json. That edits the user's own
-# config, so it is consent-gated by a single config value:
+# The tmux window pills (terminal/tmux.conf) need state hooks installed into the
+# user's Claude Code and Codex configs. Those are user-owned files, so the
+# writes are consent-gated by a single config value:
 #
 #   auto  sync silently on every start ("always, don't ask")
 #   ask   (default) surface the consent prompt in the dashboard on drift
@@ -469,16 +469,14 @@ def set_agent_state_hooks_mode(mode: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Agent-state pill hooks: the settings.json reconciler
+# Agent-state pill hooks: Claude Code + Codex reconcilers
 #
-# The interactive `claude` command line is the user's, not Merlin's, so the
-# state hook has to be pre-registered where Claude Code reads it on every
-# launch: the `hooks` key of ~/.claude/settings.json (--plugin-dir is CLI-only,
-# so it cannot help the interactive path). This reconciler owns exactly the
-# entries listed in _HOOK_EVENTS and nothing else, the same idempotent,
-# drift-only shape as
-# sync_interactive_shims(): it re-writes them whenever what Merlin ships drifts
-# from what is installed, so an 'auto' user never re-runs setup after an update.
+# Interactive agent commands belong to the user, not Merlin, so the state hooks
+# have to be registered in each agent's user config: ~/.claude/settings.json
+# and $CODEX_HOME/hooks.json (normally ~/.codex/hooks.json). The reconcilers own
+# exactly the marked matcher groups below and nothing else. They share the same
+# idempotent, drift-only shape as sync_interactive_shims(): whenever what Merlin
+# ships changes, an `auto` user gets the new definitions on the next startup.
 #
 # Merlin's entries are MARKED (a sentinel + version baked into the command
 # string, which is a harmless trailing shell comment) so they can be found,
@@ -488,12 +486,12 @@ def set_agent_state_hooks_mode(mode: str) -> str:
 # ---------------------------------------------------------------------------
 
 _HOOK_MARKER = "merlin:agent-state-pill"
-_HOOK_VERSION = 3  # v3: the 'ask' state (question / permission dialogs)
+_HOOK_VERSION = 4  # v4: Codex lifecycle hooks alongside Claude Code
 
 # Tools that open a BLOCKING dialog mid-turn: the agent has stopped and needs an
 # answer from you. Neither ends the turn, so `Stop` never fires and the pill
 # would otherwise sit on 'busy' for as long as the dialog is open.
-_ASK_TOOLS = "AskUserQuestion|ExitPlanMode"
+_CLAUDE_ASK_TOOLS = "AskUserQuestion|ExitPlanMode"
 
 # Claude Code event -> (agent-state.sh argument, matcher or None). The matcher
 # field is the tool name for Pre/PostToolUse and `notification_type` for
@@ -508,20 +506,44 @@ _ASK_TOOLS = "AskUserQuestion|ExitPlanMode"
 # to any tool, so the reset cannot be tool-matched, and the batch event costs one
 # process instead of N. The matched PostToolUse is kept alongside it as the
 # direct, near-free reset for the dialog tools themselves.
-_HOOK_EVENTS = {
+_CLAUDE_HOOK_EVENTS = {
     "UserPromptSubmit": ("busy", None),  # you submitted a prompt: agent working
     "Stop": ("done", None),  # the agent finished a turn: waiting on you
     "SessionStart": ("idle", None),  # a session started / resumed: nothing yet
-    "PreToolUse": ("ask", _ASK_TOOLS),  # a dialog opened: blocked on you
-    "PostToolUse": ("busy", _ASK_TOOLS),  # you answered it: back to work
+    "PreToolUse": ("ask", _CLAUDE_ASK_TOOLS),  # dialog opened: blocked on you
+    "PostToolUse": ("busy", _CLAUDE_ASK_TOOLS),  # answered: back to work
     "Notification": ("ask", "permission_prompt"),  # permission dialog shown
     "PostToolBatch": ("busy", None),  # any batch resolved: clear a stale 'ask'
+}
+
+# Codex exposes the same turn lifecycle through its native hooks. A
+# PermissionRequest fires immediately before Codex opens an approval dialog.
+# request_user_input is the blocking multiple-choice/question tool: PreToolUse
+# marks it asking and the unmatched PostToolUse resets both it and resolved
+# permission dialogs once their tool result returns to the agent.
+#
+# SessionStart also fires after compaction in Codex. That is mid-turn, so limit
+# this group to real starts/resumes/clears or it would incorrectly stamp idle
+# while the agent is still working.
+_CODEX_HOOK_EVENTS = {
+    "UserPromptSubmit": ("busy", None),
+    "Stop": ("done", None),
+    "SessionStart": ("idle", "startup|resume|clear"),
+    "PreToolUse": ("ask", "^request_user_input$"),
+    "PermissionRequest": ("ask", None),
+    "PostToolUse": ("busy", None),
 }
 
 
 def claude_settings_path() -> Path:
     """Claude Code's user settings file (~/.claude/settings.json)."""
     return claude_skills_dir().parent / "settings.json"
+
+
+def codex_hooks_path() -> Path:
+    """Codex's user hook file ($CODEX_HOME/hooks.json)."""
+    codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    return codex_home.expanduser() / "hooks.json"
 
 
 def _hook_command(state: str) -> str:
@@ -555,8 +577,8 @@ def _is_merlin_group(group: object) -> bool:
 def _merlin_group(event: str, state: str, matcher: str | None = None) -> dict:
     """The hook entries Merlin owns for one event. SessionStart carries a second
     command (the board session-init) in the same group. A matcher, when the
-    event scopes on one, is emitted first so the group reads like Claude Code's
-    own documented shape."""
+    event scopes on one, is emitted first so the group reads like both agents'
+    documented shape."""
     entries = [{"type": "command", "command": _hook_command(state)}]
     if event == "SessionStart":
         entries.append({"type": "command", "command": _session_init_command()})
@@ -566,10 +588,12 @@ def _merlin_group(event: str, state: str, matcher: str | None = None) -> dict:
     return group
 
 
-def _read_claude_settings() -> dict | None:
-    """Read settings.json. {} if absent, None if unreadable/invalid or not an
-    object (caller must then NOT write, to never clobber the user's file)."""
-    path = claude_settings_path()
+def _read_hook_file(path: Path) -> dict | None:
+    """Read a JSON hook/config file.
+
+    Returns {} when absent and None when unreadable, invalid, or not an object.
+    Callers must never write after None, so a malformed user file is safe.
+    """
     if not path.exists():
         return {}
     try:
@@ -579,7 +603,7 @@ def _read_claude_settings() -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def _hooks_shape_ok(settings: dict) -> bool:
+def _hooks_shape_ok(settings: dict, events: dict = _CLAUDE_HOOK_EVENTS) -> bool:
     """The `hooks` block, if present, must be the object-of-lists shape we can
     safely merge into. Anything else -> bail rather than risk corrupting it."""
     hooks = settings.get("hooks")
@@ -587,20 +611,20 @@ def _hooks_shape_ok(settings: dict) -> bool:
         return True
     if not isinstance(hooks, dict):
         return False
-    for event in _HOOK_EVENTS:
+    for event in events:
         value = hooks.get(event)
         if value is not None and not isinstance(value, list):
             return False
     return True
 
 
-def _reconcile_install(settings: dict) -> dict:
+def _reconcile_install(settings: dict, events: dict = _CLAUDE_HOOK_EVENTS) -> dict:
     """Desired settings with Merlin's own groups fresh: strip any existing
     Merlin groups (stale version / old path) and append the shipped ones.
     Foreign groups keep their place and order."""
     out = copy.deepcopy(settings)
     hooks = out.setdefault("hooks", {})
-    for event, (state, matcher) in _HOOK_EVENTS.items():
+    for event, (state, matcher) in events.items():
         groups = [g for g in hooks.get(event, []) if not _is_merlin_group(g)]
         groups.append(_merlin_group(event, state, matcher))
         hooks[event] = groups
@@ -628,10 +652,9 @@ def _reconcile_remove(settings: dict) -> dict:
     return out
 
 
-def _write_claude_settings(data: dict) -> None:
+def _write_hook_file(path: Path, data: dict) -> None:
     """Collision-safe atomic write: render, parse-verify, temp file, rename.
     Preserves the file's existing permission bits when it already exists."""
-    path = claude_settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(data, indent=2) + "\n"
     json.loads(text)  # parse-verify before touching the real file
@@ -648,46 +671,67 @@ def _write_claude_settings(data: dict) -> None:
         raise
 
 
-def install_interactive_hooks() -> bool:
-    """Install/refresh Merlin's state hooks. Returns True if it wrote a change.
-    No-op (and no write) when already in sync or when the file can't be merged
-    safely."""
-    settings = _read_claude_settings()
-    if settings is None or not _hooks_shape_ok(settings):
+def _install_hook_file(path: Path, events: dict) -> bool:
+    settings = _read_hook_file(path)
+    if settings is None or not _hooks_shape_ok(settings, events):
         logger.warning(
             "Skipping agent-state hook install: %s is unreadable or has an "
             "unexpected shape",
-            claude_settings_path(),
+            path,
         )
         return False
-    desired = _reconcile_install(settings)
+    desired = _reconcile_install(settings, events)
     if desired == settings:
         return False
-    _write_claude_settings(desired)
+    _write_hook_file(path, desired)
     return True
 
 
-def remove_interactive_hooks() -> bool:
-    """Remove Merlin's state hooks, leaving foreign entries untouched. Returns
-    True if it wrote a change."""
-    settings = _read_claude_settings()
+def install_interactive_hooks() -> bool:
+    """Install/refresh Merlin's Claude Code and Codex state hooks.
+
+    Returns True if either file changed. A malformed file is skipped without
+    preventing the other agent's valid config from being reconciled.
+    """
+    changed_claude = _install_hook_file(claude_settings_path(), _CLAUDE_HOOK_EVENTS)
+    changed_codex = _install_hook_file(codex_hooks_path(), _CODEX_HOOK_EVENTS)
+    return changed_claude or changed_codex
+
+
+def _remove_hook_file(path: Path) -> bool:
+    settings = _read_hook_file(path)
     if settings is None:
         return False
     desired = _reconcile_remove(settings)
     if desired == settings:
         return False
-    _write_claude_settings(desired)
+    _write_hook_file(path, desired)
     return True
 
 
-def interactive_hooks_drift() -> bool:
-    """True if installing would change settings.json (not installed, or a
-    version/path update made the shipped command differ). False when the file
-    can't be merged safely (we won't nag about something we won't touch)."""
-    settings = _read_claude_settings()
-    if settings is None or not _hooks_shape_ok(settings):
+def remove_interactive_hooks() -> bool:
+    """Remove Merlin's state hooks from both agents, preserving foreign ones."""
+    changed_claude = _remove_hook_file(claude_settings_path())
+    changed_codex = _remove_hook_file(codex_hooks_path())
+    return changed_claude or changed_codex
+
+
+def _hook_file_drift(path: Path, events: dict) -> bool:
+    settings = _read_hook_file(path)
+    if settings is None or not _hooks_shape_ok(settings, events):
         return False
-    return _reconcile_install(settings) != settings
+    return _reconcile_install(settings, events) != settings
+
+
+def interactive_hooks_drift() -> bool:
+    """True if either agent's hook file is missing or has install drift.
+
+    A file that cannot be merged safely contributes no drift, so Merlin never
+    nags about a change it refuses to make.
+    """
+    return _hook_file_drift(
+        claude_settings_path(), _CLAUDE_HOOK_EVENTS
+    ) or _hook_file_drift(codex_hooks_path(), _CODEX_HOOK_EVENTS)
 
 
 def sync_interactive_hooks() -> str:

@@ -5,6 +5,7 @@ All notable user-facing changes to Merlin are documented in this file.
 ## Unreleased
 
 ### Added
+- **Agent-state pills for Codex:** Codex windows now use the same `○` idle, `◐` working, `?` asking, and `●` done states as Claude Code in both the tmux status bar and the Sessions panel. Merlin installs marked lifecycle hooks in `~/.codex/hooks.json` alongside the existing Claude Code hooks, while preserving every user-owned entry.
 - **A pill for "the agent is asking you something"** — A window whose agent has stopped mid-turn to ask a question now shows a sky `?` in the tmux tab bar and the Sessions panel, instead of sitting on the amber `◐` as if it were still working. It covers the multiple-choice dialog, the plan-approval screen, and permission prompts. Unlike the green `●`, looking at the window does not clear it: only answering does.
 - **Asking outranks waiting in the Sessions panel** — The Sessions button and the per-session badges turn blue when any window is blocked on a question, so a live turn waiting on you is distinguishable from a finished one you have not read yet.
 

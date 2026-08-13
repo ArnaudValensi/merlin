@@ -7,9 +7,10 @@
 #   done  -> ●  (green)    finished, waiting on you
 # No-op outside tmux or if tmux is unavailable, so it can never block a session.
 #
-# Engine-neutral: it only writes @agent_state. The Claude Code driver wires it
-# through ~/.claude/settings.json hooks (installed by lib/skills.py):
+# Engine-neutral: it only writes @agent_state. The Claude Code and Codex
+# drivers wire it through their user hook files (installed by lib/skills.py):
 #   UserPromptSubmit -> busy   Stop -> done   SessionStart -> idle
+#   blocking question / permission -> ask   resolved tool -> busy
 
 # Drain stdin (the hooks pipe JSON we don't need here) so the writer never
 # blocks waiting on a pipe that no one closes.

@@ -317,6 +317,7 @@
 /* Pill glyphs used in the help text */
 .pill-idle { color: var(--text-muted); }
 .pill-busy { color: var(--accent-yellow); }
+.pill-ask { color: var(--accent-blue); }
 .pill-done { color: var(--accent-green); }
 
 @media (max-width: 768px) {

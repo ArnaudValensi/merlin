@@ -68,9 +68,9 @@ so it always shows the windows of whichever session you are currently on.
 
 ## Agent-state pills
 
-When you run [Claude Code](agents.md) in a window, its pill in the tmux
-status bar encodes what that session is doing, so one glance at the tab
-bar tells you which session is working, which is stuck on a question,
+When you run [Claude Code or Codex](agents.md) in a window, its pill in the
+tmux status bar encodes what that session is doing, so one glance at the
+tab bar tells you which session is working, which is stuck on a question,
 which just finished, and which you have already looked at:
 
 - `○` idle (grey): nothing is running.
@@ -89,16 +89,17 @@ several approaches, when it presents a plan for approval, or when it
 needs permission to run something. Looking at the window does **not**
 clear it, because the question is still unanswered. Answering does.
 
-Windows that are not running Claude Code (a plain shell, or another
-agent) keep the classic `●` active / `○` inactive dots, so nothing
-changes for them.
+Windows that are not running Claude Code or Codex (a plain shell, or another
+agent) keep the classic `●` active / `○` inactive dots, so nothing changes for
+them.
 
 ### Turn the pills on or off
 
-The pills need a small state hook in your Claude Code config
-(`~/.claude/settings.json`), so Merlin asks before installing it. The
-first time there is something to install, a banner appears at the top of
-the dashboard with four choices:
+The pills need small state hooks in your Claude Code and Codex configs
+(`~/.claude/settings.json` and `$CODEX_HOME/hooks.json`, normally
+`~/.codex/hooks.json`), so Merlin asks before installing them. The first time
+there is something to install, a banner appears at the top of the dashboard
+with four choices:
 
 - **Always**: install it and keep it updated automatically.
 - **Just once**: install it now, but ask again next time it changes.
@@ -115,14 +116,18 @@ merlin config agent-state-hooks ask     # ask via the dashboard banner
 merlin config agent-state-hooks off     # remove Merlin's hook, stop asking
 ```
 
-Merlin only ever touches its own entry: any hooks, model, or theme you
-have set in `settings.json` are left alone.
+Merlin only ever touches its own marked entries. Existing hooks and any other
+settings in either file are left alone.
 
-> **Already-open sessions need a restart.** Claude Code reads its hooks
-> once, when a session starts. A `claude` session that was already
-> running when the hook was installed or updated will not show pills
-> until you restart it (exit and relaunch `claude` in that window). New
-> sessions pick it up right away.
+> **Codex requires hook review.** On the next Codex launch, open `/hooks` and
+> trust Merlin's new or changed definitions. Codex deliberately skips
+> unreviewed user hooks. This trust step is separate from Merlin's install
+> consent.
+>
+> **Already-open sessions need a restart.** A `claude` or `codex` session that
+> was already running when the hook was installed or updated will not show
+> pills until you exit and relaunch the agent in that window. New sessions pick
+> it up right away, once Codex's hook definitions are trusted.
 
 ## Copy and paste
 
