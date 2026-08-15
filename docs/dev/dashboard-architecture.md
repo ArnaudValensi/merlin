@@ -30,6 +30,7 @@ merlin/
 ├── commits/                   # Commit browser module
 ├── sessions/                  # Session transcript viewer (/session, /api/session)
 ├── notes/                     # Notes editor module
+├── timeline/                  # Built-in activity-history extension
 └── merlin-bot/
     ├── merlin_app.py          # Bot extension: monitoring page with tabs (/bot, /bot/performance, /bot/logs)
     ├── structured_log.py      # JSONL writer (thread-safe, used by all emitters)
@@ -352,6 +353,28 @@ notes/
 **Pages:** `/notes` (index), `/notes/{path}` (view/edit), `/notes/tags/{tag}` (tag filter)
 
 **CDN deps:** fuse.js (fuzzy search), marked.js (markdown rendering), highlight.js (code blocks).
+
+### Agent Activity Timeline
+
+```
+timeline/
+├── __init__.py            # Built-in extension interface and startup hook
+├── routes.py              # /timeline page, consent, bounded live API
+├── schema.py              # Typed provider-neutral v1 records
+├── writer.py, store.py    # Locked JSONL append, cursor reads, span context
+├── providers.py           # Claude Code and Codex payload normalization
+├── model.py               # Pure points/spans/tracks assembly
+├── commands/emit.py       # merlin timeline emit
+├── templates/timeline.html
+└── static/timeline.css, timeline.js
+```
+
+The Timeline is an enabled-by-default built-in extension, not a core page. It
+polls an opaque cursor about every 1.5 seconds, advances open spans locally, and
+buffers updates while Frozen. The DOM renderer caps retained items, packs
+overlaps into stable sub-lanes, and preserves selection and URL state across
+polls. See [`agent-activity-timeline.md`](agent-activity-timeline.md) for its
+storage, consent, API, and privacy contracts.
 
 ### Commit Browser
 

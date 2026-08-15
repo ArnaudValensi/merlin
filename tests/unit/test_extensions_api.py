@@ -112,6 +112,43 @@ class TestToggle:
         resp = client.post("/api/extensions/nonexistent/toggle")
         assert resp.status_code == 404
 
+    def test_disable_hook_runs_before_state_is_persisted(self, client):
+        info = app_mod.extension_registry["timeline"]
+        original_enabled = info.enabled
+        original_disable = info.disable
+        observed = []
+        try:
+            info.enabled = True
+            info.disable = lambda: observed.append(info.enabled)
+            response = client.post("/api/extensions/timeline/toggle")
+            assert response.status_code == 200
+            assert response.json()["enabled"] is False
+            assert observed == [True]
+        finally:
+            info.enabled = original_enabled
+            info.disable = original_disable
+
+    def test_disable_hook_failure_leaves_extension_enabled(self, client):
+        info = app_mod.extension_registry["timeline"]
+        original_enabled = info.enabled
+        original_disable = info.disable
+
+        def fail():
+            raise RuntimeError("cleanup failed")
+
+        try:
+            info.enabled = True
+            info.disable = fail
+            response = client.post("/api/extensions/timeline/toggle")
+            assert response.status_code == 500
+            assert response.json()["detail"] == (
+                "Extension cleanup failed; it remains enabled"
+            )
+            assert info.enabled is True
+        finally:
+            info.enabled = original_enabled
+            info.disable = original_disable
+
 
 class TestConfig:
     @pytest.fixture(autouse=True)

@@ -130,6 +130,16 @@ while its pipe transports reject TTYs).
 - Terminal state persists across page reloads
 - Multiple browser tabs share the same tmux session
 
+### Agent identity and activity history
+
+The terminal's provider state hooks own the current `@agent_state` pill and mint
+the stable per-window `@agent_sid` plus pinned `@agent_cwd`. The built-in
+[Timeline extension](agent-activity-timeline.md) reads that generic identity from
+tmux in its own separately consented provider hooks. It never writes those core
+options or the state pill; when identity is not ready, it uses a private actor
+key without claiming liveness. It no-ops outside tmux. Historical capture is
+therefore independent of both the PTY bridge and `AgentEngine`.
+
 ### Transcription API
 
 `POST /api/terminal/transcribe`:

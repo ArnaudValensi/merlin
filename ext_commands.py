@@ -54,6 +54,7 @@ CORE_COMMANDS: tuple[str, ...] = (
 BUILTIN_IDS: tuple[str, ...] = (
     "notes",
     "merlin-bot",
+    "timeline",
     "files",
     "terminal",
     "commits",
@@ -70,7 +71,11 @@ TOP_LEVEL_ALIASES: dict[str, tuple[str, str]] = {
 
 # Default enabled state for built-in extensions when extensions.json has no
 # entry. Shared with main.py so the CLI and the server agree.
-BUILTIN_DEFAULT_ENABLED: dict[str, bool] = {"notes": True, "merlin-bot": False}
+BUILTIN_DEFAULT_ENABLED: dict[str, bool] = {
+    "notes": True,
+    "merlin-bot": False,
+    "timeline": True,
+}
 
 
 def reserved_names() -> set[str]:
@@ -149,6 +154,7 @@ def builtin_extension_dirs() -> dict[str, Path]:
     return {
         "notes": app / "notes",
         "merlin-bot": app / "merlin-bot",
+        "timeline": app / "timeline",
     }
 
 

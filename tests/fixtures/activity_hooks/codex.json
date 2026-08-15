@@ -1,0 +1,141 @@
+[
+  {
+    "case": "session_start_startup",
+    "payload": {
+      "session_id": "codex-session-a",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "never",
+      "hook_event_name": "SessionStart",
+      "source": "startup",
+      "model": "gpt-fixture"
+    }
+  },
+  {
+    "case": "prompt_submitted",
+    "payload": {
+      "session_id": "codex-session-a",
+      "turn_id": "codex-turn-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "never",
+      "hook_event_name": "UserPromptSubmit",
+      "model": "gpt-fixture",
+      "prompt": "<redacted>"
+    }
+  },
+  {
+    "case": "tool_start",
+    "payload": {
+      "session_id": "codex-session-a",
+      "turn_id": "codex-turn-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "never",
+      "hook_event_name": "PreToolUse",
+      "model": "gpt-fixture",
+      "tool_name": "exec_command",
+      "tool_input": {"_redacted": true, "keys": ["cmd"]},
+      "tool_use_id": "codex-tool-1"
+    }
+  },
+  {
+    "case": "permission_requested",
+    "payload": {
+      "session_id": "codex-session-a",
+      "turn_id": "codex-turn-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "never",
+      "hook_event_name": "PermissionRequest",
+      "model": "gpt-fixture",
+      "tool_name": "exec_command",
+      "tool_input": {"_redacted": true, "keys": ["cmd"]}
+    }
+  },
+  {
+    "case": "tool_finish",
+    "payload": {
+      "session_id": "codex-session-a",
+      "turn_id": "codex-turn-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "never",
+      "hook_event_name": "PostToolUse",
+      "model": "gpt-fixture",
+      "tool_name": "exec_command",
+      "tool_input": {"_redacted": true, "keys": ["cmd"]},
+      "tool_response": {"_redacted": true, "keys": ["output"]},
+      "tool_use_id": "codex-tool-1"
+    }
+  },
+  {
+    "case": "question_start",
+    "payload": {
+      "session_id": "codex-session-a",
+      "turn_id": "codex-turn-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "never",
+      "hook_event_name": "PreToolUse",
+      "model": "gpt-fixture",
+      "tool_name": "request_user_input",
+      "tool_input": {"_redacted": true, "keys": ["questions"]},
+      "tool_use_id": "codex-question-1"
+    }
+  },
+  {
+    "case": "question_finish",
+    "payload": {
+      "session_id": "codex-session-a",
+      "turn_id": "codex-turn-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "never",
+      "hook_event_name": "PostToolUse",
+      "model": "gpt-fixture",
+      "tool_name": "request_user_input",
+      "tool_input": {"_redacted": true, "keys": ["questions"]},
+      "tool_response": {"_redacted": true, "keys": ["answers"]},
+      "tool_use_id": "codex-question-1"
+    }
+  },
+  {
+    "case": "turn_stop",
+    "payload": {
+      "session_id": "codex-session-a",
+      "turn_id": "codex-turn-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "never",
+      "hook_event_name": "Stop",
+      "model": "gpt-fixture",
+      "stop_hook_active": false,
+      "last_assistant_message": "<redacted>"
+    }
+  },
+  {
+    "case": "session_resume",
+    "payload": {
+      "session_id": "codex-session-a",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "never",
+      "hook_event_name": "SessionStart",
+      "source": "resume",
+      "model": "gpt-fixture"
+    }
+  },
+  {
+    "case": "session_compact",
+    "payload": {
+      "session_id": "codex-session-a",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "never",
+      "hook_event_name": "SessionStart",
+      "source": "compact",
+      "model": "gpt-fixture"
+    }
+  }
+]

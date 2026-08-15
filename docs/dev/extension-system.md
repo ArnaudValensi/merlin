@@ -9,7 +9,7 @@ Extensions add functionality to the Merlin dashboard — pages, sidebar nav item
 ```
 main.py (_load_extension)
   ├─ Core (files, terminal, commits) — always active, registered manually
-  ├─ Built-in (notes, merlin-bot) — ship with Merlin, toggleable
+  ├─ Built-in (notes, timeline, merlin-bot) — ship with Merlin, toggleable
   └─ Installed (~/.merlin/extensions/*) — user-installed, toggleable
       └─ each folder is a Python module with routers
 ```
@@ -21,7 +21,7 @@ Key property: **Merlin always starts.** A broken extension is recorded in the re
 | Tier | Location | Default | Can disable? | Example |
 |------|----------|---------|-------------|---------|
 | Core | Hardcoded in `main.py` | Always on | No | files, terminal, commits |
-| Built-in | Ships with Merlin source | Per `BUILT_IN_DEFAULTS` | Yes | notes (on), merlin-bot (off) |
+| Built-in | Ships with Merlin source | Per `BUILT_IN_DEFAULTS` | Yes | notes and timeline (on), merlin-bot (off) |
 | Installed | `~/.merlin/extensions/` | On | Yes | video-scenes |
 
 An extension cannot declare itself as core or built-in. The tier is inferred from where it lives.
@@ -97,6 +97,11 @@ def validate():
 async def start():
     """Async startup (e.g., Discord client)."""
     ...
+
+
+def disable():
+    """Synchronous cleanup before a live extension is toggled off."""
+    ...
 ```
 
 **Defaults when fields are missing:**
@@ -105,7 +110,13 @@ async def start():
 - No `STATIC_DIR` → no static files mounted
 - No `validate()` → always considered valid
 - No `start()` → no async startup
+- No `disable()` → no immediate cleanup before the persisted toggle
 - No `logger` → Merlin injects one automatically (see Logging below)
+
+`disable()` runs before Merlin writes the disabled state. It is for bounded
+cleanup whose side effects cannot wait for restart, such as removing provider
+hooks. If it raises, the API returns an error and the extension remains enabled.
+Page, route, navigation, and skill unloading still takes effect after restart.
 
 ## Logging
 
@@ -197,7 +208,7 @@ Stores explicit user toggle choices only:
 
 **Resolution logic** (`_resolve_enabled` in `main.py`):
 1. In `extensions.json`? → use that value
-2. Built-in? → use `BUILT_IN_DEFAULTS` (`notes=True`, `merlin-bot=False`)
+2. Built-in? → use `BUILT_IN_DEFAULTS` (`notes=True`, `timeline=True`, `merlin-bot=False`)
 3. Installed? → `True` (you put it there, you want it active)
 4. Core? → always `True` regardless
 
@@ -216,12 +227,16 @@ class ExtensionInfo:
     loaded: bool  # Successfully imported?
     error: str | None  # Import/validate error message
     meta: dict  # EXTENSION_META (or generated defaults)
-    has_start: bool  # Has async start() hook
     module: object | None  # The imported module (if loaded)
+    start: callable | None  # Async startup hook
+    disable: callable | None  # Pre-toggle cleanup hook
+    validate: callable | None  # Configuration validator
+    notify: callable | None  # Optional notification seam
 ```
 
 The registry is used by:
 - `start_server()` — iterates for `start()` hooks
+- `/api/extensions/{id}/toggle` — invokes `disable()` before persisting off
 - `_validate_config()` — validates bot config if loaded
 - Extensions page — lists all extensions with status
 - `register_template_globals()` — publishes `extensions_error_count` to all template instances for the sidebar badge
@@ -318,6 +333,7 @@ Files           ← core (always)
 Terminal        ← core (always)
 Commits         ← core (always)
 Notes           ← built-in (if enabled)
+Timeline        ← built-in (if enabled)
 Bot             ← built-in (if enabled, single entry with tabs)
 Video Scenes    ← installed (if enabled)
 Extensions      ← always shown (management page, puzzle icon)
@@ -367,4 +383,5 @@ Note: merlin-bot is **Discord-only** in scope. It handles message listening, thr
 | `static/settings.css` + `.js` | Settings page UI |
 | `templates/base.html` | Sidebar nav rendering, error badge, Settings link |
 | `notes/__init__.py` | Built-in extension example (exports api_router, page_router, STATIC_DIR, NAV_ITEMS) |
+| `timeline/__init__.py` | Built-in example with routers, navigation, static assets, CLI commands, consent-aware `start()`, and bounded `disable()` cleanup |
 | `merlin-bot/merlin_bot.py` | Built-in extension example (exports api_router, page_router, URL_SLUG, NAV_ITEMS, EXTENSION_META, start, validate) |

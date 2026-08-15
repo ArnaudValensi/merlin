@@ -28,6 +28,7 @@ Your source code spans several directories from the project root:
 - **`job/`** — Job core module (`runner.py`, `manage.py`, `state.py`, `logs.py`, `routes.py`, `notify.py`)
 - **`merlin-bot/`** — Discord bot extension (`merlin_bot.py`, `discord_send.py` transport, `merlin_app.py`)
 - **`files/`**, **`terminal/`**, **`commits/`**, **`notes/`** — Dashboard modules
+- **`timeline/`** — Built-in activity-history extension and provider hook normalizer
 
 ## What You Can Inspect
 
@@ -64,4 +65,17 @@ Raw engine output per invocation (stream-json). Powers the session viewer in the
 
 ```bash
 ls -lt ~/.merlin/logs/raw-sessions/sessions/ | head -10
+```
+
+### Activity Timeline (`~/.merlin/logs/activity/`)
+
+Sanitized Codex, Claude Code, and explicit workflow lifecycle metadata. Daily
+JSONL partitions contain event/span boundaries and provider context, never raw
+prompts, commands, tool input/results, or model output. Use the authenticated
+`/timeline` page for the assembled participant view; inspect the JSONL only when
+debugging capture or correlation.
+
+```bash
+ls -lt ~/.merlin/logs/activity/*.jsonl | head -10
+tail -20 ~/.merlin/logs/activity/$(date -u +%F).jsonl
 ```

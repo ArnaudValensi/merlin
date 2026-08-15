@@ -1,5 +1,7 @@
 """Tests for the tmux sweep parser (board/sweep.py). Pure string parsing."""
 
+import subprocess
+
 from board import sweep
 
 
@@ -130,3 +132,33 @@ class TestSanitizeSessionName:
     def test_empty_falls_back(self):
         assert sweep.sanitize_session_name("") == "session"
         assert sweep.sanitize_session_name("  ") == "session"
+
+
+class TestCheckedSweep:
+    def test_missing_tmux_is_unknown_but_board_remains_empty(self, monkeypatch):
+        monkeypatch.setattr(sweep.shutil, "which", lambda _name: None)
+
+        assert sweep.run_sweep_checked() is None
+        assert sweep.run_sweep() == []
+
+    def test_failed_tmux_is_unknown(self, monkeypatch):
+        monkeypatch.setattr(sweep.shutil, "which", lambda _name: "/usr/bin/tmux")
+        monkeypatch.setattr(
+            sweep.subprocess,
+            "run",
+            lambda *args, **kwargs: subprocess.CompletedProcess(
+                args, 1, "", "no server"
+            ),
+        )
+
+        assert sweep.run_sweep_checked() is None
+
+    def test_successful_empty_tmux_is_known_empty(self, monkeypatch):
+        monkeypatch.setattr(sweep.shutil, "which", lambda _name: "/usr/bin/tmux")
+        monkeypatch.setattr(
+            sweep.subprocess,
+            "run",
+            lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""),
+        )
+
+        assert sweep.run_sweep_checked() == []

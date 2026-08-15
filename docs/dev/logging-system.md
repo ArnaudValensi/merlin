@@ -11,6 +11,7 @@ Three distinct concepts, each with its own storage:
 ├── logs/
 │   ├── merlin.log              # App log (unified, rotating)
 │   ├── engine-log.jsonl        # Engine lifecycle events
+│   ├── activity/               # Sanitized Timeline metadata, daily JSONL
 │   └── raw-sessions/           # Raw session recordings (session viewer)
 ├── sessions/                   # Session state — conversation continuity
 └── job-logs/                  # Job execution logs
@@ -114,6 +115,23 @@ Additionally, for jobs:
 
 The full raw engine output (stdout) is in `logs/raw-sessions/*.jsonl` — raw stream-json from Claude Code (init events, thinking blocks, tool calls, rate limits, result). This is what the session viewer renders.
 
+### Timeline activity is a separate log
+
+`logs/activity/YYYY-MM-DD.jsonl` belongs to the built-in Timeline extension. It
+contains sanitized interactive-agent and automation lifecycle metadata, not
+engine output. It deliberately does not derive events from `AgentEngine`,
+`engine-log.jsonl`, raw sessions, or conversation state. Provider hooks and
+`merlin timeline emit` write it directly while the dashboard is stopped.
+
+Activity capture has separate consent, private files, an 8 KiB record bound, and
+a 64 MiB daily bound. Its write path enforces 90-day retention once per UTC day,
+uses a durable event-id index for idempotency, and reports bounded current-day
+capture drops from caps, lock timeouts, normalization, or I/O without persisting
+exception text. It rejects content-bearing
+fields such as prompts, commands, inputs, outputs, responses, and secrets. Its
+complete contract is
+[`agent-activity-timeline.md`](agent-activity-timeline.md).
+
 ### The two session directories
 
 | | `logs/raw-sessions/` | `sessions/` |
@@ -181,6 +199,7 @@ All log types have bounded growth:
 | `logs/merlin.log` | `RotatingFileHandler` | 10 MB × 5 backups | 50 MB |
 | `logs/engine-log.jsonl` | Age-based cleanup at startup | 180 days | Varies |
 | `logs/raw-sessions/` | Age-based cleanup at startup | 90 days | Varies |
+| `logs/activity/` | Daily partitions; once-daily cleanup on append | 90 days | 64 MB/day |
 | `job-logs/` | Count-based per job | 50 per job | Varies |
 | `sessions/` | No rotation (state) | Forever | Grows slowly |
 
@@ -207,6 +226,7 @@ These parts of the app produce no structured events (though app-level errors go 
 | `lib/engine.py` | Main `invoke()` entry point — writes to sessions, raw-sessions, engine log |
 | `lib/structured_log.py` | `log_event()`, `cleanup_old_logs()` — engine log writer + rotation |
 | `lib/event_log.py` | Canonical **reader** for `engine-log.jsonl` — typed Pydantic event models, malformed-line resilience. Used by the bot dashboard, the job crash banner, and job performance. |
+| `timeline/schema.py`, `timeline/writer.py`, `timeline/store.py` | Timeline's independent typed record, locked writer, bounded reader, and retention. |
 | `perf/aggregate.py` | Pure aggregator — turns `InvocationEvent`s into chartable `PerformanceData` (no I/O; testable in isolation). |
 | `lib/session.py` | `append_turn()`, `create_session()` — conversation history in `sessions/` |
 | `main.py` | `_setup_logging()` — configures `merlin.*` RotatingFileHandler, calls cleanup at startup |

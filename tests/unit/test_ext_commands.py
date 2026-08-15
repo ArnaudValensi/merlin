@@ -161,7 +161,15 @@ class TestReservedNames:
             assert name in ext_commands.reserved_names()
 
     def test_builtin_ids_reserved(self):
-        for name in ("notes", "merlin-bot", "job", "files", "terminal", "commits"):
+        for name in (
+            "notes",
+            "merlin-bot",
+            "timeline",
+            "job",
+            "files",
+            "terminal",
+            "commits",
+        ):
             assert name in ext_commands.reserved_names()
 
 
@@ -182,6 +190,7 @@ class TestDiscovery:
         dirs = ext_commands.builtin_extension_dirs()
         assert dirs["notes"] == paths.app_dir() / "notes"
         assert dirs["merlin-bot"] == paths.app_dir() / "merlin-bot"
+        assert dirs["timeline"] == paths.app_dir() / "timeline"
 
 
 # ---------------------------------------------------------------------------
@@ -559,9 +568,10 @@ class TestEnabledExtensionSourceDirs:
         path.write_text(json.dumps(state))
 
     def test_builtin_defaults_applied(self, tmp_path):
-        # No state file: notes enabled by default, merlin-bot disabled
+        # No state file: notes and timeline enabled, merlin-bot disabled.
         sources = ext_commands.enabled_extension_source_dirs()
         assert "notes" in sources
+        assert "timeline" in sources
         assert "merlin-bot" not in sources
 
     def test_explicit_state_wins(self, tmp_path):

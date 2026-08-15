@@ -5,8 +5,9 @@ see everything plugged into Merlin: switch extensions on or off, fill in
 their configuration, and audit exactly what skills and commands each one
 ships before trusting it. Extensions come in three tiers, shown as card
 groups: **Core** (Files, Terminal, Commits: always on, a lock icon
-instead of a toggle), **Built-in** (Notes on by default, Merlin Bot off by
-default), and **Installed** (anything in `~/.merlin/extensions/`, on by
+instead of a toggle), **Built-in** (Notes and Timeline on by default,
+Merlin Bot off by default), and **Installed** (anything in
+`~/.merlin/extensions/`, on by
 default; the group appears once something is installed).
 
 ![Extensions page on mobile](creating-extensions/extensions-page-mobile.png)
@@ -34,6 +35,16 @@ turned off.
 What disabling actually removes, after restart: the extension's pages, nav
 items, and skills. Its CLI commands still run (`merlin <ext> <cmd>` never
 checks the toggle); delete the directory if you want the commands gone too.
+An extension may also export `disable()` for cleanup that must happen before
+the toggle is saved. If cleanup fails, Merlin leaves the extension enabled and
+reports the failure.
+
+Timeline's historical-capture consent is intentionally separate from its
+extension toggle, but disabling Timeline now sets that consent to `off` and
+removes its marked Claude Code and Codex hook groups immediately. Existing
+private activity files remain until their 90-day expiry or manual removal.
+`merlin timeline capture auto|ask|off` remains available while the web extension
+is disabled. See the [Timeline reference](dev/agent-activity-timeline.md).
 
 ## Restart from the page
 

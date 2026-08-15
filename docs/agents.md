@@ -10,6 +10,12 @@ terminal lands in the shared notes and knowledge base, and the
 [Discord bot](bot.md) and [jobs](jobs.md) run the same agent with the
 same brain doc, so every channel gets sharper together.
 
+Open `/timeline` when you need history across several interactive agent windows.
+The [Agent Activity Timeline](dev/agent-activity-timeline.md) records only
+separately consented lifecycle metadata: turns, tools, waits, review, and
+handoffs. It does not store prompt, answer, command, tool-result, or model-output
+content, and it does not route terminal agents through Merlin's `AgentEngine`.
+
 ## Run your agent anywhere
 
 Open the terminal (or any shell on the machine) and launch `claude`, `codex`, or

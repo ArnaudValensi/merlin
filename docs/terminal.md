@@ -93,6 +93,14 @@ Windows that are not running Claude Code or Codex (a plain shell, or another
 agent) keep the classic `●` active / `○` inactive dots, so nothing changes for
 them.
 
+For history rather than current state, open the [Agent Activity
+Timeline](dev/agent-activity-timeline.md). It uses separate, explicit consent and
+records sanitized lifecycle metadata from supported agents. The state pills and
+Timeline can be enabled or disabled independently. Timeline prefers the stable
+identity installed with the pills for liveness; without it, Timeline follows
+the provider's current tmux session/window as a weaker live signal and keeps its
+own private actor key.
+
 ### Turn the pills on or off
 
 The pills need small state hooks in your Claude Code and Codex configs

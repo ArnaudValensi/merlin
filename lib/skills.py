@@ -29,16 +29,19 @@ The Extensions page lists each extension's skills and commands read-only.
 
 from __future__ import annotations
 
-import contextlib
 import copy
 import json
 import logging
 import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import paths
+from lib.hook_files import (
+    provider_hook_lock,
+    read_provider_object,
+    write_provider_object,
+)
 
 logger = logging.getLogger("merlin.skills")
 
@@ -537,7 +540,12 @@ _CODEX_HOOK_EVENTS = {
 
 def claude_settings_path() -> Path:
     """Claude Code's user settings file (~/.claude/settings.json)."""
-    return claude_skills_dir().parent / "settings.json"
+    custom = os.environ.get("CLAUDE_CONFIG_DIR")
+    return (
+        Path(custom).expanduser() / "settings.json"
+        if custom
+        else claude_skills_dir().parent / "settings.json"
+    )
 
 
 def codex_hooks_path() -> Path:
@@ -625,7 +633,7 @@ def _reconcile_install(settings: dict, events: dict = _CLAUDE_HOOK_EVENTS) -> di
     out = copy.deepcopy(settings)
     hooks = out.setdefault("hooks", {})
     for event, (state, matcher) in events.items():
-        groups = [g for g in hooks.get(event, []) if not _is_merlin_group(g)]
+        groups = [g for g in (hooks.get(event) or []) if not _is_merlin_group(g)]
         groups.append(_merlin_group(event, state, matcher))
         hooks[event] = groups
     return out
@@ -652,39 +660,26 @@ def _reconcile_remove(settings: dict) -> dict:
     return out
 
 
-def _write_hook_file(path: Path, data: dict) -> None:
-    """Collision-safe atomic write: render, parse-verify, temp file, rename.
-    Preserves the file's existing permission bits when it already exists."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    text = json.dumps(data, indent=2) + "\n"
-    json.loads(text)  # parse-verify before touching the real file
-    mode = path.stat().st_mode & 0o777 if path.exists() else 0o644
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".settings-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as handle:
-            handle.write(text)
-        os.chmod(tmp, mode)
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
-
-
 def _install_hook_file(path: Path, events: dict) -> bool:
-    settings = _read_hook_file(path)
-    if settings is None or not _hooks_shape_ok(settings, events):
-        logger.warning(
-            "Skipping agent-state hook install: %s is unreadable or has an "
-            "unexpected shape",
+    with provider_hook_lock(path):
+        settings, original = read_provider_object(path)
+        if settings is None or not _hooks_shape_ok(settings, events):
+            logger.warning(
+                "Skipping agent-state hook install: %s is unreadable or has an "
+                "unexpected shape",
+                path,
+            )
+            return False
+        desired = _reconcile_install(settings, events)
+        if desired == settings:
+            return False
+        return write_provider_object(
             path,
+            desired,
+            expected=original,
+            default_mode=0o644,
+            prefix=".settings-",
         )
-        return False
-    desired = _reconcile_install(settings, events)
-    if desired == settings:
-        return False
-    _write_hook_file(path, desired)
-    return True
 
 
 def install_interactive_hooks() -> bool:
@@ -699,14 +694,20 @@ def install_interactive_hooks() -> bool:
 
 
 def _remove_hook_file(path: Path) -> bool:
-    settings = _read_hook_file(path)
-    if settings is None:
-        return False
-    desired = _reconcile_remove(settings)
-    if desired == settings:
-        return False
-    _write_hook_file(path, desired)
-    return True
+    with provider_hook_lock(path):
+        settings, original = read_provider_object(path)
+        if settings is None:
+            return False
+        desired = _reconcile_remove(settings)
+        if desired == settings:
+            return False
+        return write_provider_object(
+            path,
+            desired,
+            expected=original,
+            default_mode=0o644,
+            prefix=".settings-",
+        )
 
 
 def remove_interactive_hooks() -> bool:
@@ -741,10 +742,13 @@ def sync_interactive_hooks() -> str:
     Returns a short status: 'synced' | 'in-sync' | 'removed' | 'clean' |
     'pending' (ask-mode drift the dashboard banner should surface).
     """
-    mode = agent_state_hooks_mode()
-    if mode == "off":
-        return "removed" if remove_interactive_hooks() else "clean"
-    if mode == "auto":
-        return "synced" if install_interactive_hooks() else "in-sync"
-    # ask: startup never writes; the dashboard consent banner drives any sync.
-    return "pending" if interactive_hooks_drift() else "in-sync"
+    try:
+        mode = agent_state_hooks_mode()
+        if mode == "off":
+            return "removed" if remove_interactive_hooks() else "clean"
+        if mode == "auto":
+            return "synced" if install_interactive_hooks() else "in-sync"
+        # Ask mode never writes; the dashboard consent banner drives any sync.
+        return "pending" if interactive_hooks_drift() else "in-sync"
+    except Exception:
+        return "error"

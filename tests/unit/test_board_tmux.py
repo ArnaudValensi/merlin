@@ -143,11 +143,26 @@ def test_switch_client_and_current_session(tmux_server):
     per-client, and confirm only that client moved."""
     pid, fd = pty.fork()
     if pid == 0:
-        os.execvp("tmux", ["tmux", "-L", _SOCK, "attach", "-t", "alpha"])
+        child_env = os.environ.copy()
+        child_env.pop("TMUX", None)
+        if child_env.get("TERM") == "dumb":
+            child_env["TERM"] = "xterm-256color"
+        os.execvpe(
+            "tmux",
+            ["tmux", "-L", _SOCK, "attach", "-t", "alpha"],
+            child_env,
+        )
         os._exit(1)
     try:
-        time.sleep(1.0)
-        tty = os.readlink(f"/proc/{pid}/fd/0")
+        deadline = time.monotonic() + 3.0
+        tty = ""
+        while time.monotonic() < deadline:
+            clients = _tmux("list-clients", "-F", "#{client_tty}")
+            if clients.returncode == 0 and clients.stdout.strip():
+                tty = clients.stdout.splitlines()[0]
+                break
+            time.sleep(0.05)
+        assert tty, "tmux client did not attach"
         assert sweep.client_session(tty) == "alpha"
         assert sweep.switch_client(tty, "beta") is True
         time.sleep(0.3)

@@ -156,8 +156,13 @@ def parse_sessions(raw: str) -> list[TmuxSession]:
 def run_sweep() -> list[Window]:
     """Run the tmux sweep and parse it. Returns [] if tmux is unavailable or
     errors — the board simply shows nothing rather than failing the request."""
+    return run_sweep_checked() or []
+
+
+def run_sweep_checked() -> list[Window] | None:
+    """Run the tmux sweep, preserving failure as distinct from an empty result."""
     if not shutil.which("tmux"):
-        return []
+        return None
     try:
         proc = subprocess.run(
             ["tmux", "list-windows", "-a", "-F", _FMT],
@@ -167,9 +172,9 @@ def run_sweep() -> list[Window]:
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return []
+        return None
     if proc.returncode != 0:
-        return []
+        return None
     return parse_sweep(proc.stdout)
 
 

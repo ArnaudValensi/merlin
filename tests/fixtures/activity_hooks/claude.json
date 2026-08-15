@@ -1,0 +1,151 @@
+[
+  {
+    "case": "session_start_startup",
+    "payload": {
+      "session_id": "claude-session-a",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "default",
+      "hook_event_name": "SessionStart",
+      "source": "startup",
+      "model": "claude-fixture"
+    }
+  },
+  {
+    "case": "prompt_submitted",
+    "payload": {
+      "session_id": "claude-session-a",
+      "prompt_id": "claude-prompt-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "default",
+      "hook_event_name": "UserPromptSubmit",
+      "prompt": "<redacted>"
+    }
+  },
+  {
+    "case": "tool_start",
+    "payload": {
+      "session_id": "claude-session-a",
+      "prompt_id": "claude-prompt-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "default",
+      "hook_event_name": "PreToolUse",
+      "tool_name": "Bash",
+      "tool_input": {"_redacted": true, "keys": ["command"]},
+      "tool_use_id": "claude-tool-1"
+    }
+  },
+  {
+    "case": "permission_requested",
+    "payload": {
+      "session_id": "claude-session-a",
+      "prompt_id": "claude-prompt-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "default",
+      "hook_event_name": "PermissionRequest",
+      "tool_name": "Bash",
+      "tool_input": {"_redacted": true, "keys": ["command"]}
+    }
+  },
+  {
+    "case": "permission_notification",
+    "payload": {
+      "session_id": "claude-session-a",
+      "prompt_id": "claude-prompt-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "default",
+      "hook_event_name": "Notification",
+      "notification_type": "permission_prompt",
+      "message": "<redacted>",
+      "title": "<redacted>"
+    }
+  },
+  {
+    "case": "question_start",
+    "payload": {
+      "session_id": "claude-session-a",
+      "prompt_id": "claude-prompt-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "default",
+      "hook_event_name": "PreToolUse",
+      "tool_name": "AskUserQuestion",
+      "tool_input": {"_redacted": true, "keys": ["questions"]},
+      "tool_use_id": "claude-question-1"
+    }
+  },
+  {
+    "case": "question_finish",
+    "payload": {
+      "session_id": "claude-session-a",
+      "prompt_id": "claude-prompt-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "default",
+      "hook_event_name": "PostToolUse",
+      "tool_name": "AskUserQuestion",
+      "tool_input": {"_redacted": true, "keys": ["questions"]},
+      "tool_response": {"_redacted": true, "keys": ["answers"]},
+      "tool_use_id": "claude-question-1",
+      "duration_ms": 4100
+    }
+  },
+  {
+    "case": "tool_failure",
+    "payload": {
+      "session_id": "claude-session-a",
+      "prompt_id": "claude-prompt-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "default",
+      "hook_event_name": "PostToolUseFailure",
+      "tool_name": "Bash",
+      "tool_input": {"_redacted": true, "keys": ["command"]},
+      "tool_use_id": "claude-tool-1",
+      "error": "<redacted>",
+      "is_interrupt": false,
+      "duration_ms": 900
+    }
+  },
+  {
+    "case": "turn_stop",
+    "payload": {
+      "session_id": "claude-session-a",
+      "prompt_id": "claude-prompt-1",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "default",
+      "hook_event_name": "Stop",
+      "stop_hook_active": false,
+      "last_assistant_message": "<redacted>"
+    }
+  },
+  {
+    "case": "session_resume",
+    "payload": {
+      "session_id": "claude-session-a",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "default",
+      "hook_event_name": "SessionStart",
+      "source": "resume",
+      "model": "claude-fixture"
+    }
+  },
+  {
+    "case": "session_compact",
+    "payload": {
+      "session_id": "claude-session-a",
+      "transcript_path": "/tmp/redacted-transcript.jsonl",
+      "cwd": "/workspace/alpha",
+      "permission_mode": "default",
+      "hook_event_name": "SessionStart",
+      "source": "compact",
+      "model": "claude-fixture"
+    }
+  }
+]

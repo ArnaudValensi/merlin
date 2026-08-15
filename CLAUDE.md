@@ -48,6 +48,8 @@ merlin/
 ├── board/                     # Sessions board — /api/board + assets for the terminal's Sessions drawer
 ├── notes/                     # Notes editor module (markdown)
 │   └── commands/              # merlin notes search / kb / remember commands
+├── timeline/                  # Built-in private agent-activity Timeline extension
+│   └── commands/emit.py       # Provider-neutral, server-independent emitter
 ├── skills/                    # Core operational skills (jobs/, notes/, dashboard/, self-awareness/) — always active, aggregated regardless of the bot
 ├── tests/                     # Tests for core modules
 ├── agent/
@@ -84,6 +86,7 @@ New to the codebase? Read `architecture.md` first, then `extension-system.md` an
 | [`docs/dev/web-terminal.md`](docs/dev/web-terminal.md) | Web terminal internals: xterm.js, WebSocket, PTY/tmux, touch gesture implementation, transcription API |
 | [`docs/dev/session-viewer.md`](docs/dev/session-viewer.md) | Session transcripts, stream-json format, timeline rendering |
 | [`docs/dev/notes-editor.md`](docs/dev/notes-editor.md) | Notes routes, command palette, git ops, media upload, content search |
+| [`docs/dev/agent-activity-timeline.md`](docs/dev/agent-activity-timeline.md) | Timeline schema, consent, hooks, emitter, store, query API, and live UI |
 | [`docs/dev/extension-system.md`](docs/dev/extension-system.md) | Extension tiers, interface, state, registry, Extensions/Settings pages |
 | [`docs/dev/skill-system.md`](docs/dev/skill-system.md) | Skill registry: sources, precedence (core > extension > user), canonical aggregation, engine adapters, shims, `merlin skills` |
 | [`docs/dev/dashboard-architecture.md`](docs/dev/dashboard-architecture.md) | Dashboard theme, CSS variables, JS patterns, API endpoints |
@@ -169,6 +172,7 @@ When creating new scripts:
 | `terminal/` | Web terminal module | [`web-terminal`](docs/dev/web-terminal.md) |
 | `commits/` | Commit browser module | [`dashboard-architecture`](docs/dev/dashboard-architecture.md) |
 | `notes/` | Notes editor module | [`notes-editor`](docs/dev/notes-editor.md) |
+| `timeline/` | Built-in private activity-history extension | [`agent-activity-timeline`](docs/dev/agent-activity-timeline.md) |
 
 **Merlin Bot extension (merlin-bot/) — Discord-only scope:**
 
@@ -270,7 +274,7 @@ Web-based dashboard served by FastAPI on port 3123, started by `main.py`.
 
 - **Auth:** Cookie-based auth (`DASHBOARD_USER` / `DASHBOARD_PASS` in `.env`) — see [`docs/dev/auth-and-tunnel.md`](docs/dev/auth-and-tunnel.md)
 - **Core pages:** Files, Terminal, Commits (always available)
-- **Built-in extensions:** Notes (enabled by default), Bot with tabs at `/bot` (disabled by default, requires Discord token)
+- **Built-in extensions:** Notes and Timeline (enabled by default), Bot with tabs at `/bot` (disabled by default, requires Discord token)
 - **Management pages:** Extensions (`/extensions`), Settings (gear dropdown → Settings)
 - **Start:** `uv run main.py` starts everything (dashboard + bot + jobs) in one process
 - **Screenshots:** `uv run .claude/skills/screenshot/screenshot.py --all http://localhost:3123 --user admin --pass <pass>`
@@ -285,7 +289,7 @@ Epics and project planning are managed in the private `merlin-saas` repo under `
 - **Self-documenting scripts**: Comprehensive `--help` with examples
 - **Provider-agnostic execution**: Always use `lib/engine.py` (`invoke()`), never call `claude` or `opencode` directly. Engine configured via `AGENT_ENGINE` env var (default: `claude-code`). Available engines: `claude-code`, `opencode`. Merlin manages conversation history as JSONL files in `~/.merlin/sessions/`.
 - **Deterministic sessions**: UUID5 from channel/job ID for session persistence
-- **Extension system**: Three tiers — core (files, terminal, commits: always active), built-in (notes, merlin-bot: toggleable), installed (`~/.merlin/extensions/`: user-installed). Extensions export `api_router`/`page_router` (mounted at `/api/{slug}` and `/{slug}`, slug from optional `URL_SLUG`), `NAV_ITEMS`, `STATIC_DIR`, plus optional `register_routes(app)` escape hatch, `start()`, `validate()`. `main.py` builds an `extension_registry` at startup. State persisted in `~/.merlin/extensions.json`. Extensions page at `/extensions` for management.
+- **Extension system**: Three tiers — core (files, terminal, commits: always active), built-in (notes, timeline, merlin-bot: toggleable), installed (`~/.merlin/extensions/`: user-installed). Extensions export `api_router`/`page_router` (mounted at `/api/{slug}` and `/{slug}`, slug from optional `URL_SLUG`), `NAV_ITEMS`, `STATIC_DIR`, plus optional `register_routes(app)` escape hatch, `start()`, `disable()`, `validate()`. `disable()` performs bounded cleanup before an enabled extension is toggled off; failure leaves it enabled. `main.py` builds an `extension_registry` at startup. State persisted in `~/.merlin/extensions.json`. Extensions page at `/extensions` for management.
 - **Dynamic sidebar**: Nav items built from enabled extensions. Core items always shown, extension items added when loaded, Extensions nav item always last.
 - **Path resolution (paths.py)**: All modules use `paths.py` for file/directory resolution. Only `app_dir()` differs between modes (repo root vs `~/.merlin/current/`). User data (notes, jobs, logs, config) always lives under `~/.merlin/` regardless of mode. Dev mode detection: explicit `set_dev_mode()` > `MERLIN_DEV` env var > `.git/` directory presence. Custom install location via `MERLIN_HOME` env var.
 - **Graceful degradation**: At startup, `_check_optional_deps()` checks for tmux. Missing deps result in boot warnings, disabled nav items (grayed out with tooltip), and 503 responses on affected routes — not crashes.

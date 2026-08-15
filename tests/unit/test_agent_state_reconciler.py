@@ -267,6 +267,24 @@ class TestInstall:
         assert skills.install_interactive_hooks() is True
         assert read(settings_file) == {"hooks": ["not", "a", "dict"]}
 
+    @pytest.mark.parametrize("provider_index", [0, 1])
+    def test_null_provider_event_is_treated_as_an_empty_group_list(
+        self, hook_files, provider_index
+    ):
+        path = hook_files[provider_index]
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"hooks": {"Stop": None}}))
+
+        assert skills.install_interactive_hooks() is True
+
+        stop = read(path)["hooks"]["Stop"]
+        assert isinstance(stop, list)
+        assert any(
+            skills._HOOK_MARKER in entry.get("command", "")
+            for group in stop
+            for entry in group.get("hooks", [])
+        )
+
     def test_output_is_valid_json_with_trailing_newline(self, settings_file):
         skills.install_interactive_hooks()
         raw = settings_file.read_text()
@@ -358,6 +376,15 @@ class TestDriftAndSync:
         skills.install_interactive_hooks()  # e.g. installed earlier under auto
         skills.set_agent_state_hooks_mode("ask")
         assert skills.sync_interactive_hooks() == "in-sync"
+
+    def test_sync_fails_open_on_unexpected_reconciliation_error(self, monkeypatch):
+        monkeypatch.setattr(
+            skills,
+            "agent_state_hooks_mode",
+            lambda: (_ for _ in ()).throw(TypeError("unexpected provider shape")),
+        )
+
+        assert skills.sync_interactive_hooks() == "error"
 
 
 # ---------------------------------------------------------------------------

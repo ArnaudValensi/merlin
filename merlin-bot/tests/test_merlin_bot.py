@@ -92,6 +92,11 @@ def _clean_state(tmp_path, monkeypatch):
         session_registry, "REGISTRY_PATH", tmp_path / "session_registry.json"
     )
 
+    # Handler tests exercise Discord orchestration, not credentials or transport.
+    # Keep accidental truthy mock content from reaching the network.
+    monkeypatch.setattr(merlin, "load_token", lambda: "fake-token")
+    monkeypatch.setattr(merlin, "send_message", MagicMock())
+
 
 # ---------------------------------------------------------------------------
 # build_prompt

@@ -176,7 +176,8 @@ serves `/api/{slug}/items`.
   "config_fields"}`. This is the server-side identity card: it feeds the
   Extensions page listing and declares config fields (key, label, type,
   secret, required) that the Settings page renders and persists.
-- Hooks (optional): async `start()` at boot.
+- Hooks (optional): async `start()` at boot and synchronous `disable()` cleanup
+  before a live extension is toggled off. A failing `disable()` leaves it on.
 
 Enable, disable, and audit extensions on the `/extensions` dashboard
 page; state persists in `~/.merlin/extensions.json`. The page also lists
