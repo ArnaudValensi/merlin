@@ -373,7 +373,10 @@ The Timeline is an enabled-by-default built-in extension, not a core page. It
 polls an opaque cursor about every 1.5 seconds, advances open spans locally, and
 buffers updates while Frozen. The DOM renderer caps retained items, packs
 overlaps into stable sub-lanes, and preserves selection and URL state across
-polls. See [`agent-activity-timeline.md`](agent-activity-timeline.md) for its
+polls. Range controls accept five minutes through seven days and Fit derives its
+scale from the actual viewport. Provider capture records lifecycle boundaries,
+not individual tool calls; meaningful automation remains an explicit emitter
+event. See [`agent-activity-timeline.md`](agent-activity-timeline.md) for its
 storage, consent, API, and privacy contracts.
 
 ### Commit Browser

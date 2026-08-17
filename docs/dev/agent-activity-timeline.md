@@ -106,10 +106,19 @@ finishes require a terminal status. Attribute keys named like `prompt`, `input`,
 variants are rejected. Context and attributes are each capped at 2 KiB, nesting
 and item counts are bounded, and names are capped at 160 UTF-8 bytes.
 
-The schema is provider-neutral. Implemented kinds include human prompts and
-answers, agent turns and waits, tool calls, session lifecycle, review request /
-await / completion / guard, automation scripts, and chain handoffs. A future
-dotted kind gets neutral presentation rather than a read failure.
+The schema is provider-neutral. The provider hooks emit session lifecycle,
+human prompt boundaries, agent turns, and inherited chain handoff confirmation.
+The generic emitter supports review request / await / completion / guard,
+automation scripts, chain handoffs, and other safe dotted kinds. A future dotted
+kind gets neutral presentation rather than a read failure.
+
+Individual provider tool calls are deliberately outside the product boundary.
+They drown out the development chain, and identifying an external program would
+require inspecting private tool input. Timeline neither hooks nor renders them.
+Legacy `tool.call` records remain in the append-only partitions until retention
+removes them, but range reads and the span-context index skip them before result
+limits are applied. A producer that owns a meaningful workflow can emit one
+explicit automation event without project-specific Timeline configuration.
 
 ## Consent and provider hooks
 
@@ -138,14 +147,14 @@ Reconciliation serializes Timeline and core state-pill writers with one shared
 sidecar lock and verifies that the provider file is unchanged before replacement.
 An external edit that races the update is preserved and retried later.
 
-Hooks normalize SessionStart, prompt submission, turn completion, tool
-start/end/failure, permission waits, blocking questions, and answer transitions
-when the provider exposes them. Codex compaction SessionStart is ignored.
-Payload text is never copied. Tool names are reduced to safe labels; prompt,
-answer, command, input, result, response, model output, and secrets are not
-stored. Provider hooks accept an inherited Timeline trace only when it satisfies
-the identifier contract; an unsafe value falls back to the provider session
-scope instead of dropping capture.
+Hooks normalize SessionStart, prompt submission, and turn completion. Codex
+compaction SessionStart is ignored. Tool, permission, blocking-question, and
+answer-transition hooks are not installed. Payload text is never copied.
+Prompt, answer, command, input, result, response, model output, and secrets are
+not stored. Provider hooks accept an inherited Timeline trace only when it
+satisfies the identifier contract; an unsafe value falls back to the provider
+session scope instead of dropping capture. Reconciliation removes older marked
+Timeline tool-hook groups when it installs the current lifecycle-only matrix.
 
 Capture requires a tmux pane. Timeline reads the core-owned `@agent_sid` and
 pinned `@agent_cwd` when they exist, but never creates or changes either option
@@ -198,18 +207,23 @@ most seven days. `limit` defaults to 2,000 and is capped at 10,000. Filters are
 `participants` or `activity`.
 
 Responses contain range metadata, stable participant/activity tracks, display
-items, late finish `updates`, an opaque per-partition cursor, last-modified time,
-partial state, and data-quality counts. `skipped` is unreadable storage input,
-`flagged` is readable semantic inconsistency, and `dropped` is a capture failure
-reported by the writer. The legacy `anomalies` value is their aggregate. Supply
-the returned `cursor` to read only later bytes. Do not decode or construct
-cursors outside the extension.
+items, an opaque per-partition cursor, last-modified time, partial state, and
+data-quality counts. Cursor queries also contain late finish `updates` for spans
+the client already knows. A full query carries terminal state on its assembled
+items and does not duplicate every finish as an update. `skipped` is unreadable
+storage input, `flagged` is readable semantic inconsistency, and `dropped` is a
+capture failure reported by the writer. The legacy `anomalies` value is their
+aggregate. Supply the returned `cursor` to read only later bytes. Do not decode
+or construct cursors outside the extension.
 
 Span assembly is deterministic. A finish pairs with its trace/span start. Late
 finishes update an already-rendered span. Duplicate starts/finishes,
 finish-without-start, and clock skew stay visible as anomalies. An unfinished
-agent span is open only while the board reports its stable agent id alive; a
-known-dead actor is interrupted, and unavailable liveness is unknown.
+agent span is open only while the board reports its stable agent id busy or
+asking. An actor marked idle or done is interrupted. When a provider misses a
+Stop event, the next turn by the same actor in the same trace closes the earlier
+turn at the new start time. A missing actor is interrupted, and unavailable
+liveness is unknown.
 Full queries consult the derived span-context index, so live and crossing spans
 remain present when their starts predate `since`. Those items are marked as
 continuing from before the range and their bars are clipped at both range edges.
@@ -222,9 +236,10 @@ screenshots. A query parameter cannot enable the fixture source in production.
 ## Page behavior
 
 The DOM/CSS renderer keeps every item keyboard-focusable and uses deterministic
-sub-lanes for overlap. Participants grouping shows Human, first-seen stable agent
-tracks, then Automation. Activity grouping reuses the same data as Human input,
-Agent work, Tools and scripts, Waiting, and Review and handoff.
+sub-lanes for overlap. Participants grouping shows only present Human,
+first-seen stable agent, and Automation tracks. Activity grouping shows only
+present Human input, Agent work, Waiting, Review and handoff, and explicit
+Automation tracks.
 
 Live mode polls the cursor about every 1.5 seconds, preserves explanatory empty
 and capture-off states across those polls, grows open spans locally, and evicts
@@ -242,6 +257,12 @@ Selection, focus, grouping, zoom, filters, and the chosen range survive updates
 through local state and the URL. A disconnected poll keeps existing history,
 shows reconnecting state, and catches up after recovery. The browser retains at
 most 2,500 rendered items even when the API returns more.
+
+The page accepts any range from five minutes through the API's seven-day bound,
+with common presets through 24 hours and a custom-hours control. **Fit** computes
+the scale from the current scroll viewport and sticky-label width. It is not a
+fixed zoom preset. Long windows show dated endpoints so an overnight chain is
+unambiguous.
 
 Desktop details use a side drawer; narrow screens use a bottom sheet. Status is
 not color-only. Local transcript and artifact links appear only when a producer

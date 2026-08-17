@@ -49,7 +49,7 @@ def _activity_track(event: ActivityEvent) -> str:
         return "activity-wait"
     if event.kind.startswith("review.") or event.kind.startswith("chain."):
         return "activity-review"
-    return "activity-tools"
+    return "activity-automation"
 
 
 def _participant_track(event: ActivityEvent) -> str:
@@ -124,7 +124,9 @@ def _span(
     *,
     now: datetime,
     live_agent_ids: set[str] | None,
+    inactive_agent_ids: set[str] | None,
     live_tmux_windows: set[tuple[str, str]] | None,
+    superseded_at: datetime | None,
 ) -> tuple[dict, str | None]:
     item = {
         **_base_item(start),
@@ -147,6 +149,14 @@ def _span(
             item["end_timestamp"] = item["start_timestamp"]
             item["anomaly"] = anomaly = "clock-skew"
         item["duration_ms"] = round(duration)
+        return item, anomaly
+
+    if superseded_at is not None:
+        duration = max(0, (superseded_at - start.timestamp).total_seconds() * 1000)
+        item["end_timestamp"] = _iso(superseded_at)
+        item["duration_ms"] = round(duration)
+        item["status"] = "interrupted"
+        item["anomaly"] = anomaly = "superseded-turn"
         return item, anomaly
 
     agent_sid = start.context.agent_sid
@@ -173,6 +183,9 @@ def _span(
         else:
             item["status"] = "unknown"
             item["anomaly"] = anomaly = "liveness-unavailable"
+    elif inactive_agent_ids is not None and agent_sid in inactive_agent_ids:
+        item["status"] = "interrupted"
+        item["anomaly"] = anomaly = "actor-inactive"
     elif live_agent_ids is not None and agent_sid in live_agent_ids:
         item["open"] = True
         item["duration_ms"] = max(
@@ -188,7 +201,9 @@ def _span(
 
 
 def tracks_for_items(items: list[dict]) -> dict[str, list[dict]]:
-    participants = [{"id": "human", "name": "Human", "meta": "interventions"}]
+    participants = []
+    if any(item["actor"] == "human" for item in items):
+        participants.append({"id": "human", "name": "Human", "meta": "interventions"})
     seen_agents: set[str] = set()
     for item in items:
         if item["actor"] != "agent" or item["actor_id"] in seen_agents:
@@ -202,26 +217,29 @@ def tracks_for_items(items: list[dict]) -> dict[str, list[dict]]:
                 "role": item.get("role"),
             }
         )
-    participants.append(
-        {"id": "automation", "name": "Automation", "meta": "tools · harness"}
-    )
+    if any(item["actor"] == "automation" for item in items):
+        participants.append(
+            {"id": "automation", "name": "Automation", "meta": "workflow"}
+        )
+    activity = [
+        {"id": "activity-human", "name": "Human input", "meta": "points"},
+        {"id": "activity-agent", "name": "Agent work", "meta": "turns"},
+        {"id": "activity-wait", "name": "Waiting", "meta": "blocked"},
+        {
+            "id": "activity-review",
+            "name": "Review & handoff",
+            "meta": "coordination",
+        },
+        {
+            "id": "activity-automation",
+            "name": "Automation",
+            "meta": "explicit events",
+        },
+    ]
+    present_activity = {item["activity_track"] for item in items}
     return {
         "participants": participants,
-        "activity": [
-            {"id": "activity-human", "name": "Human input", "meta": "points"},
-            {"id": "activity-agent", "name": "Agent work", "meta": "turns"},
-            {
-                "id": "activity-tools",
-                "name": "Tools & scripts",
-                "meta": "automation",
-            },
-            {"id": "activity-wait", "name": "Waiting", "meta": "blocked"},
-            {
-                "id": "activity-review",
-                "name": "Review & handoff",
-                "meta": "coordination",
-            },
-        ],
+        "activity": [track for track in activity if track["id"] in present_activity],
     }
 
 
@@ -230,6 +248,7 @@ def assemble(
     *,
     now: datetime | None = None,
     live_agent_ids: set[str] | None = None,
+    inactive_agent_ids: set[str] | None = None,
     live_tmux_windows: set[tuple[str, str]] | None = None,
 ) -> Assembly:
     """Pair boundaries once and retain every malformed lifecycle visibly."""
@@ -243,6 +262,25 @@ def assemble(
         else:
             span_groups.setdefault((event.trace_id, event.span_id or ""), []).append(
                 (order, event)
+            )
+
+    first_turn_starts: dict[tuple[str, str], ActivityEvent] = {}
+    for boundaries in span_groups.values():
+        for _order, event in boundaries:
+            if event.phase == "start" and event.kind == "agent.turn":
+                first_turn_starts.setdefault(
+                    (event.trace_id, event.span_id or ""), event
+                )
+                break
+    turns_by_actor: dict[tuple[str, str], list[ActivityEvent]] = {}
+    for event in first_turn_starts.values():
+        turns_by_actor.setdefault((event.trace_id, event.actor.id), []).append(event)
+    superseded_turns: dict[tuple[str, str], datetime] = {}
+    for turns in turns_by_actor.values():
+        turns.sort(key=lambda event: (event.timestamp, event.event_id))
+        for current, following in zip(turns, turns[1:], strict=False):
+            superseded_turns[(current.trace_id, current.span_id or "")] = (
+                following.timestamp
             )
 
     items = [_point(event, order) for order, event in points]
@@ -264,7 +302,11 @@ def assemble(
                 start_order,
                 now=now,
                 live_agent_ids=live_agent_ids,
+                inactive_agent_ids=inactive_agent_ids,
                 live_tmux_windows=live_tmux_windows,
+                superseded_at=superseded_turns.get(
+                    (start.trace_id, start.span_id or "")
+                ),
             )
             items.append(item)
             if anomaly:

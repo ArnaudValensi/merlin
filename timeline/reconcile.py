@@ -18,26 +18,18 @@ from .consent import capture_mode
 
 
 HOOK_MARKER = "merlin:activity-timeline"
-HOOK_VERSION = 1
+HOOK_VERSION = 2
 
 CLAUDE_EVENTS: dict[str, str | None] = {
     "SessionStart": None,
     "UserPromptSubmit": None,
     "Stop": None,
-    "PreToolUse": None,
-    "PostToolUse": None,
-    "PostToolUseFailure": None,
-    "PermissionRequest": None,
-    "Notification": "permission_prompt",
 }
 
 CODEX_EVENTS: dict[str, str | None] = {
     "SessionStart": "startup|resume|clear",
     "UserPromptSubmit": None,
     "Stop": None,
-    "PreToolUse": None,
-    "PostToolUse": None,
-    "PermissionRequest": None,
 }
 
 
@@ -98,7 +90,9 @@ def _shape_ok(settings: dict, events: dict[str, str | None]) -> bool:
 
 
 def _installed(settings: dict, provider: str, events: dict[str, str | None]) -> dict:
-    output = copy.deepcopy(settings)
+    # Remove every older owned group first so a narrower hook matrix also
+    # retires events Timeline no longer observes.
+    output = _removed(settings)
     hooks = output.setdefault("hooks", {})
     for event, matcher in events.items():
         groups = [group for group in (hooks.get(event) or []) if not _is_owned(group)]

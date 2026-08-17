@@ -26,10 +26,10 @@
                 <div class="timeline-eyebrow">Private local history</div>
                 <h2 id="timeline-consent-title">Choose activity capture</h2>
             </div>
-            <p>Timeline can record lifecycle metadata from Codex and Claude Code. Records stay in your private Merlin data directory.</p>
+            <p>Timeline records session, prompt, and turn lifecycle metadata from Codex and Claude Code. Records stay in your private Merlin data directory.</p>
             <div class="timeline-consent-facts">
                 <p><strong>Stores</strong> event type, status, time, duration, provider, model, project, tmux, and stable agent identity.</p>
-                <p><strong>Never stores</strong> prompt or answer text, complete commands, tool inputs or results, model output, or secrets.</p>
+                <p><strong>Never stores</strong> individual provider tool calls, prompt or answer text, complete commands, tool inputs or results, model output, or secrets.</p>
                 <p><strong>Live status</strong> prefers Merlin's stable agent identity when available and otherwise follows the current tmux window. Timeline never changes the state-pill setting.</p>
             </div>
         </div>
@@ -50,6 +50,13 @@
             <button type="button" data-range="15">15m</button>
             <button type="button" class="is-active" data-range="60">1h</button>
             <button type="button" data-range="240">4h</button>
+            <button type="button" data-range="720">12h</button>
+            <button type="button" data-range="1440">24h</button>
+            <form class="timeline-custom-range" id="timeline-custom-range">
+                <label for="timeline-custom-hours">Hours</label>
+                <input id="timeline-custom-hours" type="number" min="0.1" max="168" step="0.1" inputmode="decimal" value="1">
+                <button type="submit">Apply</button>
+            </form>
         </div>
         <div class="timeline-icon-group" role="group" aria-label="Timeline scale">
             <button class="timeline-icon-button" id="timeline-zoom-out" type="button" aria-label="Zoom out">−</button>
@@ -59,7 +66,7 @@
         </div>
         <button class="timeline-filter-button" id="timeline-filter" type="button" aria-pressed="false">
             <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
-            Filters
+            Active only
         </button>
     </div>
 

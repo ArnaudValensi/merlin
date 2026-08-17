@@ -217,11 +217,42 @@
 
 .timeline-range {
     align-items: center;
+    flex-wrap: wrap;
 }
 
 .timeline-range button {
     min-width: 44px;
     padding: 0 8px;
+}
+
+.timeline-custom-range {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.timeline-custom-range label {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.timeline-custom-range input {
+    width: 58px;
+    min-height: 44px;
+    padding: 0 7px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font: 11px 'Geist Mono', monospace;
+}
+
+.timeline-custom-range button {
+    border-color: var(--border);
+    background: var(--bg-card);
 }
 
 .timeline-icon-group {
@@ -447,7 +478,7 @@
     position: relative;
     min-width: 0;
     background-image: linear-gradient(to right, var(--border) 1px, transparent 1px);
-    background-size: calc(var(--timeline-width) / 8) 100%;
+    background-size: calc(var(--timeline-width) / var(--timeline-divisions, 8)) 100%;
 }
 
 .timeline-ruler {
@@ -468,12 +499,17 @@
     transform: none;
 }
 
+.timeline-tick:last-child {
+    transform: translateX(-100%);
+}
+
 .timeline-now-line {
     position: absolute;
     z-index: 8;
     top: 0;
     bottom: 0;
     width: 1px;
+    transform: translateX(-4px);
     background: var(--accent-green);
     pointer-events: none;
 }
@@ -516,6 +552,13 @@
     overflow: hidden;
     padding-right: 8px;
     text-overflow: ellipsis;
+}
+
+.timeline-item:not([data-phase="point"]) .timeline-item-label {
+    box-sizing: border-box;
+    max-width: calc(100% - 3px);
+    min-width: 0;
+    padding-right: 0;
 }
 
 .timeline-item::before {
@@ -651,6 +694,11 @@
     font-size: 9px;
     opacity: 0;
     visibility: hidden;
+}
+
+.timeline-item[data-phase="point"].near-range-end .timeline-item-label {
+    right: 23px;
+    left: auto;
 }
 
 .timeline-item[data-phase="point"]:hover .timeline-item-label,
@@ -873,6 +921,7 @@
     .timeline-toolbar {
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
     }
 
     .timeline-segmented {

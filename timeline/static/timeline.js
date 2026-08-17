@@ -24,14 +24,21 @@
     var consentStatus = document.getElementById('timeline-consent-status');
     var anomaly = document.getElementById('timeline-anomaly');
     var minimapWindow = document.getElementById('timeline-minimap-window');
+    var customRangeForm = document.getElementById('timeline-custom-range');
+    var customRangeInput = document.getElementById('timeline-custom-hours');
     var OPEN_REBASELINE_POLLS = 20;
+    var MIN_ZOOM = 0.15;
+    var MAX_ZOOM = 4.8;
+    var MIN_RANGE_MINUTES = 5;
+    var MAX_RANGE_MINUTES = 7 * 24 * 60;
     var params = new URLSearchParams(window.location.search);
     var requestedRange = Number(params.get('range'));
-    if ([15, 60, 240].indexOf(requestedRange) === -1) requestedRange = 60;
+    if (!Number.isFinite(requestedRange)) requestedRange = 60;
+    requestedRange = clamp(Math.round(requestedRange), MIN_RANGE_MINUTES, MAX_RANGE_MINUTES);
     var state = {
         data: null,
         grouping: params.get('group') === 'activity' ? 'activity' : 'participants',
-        zoom: clamp(Number(params.get('zoom')) || 1, 0.7, 2.4),
+        zoom: clamp(Number(params.get('zoom')) || 1, MIN_ZOOM, MAX_ZOOM),
         selected: params.get('selected'),
         filtered: params.get('filter') === 'active',
         live: params.get('mode') !== 'frozen',
@@ -77,6 +84,18 @@
         return base.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
     }
 
+    function formatWindowBoundary(seconds) {
+        var base = new Date(state.data.range.start);
+        base.setUTCSeconds(base.getUTCSeconds() + seconds);
+        return base.toLocaleString([], {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+        });
+    }
+
     function formatTimestamp(value, fallbackSeconds) {
         if (!value) return formatClock(fallbackSeconds);
         return new Date(value).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
@@ -95,7 +114,11 @@
     }
 
     function duration(item) {
-        var nowSeconds = (currentNow() - new Date(state.data.range.start)) / 1000;
+        var nowSeconds = clamp(
+            (currentNow() - new Date(state.data.range.start)) / 1000,
+            0,
+            windowSeconds()
+        );
         var end = item.end == null ? nowSeconds : item.end;
         if (item.end == null && item.open === false) return 0;
         return Math.max(0, end - item.start);
@@ -127,7 +150,11 @@
 
     function visibleDuration(item) {
         if (item.end == null && item.open === false) return 0;
-        var nowSeconds = (currentNow() - new Date(state.data.range.start)) / 1000;
+        var nowSeconds = clamp(
+            (currentNow() - new Date(state.data.range.start)) / 1000,
+            0,
+            windowSeconds()
+        );
         var end = item.end == null ? nowSeconds : item.end;
         return Math.max(0, Math.min(windowSeconds(), end) - visibleStart(item));
     }
@@ -154,21 +181,27 @@
         if (item.kind === 'agent.turn' || item.kind === 'agent.session') return 'activity-agent';
         if (item.kind === 'review.await' || item.kind === 'agent.wait') return 'activity-wait';
         if (item.kind.indexOf('review.') === 0 || item.kind.indexOf('chain.') === 0) return 'activity-review';
-        return 'activity-tools';
+        return 'activity-automation';
     }
 
     function tracks(items) {
         if (state.grouping === 'activity') {
-            return [
+            var activity = [
                 {id: 'activity-human', name: 'Human input', meta: 'points'},
                 {id: 'activity-agent', name: 'Agent work', meta: 'turns'},
-                {id: 'activity-tools', name: 'Tools & scripts', meta: 'automation'},
                 {id: 'activity-wait', name: 'Waiting', meta: 'blocked'},
                 {id: 'activity-review', name: 'Review & handoff', meta: 'coordination'},
+                {id: 'activity-automation', name: 'Automation', meta: 'explicit events'},
             ];
+            var presentActivity = {};
+            items.forEach(function (item) { presentActivity[trackForActivity(item)] = true; });
+            return activity.filter(function (track) { return presentActivity[track.id]; });
         }
 
-        var result = [{id: 'human', name: 'Human', meta: 'interventions'}];
+        var result = [];
+        if (items.some(function (item) { return item.actor === 'human'; })) {
+            result.push({id: 'human', name: 'Human', meta: 'interventions'});
+        }
         var seen = {};
         items.filter(function (item) { return item.actor === 'agent'; }).forEach(function (item) {
             if (seen[item.actor_id]) return;
@@ -181,7 +214,9 @@
                 role: item.role || context.role,
             });
         });
-        result.push({id: 'automation', name: 'Automation', meta: 'tools · harness'});
+        if (items.some(function (item) { return item.actor === 'automation'; })) {
+            result.push({id: 'automation', name: 'Automation', meta: 'workflow'});
+        }
         return result;
     }
 
@@ -213,17 +248,17 @@
         return label;
     }
 
-    function makeRuler(width) {
+    function makeRuler(width, divisions) {
         var row = document.createElement('div');
         row.className = 'timeline-row timeline-ruler-row';
         row.appendChild(makeLabel({}, true));
         var ruler = document.createElement('div');
         ruler.className = 'timeline-ruler';
-        for (var index = 0; index <= 8; index += 1) {
+        for (var index = 0; index <= divisions; index += 1) {
             var tick = document.createElement('span');
             tick.className = 'timeline-tick';
-            tick.style.left = (index / 8 * 100) + '%';
-            tick.textContent = formatClock(index / 8 * windowSeconds());
+            tick.style.left = (index / divisions * 100) + '%';
+            tick.textContent = formatClock(index / divisions * windowSeconds());
             ruler.appendChild(tick);
         }
         row.appendChild(ruler);
@@ -232,6 +267,9 @@
 
     function makeItem(item, width, level) {
         var button = document.createElement('button');
+        var rawLeft = visibleStart(item) / windowSeconds() * width;
+        var left = Math.min(rawLeft, width - (item.phase === 'point' ? 30 : 8));
+        var renderedSpanWidth = null;
         button.type = 'button';
         button.className = 'timeline-item';
         button.dataset.id = item.id;
@@ -243,10 +281,13 @@
         var agentSlot = agentSlotFor(item);
         if (agentSlot != null) button.dataset.agentSlot = String(agentSlot);
         button.classList.toggle('continues-before-range', item.continues_before_range === true);
-        button.style.left = (visibleStart(item) / windowSeconds() * width) + 'px';
+        button.classList.toggle('near-range-end', item.phase === 'point' && rawLeft > width - 140);
+        button.style.left = Math.max(0, left) + 'px';
         button.style.top = (12 + level * 38) + 'px';
         if (item.phase !== 'point') {
-            button.style.width = Math.max(8, visibleDuration(item) / windowSeconds() * width) + 'px';
+            var spanWidth = Math.max(8, visibleDuration(item) / windowSeconds() * width);
+            renderedSpanWidth = Math.min(spanWidth, width - Math.max(0, left));
+            button.style.width = renderedSpanWidth + 'px';
         }
         button.setAttribute(
             'aria-label',
@@ -255,7 +296,9 @@
         var label = document.createElement('span');
         label.className = 'timeline-item-label';
         label.textContent = item.label;
-        button.appendChild(label);
+        if (item.phase === 'point' || renderedSpanWidth >= 24) {
+            button.appendChild(label);
+        }
         button.addEventListener('click', function () { selectItem(item.id, true); });
         button.addEventListener('keydown', moveSelection);
         return button;
@@ -276,10 +319,12 @@
         }).map(function (item) { return item.id; });
         var list = tracks(items);
         var width = Math.round(1040 * state.zoom);
+        var divisions = clamp(Math.floor(width / 100), 2, 8);
         state.canvasWidth = width;
         canvas.replaceChildren();
         canvas.style.setProperty('--timeline-width', width + 'px');
-        canvas.appendChild(makeRuler(width));
+        canvas.style.setProperty('--timeline-divisions', String(divisions));
+        canvas.appendChild(makeRuler(width, divisions));
 
         list.forEach(function (track) {
             var row = document.createElement('div');
@@ -307,7 +352,11 @@
             canvas.appendChild(row);
         });
 
-        var nowSeconds = (currentNow() - new Date(state.data.range.start)) / 1000;
+        var nowSeconds = clamp(
+            (currentNow() - new Date(state.data.range.start)) / 1000,
+            0,
+            windowSeconds()
+        );
         var line = document.createElement('div');
         line.id = 'timeline-now-line';
         line.className = 'timeline-now-line';
@@ -315,7 +364,7 @@
         canvas.appendChild(line);
         visibleCount.textContent = items.length + ' events';
         document.getElementById('timeline-window').textContent =
-            formatClock(0) + '–' + formatClock(windowSeconds());
+            formatWindowBoundary(0) + '–' + formatWindowBoundary(windowSeconds());
         var skipped = state.data.skipped || 0;
         var flagged = state.data.flagged || 0;
         anomaly.hidden = !skipped && !flagged;
@@ -347,6 +396,9 @@
         document.querySelectorAll('[data-range]').forEach(function (button) {
             button.classList.toggle('is-active', Number(button.dataset.range) === state.rangeMinutes);
         });
+        if (customRangeInput && document.activeElement !== customRangeInput) {
+            customRangeInput.value = String(Math.round(state.rangeMinutes / 6) / 10);
+        }
         liveButton.setAttribute('aria-pressed', state.live ? 'true' : 'false');
         liveButton.querySelector('span:last-child').textContent = state.live ? 'Live' : 'Frozen';
         document.getElementById('timeline-filter').setAttribute('aria-pressed', state.filtered ? 'true' : 'false');
@@ -526,10 +578,34 @@
 
     function zoom(delta) {
         var before = scroll.scrollWidth ? (scroll.scrollLeft + scroll.clientWidth / 2) / scroll.scrollWidth : 0;
-        state.zoom = clamp(state.zoom + delta, 0.7, 2.4);
+        state.zoom = clamp(state.zoom + delta, MIN_ZOOM, MAX_ZOOM);
         render();
         scroll.scrollLeft = before * scroll.scrollWidth - scroll.clientWidth / 2;
         setUrl();
+    }
+
+    function fitTimeline() {
+        var labelWidth = parseFloat(getComputedStyle(app).getPropertyValue('--timeline-label-width')) || 0;
+        var available = Math.max(1, scroll.clientWidth - labelWidth - 1);
+        state.zoom = clamp(available / 1040, MIN_ZOOM, MAX_ZOOM);
+        render();
+        scroll.scrollLeft = 0;
+        setUrl();
+    }
+
+    function applyRange(minutes) {
+        state.rangeMinutes = clamp(Math.round(minutes), MIN_RANGE_MINUTES, MAX_RANGE_MINUTES);
+        state.generation += 1;
+        state.inFlight = false;
+        state.cursor = null;
+        state.pending = [];
+        state.data = null;
+        state.orderedIds = [];
+        state.openPolls = 0;
+        showState('loading', 'Loading recent activity…');
+        syncButtons();
+        setUrl();
+        fetchTimeline(true);
     }
 
     function relativeItem(item, range) {
@@ -758,7 +834,11 @@
     function updateLiveGeometry() {
         if (!state.live || !state.data || state.data.state !== 'ready') return;
         var line = document.getElementById('timeline-now-line');
-        var nowSeconds = (currentNow() - new Date(state.data.range.start)) / 1000;
+        var nowSeconds = clamp(
+            (currentNow() - new Date(state.data.range.start)) / 1000,
+            0,
+            windowSeconds()
+        );
         if (line) line.style.left = 'calc(var(--timeline-label-width) + ' + (nowSeconds / windowSeconds() * state.canvasWidth) + 'px)';
         state.data.items.forEach(function (item) {
             if (item.phase === 'point' || item.end != null || item.open === false) return;
@@ -799,23 +879,23 @@
     });
     document.querySelectorAll('[data-range]').forEach(function (button) {
         button.addEventListener('click', function () {
-            state.rangeMinutes = Number(button.dataset.range);
-            state.generation += 1;
-            state.inFlight = false;
-            state.cursor = null;
-            state.pending = [];
-            state.data = null;
-            state.orderedIds = [];
-            state.openPolls = 0;
-            showState('loading', 'Loading recent activity…');
-            syncButtons();
-            setUrl();
-            fetchTimeline(true);
+            applyRange(Number(button.dataset.range));
         });
     });
+    if (customRangeForm) {
+        customRangeForm.addEventListener('submit', function (event) {
+            event.preventDefault();
+            var hours = Number(customRangeInput.value);
+            if (!Number.isFinite(hours) || hours <= 0) {
+                customRangeInput.focus();
+                return;
+            }
+            applyRange(hours * 60);
+        });
+    }
     document.getElementById('timeline-zoom-in').addEventListener('click', function () { zoom(0.2); });
     document.getElementById('timeline-zoom-out').addEventListener('click', function () { zoom(-0.2); });
-    document.getElementById('timeline-fit').addEventListener('click', function () { state.zoom = 0.7; render(); scroll.scrollLeft = 0; setUrl(); });
+    document.getElementById('timeline-fit').addEventListener('click', fitTimeline);
     document.getElementById('timeline-now').addEventListener('click', function () { scroll.scrollLeft = scroll.scrollWidth; });
     document.getElementById('timeline-filter').addEventListener('click', function () { state.filtered = !state.filtered; render(); setUrl(); });
     liveButton.addEventListener('click', function () {

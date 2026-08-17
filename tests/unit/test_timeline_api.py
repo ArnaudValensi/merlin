@@ -22,7 +22,7 @@ def client(monkeypatch):
     monkeypatch.delenv("MERLIN_TIMELINE_FIXTURES", raising=False)
     monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
     monkeypatch.setenv("MERLIN_ACTIVITY_HOOKS", "auto")
-    monkeypatch.setattr(routes, "_live_actors", lambda: ({"agent-a"}, set()))
+    monkeypatch.setattr(routes, "_live_actors", lambda: ({"agent-a"}, set(), set()))
     monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
     auth.configure("")
     with TestClient(app_mod.app) as test_client:
@@ -120,7 +120,7 @@ def seed() -> None:
         ),
         event(
             at=NOW + timedelta(seconds=4),
-            kind="tool.call",
+            kind="automation.script",
             phase="start",
             span="tool",
             status="running",
@@ -133,7 +133,7 @@ def seed() -> None:
         ),
         event(
             at=NOW + timedelta(seconds=5),
-            kind="tool.call",
+            kind="automation.script",
             phase="finish",
             span="tool",
             status="error",
@@ -163,6 +163,7 @@ def test_live_api_returns_tracks_pairs_bounds_and_cursor(client):
     assert value["lanes"] == value["tracks"]["participants"]
     assert value["range"]["seconds"] == 7200
     assert value["partial"] is False
+    assert value["updates"] == []
     assert value["skipped"] == value["flagged"] == value["dropped"] == 0
 
 
@@ -235,12 +236,12 @@ def test_incremental_empty_responses_preserve_truthful_state(
     ("parameter", "value", "expected"),
     [
         ("actor", "agent-a", {"agent.turn"}),
-        ("actor", "automation", {"tool.call"}),
+        ("actor", "automation", {"automation.script"}),
         ("kind", "human.prompt", {"human.prompt"}),
-        ("status", "error", {"tool.call"}),
-        ("project", "beta", {"tool.call"}),
-        ("provider", "claude code", {"tool.call"}),
-        ("trace", "trace-b", {"tool.call"}),
+        ("status", "error", {"automation.script"}),
+        ("project", "beta", {"automation.script"}),
+        ("provider", "claude code", {"automation.script"}),
+        ("trace", "trace-b", {"automation.script"}),
     ],
 )
 def test_each_filter_is_applied_after_assembly(client, parameter, value, expected):
@@ -395,14 +396,12 @@ def test_full_query_includes_live_span_started_before_range(client, monkeypatch)
     assert live["items"][0]["continues_before_range"] is True
     assert live["items"][0]["start"] == -3600
 
-    monkeypatch.setattr(routes, "_live_actors", lambda: (set(), set()))
+    monkeypatch.setattr(routes, "_live_actors", lambda: (set(), set(), set()))
     dead = client.get("/api/timeline", params=params).json()
 
     assert dead["state"] == "empty"
     assert dead["items"] == []
-    assert dead["updates"][0]["id"] == live["items"][0]["id"]
-    assert dead["updates"][0]["status"] == "interrupted"
-    assert dead["updates"][0]["open"] is False
+    assert dead["updates"] == []
 
 
 def test_full_query_pairs_span_that_finishes_inside_range(client):
@@ -514,7 +513,7 @@ def test_historical_query_pairs_future_finish_for_start_inside_range(
         ),
         strict=True,
     )
-    monkeypatch.setattr(routes, "_live_actors", lambda: (set(), set()))
+    monkeypatch.setattr(routes, "_live_actors", lambda: (set(), set(), set()))
 
     value = client.get(
         "/api/timeline",
@@ -594,7 +593,9 @@ def test_tmux_window_liveness_keeps_capture_independent_of_state_pills(
         ),
         strict=True,
     )
-    monkeypatch.setattr(routes, "_live_actors", lambda: (set(), {("work", "@7")}))
+    monkeypatch.setattr(
+        routes, "_live_actors", lambda: (set(), {("work", "@7")}, set())
+    )
 
     value = client.get("/api/timeline", params=query_range()).json()
 
@@ -604,14 +605,14 @@ def test_tmux_window_liveness_keeps_capture_independent_of_state_pills(
 
 
 @pytest.mark.parametrize(
-    ("live_actors", "expected"),
+    "live_actors",
     [
-        (None, "liveness-unknown"),
-        ((set(), set()), "actor-not-live"),
+        None,
+        (set(), set(), set()),
     ],
 )
-def test_crossing_span_returns_status_update_when_not_live(
-    client, monkeypatch, live_actors, expected
+def test_crossing_span_outside_range_does_not_duplicate_full_updates(
+    client, monkeypatch, live_actors
 ):
     store = ActivityStore()
     store.append(
@@ -637,8 +638,33 @@ def test_crossing_span_returns_status_update_when_not_live(
     ).json()
 
     assert value["items"] == []
-    assert value["updates"][0]["anomaly"] == expected
-    assert value["updates"][0]["open"] is False
+    assert value["updates"] == []
+
+
+def test_inactive_actor_closes_visible_missing_stop(client, monkeypatch):
+    store = ActivityStore()
+    store.append(
+        event(
+            kind="agent.turn",
+            phase="start",
+            span="stale-turn",
+            status="running",
+            actor_type="agent",
+            actor_id="agent-a",
+        ),
+        strict=True,
+    )
+    monkeypatch.setattr(
+        routes,
+        "_live_actors",
+        lambda: ({"agent-a"}, set(), {"agent-a"}),
+    )
+
+    value = client.get("/api/timeline", params=query_range()).json()
+
+    assert value["items"][0]["open"] is False
+    assert value["items"][0]["status"] == "interrupted"
+    assert value["items"][0]["anomaly"] == "actor-inactive"
 
 
 def test_span_context_rebuild_anomaly_is_reported(client):
@@ -659,7 +685,7 @@ def test_incremental_orphan_finish_remains_visible_and_flagged(client):
     store.append(
         event(
             at=NOW + timedelta(seconds=1),
-            kind="tool.call",
+            kind="automation.script",
             phase="finish",
             span="orphan",
             status="error",
@@ -677,3 +703,24 @@ def test_incremental_orphan_finish_remains_visible_and_flagged(client):
     assert value["items"][0]["anomaly"] == "finish-without-start"
     assert value["flagged"] == 1
     assert value["anomalies"] == 1
+
+
+def test_legacy_tool_calls_are_excluded_before_the_result_limit(client):
+    store = ActivityStore()
+    for index in range(3):
+        store.append(
+            event(
+                at=NOW + timedelta(milliseconds=index),
+                kind="tool.call",
+                name=f"Legacy tool {index}",
+            ),
+            strict=True,
+        )
+    store.append(event(at=NOW + timedelta(seconds=1), name="Visible"), strict=True)
+
+    value = client.get(
+        "/api/timeline", params=query_range(limit=1, kind="human.prompt")
+    ).json()
+
+    assert [item["label"] for item in value["items"]] == ["Visible"]
+    assert all(item["kind"] != "tool.call" for item in value["items"])

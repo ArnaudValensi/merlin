@@ -6,6 +6,7 @@ import socket
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -145,6 +146,7 @@ def test_populated_timeline_fits_each_composition(browser, timeline_server, view
     page.goto(f"{timeline_server}/timeline")
     page.locator(".timeline-item").first.wait_for()
     assert page.locator(".timeline-row").count() >= 6
+    assert page.locator('[data-kind="tool.call"]').count() == 0
     assert page.locator("#timeline-anomaly").is_hidden()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     stage = page.locator("#timeline-stage").bounding_box()
@@ -229,10 +231,38 @@ def test_grouping_controls_filter_and_url_state_restore(browser, timeline_server
     assert page.locator("#timeline-detail").get_attribute("aria-hidden") == "false"
     page.locator("#timeline-detail-close").click()
     page.locator("#timeline-filter").click()
-    assert page.locator(".timeline-item").count() == 3
+    assert page.locator(".timeline-item").count() == 2
     page.locator('[data-grouping="participants"]').click()
     assert "group=participants" in page.url
     assert page.locator('[data-track="agent-codex-l3"]').count() == 1
+    assert errors == []
+    context.close()
+
+
+def test_custom_range_and_fit_use_the_requested_window_and_viewport(
+    browser, timeline_server
+):
+    context, page, errors = _page(browser, {"width": 768, "height": 820})
+    page.goto(f"{timeline_server}/timeline")
+    page.locator(".timeline-item").first.wait_for()
+    page.locator("#timeline-custom-hours").fill("10")
+    with page.expect_request(
+        lambda request: "/api/timeline?" in request.url and "range=600" in page.url,
+        timeout=3000,
+    ) as requested:
+        page.locator("#timeline-custom-range button").click()
+    query = parse_qs(urlparse(requested.value.url).query)
+    start = datetime.fromisoformat(query["since"][0].replace("Z", "+00:00"))
+    end = datetime.fromisoformat(query["until"][0].replace("Z", "+00:00"))
+    assert end - start == timedelta(hours=10)
+    assert "range=600" in page.url
+    page.locator(".timeline-item").first.wait_for()
+
+    page.locator("#timeline-fit").click()
+    geometry = page.locator("#timeline-scroll").evaluate(
+        "element => ({scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, canvasWidth: element.firstElementChild.getBoundingClientRect().width})"
+    )
+    assert geometry["scrollWidth"] <= geometry["clientWidth"] + 1, geometry
     assert errors == []
     context.close()
 

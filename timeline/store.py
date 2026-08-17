@@ -15,6 +15,7 @@ from pathlib import Path
 import paths
 from pydantic import ValidationError
 
+from .policy import HIDDEN_EVENT_KINDS
 from .schema import ActivityEvent
 from .writer import (
     MAX_RECORD_BYTES,
@@ -30,7 +31,7 @@ MAX_READ_EVENTS = 10000
 MAX_INDEXED_OPEN_SPANS = 10000
 MAX_INDEXED_CLOSED_SPANS = 10000
 _PARTITION_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.jsonl$")
-_SPAN_INDEX_VERSION = 2
+_SPAN_INDEX_VERSION = 3
 
 
 class ActivityStoreError(RuntimeError):
@@ -140,6 +141,7 @@ class ActivityStore:
         *,
         cursor: str | None = None,
         limit: int = 1000,
+        exclude_kinds: frozenset[str] = frozenset(),
     ) -> ReadResult:
         since = _as_utc(since, "since")
         until = _as_utc(until, "until")
@@ -200,6 +202,8 @@ class ActivityStore:
                             anomalies += 1
                             continue
                         seen_event_ids.add(event.event_id)
+                        if event.kind in exclude_kinds:
+                            continue
                         if since <= event.timestamp <= until:
                             events.append((event, path.name, line_start))
                     if len(events) >= limit:
@@ -344,6 +348,8 @@ class ActivityStore:
                             if path.name not in covered_partitions:
                                 anomalies += 1
                             continue
+                        if event.kind in HIDDEN_EVENT_KINDS:
+                            continue
                         if event.phase == "point":
                             continue
                         key = _span_key(event)
@@ -423,7 +429,7 @@ def _load_span_index(path: Path) -> tuple[dict, int]:
         return _empty_span_index(), 0
     except (OSError, json.JSONDecodeError):
         return _empty_span_index(), 1
-    if isinstance(value, dict) and value.get("version") in {1}:
+    if isinstance(value, dict) and value.get("version") in {1, 2}:
         # Derived indexes are rebuilt on schema upgrades. An expected upgrade is
         # not malformed input and must not raise the public skipped count.
         return _empty_span_index(), 0

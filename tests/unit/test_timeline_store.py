@@ -334,14 +334,14 @@ def test_span_context_returns_only_future_finish_for_start_inside_range(tmp_path
     store = ActivityStore(tmp_path / "activity")
     started = event(
         timestamp=NOW - timedelta(minutes=50),
-        kind="tool.call",
+        kind="agent.turn",
         phase="start",
         span_id="inside-turn",
         status="running",
     )
     finished = event(
         timestamp=NOW + timedelta(minutes=10),
-        kind="tool.call",
+        kind="agent.turn",
         phase="finish",
         span_id="inside-turn",
         status="ok",

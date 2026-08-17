@@ -100,7 +100,9 @@ def records(home: Path) -> list[dict]:
     ]
 
 
-def test_prompt_tool_stop_flow_uses_stable_tmux_identity(private_tmux, tmp_path):
+def test_prompt_stop_flow_ignores_tools_and_uses_stable_tmux_identity(
+    private_tmux, tmp_path
+):
     server, pane = private_tmux
     server.command("set-option", "-w", "-t", pane, "@agent_state", "ask")
     server.command("set-option", "-w", "-t", pane, "@agent_sid", "core-agent")
@@ -142,8 +144,6 @@ def test_prompt_tool_stop_flow_uses_stable_tmux_identity(private_tmux, tmp_path)
     assert [item["kind"] for item in output] == [
         "human.prompt",
         "agent.turn",
-        "tool.call",
-        "tool.call",
         "agent.turn",
     ]
     assert len({item["context"]["agent_sid"] for item in output}) == 1

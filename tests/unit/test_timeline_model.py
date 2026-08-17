@@ -276,7 +276,66 @@ def test_equal_timestamps_keep_input_order_and_unknown_kinds_are_neutral():
     )
     result = assemble([second, first], now=NOW, live_agent_ids=set())
     assert [item["label"] for item in result.items] == ["Second", "First"]
-    assert all(item["activity_track"] == "activity-tools" for item in result.items)
+    assert all(item["activity_track"] == "activity-automation" for item in result.items)
+
+
+def test_later_turn_closes_a_missing_stop_at_the_next_start():
+    first = event(
+        phase="start",
+        kind="agent.turn",
+        span="first",
+        status="running",
+        actor_type="agent",
+        actor_id="agent-a",
+        agent_sid="agent-a",
+    )
+    second = event(
+        at=NOW + timedelta(minutes=5),
+        phase="start",
+        kind="agent.turn",
+        span="second",
+        status="running",
+        actor_type="agent",
+        actor_id="agent-a",
+        agent_sid="agent-a",
+    )
+
+    items = assemble(
+        [first, second],
+        now=NOW + timedelta(minutes=6),
+        live_agent_ids={"agent-a"},
+    ).items
+
+    assert items[0]["status"] == "interrupted"
+    assert items[0]["anomaly"] == "superseded-turn"
+    assert items[0]["duration_ms"] == 300_000
+    assert items[0]["end_timestamp"] == second.timestamp.isoformat().replace(
+        "+00:00", "Z"
+    )
+    assert items[1]["open"] is True
+
+
+def test_idle_or_done_actor_cannot_have_a_running_turn():
+    start = event(
+        phase="start",
+        kind="agent.turn",
+        span="turn",
+        status="running",
+        actor_type="agent",
+        actor_id="agent-a",
+        agent_sid="agent-a",
+    )
+
+    item = assemble(
+        [start],
+        now=NOW + timedelta(seconds=5),
+        live_agent_ids={"agent-a"},
+        inactive_agent_ids={"agent-a"},
+    ).items[0]
+
+    assert item["open"] is False
+    assert item["status"] == "interrupted"
+    assert item["anomaly"] == "actor-inactive"
 
 
 def test_whole_second_sorts_before_fractional_timestamp():

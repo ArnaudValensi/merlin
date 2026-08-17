@@ -119,14 +119,35 @@ def test_install_update_drift_remove_and_permissions(hook_files, monkeypatch):
     assert reconcile.install_hooks() is False
     assert claude.read_text() == before
     assert reconcile.hooks_drift() is False
-    monkeypatch.setattr(reconcile, "HOOK_VERSION", 2)
+    monkeypatch.setattr(reconcile, "HOOK_VERSION", 3)
     assert reconcile.hooks_drift() is True
     assert reconcile.install_hooks() is True
-    assert ":v2" in claude.read_text()
+    assert ":v3" in claude.read_text()
     assert reconcile.remove_hooks() is True
     assert read(claude) == {}
     assert read(codex) == {}
     assert claude.stat().st_mode & 0o777 == 0o600
+
+
+def test_install_retires_owned_tool_hook_groups(hook_files):
+    claude, _codex = hook_files
+    claude.parent.mkdir(parents=True)
+    legacy = {
+        "matcher": "Read|Write|Bash",
+        "hooks": [
+            {
+                "type": "command",
+                "command": "old activity hook # merlin:activity-timeline:v1",
+            }
+        ],
+    }
+    claude.write_text(json.dumps({"hooks": {"PostToolUse": [legacy]}}))
+
+    assert reconcile.install_hooks() is True
+
+    value = read(claude)
+    assert "PostToolUse" not in value["hooks"]
+    assert set(value["hooks"]) == set(reconcile.CLAUDE_EVENTS)
 
 
 def test_malformed_provider_file_is_untouched_and_other_provider_installs(hook_files):

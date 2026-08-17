@@ -13,6 +13,7 @@ from merlin_ext import make_templates
 
 from .consent import capture_mode, capture_setting, set_capture_mode
 from .model import assemble, span_item_id, tracks_for_items
+from .policy import HIDDEN_EVENT_KINDS
 from .reconcile import hooks_drift, sync_hooks
 from .store import ActivityStore, ActivityStoreError
 from .writer import read_capture_health
@@ -45,7 +46,7 @@ def _store() -> ActivityStore:
     return ActivityStore()
 
 
-def _live_actors() -> tuple[set[str], set[tuple[str, str]]] | None:
+def _live_actors() -> tuple[set[str], set[tuple[str, str]], set[str]] | None:
     try:
         from board.sweep import run_sweep_checked
 
@@ -55,6 +56,11 @@ def _live_actors() -> tuple[set[str], set[tuple[str, str]]] | None:
         return (
             {window.sid for window in windows if window.sid},
             {(window.session, window.window_id) for window in windows},
+            {
+                window.sid
+                for window in windows
+                if window.sid and window.state in {"idle", "done"}
+            },
         )
     except Exception:
         return None
@@ -205,19 +211,6 @@ def _fixture_data() -> dict:
                 },
             },
             {
-                "id": "tool-inspect",
-                "phase": "span",
-                "kind": "tool.call",
-                "start": 42,
-                "end": 62,
-                "actor": "automation",
-                "actor_id": "automation",
-                "label": "Inspect source",
-                "status": "ok",
-                "parent_id": "turn-l2",
-                "trace_id": "trace-clover-listen",
-            },
-            {
                 "id": "tool-build",
                 "phase": "span",
                 "kind": "automation.script",
@@ -233,7 +226,7 @@ def _fixture_data() -> dict:
             {
                 "id": "tool-failed",
                 "phase": "span",
-                "kind": "tool.call",
+                "kind": "automation.script",
                 "start": 161,
                 "end": 178,
                 "actor": "automation",
@@ -288,19 +281,6 @@ def _fixture_data() -> dict:
                     "tmux": "clover / listen-review / %32",
                     "agent_sid": "@rv-1aa8",
                 },
-            },
-            {
-                "id": "review-read",
-                "phase": "span",
-                "kind": "tool.call",
-                "start": 267,
-                "end": 286,
-                "actor": "automation",
-                "actor_id": "automation",
-                "label": "Read diff",
-                "status": "ok",
-                "parent_id": "review-turn",
-                "trace_id": "trace-clover-listen",
             },
             {
                 "id": "review-complete",
@@ -360,19 +340,6 @@ def _fixture_data() -> dict:
                 },
             },
             {
-                "id": "tool-open",
-                "phase": "span",
-                "kind": "tool.call",
-                "start": 404,
-                "end": None,
-                "actor": "automation",
-                "actor_id": "automation",
-                "label": "Run targeted checks",
-                "status": "running",
-                "parent_id": "turn-l3",
-                "trace_id": "trace-clover-listen",
-            },
-            {
                 "id": "turn-claude",
                 "phase": "span",
                 "kind": "agent.turn",
@@ -419,6 +386,7 @@ def timeline_consent():
         ],
         "never_stores": [
             "prompt or answer text",
+            "individual provider tool calls",
             "complete commands or tool inputs",
             "tool results, model output, or secrets",
         ],
@@ -498,7 +466,13 @@ def timeline_data(
 
     store = _store()
     try:
-        read = store.read_range(since, until, cursor=cursor, limit=limit)
+        read = store.read_range(
+            since,
+            until,
+            cursor=cursor,
+            limit=limit,
+            exclude_kinds=HIDDEN_EVENT_KINDS,
+        )
         span_context = store.read_span_context(since, until, limit=limit)
     except ActivityStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -506,10 +480,12 @@ def timeline_data(
     live_actors = _live_actors()
     live_agent_ids = live_actors[0] if live_actors is not None else None
     live_tmux_windows = live_actors[1] if live_actors is not None else None
+    inactive_agent_ids = live_actors[2] if live_actors is not None else None
     assembled = assemble(
         [*context_events, *read.events],
         now=now,
         live_agent_ids=live_agent_ids,
+        inactive_agent_ids=inactive_agent_ids,
         live_tmux_windows=live_tmux_windows,
     )
     filters = {
@@ -557,17 +533,25 @@ def timeline_data(
         )
         and _matches(item, **filters)
     ]
-    updates = [
-        update for update in assembled.updates if _update_matches(update, **filters)
-    ]
-    has_visible_updates = bool(updates)
-    updates.extend(
-        _stale_span_update(item)
-        for item in hidden_before_range
-        if item.get("anomaly")
-        in {"actor-not-live", "liveness-unknown", "liveness-unavailable"}
-        and _matches(item, **filters)
+    updates = (
+        [update for update in assembled.updates if _update_matches(update, **filters)]
+        if cursor is not None
+        else []
     )
+    if cursor is not None:
+        updates.extend(
+            _stale_span_update(item)
+            for item in hidden_before_range
+            if item.get("anomaly")
+            in {
+                "actor-inactive",
+                "actor-not-live",
+                "liveness-unknown",
+                "liveness-unavailable",
+            }
+            and _matches(item, **filters)
+        )
+    has_visible_updates = bool(updates)
     tracks = tracks_for_items(items)
     has_filters = any(value is not None for value in filters.values())
     mode = capture_mode()

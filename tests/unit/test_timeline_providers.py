@@ -1,4 +1,4 @@
-"""Provider fixture normalization, correlation, privacy, and recovery tests."""
+"""Provider lifecycle normalization, privacy, and recovery tests."""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ def test_unsafe_inherited_trace_falls_back_to_provider_session(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex"])
-def test_prompt_turn_tool_stop_matrix_is_correlated_and_sanitized(provider, tmp_path):
+def test_prompt_turn_stop_is_correlated_and_tools_are_ignored(provider, tmp_path):
     fixture = cases(provider)
     output = []
     names = ["prompt_submitted", "tool_start"]
@@ -105,15 +105,10 @@ def test_prompt_turn_tool_stop_matrix_is_correlated_and_sanitized(provider, tmp_
     assert [event["kind"] for event in output] == [
         "human.prompt",
         "agent.turn",
-        "tool.call",
-        "tool.call",
         "agent.turn",
     ]
     turn = [event for event in output if event["kind"] == "agent.turn"]
-    tool = [event for event in output if event["kind"] == "tool.call"]
     assert turn[0]["span_id"] == turn[1]["span_id"]
-    assert tool[0]["span_id"] == tool[1]["span_id"]
-    assert tool[0]["parent_span_id"] == turn[0]["span_id"]
     serialized = json.dumps(output).lower()
     assert "<redacted>" not in serialized
     for forbidden_key in (
@@ -125,46 +120,27 @@ def test_prompt_turn_tool_stop_matrix_is_correlated_and_sanitized(provider, tmp_
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex"])
-def test_question_wait_and_human_answer(provider, tmp_path):
+def test_tool_permission_and_question_boundaries_are_ignored(provider, tmp_path):
     fixture = cases(provider)
-    started = normalize_payload(
-        provider,
-        fixture["question_start"],
-        metadata(),
-        now=NOW,
-        correlation_dir=tmp_path,
-    )
-    finished = normalize_payload(
-        provider,
-        fixture["question_finish"],
-        metadata(),
-        now=NOW,
-        correlation_dir=tmp_path,
-    )
-    assert started[0]["kind"] == "agent.wait"
-    assert started[0]["status"] == "blocked"
-    assert finished[0]["span_id"] == started[0]["span_id"]
-    assert finished[0]["status"] == "ok"
-    assert finished[-1]["kind"] == "human.answer"
-
-
-@pytest.mark.parametrize("provider", ["claude", "codex"])
-def test_permission_without_tool_id_uses_exact_sidecar_scope(provider, tmp_path):
-    fixture = cases(provider)
-    start = normalize_payload(
-        provider,
-        fixture["permission_requested"],
-        metadata(),
-        now=NOW,
-        correlation_dir=tmp_path,
-    )
-    finish_payload = fixture["tool_failure" if provider == "claude" else "tool_finish"]
-    finish = normalize_payload(
-        provider, finish_payload, metadata(), now=NOW, correlation_dir=tmp_path
-    )
-    wait_finish = next(event for event in finish if event["kind"] == "agent.wait")
-    assert wait_finish["span_id"] == start[0]["span_id"]
-    assert finish[-1]["kind"] == "human.answer"
+    names = [
+        "tool_start",
+        "tool_failure" if provider == "claude" else "tool_finish",
+        "question_start",
+        "question_finish",
+        "permission_requested",
+    ]
+    for name in names:
+        assert (
+            normalize_payload(
+                provider,
+                fixture[name],
+                metadata(),
+                now=NOW,
+                correlation_dir=tmp_path,
+            )
+            == []
+        )
+    assert not (tmp_path / ".pending.json").exists()
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex"])
@@ -237,7 +213,7 @@ def test_queued_missing_id_prompt_does_not_duplicate_turn_start(tmp_path):
     assert [record["kind"] for record in queued] == ["human.prompt"]
 
 
-def test_ambiguous_missing_tool_id_is_bounded_and_recovers(tmp_path):
+def test_missing_tool_ids_are_ignored_without_correlation_state(tmp_path):
     start = {
         "hook_event_name": "PreToolUse",
         "session_id": "s",
@@ -248,26 +224,12 @@ def test_ambiguous_missing_tool_id_is_bounded_and_recovers(tmp_path):
     first = normalize_payload(
         "codex", start, metadata(), now=NOW, correlation_dir=tmp_path
     )
-    duplicate = normalize_payload(
-        "codex", start, metadata(), now=NOW, correlation_dir=tmp_path
-    )
-    paired = normalize_payload(
+    finished = normalize_payload(
         "codex", finish, metadata(), now=NOW, correlation_dir=tmp_path
-    )
-    unmatched = normalize_payload(
-        "codex", finish, metadata(), now=NOW, correlation_dir=tmp_path
-    )
-    recovered = normalize_payload(
-        "codex", start, metadata(), now=NOW, correlation_dir=tmp_path
     )
 
-    assert len(first) == 1
-    assert duplicate == []
-    assert paired[0]["span_id"] == first[0]["span_id"]
-    assert unmatched[0]["span_id"].startswith("unmatched:")
-    assert recovered[0]["span_id"] != first[0]["span_id"]
-    state = json.loads((tmp_path / ".pending.json").read_text())
-    assert len(state) == 1
+    assert first == finished == []
+    assert not (tmp_path / ".pending.json").exists()
 
 
 def test_pending_correlation_expires_and_recovers(monkeypatch, tmp_path):
@@ -286,7 +248,7 @@ def test_pending_correlation_expires_and_recovers(monkeypatch, tmp_path):
     assert second != first
 
 
-def test_finish_without_start_is_retained_as_unmatched(tmp_path):
+def test_tool_finish_without_start_is_ignored(tmp_path):
     payload = {
         "hook_event_name": "PostToolUse",
         "session_id": "s",
@@ -296,8 +258,7 @@ def test_finish_without_start_is_retained_as_unmatched(tmp_path):
     records = normalize_payload(
         "codex", payload, metadata(), now=NOW, correlation_dir=tmp_path
     )
-    assert records[0]["phase"] == "finish"
-    assert records[0]["span_id"].startswith("unmatched:")
+    assert records == []
 
 
 def test_session_start_confirms_explicit_handoff_once(monkeypatch, tmp_path):
