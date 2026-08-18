@@ -2,6 +2,16 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.29.0 (2026-08-18)
+
+### Added
+- **Agent Activity Timeline** — A new `/timeline` page shows the history of your interactive agent sessions across windows: turns, tool use, waits, review, and handoffs, for both Claude Code and Codex. It is a built-in extension, on by default, and records only lifecycle metadata: never your prompts, answers, commands, tool results, or model output.
+- **Separate consent for activity history** — Recording is off until you say yes, with `merlin timeline capture auto|ask|off` to change your mind from the CLI. Records stay private on your machine and expire after 90 days. Turning Timeline off on the Extensions page stops capture and removes its agent hooks straight away.
+- **Browser terminals restore their own tmux session** — Each browser tab remembers the session it was attached to and comes back to it after a refresh, so two tabs can sit on two different sessions instead of fighting over one. Switching sessions inside tmux itself is picked up too, without touching the Sessions panel.
+
+### Fixed
+- **No more session flicker on reload** — Reloading the terminal no longer attaches to one session and then visibly jumps to another. A renamed session is still found, and a session that has gone away falls back cleanly instead of leaving the tab stuck on a stale choice.
+
 ## v0.28.0 (2026-08-14)
 
 ### Added
