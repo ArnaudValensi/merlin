@@ -60,6 +60,11 @@ class TestSetWinsize:
 class TestTerminalWebSocket:
     """WebSocket endpoint behavior with mocked PTY."""
 
+    @pytest.fixture(autouse=True)
+    def known_empty_session_sweep(self, monkeypatch):
+        """WebSocket unit tests never depend on the developer's tmux server."""
+        monkeypatch.setattr(tr.board_sweep, "run_session_sweep_checked", lambda: [])
+
     @pytest.fixture
     def mock_websocket_with_cookie(self):
         """Create a mock WebSocket with a valid session cookie."""
@@ -111,6 +116,74 @@ class TestTerminalWebSocket:
             ws.accept.assert_called_once()
         finally:
             os.close(slave)
+
+    def test_passes_requested_session_identity_to_reconnect_policy(
+        self, mock_websocket_with_cookie
+    ):
+        """The initial attach decision receives the tab's WebSocket preference."""
+        import pty as _pty
+
+        from terminal.tmux import SessionIdentity
+
+        ws = mock_websocket_with_cookie
+        ws.query_params = {
+            "session_id": "$4",
+            "session_created": "1699999900",
+        }
+        master, slave = _pty.openpty()
+        sessions = [mock.sentinel.session]
+
+        try:
+            with (
+                mock.patch("pty.fork", return_value=(999, master)),
+                mock.patch("os.waitpid", return_value=(0, 0)),
+                mock.patch(
+                    "terminal.routes.board_sweep.run_session_sweep_checked",
+                    return_value=sessions,
+                ),
+                mock.patch(
+                    "terminal.routes.reconnect_argv",
+                    return_value=["tmux", "attach"],
+                ) as choose,
+                mock.patch(
+                    "terminal.routes.terminate_client", new_callable=mock.AsyncMock
+                ),
+            ):
+                from starlette.websockets import WebSocketDisconnect
+
+                ws.receive_text.side_effect = WebSocketDisconnect()
+                asyncio.run(tr.terminal_ws(ws))
+
+            choose.assert_called_once_with(sessions, SessionIdentity("$4", 1699999900))
+        finally:
+            os.close(slave)
+
+    def test_transient_tmux_sweep_failure_retries_without_forking(
+        self, mock_websocket_with_cookie
+    ):
+        """An unknown sweep must not create merlin-dev or consume the tab pin."""
+        ws = mock_websocket_with_cookie
+        ws.query_params = {
+            "session_id": "$4",
+            "session_created": "1699999900",
+        }
+
+        with (
+            mock.patch(
+                "terminal.routes.board_sweep.run_session_sweep_checked",
+                return_value=None,
+            ),
+            mock.patch("terminal.routes.reconnect_argv") as choose,
+            mock.patch("pty.fork") as fork,
+        ):
+            asyncio.run(tr.terminal_ws(ws))
+
+        ws.accept.assert_awaited_once()
+        ws.close.assert_awaited_once_with(
+            code=1013, reason="tmux temporarily unavailable"
+        )
+        choose.assert_not_called()
+        fork.assert_not_called()
 
     def test_cleanup_on_disconnect(self, mock_websocket_with_cookie):
         """PTY bridge is closed, registry cleared, tmux client terminated."""

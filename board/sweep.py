@@ -40,11 +40,13 @@ _FMT = "\t".join("#{" + f + "}" for f in _FIELDS)
 _SESSION_FIELDS = (
     "session_name",
     "session_id",
+    "session_created",
     "session_attached",
     "session_windows",
     "session_activity",
 )
 _SESSION_FMT = "\t".join("#{" + f + "}" for f in _SESSION_FIELDS)
+_CLIENT_SESSION_FMT = "#{client_session}\t#{session_id}\t#{session_created}"
 
 
 @dataclass(frozen=True)
@@ -81,9 +83,19 @@ class TmuxSession:
 
     name: str
     session_id: str
+    created: int
     attached: bool
     windows: int
     activity: int
+
+
+@dataclass(frozen=True)
+class ClientSession:
+    """Identity of the session currently displayed by one tmux client."""
+
+    name: str
+    session_id: str
+    created: int
 
 
 def parse_sweep(raw: str) -> list[Window]:
@@ -140,11 +152,12 @@ def parse_sessions(raw: str) -> list[TmuxSession]:
         parts = line.split("\t")
         if len(parts) != len(_SESSION_FIELDS):
             continue
-        name, sid, attached, windows, activity = parts
+        name, sid, created, attached, windows, activity = parts
         out.append(
             TmuxSession(
                 name=name,
                 session_id=sid,
+                created=int(created) if created.isdigit() else 0,
                 attached=attached.isdigit() and int(attached) > 0,
                 windows=int(windows) if windows.isdigit() else 0,
                 activity=int(activity) if activity.isdigit() else 0,
@@ -185,6 +198,37 @@ def run_session_sweep() -> list[TmuxSession]:
     return parse_sessions(out) if out is not None else []
 
 
+def run_session_sweep_checked() -> list[TmuxSession] | None:
+    """Run the session sweep while preserving transient failure as None.
+
+    A missing tmux server is a known empty state and returns an empty list. An
+    operational failure stays unknown so callers cannot mistake it for first
+    boot and create a replacement session.
+    """
+    if not shutil.which("tmux"):
+        return None
+    try:
+        proc = subprocess.run(
+            ["tmux", "list-sessions", "-F", _SESSION_FMT],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode == 0:
+        return parse_sessions(proc.stdout)
+    error = proc.stderr.lower()
+    if (
+        "no server running" in error
+        or "no sessions" in error
+        or "no such file or directory" in error
+    ):
+        return []
+    return None
+
+
 def _tmux_capture(args: list[str]) -> str | None:
     """Run a read-only tmux command, returning stdout or None on any failure."""
     if not shutil.which("tmux"):
@@ -209,10 +253,24 @@ def client_session(tty: str) -> str | None:
     switching stays per-client (one browser tab switching never moves another).
     Returns None if tmux is unavailable or the client is unknown.
     """
+    current = client_session_info(tty)
+    return current.name if current is not None else None
+
+
+def client_session_info(tty: str) -> ClientSession | None:
+    """Return the exact name and stable reconnect identity for one client."""
     if not tty:
         return None
-    out = _tmux_capture(["display-message", "-p", "-t", tty, "#{client_session}"])
-    return out.strip() if out else None
+    out = _tmux_capture(["display-message", "-p", "-t", tty, _CLIENT_SESSION_FMT])
+    if not out:
+        return None
+    parts = out.strip().split("\t")
+    if len(parts) != 3:
+        return None
+    name, session_id, created = parts
+    if not name or not session_id or not created.isdigit():
+        return None
+    return ClientSession(name, session_id, int(created))
 
 
 def sanitize_session_name(name: str) -> str:

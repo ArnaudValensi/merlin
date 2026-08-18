@@ -117,6 +117,7 @@
 {# Shared clipboard ladder — the same partial /clipboard-test includes, so the
    diagnostic page and the terminal can never disagree about what a paste does. #}
 <script>{% include "clipboard-core.js" %}</script>
+<script>{% include "session-identity.js" %}</script>
 <style>
 /* Terminal column wraps the terminal + toolbars so the panel sits beside it on
    desktop; fills its slot in both the mobile column and the desktop row. */
@@ -1898,20 +1899,26 @@ document.addEventListener('DOMContentLoaded', () => {
         if (ws) { try { ws.close(); } catch (_) {} }
         setStatus('connecting', 'Connecting...');
 
-        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        ws = new WebSocket(`${proto}//${location.host}/ws/terminal`);
+        const attemptedIdentity = MerlinSessionIdentity.read();
+        let sessionConfirmed = false;
+        const socket = new WebSocket(
+            MerlinSessionIdentity.websocketUrl(location, attemptedIdentity)
+        );
+        ws = socket;
 
-        ws.onopen = () => {
+        socket.onopen = () => {
+            if (ws !== socket) return;
             reconnectDelay = 1000; // reset backoff on success
             setStatus('connected', 'Connected');
             term.focus();
             const dims = fitAddon.proposeDimensions();
             if (dims) {
-                ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+                socket.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
             }
         };
 
-        ws.onmessage = (e) => {
+        socket.onmessage = (e) => {
+            if (ws !== socket) return;
             var d = e.data;
             // Control frames are a separate WS message prefixed with NUL, which
             // never leads a normal terminal chunk. Everything else is PTY output.
@@ -1920,6 +1927,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     var ctl = JSON.parse(d.slice(1));
                     if (ctl && ctl.type === 'session') {
                         currentSession = ctl.name || '';
+                        if (MerlinSessionIdentity.confirm(ctl)) {
+                            sessionConfirmed = true;
+                        }
                         if (window.SessionsBoard && window.SessionsBoard.setCurrentSession) {
                             window.SessionsBoard.setCurrentSession(currentSession);
                         }
@@ -1930,16 +1940,20 @@ document.addEventListener('DOMContentLoaded', () => {
             term.write(d);
         };
 
-        ws.onclose = (e) => {
+        socket.onclose = (e) => {
+            if (ws !== socket) return;
             if (e.code === 4401) {
                 setStatus('disconnected', 'Unauthorized — reload page');
                 return; // don't reconnect on auth failure
             }
+            MerlinSessionIdentity.clearAfterClose(
+                attemptedIdentity, sessionConfirmed, e.code
+            );
             setStatus('disconnected', 'Disconnected');
             scheduleReconnect();
         };
 
-        ws.onerror = () => {
+        socket.onerror = () => {
             // onclose will fire after onerror, which handles reconnect
         };
     }

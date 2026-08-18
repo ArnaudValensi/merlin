@@ -27,13 +27,24 @@ zsh shell
 ### Connection
 
 ```javascript
-const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-ws = new WebSocket(`${proto}//${location.host}/ws/terminal`);
+const attemptedIdentity = MerlinSessionIdentity.read();
+ws = new WebSocket(MerlinSessionIdentity.websocketUrl(location, attemptedIdentity));
 ```
 
 - Auto-reconnect with exponential backoff (1s → 30s max)
 - Status indicator: green dot (connected), yellow (connecting), red (disconnected)
 - Auth failure (close code 4401) stops reconnection
+- The last server-confirmed tmux identity is stored in `sessionStorage`, which
+  keeps browser tabs independent and survives a refresh in the same tab.
+- A `session` control frame replaces the stored identity after initial attach
+  and after every session switch.
+- The server watches the attached tmux client every 500 ms. A native tmux
+  session switch emits the same confirmation frame without requiring a panel
+  action. Unchanged observations emit nothing.
+- A connection that closes before confirming its attempted identity normally
+  removes that identity before retrying. Close code 1013 means the tmux sweep
+  was temporarily unavailable, so the confirmed identity is preserved.
+- Cleanup is conditional, so an older socket cannot erase a newer confirmation.
 
 ### Resize Handling
 
@@ -90,14 +101,21 @@ User-facing copy/paste recipes (shortcuts, pills, NeoVim config, `/terminal/clip
 In `terminal/routes.py`:
 
 1. Verify auth via session cookie
-2. Fork a PTY (`pty.fork()`) running `tmux new-session -A -s merlin-dev`
-3. Wrap the master fd in a `PtyBridge` (`terminal/pty_bridge.py`)
-4. Bidirectional relay:
+2. Sweep the live tmux sessions and validate the optional browser identity
+3. On a transient sweep failure, close with code 1013 before any fork so the
+   browser retries without discarding its identity
+4. Select the attach command before the fork
+5. Fork a PTY (`pty.fork()`) running that tmux command
+6. Wrap the master fd in a `PtyBridge` (`terminal/pty_bridge.py`)
+7. Bidirectional relay:
    - WebSocket → PTY: forward input via `bridge.write()`
    - PTY → WebSocket: forward output via `bridge.read()` through an
      incremental UTF-8 decoder (multibyte sequences can split across reads)
-5. Handle resize messages (JSON with `type: "resize"`)
-6. Clean up on disconnect: close the bridge, then `terminate_client()`
+8. Report the attached session as a NUL-prefixed control frame containing its
+   current `name`, `id`, and `created` fields
+9. Watch that client's current session and report native tmux switches
+10. Handle resize and per-client session-switch messages
+11. Clean up on disconnect: close the bridge, then `terminate_client()`
    SIGHUPs the tmux client, waits for it to exit, and escalates to SIGKILL
 
 ### PTY Bridge (`terminal/pty_bridge.py`)
@@ -123,12 +141,36 @@ Properties the tests pin down (`tests/unit/test_pty_bridge.py`):
 deliberately: they are loop-agnostic (uvloop supports them on any fd,
 while its pipe transports reject TTYs).
 
-### tmux Session
+### tmux Session Restoration
 
-- **Session name**: `merlin`
-- **Flag**: `-A` (attach if exists, create if not)
-- Terminal state persists across page reloads
-- Multiple browser tabs share the same tmux session
+Each WebSocket owns one tmux client. Session restoration is chosen before that
+client starts, so a refresh never attaches to one session and visibly switches
+to another afterwards.
+
+The attach ladder is:
+
+1. If the session sweep fails for an operational reason, close the WebSocket
+   with code 1013 and retry. Do not fork tmux or change browser identity.
+2. If the browser supplied `(session_id, session_created)` and both fields
+   exactly match a live sweep row, run `tmux attach -t <session_id>`.
+3. If the identity is absent or stale and any session exists, run bare
+   `tmux attach`. tmux chooses its most recently used session.
+4. If no tmux server exists, run
+   `tmux new-session -A -s merlin-dev -x 120 -y 40`.
+
+The identity pair handles the important lifecycle cases:
+
+- A rename changes the display name but keeps the id and creation time.
+- A deleted session no longer matches, so the fallback runs and the next
+  control frame replaces the stale browser value.
+- A full tmux server restart may reuse `$0`, but the new session has a different
+  creation time and does not match the old identity.
+- Malformed or unavailable browser storage behaves exactly like no preference.
+
+`sessionStorage` is intentional. `localStorage` would make every tab overwrite
+one shared choice. With tab-scoped storage, two tabs may restore different tmux
+sessions. If two tabs select the same session, normal tmux semantics still
+apply: that session's selected window is shared by both clients.
 
 ### Agent identity and activity history
 

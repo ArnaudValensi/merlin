@@ -25,7 +25,12 @@ def win(session="alpha", wid="@1", index=0, state="", name="claude", **over):
 
 def sess(name="alpha", attached=True, windows=1):
     return TmuxSession(
-        name=name, session_id="$" + name, attached=attached, windows=windows, activity=0
+        name=name,
+        session_id="$" + name,
+        created=1,
+        attached=attached,
+        windows=windows,
+        activity=0,
     )
 
 

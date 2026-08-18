@@ -29,7 +29,12 @@ from auth import verify_ws_cookie
 from board import sweep as board_sweep
 from merlin_ext import make_templates
 from terminal.pty_bridge import PtyBridge, terminate_client
-from terminal.tmux import DEFAULT_SESSION_NAME, reconnect_argv, terminal_process_env
+from terminal.tmux import (
+    DEFAULT_SESSION_NAME,
+    parse_session_identity,
+    reconnect_argv,
+    terminal_process_env,
+)
 
 logger = logging.getLogger("merlin.terminal")
 
@@ -47,6 +52,7 @@ api_router = APIRouter()
 page_router = APIRouter()
 
 MAX_AUDIO_SIZE = 25 * 1024 * 1024
+SESSION_REPORT_INTERVAL = 0.5
 
 # Clipboard image upload directory
 CLIPBOARD_DIR = Path("/tmp/merlin-clipboard")
@@ -71,22 +77,93 @@ def _client_tty(pid: int) -> str:
         return ""
 
 
-async def _report_current_session(websocket: WebSocket, pid: int) -> None:
-    """Tell the browser which tmux session its client is on, as a NUL-prefixed
-    control frame the terminal JS intercepts (never written to the screen)."""
+async def _read_current_session(pid: int) -> board_sweep.ClientSession | None:
+    """Read the exact tmux session currently displayed by one browser client."""
     tty = _client_tty(pid)
     if not tty:
-        return
+        return None
     loop = asyncio.get_running_loop()
-    cur = await loop.run_in_executor(None, board_sweep.client_session, tty)
-    if cur:
-        with contextlib.suppress(Exception):
-            await websocket.send_text(
-                "\x00" + json.dumps({"type": "session", "name": cur})
+    return await loop.run_in_executor(None, board_sweep.client_session_info, tty)
+
+
+async def _send_session_frame(
+    websocket: WebSocket, current: board_sweep.ClientSession
+) -> bool:
+    """Send one browser-only session identity control frame."""
+    try:
+        await websocket.send_text(
+            "\x00"
+            + json.dumps(
+                {
+                    "type": "session",
+                    "name": current.name,
+                    "id": current.session_id,
+                    "created": current.created,
+                }
             )
+        )
+        return True
+    except Exception:
+        return False
 
 
-async def _switch_session(websocket: WebSocket, pid: int, target: str) -> None:
+class SessionReportState:
+    """Deduplicate session frames shared by panel switches and the watcher."""
+
+    def __init__(self) -> None:
+        self.last_reported: board_sweep.ClientSession | None = None
+        self.lock = asyncio.Lock()
+
+
+async def _send_session_if_changed(
+    websocket: WebSocket,
+    current: board_sweep.ClientSession,
+    state: SessionReportState,
+) -> bool:
+    async with state.lock:
+        if current == state.last_reported:
+            return False
+        if await _send_session_frame(websocket, current):
+            state.last_reported = current
+            return True
+    return False
+
+
+async def _report_current_session(
+    websocket: WebSocket, pid: int, state: SessionReportState | None = None
+) -> board_sweep.ClientSession | None:
+    """Read and report the current session, returning it after a successful send."""
+    report_state = state or SessionReportState()
+    current = await _read_current_session(pid)
+    if current is not None and await _send_session_if_changed(
+        websocket, current, report_state
+    ):
+        return current
+    return None
+
+
+async def _watch_current_session(
+    websocket: WebSocket,
+    pid: int,
+    state: SessionReportState | None = None,
+    *,
+    interval: float = SESSION_REPORT_INTERVAL,
+) -> None:
+    """Report initial attach and later tmux-native per-client switches."""
+    report_state = state or SessionReportState()
+    while True:
+        current = await _read_current_session(pid)
+        if current is not None:
+            await _send_session_if_changed(websocket, current, report_state)
+        await asyncio.sleep(interval)
+
+
+async def _switch_session(
+    websocket: WebSocket,
+    pid: int,
+    target: str,
+    state: SessionReportState | None = None,
+) -> None:
     """Per-client switch to ``target`` (``session`` or ``session:window``), then
     report the client's new current session back to the browser."""
     if not target:
@@ -96,7 +173,7 @@ async def _switch_session(websocket: WebSocket, pid: int, target: str) -> None:
         return
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, board_sweep.switch_client, tty, target)
-    await _report_current_session(websocket, pid)
+    await _report_current_session(websocket, pid, state)
 
 
 def _voice_available() -> bool:
@@ -391,7 +468,15 @@ async def terminal_ws(websocket: WebSocket):
     await websocket.accept()
     logger.info("Terminal WebSocket connected")
 
-    tmux_args = reconnect_argv(board_sweep.run_session_sweep())
+    preferred = parse_session_identity(
+        websocket.query_params.get("session_id"),
+        websocket.query_params.get("session_created"),
+    )
+    sessions = board_sweep.run_session_sweep_checked()
+    if sessions is None:
+        await websocket.close(code=1013, reason="tmux temporarily unavailable")
+        return
+    tmux_args = reconnect_argv(sessions, preferred)
     tmux_conf = TERMINAL_DIR / "tmux.conf"
     if tmux_conf.exists():
         tmux_args[1:1] = ["-f", str(tmux_conf)]
@@ -426,6 +511,7 @@ async def terminal_ws(websocket: WebSocket):
         await websocket.close(code=1011, reason="PTY setup failed")
         return
     register_pty("terminal", bridge)
+    session_report_state = SessionReportState()
 
     # Check if child is still alive
     try:
@@ -477,7 +563,10 @@ async def terminal_ws(websocket: WebSocket):
                             continue
                         if msg_type == "switch":
                             await _switch_session(
-                                websocket, pid, str(parsed.get("target", ""))
+                                websocket,
+                                pid,
+                                str(parsed.get("target", "")),
+                                session_report_state,
                             )
                             continue
                     except (json.JSONDecodeError, KeyError, ValueError, TypeError):
@@ -491,27 +580,11 @@ async def terminal_ws(websocket: WebSocket):
         except Exception:
             logger.exception("ws_to_pty error")
 
-    async def push_initial_session():
-        """Once the client has attached, tell the browser which session it is on
-        (the bottom bar and switcher key off this). Retries briefly because
-        ``client_session`` is empty until the attach settles."""
-        for _ in range(20):
-            await asyncio.sleep(0.25)
-            tty = _client_tty(pid)
-            if not tty:
-                continue
-            loop = asyncio.get_running_loop()
-            cur = await loop.run_in_executor(None, board_sweep.client_session, tty)
-            if cur:
-                with contextlib.suppress(Exception):
-                    await websocket.send_text(
-                        "\x00" + json.dumps({"type": "session", "name": cur})
-                    )
-                return
-
     pty_reader = asyncio.create_task(pty_to_ws())
     ws_reader = asyncio.create_task(ws_to_pty())
-    session_pusher = asyncio.create_task(push_initial_session())
+    session_watcher = asyncio.create_task(
+        _watch_current_session(websocket, pid, session_report_state)
+    )
 
     try:
         done, pending = await asyncio.wait(
@@ -527,11 +600,11 @@ async def terminal_ws(websocket: WebSocket):
         # handler is itself cancelled (server shutdown).
         unregister_pty("terminal")
         bridge.close()
-        for task in (pty_reader, ws_reader, session_pusher):
+        for task in (pty_reader, ws_reader, session_watcher):
             task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.gather(
-                pty_reader, ws_reader, session_pusher, return_exceptions=True
+                pty_reader, ws_reader, session_watcher, return_exceptions=True
             )
         logger.info("Cleanup: PTY closed fd=%d, terminating pid=%d", master_fd, pid)
         # Terminate the tmux client process (NOT the session) and reap it,

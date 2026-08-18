@@ -27,6 +27,7 @@ def sline(**over):
     fields = {
         "session_name": "alpha",
         "session_id": "$1",
+        "session_created": "1699999900",
         "session_attached": "1",
         "session_windows": "3",
         "session_activity": "1700",
@@ -99,6 +100,7 @@ class TestParseSessions:
         (s,) = sweep.parse_sessions(sline())
         assert s.name == "alpha"
         assert s.session_id == "$1"
+        assert s.created == 1699999900
         assert s.attached is True
         assert s.windows == 3
         assert s.activity == 1700
@@ -162,3 +164,60 @@ class TestCheckedSweep:
         )
 
         assert sweep.run_sweep_checked() == []
+
+
+class TestClientSessionInfo:
+    def test_parses_name_id_and_creation_time(self, monkeypatch):
+        monkeypatch.setattr(
+            sweep, "_tmux_capture", lambda _args: "renamed\t$4\t1699999900\n"
+        )
+
+        assert sweep.client_session_info("/dev/pts/9") == sweep.ClientSession(
+            name="renamed", session_id="$4", created=1699999900
+        )
+
+    def test_rejects_malformed_or_missing_client(self, monkeypatch):
+        monkeypatch.setattr(sweep, "_tmux_capture", lambda _args: "incomplete\t$4")
+        assert sweep.client_session_info("/dev/pts/9") is None
+        assert sweep.client_session_info("") is None
+
+
+class TestCheckedSessionSweep:
+    def test_missing_tmux_is_unknown(self, monkeypatch):
+        monkeypatch.setattr(sweep.shutil, "which", lambda _name: None)
+
+        assert sweep.run_session_sweep_checked() is None
+
+    def test_transient_tmux_failure_is_unknown(self, monkeypatch):
+        monkeypatch.setattr(sweep.shutil, "which", lambda _name: "/usr/bin/tmux")
+        monkeypatch.setattr(
+            sweep.subprocess,
+            "run",
+            lambda *args, **kwargs: subprocess.CompletedProcess(
+                args, 1, "", "temporary server error"
+            ),
+        )
+
+        assert sweep.run_session_sweep_checked() is None
+
+    def test_no_server_is_known_empty(self, monkeypatch):
+        monkeypatch.setattr(sweep.shutil, "which", lambda _name: "/usr/bin/tmux")
+        monkeypatch.setattr(
+            sweep.subprocess,
+            "run",
+            lambda *args, **kwargs: subprocess.CompletedProcess(
+                args, 1, "", "no server running on /tmp/tmux-1000/default"
+            ),
+        )
+
+        assert sweep.run_session_sweep_checked() == []
+
+    def test_success_parses_sessions(self, monkeypatch):
+        monkeypatch.setattr(sweep.shutil, "which", lambda _name: "/usr/bin/tmux")
+        monkeypatch.setattr(
+            sweep.subprocess,
+            "run",
+            lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, sline(), ""),
+        )
+
+        assert sweep.run_session_sweep_checked() == sweep.parse_sessions(sline())

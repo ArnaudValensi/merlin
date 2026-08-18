@@ -13,15 +13,23 @@ import pytest
 
 from board import sweep as board_sweep
 from board.sweep import TmuxSession
-from terminal.tmux import DEFAULT_SESSION_NAME, reconnect_argv
+from terminal.tmux import (
+    DEFAULT_SESSION_NAME,
+    SessionIdentity,
+    parse_session_identity,
+    reconnect_argv,
+)
 
 TMUX_CONF = Path(__file__).resolve().parents[2] / "terminal" / "tmux.conf"
 
 
-def _session(name: str = "renamed") -> TmuxSession:
+def _session(
+    name: str = "renamed", session_id: str = "$0", created: int = 1
+) -> TmuxSession:
     return TmuxSession(
         name=name,
-        session_id="$0",
+        session_id=session_id,
+        created=created,
         attached=False,
         windows=1,
         activity=0,
@@ -30,6 +38,59 @@ def _session(name: str = "renamed") -> TmuxSession:
 
 def test_reconnect_attaches_when_a_session_exists():
     assert reconnect_argv([_session()]) == ["tmux", "attach"]
+
+
+def test_reconnect_attaches_directly_to_a_matching_identity():
+    sessions = [_session("alpha", "$0", 10), _session("beta", "$1", 20)]
+
+    assert reconnect_argv(sessions, SessionIdentity("$0", 10)) == [
+        "tmux",
+        "attach",
+        "-t",
+        "$0",
+    ]
+
+
+def test_reconnect_does_not_match_id_with_a_different_creation_time():
+    sessions = [_session("replacement", "$0", 20)]
+
+    assert reconnect_argv(sessions, SessionIdentity("$0", 10)) == [
+        "tmux",
+        "attach",
+    ]
+
+
+def test_reconnect_falls_back_when_the_preferred_session_was_deleted():
+    sessions = [_session("survivor", "$1", 20)]
+
+    assert reconnect_argv(sessions, SessionIdentity("$0", 10)) == [
+        "tmux",
+        "attach",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("session_id", "created"),
+    [
+        (None, None),
+        ("", "1"),
+        ("alpha", "1"),
+        ("$1", ""),
+        ("$1", "not-a-number"),
+        ("$1", "0"),
+        ("$-1", "1"),
+    ],
+)
+def test_parse_session_identity_rejects_missing_or_malformed_values(
+    session_id, created
+):
+    assert parse_session_identity(session_id, created) is None
+
+
+def test_parse_session_identity_accepts_tmux_id_and_creation_time():
+    assert parse_session_identity("$12", "1699999900") == SessionIdentity(
+        "$12", 1699999900
+    )
 
 
 def test_reconnect_bootstraps_when_no_session_exists():
@@ -150,7 +211,7 @@ def test_toolbar_new_window_inherits_current_cwd(tmp_path):
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed")
 def test_reconnect_follows_a_renamed_session(monkeypatch, tmp_path):
-    """A reconnect attaches to the renamed session without creating another."""
+    """A pinned reconnect follows a rename even when another session exists."""
     socket = tmp_path / "tmux.sock"
 
     def tmux(*args: str) -> subprocess.CompletedProcess[str]:
@@ -168,11 +229,16 @@ def test_reconnect_follows_a_renamed_session(monkeypatch, tmp_path):
     monkeypatch.setattr(board_sweep, "_tmux_capture", private_capture)
     created = tmux("new-session", "-d", "-s", DEFAULT_SESSION_NAME)
     assert created.returncode == 0, created.stderr
-    before = len(board_sweep.run_session_sweep())
+    original = board_sweep.run_session_sweep()[0]
     renamed = tmux("rename-session", "-t", DEFAULT_SESSION_NAME, "renamed-by-user")
     assert renamed.returncode == 0, renamed.stderr
+    other = tmux("new-session", "-d", "-s", "other-session")
+    assert other.returncode == 0, other.stderr
+    before = len(board_sweep.run_session_sweep())
 
-    args = reconnect_argv(board_sweep.run_session_sweep())
+    identity = SessionIdentity(original.session_id, original.created)
+    args = reconnect_argv(board_sweep.run_session_sweep(), identity)
+    assert args == ["tmux", "attach", "-t", original.session_id]
     private_args = [args[0], "-S", str(socket), *args[1:]]
     pid, master_fd = pty.fork()
     if pid == 0:
@@ -199,3 +265,43 @@ def test_reconnect_follows_a_renamed_session(monkeypatch, tmp_path):
             os.close(master_fd)
         with contextlib.suppress(ChildProcessError):
             os.waitpid(pid, 0)
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed")
+def test_reconnect_rejects_an_id_reused_after_server_restart(monkeypatch, tmp_path):
+    """An old $0 must not identify the new server's unrelated $0 session."""
+    socket = tmp_path / "tmux.sock"
+
+    def tmux(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["tmux", "-S", str(socket), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def private_capture(args: list[str]) -> str | None:
+        result = tmux(*args)
+        return result.stdout if result.returncode == 0 else None
+
+    monkeypatch.setattr(board_sweep, "_tmux_capture", private_capture)
+    try:
+        created = tmux("new-session", "-d", "-s", "old-server-session")
+        assert created.returncode == 0, created.stderr
+        (old,) = board_sweep.run_session_sweep()
+        stopped = tmux("kill-server")
+        assert stopped.returncode == 0, stopped.stderr
+
+        while int(time.time()) <= old.created:
+            time.sleep(0.05)
+
+        created = tmux("new-session", "-d", "-s", "replacement-session")
+        assert created.returncode == 0, created.stderr
+        (replacement,) = board_sweep.run_session_sweep()
+        assert replacement.session_id == old.session_id == "$0"
+        assert replacement.created != old.created
+
+        identity = SessionIdentity(old.session_id, old.created)
+        assert reconnect_argv([replacement], identity) == ["tmux", "attach"]
+    finally:
+        tmux("kill-server")

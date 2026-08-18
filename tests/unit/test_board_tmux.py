@@ -164,8 +164,18 @@ def test_switch_client_and_current_session(tmux_server):
             time.sleep(0.05)
         assert tty, "tmux client did not attach"
         assert sweep.client_session(tty) == "alpha"
+        alpha = sweep.client_session_info(tty)
+        assert alpha is not None
+        assert alpha.name == "alpha"
+        assert alpha.session_id.startswith("$")
+        assert alpha.created > 0
         assert sweep.switch_client(tty, "beta") is True
         time.sleep(0.3)
         assert sweep.client_session(tty) == "beta"
+        beta = sweep.client_session_info(tty)
+        assert beta is not None
+        assert beta.name == "beta"
+        assert beta.session_id != alpha.session_id
+        assert beta.created > 0
     finally:
         os.close(fd)
