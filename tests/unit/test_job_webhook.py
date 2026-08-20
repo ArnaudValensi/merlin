@@ -381,37 +381,35 @@ class TestWhoamiResolution:
 
 
 class TestServerPort:
-    def test_env_wins(self, monkeypatch):
-        monkeypatch.setenv("MERLIN_PORT", "8080")
-        assert webhook._server_port() == "8080"
-
-    def test_reads_persisted_file_when_env_unset(self, monkeypatch):
+    def test_reads_state_file(self):
         import paths
 
-        monkeypatch.delenv("MERLIN_PORT", raising=False)
+        paths.write_server_state(pid=1234, port=8080)
+        assert webhook._server_port() == "8080"
+
+    def test_legacy_port_file_fallback(self):
+        import paths
+
+        # No unified state file; the legacy server-port file is still honored.
         p = paths.server_port_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("9090")
         assert webhook._server_port() == "9090"
 
-    def test_default_when_absent(self, monkeypatch):
-        monkeypatch.delenv("MERLIN_PORT", raising=False)
+    def test_default_when_absent(self):
         assert webhook._server_port() == "3123"
 
-    def test_ip_tier_uses_persisted_port(self, monkeypatch):
+    def test_ip_tier_uses_state_port(self, monkeypatch):
         import paths
 
         for k in (
             "MERLIN_DASHBOARD_URL",
             "MERLIN_SAAS_TOKEN",
             "MERLIN_ENVIRONMENT_SLUG",
-            "MERLIN_PORT",
         ):
             monkeypatch.delenv(k, raising=False)
         monkeypatch.setattr(webhook, "_local_ip", lambda: "192.168.1.50")
-        p = paths.server_port_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("8080")
+        paths.write_server_state(pid=1234, port=8080)
         assert webhook.public_url("j") == "http://192.168.1.50:8080/webhooks/job/j"
 
 
@@ -457,10 +455,12 @@ class TestPublicUrl:
         assert webhook.resolve_public_base()[1] == "slug"
 
     def test_ip_fallback_uses_port(self, monkeypatch):
+        import paths
+
         monkeypatch.delenv("MERLIN_DASHBOARD_URL", raising=False)
         monkeypatch.delenv("MERLIN_ENVIRONMENT_SLUG", raising=False)
         monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
-        monkeypatch.setenv("MERLIN_PORT", "3199")
+        paths.write_server_state(pid=1234, port=3199)
         monkeypatch.setattr(webhook, "_local_ip", lambda: "192.168.1.50")
         assert webhook.public_url("j") == "http://192.168.1.50:3199/webhooks/job/j"
         assert webhook.resolve_public_base()[1] == "ip"

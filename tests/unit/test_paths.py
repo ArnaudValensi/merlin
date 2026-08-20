@@ -466,6 +466,59 @@ class TestIsSupervised:
         assert paths.is_supervised() is False
 
 
+class TestServerState:
+    """Unified server-state.json: PID + port, atomically written."""
+
+    def test_state_path_under_home(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        assert paths.server_state_path() == tmp_path / "data" / "server-state.json"
+
+    def test_write_then_read_roundtrip(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        paths.write_server_state(pid=4242, port=8080)
+        assert paths.read_server_state() == {"pid": 4242, "port": 8080}
+
+    def test_write_leaves_no_tmp_file(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        paths.write_server_state(pid=1, port=2)
+        assert list((tmp_path / "data").glob("*.tmp")) == []
+
+    def test_read_none_when_absent(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        assert paths.read_server_state() is None
+
+    def test_read_none_on_garbage(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        p = paths.server_state_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{ not json")
+        assert paths.read_server_state() is None
+
+
+class TestResolveDashboardPort:
+    """--port flag > MERLIN_DASHBOARD_PORT > 3123."""
+
+    def test_flag_wins(self, monkeypatch):
+        monkeypatch.setenv("MERLIN_DASHBOARD_PORT", "8080")
+        assert paths.resolve_dashboard_port(9000) == 9000
+
+    def test_env_used_when_no_flag(self, monkeypatch):
+        monkeypatch.setenv("MERLIN_DASHBOARD_PORT", "8080")
+        assert paths.resolve_dashboard_port(None) == 8080
+
+    def test_default_when_nothing(self, monkeypatch):
+        monkeypatch.delenv("MERLIN_DASHBOARD_PORT", raising=False)
+        assert paths.resolve_dashboard_port(None) == 3123
+
+    def test_ignores_out_of_range(self, monkeypatch):
+        monkeypatch.setenv("MERLIN_DASHBOARD_PORT", "70000")
+        assert paths.resolve_dashboard_port(None) == 3123
+
+    def test_ignores_non_numeric(self, monkeypatch):
+        monkeypatch.setenv("MERLIN_DASHBOARD_PORT", "abc")
+        assert paths.resolve_dashboard_port(None) == 3123
+
+
 class TestLaunchCwd:
     """Shared default working directory: MERLIN_LAUNCH_CWD -> $HOME."""
 

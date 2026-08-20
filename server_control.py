@@ -16,7 +16,7 @@ Two properties are deliberate and load-bearing:
     relaunch itself is delegated to a fresh `uv run`, which resolves the new
     version's venv cleanly rather than reusing this process's interpreter.
 
-Stopping targets the exact PID the server recorded (see paths.server_pid_path),
+Stopping targets the exact PID from server-state.json (paths.server_state_path),
 validated with POSIX `ps` so a recycled PID is never signalled. A user-scoped
 pattern-kill remains as a gated fallback for the first restart after updating
 from a version that predates the PID file; it is removable once every supported
@@ -43,14 +43,44 @@ _FALLBACK_PATTERNS = (
 )
 
 
-def read_server_pid() -> int | None:
-    """The PID the running server recorded, or None if absent/garbage."""
+def _read_legacy_pid() -> int | None:
+    """PID from the legacy server-pid file (a server started by v0.30.x, before
+    the unified server-state.json). Port is unknown there."""
     try:
         raw = paths.server_pid_path().read_text()
     except OSError:
         return None
     digits = "".join(ch for ch in raw if ch.isdigit())
     return int(digits) if digits else None
+
+
+def live_state() -> tuple[int | None, int | None]:
+    """(pid, port) of the running server, or (None, None).
+
+    Prefer the unified server-state.json; fall back to the legacy server-pid
+    file (port unknown there). Only ever returns a PID that is a live Merlin
+    process — a stale file naming a dead or foreign PID yields (None, None).
+    """
+    state = paths.read_server_state()
+    if state is not None:
+        pid = state.get("pid")
+        port = state.get("port")
+        if isinstance(pid, int) and pid_is_merlin(pid):
+            return pid, (port if isinstance(port, int) else None)
+
+    legacy = _read_legacy_pid()
+    if legacy is not None and pid_is_merlin(legacy):
+        return legacy, None
+    return None, None
+
+
+def _remove_state_files() -> None:
+    """Drop the state file and the legacy pid file, if present."""
+    for path in (paths.server_state_path(), paths.server_pid_path()):
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 
 def _ps_field(pid: int, fmt: str) -> str | None:
@@ -124,17 +154,18 @@ def _fallback_pattern_kill() -> None:
             pass
 
 
-def stop_server(timeout: float = 5.0) -> bool:
-    """Stop the running server. Returns True if the PID path stopped a process.
+def stop_server(timeout: float = 5.0) -> tuple[bool, int | None]:
+    """Stop the running server. Returns (stopped, port) — whether a process was
+    signalled, and the port it was on (for restart to reuse), or None.
 
-    SIGTERM, wait up to `timeout`, then SIGKILL only if still alive. The PID file
-    is removed afterwards whether we signalled it or found it stale. If the PID
-    path stops nothing, the gated fallback runs.
+    SIGTERM, wait up to `timeout`, then SIGKILL only if still alive. The state
+    files are removed afterwards whether we signalled a process or found them
+    stale. If nothing valid was found, the gated fallback runs.
     """
-    pid = read_server_pid()
+    pid, port = live_state()
     stopped = False
 
-    if pid is not None and pid_is_merlin(pid):
+    if pid is not None:
         try:
             os.kill(pid, signal.SIGTERM)
         except OSError:
@@ -152,15 +183,12 @@ def stop_server(timeout: float = 5.0) -> bool:
         stopped = True
         print(f"Stopped Merlin (PID {pid})")
 
-    try:
-        paths.server_pid_path().unlink()
-    except OSError:
-        pass
+    _remove_state_files()
 
     if not stopped:
         _fallback_pattern_kill()
 
-    return stopped
+    return stopped, port
 
 
 def _relaunch_env() -> dict[str, str]:
@@ -177,17 +205,23 @@ def _relaunch_env() -> dict[str, str]:
     return env
 
 
-def _relaunch() -> None:
-    """Start a fresh, detached server via `uv run`.
+def _relaunch(port: int | None = None) -> None:
+    """Start a fresh, detached server via `uv run`, on the same port it was on.
 
     `uv run` re-resolves the venv for the app directory (the new version after an
     update's symlink flip), so the successor never inherits this process's pinned
-    interpreter or sys.path.
+    interpreter or sys.path. `port` is the port the stopped server was bound to;
+    passing it as an explicit `--port` preserves a custom port across restart.
+    When unknown (None), the child re-resolves normally (MERLIN_DASHBOARD_PORT,
+    then 3123).
     """
     app_dir = paths.app_dir()
+    cmd = ["uv", "run", "cli.py", "start"]
+    if port is not None:
+        cmd += ["--port", str(port)]
     out = open(app_dir / "nohup.out", "ab")  # noqa: SIM115 — handed to the child
     subprocess.Popen(
-        ["uv", "run", "cli.py", "start"],
+        cmd,
         cwd=str(app_dir),
         env=_relaunch_env(),
         stdout=out,
@@ -215,14 +249,14 @@ def restart() -> int:
     stop and exit; launching our own would race it for the port. Returns a
     process exit code.
     """
-    stop_server()
+    _, port = stop_server()
     time.sleep(1)
 
     if paths.is_supervised():
         print("Supervised mode: stopped; the service manager will restart Merlin.")
         return 0
 
-    _relaunch()
+    _relaunch(port)
     time.sleep(2)
     if _server_running():
         print("Merlin restarted.")
@@ -233,8 +267,6 @@ def restart() -> int:
 
 def stop() -> int:
     """Stop the server without relaunching. Returns a process exit code."""
-    stopped = stop_server()
-    print(
-        "Merlin stopped." if stopped else "No running Merlin found (pid file cleared)."
-    )
+    stopped, _ = stop_server()
+    print("Merlin stopped." if stopped else "No running Merlin found (state cleared).")
     return 0

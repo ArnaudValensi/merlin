@@ -64,7 +64,9 @@ class TestArgumentParsing:
     def test_start_defaults(self):
         parser = build_parser()
         args = parser.parse_args(["start"])
-        assert args.port == 3123
+        # --port defaults to None; the port is resolved later (flag >
+        # MERLIN_DASHBOARD_PORT > 3123) at the command boundary.
+        assert args.port is None
         assert args.host == "0.0.0.0"
         assert args.dev is False
 

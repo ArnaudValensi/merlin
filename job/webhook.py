@@ -277,16 +277,19 @@ def normalize_base_url(value: str) -> str:
 
 
 def _server_port() -> str:
-    """The port the server is (or was last) bound to.
+    """The port the running server is bound to.
 
-    The live env var wins inside the server process; a CLI process reads the
-    file the server persisted; absent both, the default. Lets `merlin job url`
-    print the right port when the server runs on a non-default one.
+    Read from the server-state.json the server published; fall back to the
+    legacy server-port file (pre-unified-state) during an upgrade; else the
+    default. Lets `merlin job url` print the right port on a non-default one.
     """
-    env = os.getenv("MERLIN_PORT")
-    if env:
-        return env
     import paths
+
+    state = paths.read_server_state()
+    if state is not None:
+        port = state.get("port")
+        if isinstance(port, int):
+            return str(port)
 
     try:
         persisted = paths.server_port_path().read_text().strip()

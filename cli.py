@@ -528,7 +528,10 @@ def build_parser(include_extension_help: bool = True) -> argparse.ArgumentParser
         description="Start the Merlin dashboard server.",
     )
     start_parser.add_argument(
-        "--port", type=int, default=3123, help="Port to serve on (default: 3123)"
+        "--port",
+        type=int,
+        default=None,
+        help="Port to serve on (default: MERLIN_DASHBOARD_PORT or 3123)",
     )
     start_parser.add_argument(
         "--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
@@ -1018,9 +1021,14 @@ def cli_main(argv: list[str] | None = None) -> None:
         if dev:
             paths.set_dev_mode(True)
 
-        port = getattr(args, "port", 3123)
         host = getattr(args, "host", "0.0.0.0")
         saas_token = getattr(args, "saas_token", None)
+
+        # Resolve the port at the command boundary: --port > MERLIN_DASHBOARD_PORT
+        # (config.env / environment) > 3123. Load config first so a configured
+        # port is visible before we resolve.
+        paths.load_config_env()
+        port = paths.resolve_dashboard_port(getattr(args, "port", None))
 
         # Save SaaS token to config and set in environment
         if saas_token:

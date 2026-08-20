@@ -38,6 +38,8 @@ merlin
 
 Bare `merlin` is `merlin start`. It prints `Merlin starting on http://0.0.0.0:3123` plus the working directory it serves. Open **http://localhost:3123**: you get a single password field, and a successful login sets a signed cookie that lasts 30 days and survives restarts. Log out at `/logout`. Port, host, and the rest are in `merlin start --help`.
 
+**Serving on a different port.** Pass `--port 8080` for a one-off, or — to make it stick — set `MERLIN_DASHBOARD_PORT=8080` in `~/.merlin/config.env` (the local bind port; put a public port in your proxy or `MERLIN_DASHBOARD_URL`). Resolution order is `--port` > `MERLIN_DASHBOARD_PORT` > 3123. `merlin restart` and in-dashboard updates keep whatever port the server is currently on.
+
 That one process is the whole system: the job scheduler starts with it, extensions load, and the skill registry your agent reads is rebuilt. The terminal, the bot, and jobs all share the notes under `~/.merlin`, which is why the longer it runs, the more your agent knows.
 
 ## Run Merlin as a service (systemd / launchd)

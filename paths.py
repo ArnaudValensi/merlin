@@ -18,6 +18,7 @@ Override the base install directory with MERLIN_HOME env var (default: ~/.merlin
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -172,24 +173,66 @@ def extensions_state_path() -> Path:
     return data_dir() / "extensions.json"
 
 
-def server_port_path() -> Path:
-    """File where the running server records its bound port.
+def server_state_path() -> Path:
+    """File where the running server publishes its live state (PID + port).
 
-    Lets CLI processes (e.g. `merlin job url`) derive exact IP-based public
-    URLs even when the server runs on a non-default port. Stale-but-harmless if
-    the server isn't running; falls back to the default port when absent.
+    One atomically-written JSON file — ``{"pid": ..., "port": ...}`` — is the
+    single source of truth for a running Merlin: `merlin restart` reads the PID
+    to stop the exact process and the port to relaunch on the same one, and CLI
+    readers (`merlin job url`) read the port for exact public URLs. Written only
+    after the socket binds. Stale after a crash, so readers must confirm the PID
+    is a live Merlin before trusting it; stale state with no matching live
+    process is ignored, never treated as configuration.
     """
+    return data_dir() / "data" / "server-state.json"
+
+
+def read_server_state() -> dict | None:
+    """Parse server-state.json, or None if absent/garbage."""
+    try:
+        data = json.loads(server_state_path().read_text())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def write_server_state(pid: int, port: int) -> None:
+    """Publish the live PID+port atomically (write temp, then rename)."""
+    path = server_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps({"pid": pid, "port": port}))
+    os.replace(tmp, path)
+
+
+def resolve_dashboard_port(flag: int | None) -> int:
+    """The port to serve on: ``--port`` flag > MERLIN_DASHBOARD_PORT > 3123.
+
+    MERLIN_DASHBOARD_PORT is the persistent *intent* (config.env or the process
+    environment; the environment wins via load_config_env's setdefault). It is
+    the local bind port, not a public/proxy port. This is the shared resolver
+    for both `merlin start` and direct `main.py` startup.
+    """
+    if flag is not None:
+        return flag
+    raw = os.environ.get("MERLIN_DASHBOARD_PORT", "").strip()
+    if raw.isdigit():
+        port = int(raw)
+        if 1 <= port <= 65535:
+            return port
+    return 3123
+
+
+def server_port_path() -> Path:
+    """Legacy per-release port file (pre-server-state.json). Read-only now, as a
+    fallback for CLI readers during the upgrade to the unified state file."""
     return data_dir() / "data" / "server-port"
 
 
 def server_pid_path() -> Path:
-    """File where the running server records its PID.
-
-    Lets `merlin restart` (server_control) signal the exact process instead
-    of pattern-matching command lines. Stale if the server was killed without cleaning up, so
-    readers must confirm the PID still belongs to a Merlin process they own
-    before signalling it.
-    """
+    """Legacy PID file (v0.30.x, pre-server-state.json). Read-only now, so a
+    `merlin restart` on the new version can still stop a server started by the
+    previous one, which wrote this file instead of server-state.json."""
     return data_dir() / "data" / "server-pid"
 
 

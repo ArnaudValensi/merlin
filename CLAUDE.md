@@ -251,12 +251,17 @@ uv run scripts.py validate    # full validation: lint + format + typecheck + tes
 ```
 
 Restart/stop live in `server_control.py` (behind `merlin restart` / `merlin stop`
-and the `/api/restart` + `/api/update` endpoints). They stop the server by the
-PID it recorded in `~/.merlin/data/server-pid` (validated with `ps`, so a
-lookalike is never killed), with a user-scoped pattern-kill fallback only when no
-PID file exists. Restart cannot happen in-process — the endpoints spawn a
-detached `merlin restart`, which relaunches via a fresh `uv run` (clean venv
-after an update's symlink flip). Set `MERLIN_SUPERVISED=1` (in the
+and the `/api/restart` + `/api/update` endpoints). The running server publishes
+`~/.merlin/data/server-state.json` (`{pid, port}`, written atomically after the
+socket binds); restart reads it to stop that exact PID (validated with `ps`, so a
+lookalike is never killed) and to relaunch on the same port. Readers ignore stale
+state whose PID is not a live Merlin; a user-scoped pattern-kill is the fallback
+only when there is no valid state (it also reads the legacy `server-pid` file so a
+restart can stop a server started by the previous release). Restart cannot happen
+in-process — the endpoints spawn a detached `merlin restart`, which relaunches via
+a fresh `uv run` (clean venv after an update's symlink flip). The bind port
+resolves as `--port` > `MERLIN_DASHBOARD_PORT` (config) > 3123. Set
+`MERLIN_SUPERVISED=1` (in the
 systemd/launchd unit, see `deploy/`) when a service manager owns the lifecycle:
 restart/update then stop-and-exit instead of self-relaunching. See
 [`docs/getting-started.md`](docs/getting-started.md) → "Run Merlin as a service".

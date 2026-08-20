@@ -16,7 +16,6 @@ Usage:
 
 import argparse
 import asyncio
-import atexit
 import json
 import logging
 import os
@@ -1395,51 +1394,17 @@ def _validate_config() -> None:
             )
 
 
-def _remove_pid_file(path: Path, owner_pid: int) -> None:
-    """Drop the pid file, but only while it still names this process.
-
-    A restart writes its own PID as soon as it boots, so a slow shutdown must
-    not delete the newcomer's file.
-    """
-    try:
-        if path.read_text().strip() == str(owner_pid):
-            path.unlink()
-    except (OSError, ValueError):
-        pass
-
-
 def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
     """Start the Merlin dashboard server. Called by cli.py or main()."""
     import uvicorn
 
-    # Expose the bound port so IP-based public URLs (job webhooks) are exact —
-    # in this process via the env var, and to CLI processes via a small file.
-    os.environ["MERLIN_PORT"] = str(port)
-    try:
-        port_file = paths.server_port_path()
-        port_file.parent.mkdir(parents=True, exist_ok=True)
-        port_file.write_text(str(port))
-    except OSError:
-        logger.debug("Could not persist server port", exc_info=True)
-
-    # Record the PID so restart.sh can stop this exact process rather than
-    # pattern-matching command lines.
-    #
-    # Cleanup is deliberately not trusted to run in-process. On this platform a
-    # SIGTERM (how both restart.sh and a service manager stop Merlin) terminates
-    # uvicorn immediately — verified: neither atexit nor a FastAPI shutdown hook
-    # fires on that path. So the authoritative cleanup is restart.sh removing the
-    # file, backed by readers that validate the PID (ps: alive, ours, Merlin-like)
-    # before ever signalling it. atexit below is a best-effort tidy for the rare
-    # normal-interpreter-exit path; a stale file is expected and handled, never
-    # relied upon.
-    try:
-        pid_file = paths.server_pid_path()
-        pid_file.parent.mkdir(parents=True, exist_ok=True)
-        pid_file.write_text(str(os.getpid()))
-        atexit.register(_remove_pid_file, pid_file, os.getpid())
-    except OSError:
-        logger.debug("Could not persist server pid", exc_info=True)
+    # The live PID+port are published to server-state.json only after the socket
+    # binds (see _run below) — a file written before the bind would not prove the
+    # server actually came up. Cleanup is not trusted to run in-process: on this
+    # platform SIGTERM (how restart and service managers stop Merlin) terminates
+    # uvicorn immediately, so no atexit/shutdown hook fires. Instead, `merlin
+    # restart` removes the file, and every reader validates that the PID is a
+    # live Merlin — a stale file (crash) names a dead PID and is ignored.
 
     _setup_logging()
 
@@ -1474,7 +1439,21 @@ def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
         config = uvicorn.Config(app, host=host, port=port, log_level="info")
         server = uvicorn.Server(config)
 
-        tasks = [asyncio.create_task(server.serve())]
+        serve_task = asyncio.create_task(server.serve())
+        tasks = [serve_task]
+
+        async def _publish_state():
+            # Publish PID+port only once the listen socket is actually bound, so
+            # the file never advertises a server that failed to start.
+            while not serve_task.done() and not server.started:
+                await asyncio.sleep(0.02)
+            if server.started:
+                try:
+                    paths.write_server_state(os.getpid(), port)
+                except OSError:
+                    logger.debug("Could not publish server state", exc_info=True)
+
+        tasks.append(asyncio.create_task(_publish_state()))
 
         if MERLIN_SAAS_TOKEN:
             from saas_tunnel import start_saas_tunnel
@@ -1530,14 +1509,17 @@ Environment variables (from .env or shell):
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--port", type=int, default=3123, help="Port to serve on (default: 3123)"
+        "--port",
+        type=int,
+        default=None,
+        help="Port to serve on (default: MERLIN_DASHBOARD_PORT or 3123)",
     )
     parser.add_argument(
         "--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
     )
     args = parser.parse_args()
 
-    start_server(port=args.port, host=args.host)
+    start_server(port=paths.resolve_dashboard_port(args.port), host=args.host)
 
 
 if __name__ == "__main__":
