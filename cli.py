@@ -582,6 +582,14 @@ def build_parser(include_extension_help: bool = True) -> argparse.ArgumentParser
     )
 
     # version
+    subparsers.add_parser(
+        "restart",
+        help="Restart the running server (stop, then start a fresh one)",
+    )
+    subparsers.add_parser(
+        "stop",
+        help="Stop the running server without restarting it",
+    )
     subparsers.add_parser("version", help="Print the current version")
 
     # setup
@@ -994,6 +1002,16 @@ def cli_main(argv: list[str] | None = None) -> None:
 
     elif command == "skills":
         run_skills()
+
+    elif command == "restart":
+        import server_control
+
+        sys.exit(server_control.restart())
+
+    elif command == "stop":
+        import server_control
+
+        sys.exit(server_control.stop())
 
     elif command == "start":
         dev = getattr(args, "dev", False)

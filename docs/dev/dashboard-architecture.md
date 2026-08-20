@@ -66,7 +66,7 @@ Refresh.start(5000);               // start polling
 
 `main.py` starts uvicorn + Discord bot + job scheduler in a single process. Port 3123 by default.
 
-Start command: `uv run main.py` (or `restart.sh` to restart in background).
+Start command: `uv run main.py` (or `merlin restart` / `uv run cli.py restart` to restart in the background).
 
 ## CSS Conventions
 

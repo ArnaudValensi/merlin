@@ -324,3 +324,10 @@
     .settings-segmented { display: flex; width: 100%; }
     .settings-seg-btn { flex: 1; padding: 12px 8px; }
 }
+
+/* Read-only runtime-mode line under Version (supervised vs self-managed). */
+.update-mode {
+    margin-top: 10px;
+    font-size: 0.85em;
+    color: var(--text-muted);
+}

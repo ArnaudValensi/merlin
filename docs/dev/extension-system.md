@@ -304,7 +304,7 @@ Shows all extensions grouped by tier (Core, Built-in, Installed). Each card show
 | `/api/extensions` | GET | List all extensions as JSON |
 | `/api/extensions/{id}/toggle` | POST | Enable/disable an extension |
 | `/api/extensions/{id}/config` | POST | Save config fields to `config.env` |
-| `/api/restart` | POST | Restart Merlin via `restart.sh` |
+| `/api/restart` | POST | Restart Merlin via a detached `merlin restart` (PID-file stop; stop-and-exit under `MERLIN_SUPERVISED=1`) |
 
 The config endpoint only accepts keys declared in the extension's `config_fields` metadata. Undeclared keys are silently ignored.
 

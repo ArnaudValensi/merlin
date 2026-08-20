@@ -40,6 +40,63 @@ Bare `merlin` is `merlin start`. It prints `Merlin starting on http://0.0.0.0:31
 
 That one process is the whole system: the job scheduler starts with it, extensions load, and the skill registry your agent reads is rebuilt. The terminal, the bot, and jobs all share the notes under `~/.merlin`, which is why the longer it runs, the more your agent knows.
 
+## Run Merlin as a service (systemd / launchd)
+
+For a machine that should keep Merlin up 24/7 — restarting it on crash and on
+boot — run it under your OS service manager instead of a terminal. This is the
+recommended way to run a permanent server.
+
+**Who restarts Merlin.** By default, Merlin owns its own lifecycle: when you
+restart or update, it stops the old process and launches the new one itself.
+Under a service manager that is wrong — the manager *also* relaunches Merlin, and
+two instances fight over the port. So you tell Merlin a supervisor is in charge
+with one environment variable:
+
+```
+MERLIN_SUPERVISED=1
+```
+
+With it set, restart and update **stop and exit**, and let the service manager
+start the replacement. Two rules make this safe:
+
+- **Set it in the service unit, never in `config.env`.** `config.env` is read by
+  every launch, so a stray `MERLIN_SUPERVISED=1` there would make a hand-run
+  `merlin start` think it is supervised and never come back after an update.
+- **Your unit must restart Merlin on exit** (`Restart=always` on systemd,
+  `KeepAlive=true` on launchd). An in-dashboard update stops Merlin and trusts
+  the manager to bring the new version up; a unit that only restarts on failure
+  would leave Merlin down — and Merlin is often your only way back into the box.
+
+Ready-to-use templates live in `~/.merlin/current/deploy/`.
+
+**Linux (systemd user service):**
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp ~/.merlin/current/deploy/merlin.service ~/.config/systemd/user/merlin.service
+systemctl --user daemon-reload
+systemctl --user enable --now merlin
+loginctl enable-linger "$USER"        # keep it running with no active login
+# manage it:
+systemctl --user restart merlin
+journalctl --user -u merlin -f
+```
+
+**macOS (launchd user agent):**
+
+```bash
+cp ~/.merlin/current/deploy/com.merlin.plist ~/Library/LaunchAgents/com.merlin.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.merlin.plist
+launchctl kickstart -k gui/$(id -u)/com.merlin   # restart
+```
+
+Both templates already set `MERLIN_SUPERVISED=1` and an always-restart policy.
+Settings → Version shows the current runtime mode (supervised or self-managed)
+read-only, so you can confirm which regime is live.
+
+Not running under a supervisor? You do not need any of this — `merlin` in a
+terminal (or under tmux) restarts and updates itself, exactly as before.
+
 ## Reach it from your phone
 
 Expose the dashboard with your own tunnel or reverse proxy (Tailscale, Cloudflare, nginx, whatever you trust), or use Merlin Cloud (next section), which handles remote access for you. Merlin serves plain HTTP on port 3123 and does not ship a tunnel of its own: whatever fronts it terminates HTTPS. If you set a dashboard password, exposure is safe; without one, keep it local.

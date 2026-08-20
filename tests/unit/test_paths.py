@@ -435,6 +435,37 @@ class TestLoadConfigEnv:
         paths.load_config_env()  # No config.env in tmp home: no crash
 
 
+class TestServerPidPath:
+    """server_pid_path() lives under the version-independent data dir."""
+
+    def test_under_merlin_home(self, monkeypatch, tmp_path):
+        custom = tmp_path / "custom-merlin"
+        monkeypatch.setenv("MERLIN_HOME", str(custom))
+        assert paths.server_pid_path() == custom / "data" / "server-pid"
+
+    def test_sits_next_to_server_port(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path / "m"))
+        assert paths.server_pid_path().parent == paths.server_port_path().parent
+
+
+class TestIsSupervised:
+    """MERLIN_SUPERVISED declares that a service manager owns the lifecycle."""
+
+    def test_unset_is_self_managed(self, monkeypatch):
+        monkeypatch.delenv("MERLIN_SUPERVISED", raising=False)
+        assert paths.is_supervised() is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "True", "YES", "yes"])
+    def test_truthy_values(self, monkeypatch, value):
+        monkeypatch.setenv("MERLIN_SUPERVISED", value)
+        assert paths.is_supervised() is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "no", "", "off"])
+    def test_falsey_values(self, monkeypatch, value):
+        monkeypatch.setenv("MERLIN_SUPERVISED", value)
+        assert paths.is_supervised() is False
+
+
 class TestLaunchCwd:
     """Shared default working directory: MERLIN_LAUNCH_CWD -> $HOME."""
 

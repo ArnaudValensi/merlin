@@ -16,6 +16,14 @@
             </div>
             <div class="update-actions" id="update-actions"></div>
         </div>
+        <div class="update-mode" title="How Merlin's process lifecycle is managed. Set by MERLIN_SUPERVISED in the service unit; read-only here.">
+            Runtime:
+            {% if supervised %}
+            supervised — a service manager restarts Merlin
+            {% else %}
+            self-managed — Merlin restarts itself
+            {% endif %}
+        </div>
     </div>
 </div>
 

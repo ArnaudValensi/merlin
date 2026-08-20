@@ -28,7 +28,7 @@ Variants:
 
 ```bash
 uv run main.py                   # dashboard
-./restart.sh                     # restart everything in background (single process)
+uv run cli.py restart            # restart the running server (stop + fresh start)
 ```
 
 The dashboard listens on http://localhost:3123.

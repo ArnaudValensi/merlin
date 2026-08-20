@@ -1,0 +1,39 @@
+# Merlin as a systemd *user* service.
+#
+# Install (as your normal user, no sudo):
+#   mkdir -p ~/.config/systemd/user
+#   cp ~/.merlin/current/deploy/merlin.service ~/.config/systemd/user/merlin.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now merlin
+#   loginctl enable-linger "$USER"   # so it runs without an active login session
+#
+# Then reach it at http://<host>:3123 and manage it with:
+#   systemctl --user status merlin
+#   systemctl --user restart merlin
+#   journalctl --user -u merlin -f
+
+[Unit]
+Description=Merlin — personal dev dashboard, bot, and job scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=%h/.merlin/current/bin/merlin start
+
+# Declares that a supervisor owns the lifecycle. Merlin then stops-and-exits on
+# restart/update instead of relaunching itself, and lets systemd bring the
+# replacement up. Keep this here, in the unit — never in ~/.merlin/config.env,
+# which every launch reads (a hand-run `merlin start` would then wrongly believe
+# it is supervised and never come back after an update).
+Environment=MERLIN_SUPERVISED=1
+
+# REQUIRED by the supervised contract. An in-dashboard update stops Merlin and
+# trusts systemd to start the new version. Without always-restart, that update
+# would leave Merlin down — and Merlin is often the only remote access to the
+# box. Do not weaken this to on-failure.
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=default.target

@@ -38,6 +38,8 @@ import paths
 # dispatch and the server loader agree without importing cli.py.
 CORE_COMMANDS: tuple[str, ...] = (
     "start",
+    "restart",
+    "stop",
     "version",
     "setup",
     "update",

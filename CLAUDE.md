@@ -245,9 +245,22 @@ Reference dev environment (the maintainer's setup, not a requirement). Merlin it
 
 ```bash
 uv run main.py                # start everything (dashboard + bot + jobs, dev mode)
-restart.sh                    # restart everything in background (single process)
+uv run cli.py restart         # restart the running server (stop + fresh start)
+uv run cli.py stop            # stop it without restarting
 uv run scripts.py validate    # full validation: lint + format + typecheck + tests
 ```
+
+Restart/stop live in `server_control.py` (behind `merlin restart` / `merlin stop`
+and the `/api/restart` + `/api/update` endpoints). They stop the server by the
+PID it recorded in `~/.merlin/data/server-pid` (validated with `ps`, so a
+lookalike is never killed), with a user-scoped pattern-kill fallback only when no
+PID file exists. Restart cannot happen in-process — the endpoints spawn a
+detached `merlin restart`, which relaunches via a fresh `uv run` (clean venv
+after an update's symlink flip). Set `MERLIN_SUPERVISED=1` (in the
+systemd/launchd unit, see `deploy/`) when a service manager owns the lifecycle:
+restart/update then stop-and-exit instead of self-relaunching. See
+[`docs/getting-started.md`](docs/getting-started.md) → "Run Merlin as a service".
+`restart.sh` is a deprecated one-release shim that forwards to `merlin restart`.
 
 Full setup, test variants, bot-from-checkout, and E2E first-time setup:
 [`docs/dev/development-setup.md`](docs/dev/development-setup.md).

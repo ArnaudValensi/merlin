@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import asyncio
+import atexit
 import json
 import logging
 import os
@@ -479,14 +480,30 @@ async def api_save_extension_config(
     return {"ok": True, "values": masked}
 
 
-@app.post("/api/restart")
-def api_restart(_auth=Depends(require_auth)):
-    """Restart Merlin via restart.sh."""
+def _trigger_restart() -> None:
+    """Spawn a detached `merlin restart` (stops this process, starts a fresh one
+    unless supervised).
+
+    A restart cannot happen in-process: this very process is the one the
+    restarter kills. It is launched via `uv run` from the app directory so the
+    successor resolves the current version's venv — after an update the
+    `~/.merlin/current` symlink already points at the new version, and `uv run`
+    picks that up cleanly instead of reusing this process's pinned interpreter.
+    """
     import subprocess
 
-    restart_script = paths.app_dir() / "restart.sh"
-    if restart_script.exists():
-        subprocess.Popen(["bash", str(restart_script)], start_new_session=True)
+    if (paths.app_dir() / "cli.py").exists():
+        subprocess.Popen(
+            ["uv", "run", "cli.py", "restart"],
+            cwd=str(paths.app_dir()),
+            start_new_session=True,
+        )
+
+
+@app.post("/api/restart")
+def api_restart(_auth=Depends(require_auth)):
+    """Restart Merlin (detached `merlin restart`)."""
+    _trigger_restart()
     return {"ok": True}
 
 
@@ -541,8 +558,6 @@ def api_version(_auth=Depends(require_auth)):
 @app.post("/api/update")
 def api_update(_auth=Depends(require_auth)):
     """Update Merlin to latest version and restart."""
-    import subprocess
-
     from cli import (
         atomic_symlink,
         download_and_extract,
@@ -573,10 +588,8 @@ def api_update(_auth=Depends(require_auth)):
     global _latest_tag_cache
     _latest_tag_cache = (None, 0.0)
 
-    # Trigger restart
-    restart_script = paths.app_dir() / "restart.sh"
-    if restart_script.exists():
-        subprocess.Popen(["bash", str(restart_script)], start_new_session=True)
+    # Trigger restart onto the freshly-symlinked version.
+    _trigger_restart()
 
     return {"ok": True, "version": latest}
 
@@ -596,6 +609,7 @@ def settings_page(request: Request, _auth=Depends(require_auth)):
         {
             "openai_key_set": bool(cfg.get("OPENAI_API_KEY")),
             "default_public_url": job_webhook.discovered_public_base()[0],
+            "supervised": paths.is_supervised(),
         },
     )
 
@@ -1381,6 +1395,19 @@ def _validate_config() -> None:
             )
 
 
+def _remove_pid_file(path: Path, owner_pid: int) -> None:
+    """Drop the pid file, but only while it still names this process.
+
+    A restart writes its own PID as soon as it boots, so a slow shutdown must
+    not delete the newcomer's file.
+    """
+    try:
+        if path.read_text().strip() == str(owner_pid):
+            path.unlink()
+    except (OSError, ValueError):
+        pass
+
+
 def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
     """Start the Merlin dashboard server. Called by cli.py or main()."""
     import uvicorn
@@ -1394,6 +1421,25 @@ def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
         port_file.write_text(str(port))
     except OSError:
         logger.debug("Could not persist server port", exc_info=True)
+
+    # Record the PID so restart.sh can stop this exact process rather than
+    # pattern-matching command lines.
+    #
+    # Cleanup is deliberately not trusted to run in-process. On this platform a
+    # SIGTERM (how both restart.sh and a service manager stop Merlin) terminates
+    # uvicorn immediately — verified: neither atexit nor a FastAPI shutdown hook
+    # fires on that path. So the authoritative cleanup is restart.sh removing the
+    # file, backed by readers that validate the PID (ps: alive, ours, Merlin-like)
+    # before ever signalling it. atexit below is a best-effort tidy for the rare
+    # normal-interpreter-exit path; a stale file is expected and handled, never
+    # relied upon.
+    try:
+        pid_file = paths.server_pid_path()
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        pid_file.write_text(str(os.getpid()))
+        atexit.register(_remove_pid_file, pid_file, os.getpid())
+    except OSError:
+        logger.debug("Could not persist server pid", exc_info=True)
 
     _setup_logging()
 

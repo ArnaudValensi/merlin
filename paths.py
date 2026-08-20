@@ -180,3 +180,30 @@ def server_port_path() -> Path:
     the server isn't running; falls back to the default port when absent.
     """
     return data_dir() / "data" / "server-port"
+
+
+def server_pid_path() -> Path:
+    """File where the running server records its PID.
+
+    Lets `merlin restart` (server_control) signal the exact process instead
+    of pattern-matching command lines. Stale if the server was killed without cleaning up, so
+    readers must confirm the PID still belongs to a Merlin process they own
+    before signalling it.
+    """
+    return data_dir() / "data" / "server-pid"
+
+
+def is_supervised() -> bool:
+    """True when a service manager (systemd, launchd, ...) owns Merlin's
+    lifecycle.
+
+    Declared, never detected: the unit/plist that starts Merlin sets
+    MERLIN_SUPERVISED=1. In this mode `merlin restart` stops the process and exits,
+    letting the supervisor start the replacement, instead of relaunching Merlin
+    itself (which would race the supervisor for the port).
+
+    Keep this flag in the unit's Environment=, never in config.env: config.env
+    is read by every launch, so it would leak into a hand-run process and make
+    an update stop Merlin with nothing to bring it back.
+    """
+    return os.environ.get("MERLIN_SUPERVISED", "").lower() in ("1", "true", "yes")

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merlin as a launchd *user agent* (macOS).
+
+  Install (as your normal user):
+    cp ~/.merlin/current/deploy/com.merlin.plist ~/Library/LaunchAgents/com.merlin.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.merlin.plist
+    launchctl enable gui/$(id -u)/com.merlin
+
+  Restart / stop:
+    launchctl kickstart -k gui/$(id -u)/com.merlin
+    launchctl bootout gui/$(id -u)/com.merlin
+
+  KeepAlive=true is the macOS equivalent of systemd Restart=always: it satisfies
+  the supervised contract, so an in-dashboard update that stops Merlin is brought
+  back up automatically on the new version.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.merlin</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-lc</string>
+        <string>exec "$HOME/.merlin/current/bin/merlin" start</string>
+    </array>
+
+    <!-- Declares that a supervisor owns the lifecycle. Keep it here, not in
+         ~/.merlin/config.env (which every launch reads). -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>MERLIN_SUPERVISED</key>
+        <string>1</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/merlin.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/merlin.err.log</string>
+</dict>
+</plist>
