@@ -50,9 +50,13 @@ def cron_to_human(expression: str) -> str:
     (e.g. an invalid expression), preserving the original behavior.
     """
     try:
-        from cron_descriptor import get_description
+        from cron_descriptor import Options, get_description
 
-        description = get_description(expression)
+        # Force 24-hour times so the description is deterministic regardless of
+        # the host locale (a 12-hour locale would otherwise render "09:00 AM").
+        options = Options()
+        options.use_24hour_time_format = True
+        description = get_description(expression, options)
         # Lowercase just the leading character for a clean "every minute" /
         # "at 09:00" reading without lowercasing names like "Monday".
         if description:
