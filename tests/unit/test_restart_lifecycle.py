@@ -210,6 +210,45 @@ class TestStopServer:
         server_control._fallback_pattern_kill.assert_called_once()
 
 
+class TestFallbackExclusion:
+    """The fallback must never signal the restarter's own process group — its
+    `uv run cli.py restart` wrapper matches a pattern, and uv would forward the
+    signal to the child mid-relaunch."""
+
+    def test_spares_own_group_kills_other_group(self, monkeypatch, tmp_path):
+        marker = "merlinfallbacktest_marker_zzz"
+        script = tmp_path / "s.py"
+        script.write_text("import time\ntime.sleep(60)\n")
+        monkeypatch.setattr(server_control, "_FALLBACK_PATTERNS", (marker,))
+
+        # A detached process (its own session/group) stands in for the old daemon.
+        victim = subprocess.Popen(
+            [sys.executable, str(script), marker], start_new_session=True
+        )
+        # A process in OUR group stands in for the restarter's own wrapper/child.
+        sibling = subprocess.Popen([sys.executable, str(script), marker])
+        try:
+            assert _wait(
+                lambda: marker in (server_control._ps_field(victim.pid, "args=") or "")
+            )
+            assert _wait(
+                lambda: marker in (server_control._ps_field(sibling.pid, "args=") or "")
+            )
+
+            server_control._fallback_pattern_kill()
+
+            assert _wait(lambda: victim.poll() is not None), (
+                "a matching process in another group must be signalled"
+            )
+            time.sleep(0.3)
+            assert sibling.poll() is None, "our own process group must be spared"
+        finally:
+            victim.kill()
+            victim.wait()
+            sibling.kill()
+            sibling.wait()
+
+
 # ---------------------------------------------------------------------------
 # relaunch environment sanitization
 # ---------------------------------------------------------------------------

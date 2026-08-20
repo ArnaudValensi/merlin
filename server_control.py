@@ -140,16 +140,68 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _fallback_pattern_kill() -> None:
-    """Gated legacy stop: user-scoped pkill on Merlin command-line patterns.
+def _parent_pid(pid: int) -> int | None:
+    ppid = _ps_field(pid, "ppid=")
+    return int(ppid) if ppid and ppid.isdigit() else None
 
-    Runs only when the PID path stopped nothing. Scoped to our own uid — a
-    non-root pkill only hits our processes anyway, but -u makes it explicit.
+
+def _own_lineage() -> set[int]:
+    """This process and its ancestors. The restarter runs as `uv run cli.py
+    restart`, whose wrapper matches a fallback pattern, so signalling any of
+    these would kill the restart itself mid-relaunch."""
+    lineage = {os.getpid()}
+    pid = os.getppid()
+    for _ in range(64):  # bounded walk toward PID 1
+        if pid <= 1 or pid in lineage:
+            break
+        lineage.add(pid)
+        parent = _parent_pid(pid)
+        if parent is None:
+            break
+        pid = parent
+    return lineage
+
+
+def _fallback_pattern_kill() -> None:
+    """Gated legacy stop: user-scoped SIGTERM to processes whose command line
+    matches a Merlin pattern — EXCEPT this restarter's own lineage and process
+    group. Runs only when the PID path stopped nothing.
+
+    The exclusion is essential: `merlin restart` runs as `uv run cli.py restart`,
+    whose wrapper matches "uv run cli.py"; a blind `pkill` would signal that
+    wrapper and `uv` forwards the signal to the child doing the relaunch, killing
+    it. The old daemon we DO want to stop lives in a different process group, so
+    it is still signalled.
     """
     uid = str(os.getuid())
+    protected = _own_lineage()
+    try:
+        my_pgid = os.getpgrp()
+    except OSError:
+        my_pgid = -1
+
+    victims: set[int] = set()
     for pattern in _FALLBACK_PATTERNS:
         try:
-            subprocess.run(["pkill", "-u", uid, "-f", pattern], capture_output=True)
+            out = subprocess.run(
+                ["pgrep", "-u", uid, "-f", pattern], capture_output=True, text=True
+            )
+        except OSError:
+            continue
+        for token in out.stdout.split():
+            if token.isdigit():
+                victims.add(int(token))
+
+    for pid in victims:
+        if pid in protected:
+            continue
+        try:
+            if os.getpgid(pid) == my_pgid:  # our own restart process group
+                continue
+        except OSError:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
         except OSError:
             pass
 
