@@ -2,6 +2,11 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.32.1 (2026-08-20)
+
+### Fixed
+- **Restart recovers when it has no saved state** — On a machine with no live state file — a fresh service (systemd/launchd) setup, a crash, or the first update from an old version — `merlin restart` no longer risks stopping Merlin without bringing it back up.
+
 ## v0.32.0 (2026-08-20)
 
 ### Changed
