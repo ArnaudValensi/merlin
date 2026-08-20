@@ -2,6 +2,16 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.32.0 (2026-08-20)
+
+### Changed
+- **Timeline focuses on your development chain** — The Agent Activity Timeline now records session lifecycle, your prompt boundaries, agent turns, and chain handoffs, and no longer captures individual tool calls. Tool events drowned out the work that matters and would have meant inspecting private tool input, so they are gone; a producer that owns a real workflow can still emit one explicit automation event.
+- **Wider, smarter Timeline range** — Pick any window from 5 minutes to 7 days, with quick presets and a custom-hours control. "Fit" now scales the view to your current viewport instead of a fixed zoom, and long overnight windows show dated endpoints so a span is never ambiguous. Participant and activity lanes show only the tracks actually present.
+
+### Fixed
+- **Timeline spans close when they should** — An agent's turn now ends when it goes idle or done, or when its next turn starts after a missed stop event, instead of appearing to run forever. Late finishes still update an already-rendered span, and duplicate or out-of-order events stay visible as anomalies.
+- **Consistent 24-hour job schedules** — Human-readable job schedules always read as 24-hour times (`at 09:00`), instead of switching to `09:00 AM` on servers with a 12-hour locale.
+
 ## v0.31.0 (2026-08-20)
 
 ### Added
