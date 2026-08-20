@@ -2,6 +2,15 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.30.0 (2026-08-20)
+
+### Added
+- **`merlin restart` and `merlin stop`** — Restart or stop the running server straight from the CLI.
+- **Run Merlin as a service (systemd / launchd)** — Set `MERLIN_SUPERVISED=1` and let your service manager own restarts and updates instead of Merlin relaunching itself; copy-paste unit templates ship in `deploy/`, and Settings shows which mode is live. See "Run Merlin as a service" in the getting-started guide.
+
+### Fixed
+- **Safer restart** — Restarting Merlin now stops its exact process by recorded PID instead of matching command lines, so it can no longer kill an unrelated program that happens to be running a `main.py` or `cli.py`.
+
 ## v0.29.0 (2026-08-18)
 
 ### Added
