@@ -167,7 +167,9 @@ const Settings = {
     const section = document.getElementById('update-section');
     if (!section) return;
 
-    const data = await API.get('/api/version');
+    // Force a fresh check on the Settings page (the sidebar indicator stays on
+    // the 1h cache), so a just-released version shows up here without the wait.
+    const data = await API.get('/api/version?refresh=1');
     if (!data) return;
 
     const currentEl = document.getElementById('update-current');

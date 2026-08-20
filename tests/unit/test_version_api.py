@@ -151,6 +151,40 @@ class TestVersionCache:
         assert result == "0.18.0"
         assert m.call_count == 1
 
+    def test_force_refetches_past_refresh_floor(self):
+        """A forced check refetches once the cache is older than the short floor,
+        even though the 1h TTL has not elapsed."""
+        with mock.patch("cli.fetch_latest_tag", return_value="0.17.0"):
+            app_mod._get_latest_tag_cached()
+
+        # Older than the refresh floor but well within the 1h TTL.
+        tag, _ = app_mod._latest_tag_cache
+        app_mod._latest_tag_cache = (tag, time.monotonic() - app_mod._REFRESH_TTL - 1)
+
+        with mock.patch("cli.fetch_latest_tag", return_value="0.18.0") as m:
+            cached = app_mod._get_latest_tag_cached()  # navbar path: still cached
+            forced = app_mod._get_latest_tag_cached(force=True)  # settings path
+        assert cached == "0.17.0"
+        assert forced == "0.18.0"
+        assert m.call_count == 1  # only the forced call refetched
+
+    def test_force_still_uses_cache_within_floor(self):
+        """Rapid forced checks within the floor do not hammer GitHub."""
+        with mock.patch("cli.fetch_latest_tag", return_value="0.17.0") as m:
+            app_mod._get_latest_tag_cached(force=True)
+            app_mod._get_latest_tag_cached(force=True)
+        assert m.call_count == 1
+
+    def test_api_refresh_param_forces_fresh_check(self, client):
+        """GET /api/version?refresh=1 forces a fresh check."""
+        with mock.patch.object(app_mod, "_get_latest_tag_cached") as m:
+            m.return_value = "0.18.0"
+            with mock.patch("cli.get_version", return_value="0.17.0"):
+                client.get("/api/version")
+                client.get("/api/version?refresh=1")
+        assert m.call_args_list[0].kwargs.get("force", False) is False
+        assert m.call_args_list[1].kwargs.get("force") is True
+
 
 class TestUpdateAPI:
     def test_rejects_dev_mode(self, client):

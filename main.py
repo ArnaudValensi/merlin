@@ -512,17 +512,26 @@ def api_restart(_auth=Depends(require_auth)):
 
 # Cached latest tag: (version_string, timestamp)
 _latest_tag_cache: tuple[str | None, float] = (None, 0.0)
-_CACHE_TTL = 3600  # 1 hour
+_CACHE_TTL = 3600  # 1 hour — the passive sidebar version indicator
+_REFRESH_TTL = 60  # a forced check (opening Settings) refetches past this floor
 
 
-def _get_latest_tag_cached() -> str | None:
-    """Fetch latest GitHub tag with 1h in-memory cache."""
+def _get_latest_tag_cached(force: bool = False) -> str | None:
+    """Latest GitHub tag, cached in memory.
+
+    The sidebar indicator uses the 1h cache so it never hammers GitHub. A forced
+    check — the Settings page, where you go to actually update — refetches once
+    the cache is older than a short floor, so a just-released version shows up
+    without waiting the full hour, and rapid reloads still hit the cache. A
+    successful fetch updates the shared cache, so the sidebar goes fresh too.
+    """
     import time
 
     global _latest_tag_cache
     now = time.monotonic()
     cached_tag, cached_at = _latest_tag_cache
-    if cached_tag is not None and (now - cached_at) < _CACHE_TTL:
+    ttl = _REFRESH_TTL if force else _CACHE_TTL
+    if cached_tag is not None and (now - cached_at) < ttl:
         return cached_tag
 
     from cli import fetch_latest_tag
@@ -534,12 +543,16 @@ def _get_latest_tag_cached() -> str | None:
 
 
 @app.get("/api/version")
-def api_version(_auth=Depends(require_auth)):
-    """Current and latest version info."""
+def api_version(refresh: bool = False, _auth=Depends(require_auth)):
+    """Current and latest version info.
+
+    `refresh=true` forces a fresh check (used by the Settings page); the sidebar
+    indicator omits it and reads the cached value.
+    """
     from cli import get_version
 
     current = get_version()
-    latest = _get_latest_tag_cached()
+    latest = _get_latest_tag_cached(force=refresh)
     update_available = False
     if latest and current not in ("dev", "unknown"):
         # Compare just the base version (strip git describe suffix like -3-gabcdef)
