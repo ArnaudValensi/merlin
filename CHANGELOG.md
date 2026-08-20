@@ -2,6 +2,14 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.31.0 (2026-08-20)
+
+### Added
+- **Set a permanent port** — `MERLIN_DASHBOARD_PORT` in `config.env` fixes the port Merlin serves on, so it survives restarts and updates. `--port` still overrides for a single run.
+
+### Fixed
+- **Restart keeps your port** — restarting or updating Merlin now comes back on the port it was actually running on, instead of resetting to the default 3123.
+
 ## v0.30.0 (2026-08-20)
 
 ### Added
