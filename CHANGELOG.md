@@ -2,6 +2,11 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.32.2 (2026-08-20)
+
+### Fixed
+- **Settings shows updates right away** — Opening Settings now checks for a new version on the spot, so a just-released update appears there immediately instead of waiting on the sidebar's hourly cache.
+
 ## v0.32.1 (2026-08-20)
 
 ### Fixed
