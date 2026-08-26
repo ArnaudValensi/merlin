@@ -29,6 +29,17 @@
     const ICON_X = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
     const ICON_CIRCLE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg>';
     const ICON_CHECK_CIRCLE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>';
+    const ICON_AUDIO_NOTE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+    const ICON_AUDIO_STOP = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>';
+
+    // Inline audio audition: at most one sample plays at a time, straight from
+    // the listing, without navigating. State lives in audio-audition.js; the
+    // onStart/onStop callbacks translate it into per-row button classes.
+    const audition = MerlinAudioAudition.createAuditionController({
+        createAudio: (src) => new Audio(src),
+        onStart: (path) => setRowPlaying(path, true),
+        onStop: (path) => setRowPlaying(path, false),
+    });
 
     // DOM refs
     let dirView, fileView;
@@ -315,6 +326,10 @@
     async function browse(fsPath, pushState) {
         currentPath = fsPath;
 
+        // Leaving the current listing (into a subdir or a file detail) stops any
+        // inline audition; the row it belongs to is about to disappear.
+        audition.stop();
+
         // Exit selection mode when browsing
         if (selectionMode) exitSelectionMode();
 
@@ -588,23 +603,31 @@
             }
 
             // Icon
-            const icon = document.createElement('span');
-            icon.className = 'dir-entry-icon';
-            if (entry.type === 'dir') {
-                icon.innerHTML = ICON_FOLDER;
-                icon.classList.add('icon-folder');
-            } else if (isImageName(entry.name)) {
-                icon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>';
-                icon.classList.add('icon-image');
-            } else if (isAudioName(entry.name)) {
-                icon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
-                icon.classList.add('icon-audio');
-            } else if (isVideoName(entry.name)) {
-                icon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect width="15" height="14" x="1" y="5" rx="2" ry="2"/></svg>';
-                icon.classList.add('icon-video');
+            let icon;
+            if (isAudioName(entry.name) && entry.type === 'file' && !selectionMode) {
+                // Audio rows: the leading icon is a one-tap inline play/stop
+                // control. Tapping it auditions in place; the rest of the row
+                // still opens the detail view via the click handler below.
+                icon = makeAudioPlayControl(entryPath, entry.name);
             } else {
-                icon.innerHTML = ICON_FILE;
-                icon.classList.add('icon-file');
+                icon = document.createElement('span');
+                icon.className = 'dir-entry-icon';
+                if (entry.type === 'dir') {
+                    icon.innerHTML = ICON_FOLDER;
+                    icon.classList.add('icon-folder');
+                } else if (isImageName(entry.name)) {
+                    icon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>';
+                    icon.classList.add('icon-image');
+                } else if (isAudioName(entry.name)) {
+                    icon.innerHTML = ICON_AUDIO_NOTE;
+                    icon.classList.add('icon-audio');
+                } else if (isVideoName(entry.name)) {
+                    icon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect width="15" height="14" x="1" y="5" rx="2" ry="2"/></svg>';
+                    icon.classList.add('icon-video');
+                } else {
+                    icon.innerHTML = ICON_FILE;
+                    icon.classList.add('icon-file');
+                }
             }
             row.appendChild(icon);
 
@@ -646,6 +669,60 @@
 
             dirEntries.appendChild(row);
         }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Inline audio audition (play a sample from the listing without navigating)
+    // ---------------------------------------------------------------------------
+
+    // Build the leading icon for an audio row as a play/stop button. Clicking it
+    // toggles inline playback and never navigates (stopPropagation keeps the
+    // row's own click handler from firing). State is reflected from the shared
+    // controller so a benign rerender restores the right button for a sample
+    // that is still playing.
+    function makeAudioPlayControl(entryPath, name) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'dir-entry-icon dir-entry-play icon-audio';
+        btn.dataset.auditionPath = entryPath;
+        btn.dataset.auditionName = name || '';
+        const playing = audition.playingPath() === entryPath;
+        applyPlayControlState(btn, playing);
+        const rawUrl = '/api/files/raw?path=' + encodeURIComponent(entryPath);
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            audition.toggle(entryPath, rawUrl);
+        });
+        return btn;
+    }
+
+    function applyPlayControlState(btn, playing) {
+        const name = btn.dataset.auditionName || 'audio';
+        btn.innerHTML = playing ? ICON_AUDIO_STOP : ICON_AUDIO_NOTE;
+        btn.classList.toggle('playing', playing);
+        btn.setAttribute('aria-label', (playing ? 'Stop ' : 'Play ') + name);
+        btn.setAttribute('aria-pressed', playing ? 'true' : 'false');
+    }
+
+    // Reflect a controller start/stop onto the matching row. Queried by path so
+    // it works regardless of which rerender produced the current DOM.
+    function setRowPlaying(path, playing) {
+        const selector =
+            '.dir-entry-play[data-audition-path="' + cssEscape(path) + '"]';
+        const btn = dirEntries.querySelector(selector);
+        if (!btn) return;
+        applyPlayControlState(btn, playing);
+        const row = btn.closest('.dir-entry');
+        if (row) row.classList.toggle('playing', playing);
+    }
+
+    // Escape a value for use inside a CSS attribute selector. Sample paths can
+    // carry quotes, brackets, and other metacharacters.
+    function cssEscape(value) {
+        if (window.CSS && typeof window.CSS.escape === 'function') {
+            return window.CSS.escape(value);
+        }
+        return String(value).replace(/["\\]/g, '\\$&');
     }
 
     // ---------------------------------------------------------------------------

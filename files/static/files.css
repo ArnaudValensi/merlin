@@ -435,6 +435,39 @@
 .icon-video { color: var(--accent-yellow, #fbbf24); }
 .icon-file { color: var(--text-muted); }
 
+/* Audio rows: the leading icon is a one-tap inline play/stop control. Padding
+   with a compensating negative margin grows the tap target without nudging the
+   row layout. */
+.dir-entry-play {
+    background: none;
+    border: none;
+    padding: 8px;
+    margin: -8px -2px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--accent-purple, #a78bfa);
+    -webkit-tap-highlight-color: transparent;
+}
+.dir-entry-play:hover {
+    background: var(--bg-card);
+    color: var(--text-primary);
+}
+.dir-entry-play:focus-visible {
+    outline: 2px solid var(--accent-purple, #a78bfa);
+    outline-offset: 1px;
+}
+.dir-entry-play.playing {
+    color: var(--accent-green, #4ade80);
+}
+
+/* The row whose sample is currently sounding */
+.dir-entry.playing {
+    background: var(--bg-hover);
+}
+.dir-entry.playing .dir-entry-name {
+    color: var(--accent-green, #4ade80);
+}
+
 /* Entry name */
 .dir-entry-name {
     flex: 1;
