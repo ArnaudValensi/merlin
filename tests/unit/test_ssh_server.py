@@ -1,11 +1,9 @@
 """Tests for ssh_server.py — Container-side SSH server."""
 
 import asyncio
-import contextlib
 import os
-import shutil
-import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import asyncssh
 import pytest
@@ -257,44 +255,61 @@ class TestSFTP:
 # ---------------------------------------------------------------------------
 
 
-class TestShellReconnect:
-    """Default SSH shells follow existing tmux sessions across renames."""
+class TestLoginShellResolution:
+    """SSH is the raw machine: an interactive login gets a shell, never tmux."""
 
-    @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed")
-    def test_reconnect_follows_a_renamed_session(self, monkeypatch, tmp_merlin_home):
-        socket = tmp_merlin_home / "tmux.sock"
+    def test_prefers_the_passwd_entry(self, monkeypatch):
+        """The account's own shell wins over the daemon's inherited $SHELL."""
+        monkeypatch.setenv("SHELL", "/bin/inherited-from-daemon")
+        monkeypatch.setattr(
+            ssh_server.pwd,
+            "getpwuid",
+            lambda _uid: SimpleNamespace(pw_shell="/usr/bin/zsh"),
+        )
 
-        def tmux(*args: str) -> subprocess.CompletedProcess[str]:
-            return subprocess.run(
-                ["tmux", "-S", str(socket), *args],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+        assert ssh_server.login_shell_argv() == ["/usr/bin/zsh", "-l"]
 
-        def private_capture(args: list[str]) -> str | None:
-            result = tmux(*args)
-            return result.stdout if result.returncode == 0 else None
+    def test_falls_back_to_shell_env_when_passwd_is_empty(self, monkeypatch):
+        monkeypatch.setenv("SHELL", "/usr/bin/fish")
+        monkeypatch.setattr(
+            ssh_server.pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_shell="")
+        )
 
-        real_reconnect_argv = ssh_server.reconnect_argv
+        assert ssh_server.login_shell_argv() == ["/usr/bin/fish", "-l"]
 
-        def private_reconnect_argv(sessions):
-            args = real_reconnect_argv(sessions)
-            return [args[0], "-S", str(socket), *args[1:]]
+    def test_falls_back_to_sh_without_a_passwd_entry(self, monkeypatch):
+        """A uid with no passwd entry is possible in a slim container."""
+        monkeypatch.delenv("SHELL", raising=False)
 
+        def no_entry(_uid):
+            raise KeyError("no passwd entry")
+
+        monkeypatch.setattr(ssh_server.pwd, "getpwuid", no_entry)
+
+        assert ssh_server.login_shell_argv() == ["/bin/sh", "-l"]
+
+    def test_tmux_is_not_wired_into_the_ssh_entry_point(self):
+        """The tmux ladder is gone, not merely unused: it cannot be called."""
+        assert not hasattr(ssh_server, "reconnect_argv")
+        assert not hasattr(ssh_server, "board_sweep")
+
+
+class TestInteractiveSessionRunsAShell:
+    """End to end against a real asyncssh client and a real child process."""
+
+    def test_interactive_login_lands_in_a_shell_and_starts_no_tmux(
+        self, monkeypatch, tmp_merlin_home, tmp_path
+    ):
+        # Any tmux the child accidentally started would land on this private
+        # server rather than the developer's own, so the assertion below is both
+        # safe and meaningful.
+        tmux_tmpdir = tmp_path / "tmuxtmp"
+        tmux_tmpdir.mkdir()
+        monkeypatch.setenv("TMUX_TMPDIR", str(tmux_tmpdir))
         monkeypatch.delenv("TMUX", raising=False)
-        monkeypatch.setattr(ssh_server.board_sweep, "_tmux_capture", private_capture)
-        monkeypatch.setattr(ssh_server, "reconnect_argv", private_reconnect_argv)
-
-        created = tmux("-f", "/dev/null", "new-session", "-d", "-s", "merlin-dev")
-        assert created.returncode == 0, created.stderr
-        before = len(ssh_server.board_sweep.run_session_sweep())
-        renamed = tmux("rename-session", "-t", "merlin-dev", "renamed-by-user")
-        assert renamed.returncode == 0, renamed.stderr
 
         async def _test():
             port = _free_port()
-            client = None
             conn = None
             try:
                 acceptor = await ssh_server.start_ssh_server(port=port)
@@ -307,34 +322,53 @@ class TestShellReconnect:
                     password="",
                 )
                 client = await conn.create_process(term_type="xterm-256color")
-
-                deadline = asyncio.get_running_loop().time() + 5
-                current = ""
-                while asyncio.get_running_loop().time() < deadline:
-                    current = tmux(
-                        "list-clients", "-F", "#{client_session}"
-                    ).stdout.strip()
-                    if current:
-                        break
-                    await asyncio.sleep(0.05)
-                after = len(ssh_server.board_sweep.run_session_sweep())
-
-                tmux("detach-client", "-s", "renamed-by-user")
-                await asyncio.wait_for(client.wait(), timeout=5)
-
-                assert after == before
-                assert current == "renamed-by-user"
+                # A real shell evaluates this; tmux would swallow it as keys.
+                client.stdin.write('echo "READY:[$TMUX]"\nexit\n')
+                result = await asyncio.wait_for(client.wait(), timeout=10)
+                text = str(result.stdout)
             finally:
-                tmux("kill-server")
-                if client is not None:
-                    with contextlib.suppress(asyncio.TimeoutError):
-                        await asyncio.wait_for(client.wait(), timeout=5)
+                if conn is not None:
+                    conn.close()
+                    await conn.wait_closed()
+                await ssh_server.stop_ssh_server()
+            return text
+
+        text = asyncio.run(_test())
+
+        # The shell ran the command, and it was not inside tmux.
+        assert "READY:[]" in text, f"no shell echo in session output: {text!r}"
+
+        # And nothing created a tmux server on the private tmpdir.
+        sockets = list(tmux_tmpdir.rglob("*"))
+        assert not [p for p in sockets if p.is_socket()], (
+            f"an interactive SSH login started tmux: {sockets}"
+        )
+
+    def test_command_mode_still_runs_through_sh(self, tmp_merlin_home):
+        """`ssh host "cmd"` is what tooling (VS Code Remote) uses; unchanged."""
+
+        async def _test():
+            port = _free_port()
+            conn = None
+            try:
+                acceptor = await ssh_server.start_ssh_server(port=port)
+                assert acceptor is not None
+                conn = await asyncssh.connect(
+                    "127.0.0.1",
+                    port=port,
+                    known_hosts=None,
+                    username="test",
+                    password="",
+                )
+                result = await conn.run("echo command-mode-ok", check=False)
+                return str(result.stdout)
+            finally:
                 if conn is not None:
                     conn.close()
                     await conn.wait_closed()
                 await ssh_server.stop_ssh_server()
 
-        asyncio.run(_test())
+        assert "command-mode-ok" in asyncio.run(_test())
 
 
 # ---------------------------------------------------------------------------

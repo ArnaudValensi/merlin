@@ -3,8 +3,13 @@
 Runs a lightweight asyncssh server on 127.0.0.1:2222 (localhost only).
 No authentication — only reachable via the portal's authenticated tunnel.
 
+SSH is the raw machine: a login shell, file transfer, system access. The
+session layer (tmux, agents, continuity across devices) is what the web
+terminal is for. Someone who wants the Merlin session over SSH asks for it
+explicitly with ``ssh <env> -t tmux attach``.
+
 Features:
-- Shell sessions via tmux (shares `merlin-dev` session with web terminal)
+- Interactive sessions run the account's login shell (no tmux)
 - SFTP with full filesystem access
 - Ed25519 host key auto-generated and persisted at ~/.merlin/ssh/host_key
 """
@@ -12,10 +17,12 @@ Features:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import errno
 import fcntl
 import logging
 import os
+import pwd
 import signal
 import struct
 import termios
@@ -23,8 +30,7 @@ from pathlib import Path
 
 import asyncssh
 
-from board import sweep as board_sweep
-from terminal.tmux import reconnect_argv, terminal_process_env
+from terminal.tmux import terminal_process_env
 
 logger = logging.getLogger("merlin.ssh")
 
@@ -83,13 +89,33 @@ def _set_winsize(fd: int, width: int, height: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
 
 
+def login_shell_argv() -> list[str]:
+    """The account's login shell, resolved the way OpenSSH resolves it.
+
+    The passwd entry is authoritative for the account. ``$SHELL`` only reflects
+    whatever environment the Merlin daemon happened to be started from, which is
+    not the same thing and is often wrong inside a container, so it is a
+    fallback rather than the first choice. ``-l`` makes it a login shell, so
+    profile files load and the session behaves like any other SSH login.
+    """
+    shell = ""
+    with contextlib.suppress(KeyError):  # uid with no passwd entry
+        shell = pwd.getpwuid(os.getuid()).pw_shell or ""
+    shell = shell or os.environ.get("SHELL", "") or "/bin/sh"
+    return [shell, "-l"]
+
+
 async def _handle_session(process: asyncssh.SSHServerProcess) -> None:
-    """Process factory: attach to the shared tmux server via PTY."""
+    """Process factory: run a command, or drop the user in a login shell.
+
+    Deliberately no tmux. SSH is the raw machine; the web terminal owns the
+    session layer. See the module docstring.
+    """
     command = process.command
     if command:
         process_args = ["/bin/sh", "-c", command]
     else:
-        process_args = reconnect_argv(board_sweep.run_session_sweep())
+        process_args = login_shell_argv()
 
     term_type = process.get_terminal_type() or "xterm-256color"
     # Fall back if the client's TERM isn't in the container's terminfo.
