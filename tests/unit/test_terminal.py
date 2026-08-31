@@ -185,6 +185,45 @@ class TestTerminalWebSocket:
         choose.assert_not_called()
         fork.assert_not_called()
 
+    def test_unresolvable_client_tty_fails_the_connection(
+        self, mock_websocket_with_cookie
+    ):
+        """Never serve a terminal that runs but cannot switch sessions.
+
+        A tty we cannot derive means per-client switching is impossible. That
+        must tear the connection down rather than degrade silently — the
+        silent-degrade path is exactly how the macOS /proc breakage hid. This
+        pins the orchestration: no bridge, the master fd closed, the child
+        handed to terminate_client, and an error close code.
+        """
+        import pty as _pty
+
+        ws = mock_websocket_with_cookie
+        master, slave = _pty.openpty()
+
+        try:
+            with (
+                mock.patch("pty.fork", return_value=(999, master)),
+                mock.patch("os.ptsname", side_effect=OSError("no pty")),
+                mock.patch(
+                    "terminal.routes.terminate_client", new_callable=mock.AsyncMock
+                ) as mock_terminate,
+                mock.patch("terminal.routes.PtyBridge") as bridge_cls,
+            ):
+                asyncio.run(tr.terminal_ws(ws))
+
+            bridge_cls.assert_not_called()
+            mock_terminate.assert_awaited_once_with(999)
+            ws.close.assert_awaited_once_with(code=1011, reason="PTY setup failed")
+
+            # The master fd is really released, not merely "cleanup was called":
+            # fstat on a closed descriptor raises. terminate_client is mocked
+            # here, so reaping itself is covered by test_cleanup_on_disconnect.
+            with pytest.raises(OSError):
+                os.fstat(master)
+        finally:
+            os.close(slave)
+
     def test_cleanup_on_disconnect(self, mock_websocket_with_cookie):
         """PTY bridge is closed, registry cleared, tmux client terminated."""
         import pty as _pty

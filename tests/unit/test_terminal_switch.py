@@ -1,14 +1,16 @@
 """Tests for the per-client session-switch wiring on the terminal WebSocket
-(terminal/routes.py): tty resolution, the switch flow, and the control frame
-the browser intercepts. The tmux calls are stubbed; the frame format is real."""
+(terminal/routes.py): the switch flow and the control frame the browser
+intercepts. The tmux calls are stubbed; the frame format is real.
+
+The client tty is no longer discovered here — it is derived from the PTY master
+at connection setup (see tests/unit/test_terminal_client_tty.py for the contract
+that ties that derivation to tmux's own ``client_tty``).
+"""
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
-import pty
-import time
 
 import terminal.routes as tr
 
@@ -21,30 +23,8 @@ class FakeWS:
         self.sent.append(text)
 
 
-def test_client_tty_resolves_a_pts():
-    pid, fd = pty.fork()
-    if pid == 0:
-        time.sleep(2)
-        os._exit(0)
-    try:
-        time.sleep(0.2)
-        assert tr._client_tty(pid).startswith("/dev/pts/")
-    finally:
-        os.close(fd)
-        try:
-            os.waitpid(pid, 0)
-        except ChildProcessError:
-            pass
-
-
-def test_client_tty_missing_process_is_empty():
-    # A pid with no /proc entry yields "" (switch then no-ops), never raises.
-    assert tr._client_tty(2_147_483_000) == ""
-
-
 def test_switch_session_switches_and_reports(monkeypatch):
     calls = {}
-    monkeypatch.setattr(tr, "_client_tty", lambda pid: "/dev/pts/9")
     monkeypatch.setattr(
         tr.board_sweep,
         "switch_client",
@@ -58,7 +38,7 @@ def test_switch_session_switches_and_reports(monkeypatch):
 
     ws = FakeWS()
     state = tr.SessionReportState()
-    asyncio.run(tr._switch_session(ws, 123, "beta", state))
+    asyncio.run(tr._switch_session(ws, "/dev/pts/9", "beta", state))
 
     assert calls["switch"] == ("/dev/pts/9", "beta")
     assert state.last_reported == tr.board_sweep.ClientSession("beta", "$2", 200)
@@ -72,29 +52,20 @@ def test_switch_session_switches_and_reports(monkeypatch):
     }
 
 
-def test_switch_session_noop_without_target(monkeypatch):
-    monkeypatch.setattr(tr, "_client_tty", lambda pid: "/dev/pts/9")
+def test_switch_session_noop_without_target():
     ws = FakeWS()
-    asyncio.run(tr._switch_session(ws, 123, ""))
-    assert ws.sent == []
-
-
-def test_switch_session_noop_without_tty(monkeypatch):
-    monkeypatch.setattr(tr, "_client_tty", lambda pid: "")
-    ws = FakeWS()
-    asyncio.run(tr._switch_session(ws, 123, "beta"))
+    asyncio.run(tr._switch_session(ws, "/dev/pts/9", ""))
     assert ws.sent == []
 
 
 def test_report_current_session_frame(monkeypatch):
-    monkeypatch.setattr(tr, "_client_tty", lambda pid: "/dev/pts/9")
     monkeypatch.setattr(
         tr.board_sweep,
         "client_session_info",
         lambda tty: tr.board_sweep.ClientSession("alpha", "$1", 100),
     )
     ws = FakeWS()
-    asyncio.run(tr._report_current_session(ws, 1))
+    asyncio.run(tr._report_current_session(ws, "/dev/pts/9"))
     assert json.loads(ws.sent[0][1:]) == {
         "type": "session",
         "name": "alpha",
@@ -119,7 +90,9 @@ def test_session_watcher_reports_tmux_native_switches_once(monkeypatch):
 
     async def run():
         ws = FakeWS()
-        task = asyncio.create_task(tr._watch_current_session(ws, 123, interval=0))
+        task = asyncio.create_task(
+            tr._watch_current_session(ws, "/dev/pts/9", interval=0)
+        )
         try:
             for _ in range(20):
                 if len(ws.sent) == 2:
@@ -151,7 +124,7 @@ def test_session_watcher_does_not_repeat_panel_switch_frame(monkeypatch):
         state = tr.SessionReportState()
         state.last_reported = beta
         task = asyncio.create_task(
-            tr._watch_current_session(ws, 123, state, interval=0)
+            tr._watch_current_session(ws, "/dev/pts/9", state, interval=0)
         )
         try:
             for _ in range(5):

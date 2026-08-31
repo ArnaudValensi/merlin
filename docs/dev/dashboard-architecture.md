@@ -529,8 +529,9 @@ onAttention, onJump, onClose})`. The bottom row of window tabs is tmux's own
 status line — `switch-client` makes it follow the current session for free.
 
 **Switching is per-client, over the WebSocket — not HTTP.** Only the terminal
-socket knows which tmux client this browser is (it resolves the client tty from
-`/proc/<pid>/fd/0`, the pts `pty.fork()` gave the tmux client). Tapping a session
+socket knows which tmux client this browser is (it derives the client tty with
+`os.ptsname()` on the PTY master `pty.fork()` returned, which *is* the pts given
+to the tmux client). Tapping a session
 sends `{type:"switch", target:"<session>"}`; tapping a window sends
 `target:"<session>:<window_id>"` (switch + select in one call). The server runs
 `tmux switch-client -c <tty> -t <target>` so one browser tab never moves another,

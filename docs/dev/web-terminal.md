@@ -106,16 +106,17 @@ In `terminal/routes.py`:
    browser retries without discarding its identity
 4. Select the attach command before the fork
 5. Fork a PTY (`pty.fork()`) running that tmux command
-6. Wrap the master fd in a `PtyBridge` (`terminal/pty_bridge.py`)
-7. Bidirectional relay:
+6. Derive this client's tty from the PTY master (see "Client tty" below)
+7. Wrap the master fd in a `PtyBridge` (`terminal/pty_bridge.py`)
+8. Bidirectional relay:
    - WebSocket → PTY: forward input via `bridge.write()`
    - PTY → WebSocket: forward output via `bridge.read()` through an
      incremental UTF-8 decoder (multibyte sequences can split across reads)
-8. Report the attached session as a NUL-prefixed control frame containing its
+9. Report the attached session as a NUL-prefixed control frame containing its
    current `name`, `id`, and `created` fields
-9. Watch that client's current session and report native tmux switches
-10. Handle resize and per-client session-switch messages
-11. Clean up on disconnect: close the bridge, then `terminate_client()`
+10. Watch that client's current session and report native tmux switches
+11. Handle resize and per-client session-switch messages
+12. Clean up on disconnect: close the bridge, then `terminate_client()`
    SIGHUPs the tmux client, waits for it to exit, and escalates to SIGKILL
 
 ### PTY Bridge (`terminal/pty_bridge.py`)
@@ -140,6 +141,42 @@ Properties the tests pin down (`tests/unit/test_pty_bridge.py`):
 `add_reader`/`add_writer` are used instead of asyncio pipe transports
 deliberately: they are loop-agnostic (uvloop supports them on any fd,
 while its pipe transports reject TTYs).
+
+### Client tty
+
+Per-client switching (`tmux switch-client -c <tty>`) needs the tty of *this*
+browser's tmux client. It is **derived, not looked up**: the parent already holds
+the PTY master from `pty.fork()`, and `os.ptsname(master_fd)` names the slave
+side, which is exactly tmux's `client_tty`.
+
+This matters for three reasons:
+
+- **Portable by construction.** There is no `sys.platform` branch. The OS returns
+  a native string (`/dev/pts/N` on Linux, `/dev/ttysNNN` on macOS) and it goes
+  straight to tmux, which strips `/dev/` before matching clients. Linux CI runs
+  the same lines macOS runs. The previous implementation read
+  `/proc/<pid>/fd/0`, which does not exist on macOS: it returned `""`, every
+  caller treated that as "do nothing", and the Sessions panel silently could not
+  switch at all while the native tmux tabs kept working.
+- **No lookup to get wrong.** The value is known before the child execs, so
+  nothing has to search for it: no lookup can fail, return late, or name the
+  wrong client, and stale clients left over from a previous Merlin run are
+  irrelevant. This does not remove tmux's own attach window — a command aimed
+  at the tty finds no client until tmux has registered it — but switching is
+  user-initiated long after attach, and the session watcher simply reports
+  nothing until the client appears.
+- **A per-connection constant.** Callers never re-derive it and never have to
+  guard against an unknown tty. `os.ptsname` requires Python 3.13, which is why
+  `requires-python` is `>=3.13`.
+
+If the tty cannot be derived the connection is closed and the child reaped. It
+never degrades to a terminal that runs but cannot switch — that silent-degrade
+path is what hid the macOS breakage.
+
+The contract between this derivation and tmux is pinned by
+`tests/unit/test_terminal_client_tty.py`, which asserts the derived tty equals
+tmux's reported `#{client_tty}` and that `switch-client -c` on it moves that
+client. It runs unchanged on both platforms.
 
 ### tmux Session Restoration
 

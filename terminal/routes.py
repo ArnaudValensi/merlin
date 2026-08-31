@@ -62,26 +62,8 @@ CLIPBOARD_MAX_AGE = 3600  # 1 hour
 _cwd: str | None = None
 
 
-def _client_tty(pid: int) -> str:
-    """The tty of this browser's tmux client, read from its process fd 0.
-
-    pty.fork() made ``pid`` (the tmux client) own the pts as its controlling
-    terminal, so ``/proc/<pid>/fd/0`` is that pts path — exactly tmux's
-    ``client_tty``. This is what lets a switch target *this* client only, so one
-    browser tab switching sessions never moves another. Empty string if the
-    process or /proc is gone (then a switch simply no-ops).
-    """
-    try:
-        return os.readlink(f"/proc/{pid}/fd/0")
-    except OSError:
-        return ""
-
-
-async def _read_current_session(pid: int) -> board_sweep.ClientSession | None:
+async def _read_current_session(tty: str) -> board_sweep.ClientSession | None:
     """Read the exact tmux session currently displayed by one browser client."""
-    tty = _client_tty(pid)
-    if not tty:
-        return None
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, board_sweep.client_session_info, tty)
 
@@ -130,11 +112,11 @@ async def _send_session_if_changed(
 
 
 async def _report_current_session(
-    websocket: WebSocket, pid: int, state: SessionReportState | None = None
+    websocket: WebSocket, tty: str, state: SessionReportState | None = None
 ) -> board_sweep.ClientSession | None:
     """Read and report the current session, returning it after a successful send."""
     report_state = state or SessionReportState()
-    current = await _read_current_session(pid)
+    current = await _read_current_session(tty)
     if current is not None and await _send_session_if_changed(
         websocket, current, report_state
     ):
@@ -144,7 +126,7 @@ async def _report_current_session(
 
 async def _watch_current_session(
     websocket: WebSocket,
-    pid: int,
+    tty: str,
     state: SessionReportState | None = None,
     *,
     interval: float = SESSION_REPORT_INTERVAL,
@@ -152,7 +134,7 @@ async def _watch_current_session(
     """Report initial attach and later tmux-native per-client switches."""
     report_state = state or SessionReportState()
     while True:
-        current = await _read_current_session(pid)
+        current = await _read_current_session(tty)
         if current is not None:
             await _send_session_if_changed(websocket, current, report_state)
         await asyncio.sleep(interval)
@@ -160,7 +142,7 @@ async def _watch_current_session(
 
 async def _switch_session(
     websocket: WebSocket,
-    pid: int,
+    tty: str,
     target: str,
     state: SessionReportState | None = None,
 ) -> None:
@@ -168,12 +150,9 @@ async def _switch_session(
     report the client's new current session back to the browser."""
     if not target:
         return
-    tty = _client_tty(pid)
-    if not tty:
-        return
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, board_sweep.switch_client, tty, target)
-    await _report_current_session(websocket, pid, state)
+    await _report_current_session(websocket, tty, state)
 
 
 def _voice_available() -> bool:
@@ -501,6 +480,28 @@ async def terminal_ws(websocket: WebSocket):
     # the event loop (see terminal/pty_bridge.py for why no thread may
     # ever block inside a PTY syscall).
     logger.info("pty.fork() returned: pid=%d, fd=%d", pid, master_fd)
+
+    # The tmux client's tty, derived from the master fd we already hold rather
+    # than looked up afterwards. This is exactly tmux's ``client_tty``, so it is
+    # what lets a switch target *this* client only and one browser tab never
+    # moves another. Deriving it keeps a single code path on Linux and macOS
+    # (only the string shape differs) and makes it a per-connection constant:
+    # no lookup can fail or name the wrong client, and callers never have an
+    # "unknown tty" state to guard against. (tmux still has its own attach
+    # window before it registers the client; a command aimed at the tty simply
+    # finds nothing until then, which the session watcher rides out by
+    # reporting nothing.) It must never degrade to a terminal that runs but
+    # cannot switch, so a failure closes the socket.
+    try:
+        client_tty = os.ptsname(master_fd)
+    except OSError:
+        logger.exception("Could not resolve the tmux client tty")
+        with contextlib.suppress(OSError):
+            os.close(master_fd)
+        await terminate_client(pid)
+        await websocket.close(code=1011, reason="PTY setup failed")
+        return
+
     try:
         bridge = PtyBridge(master_fd)
     except OSError:
@@ -564,7 +565,7 @@ async def terminal_ws(websocket: WebSocket):
                         if msg_type == "switch":
                             await _switch_session(
                                 websocket,
-                                pid,
+                                client_tty,
                                 str(parsed.get("target", "")),
                                 session_report_state,
                             )
@@ -583,7 +584,7 @@ async def terminal_ws(websocket: WebSocket):
     pty_reader = asyncio.create_task(pty_to_ws())
     ws_reader = asyncio.create_task(ws_to_pty())
     session_watcher = asyncio.create_task(
-        _watch_current_session(websocket, pid, session_report_state)
+        _watch_current_session(websocket, client_tty, session_report_state)
     )
 
     try:

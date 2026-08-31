@@ -3,7 +3,7 @@ name = "merlin"
 version = "0.12.0"
 description = "Portable mobile dev environment"
 license = "MIT"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "asyncssh",
     "cron-descriptor>=2.1.0",
