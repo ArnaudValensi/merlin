@@ -34,6 +34,7 @@ from terminal.tmux import (
     parse_session_identity,
     reconnect_argv,
     terminal_process_env,
+    with_tmux_conf,
 )
 
 logger = logging.getLogger("merlin.terminal")
@@ -455,15 +456,8 @@ async def terminal_ws(websocket: WebSocket):
     if sessions is None:
         await websocket.close(code=1013, reason="tmux temporarily unavailable")
         return
-    tmux_args = reconnect_argv(sessions, preferred)
-    tmux_conf = TERMINAL_DIR / "tmux.conf"
-    if tmux_conf.exists():
-        tmux_args[1:1] = ["-f", str(tmux_conf)]
+    tmux_args = with_tmux_conf(reconnect_argv(sessions, preferred))
     tmux_env = terminal_process_env(os.environ, term="xterm-256color")
-    # tmux.conf's agent-state switch-clear hook resolves this to find
-    # terminal/hooks/agent-state-switch.sh. Keep it in the tmux client's
-    # environment so a newly created server captures it for run-shell hooks.
-    tmux_env["MERLIN_TERMINAL_HOOKS"] = str(TERMINAL_DIR / "hooks")
 
     # Fork a PTY running tmux. Nothing but exec-prep may run in the child:
     # its stdio IS the pty, so e.g. logging would leak into the terminal

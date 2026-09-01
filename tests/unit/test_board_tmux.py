@@ -179,3 +179,46 @@ def test_switch_client_and_current_session(tmux_server):
         assert beta.created > 0
     finally:
         os.close(fd)
+
+
+def test_create_or_get_starts_a_configured_server(monkeypatch, tmp_path, request):
+    """When this call is the one that starts tmux, the server gets Merlin's conf.
+
+    tmux reads its config only at server creation and ignores ``-f`` when
+    attaching, so whichever entry point starts the server decides for its whole
+    lifetime whether the agent-state pills and the done-pill clearing hooks
+    exist. Reachable here because the Sessions panel talks over HTTP: with the
+    terminal WebSocket down and the server dead, "+ new session" is what creates
+    it. Deliberately starts from *no* server, since that is the only case where
+    the flag can matter.
+    """
+    sock = "boardconf_" + re.sub(r"[^A-Za-z0-9]+", "_", request.node.name)
+    real_run = subprocess.run
+
+    def routed(cmd, *a, **kw):
+        if isinstance(cmd, list) and cmd[:1] == ["tmux"] and "-L" not in cmd:
+            cmd = ["tmux", "-L", sock, *cmd[1:]]
+        return real_run(cmd, *a, **kw)
+
+    def tmux(*args: str) -> str:
+        return real_run(
+            ["tmux", "-L", sock, *args], capture_output=True, text=True, check=False
+        ).stdout
+
+    monkeypatch.setattr(sweep.subprocess, "run", routed)
+    tmux("kill-server")
+    project = tmp_path / "fresh-proj"
+    project.mkdir()
+
+    try:
+        assert not tmux("list-sessions").strip(), "a server already existed"
+
+        name = sweep.create_or_get_session(str(project))
+        assert name == "fresh-proj"
+
+        # The pills read @agent_state; the default format does not mention it.
+        assert "@agent_state" in tmux("show-options", "-g", "window-status-format")
+        # And the hook that clears the done pill is actually bound, not just named.
+        assert "agent-state-switch.sh" in tmux("show-hooks", "-g")
+    finally:
+        tmux("kill-server")

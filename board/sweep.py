@@ -428,7 +428,19 @@ def create_or_get_session(directory: str, name: str = "") -> str | None:
         return session
     # Detached create (-d): the browser attaches by switch-client afterwards,
     # keeping session creation global but switching per-client.
-    if _run_ok(["new-session", "-d", "-s", session, "-c", directory]):
+    #
+    # The config flag matters when no tmux server is running yet, because then
+    # this call *creates* it, and tmux reads its config only at server creation.
+    # Without it the server would run for its whole life with no agent-state
+    # pills and no done-pill clearing hooks. Reachable when the Sessions panel
+    # is open (it talks over HTTP) while the terminal WebSocket is down and the
+    # server has died. Imported here rather than at module scope: terminal's
+    # package __init__ pulls in terminal.routes, which imports this module.
+    from terminal.tmux import tmux_conf_args
+
+    if _run_ok(
+        [*tmux_conf_args(), "new-session", "-d", "-s", session, "-c", directory]
+    ):
         return session
     return None
 
