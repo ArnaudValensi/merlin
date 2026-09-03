@@ -167,13 +167,20 @@ class TestCheckedSweep:
 
 
 class TestClientSessionInfo:
-    def test_parses_name_id_and_creation_time(self, monkeypatch):
+    def test_parses_session_and_active_window(self, monkeypatch):
         monkeypatch.setattr(
-            sweep, "_tmux_capture", lambda _args: "renamed\t$4\t1699999900\n"
+            sweep,
+            "_tmux_capture",
+            lambda _args: "renamed\t$4\t1699999900\t@7\t2\tapi\n",
         )
 
         assert sweep.client_session_info("/dev/pts/9") == sweep.ClientSession(
-            name="renamed", session_id="$4", created=1699999900
+            name="renamed",
+            session_id="$4",
+            created=1699999900,
+            window_id="@7",
+            window_index=2,
+            window_name="api",
         )
 
     def test_rejects_malformed_or_missing_client(self, monkeypatch):

@@ -46,7 +46,10 @@ _SESSION_FIELDS = (
     "session_activity",
 )
 _SESSION_FMT = "\t".join("#{" + f + "}" for f in _SESSION_FIELDS)
-_CLIENT_SESSION_FMT = "#{client_session}\t#{session_id}\t#{session_created}"
+_CLIENT_SESSION_FMT = (
+    "#{client_session}\t#{session_id}\t#{session_created}\t"
+    "#{window_id}\t#{window_index}\t#{window_name}"
+)
 
 
 @dataclass(frozen=True)
@@ -91,11 +94,14 @@ class TmuxSession:
 
 @dataclass(frozen=True)
 class ClientSession:
-    """Identity of the session currently displayed by one tmux client."""
+    """Session and window currently displayed by one tmux client."""
 
     name: str
     session_id: str
     created: int
+    window_id: str = ""
+    window_index: int = 0
+    window_name: str = ""
 
 
 def parse_sweep(raw: str) -> list[Window]:
@@ -258,19 +264,32 @@ def client_session(tty: str) -> str | None:
 
 
 def client_session_info(tty: str) -> ClientSession | None:
-    """Return the exact name and stable reconnect identity for one client."""
+    """Return the exact session and window displayed by one client."""
     if not tty:
         return None
     out = _tmux_capture(["display-message", "-p", "-t", tty, _CLIENT_SESSION_FMT])
     if not out:
         return None
     parts = out.strip().split("\t")
-    if len(parts) != 3:
+    if len(parts) != 6:
         return None
-    name, session_id, created = parts
-    if not name or not session_id or not created.isdigit():
+    name, session_id, created, window_id, window_index, window_name = parts
+    if (
+        not name
+        or not session_id
+        or not created.isdigit()
+        or not window_id
+        or not window_index.isdigit()
+    ):
         return None
-    return ClientSession(name, session_id, int(created))
+    return ClientSession(
+        name,
+        session_id,
+        int(created),
+        window_id,
+        int(window_index),
+        window_name,
+    )
 
 
 def sanitize_session_name(name: str) -> str:

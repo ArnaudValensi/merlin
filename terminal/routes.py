@@ -82,6 +82,9 @@ async def _send_session_frame(
                     "name": current.name,
                     "id": current.session_id,
                     "created": current.created,
+                    "window_id": current.window_id,
+                    "window_index": current.window_index,
+                    "window": current.window_name,
                 }
             )
         )

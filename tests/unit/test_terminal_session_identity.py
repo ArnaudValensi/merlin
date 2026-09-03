@@ -17,6 +17,11 @@ def test_websocket_uses_stored_identity_and_confirms_server_frames():
     assert "MerlinSessionIdentity.confirm(ctl)" in TERMINAL
 
 
+def test_confirmed_tmux_context_updates_the_page_title():
+    assert "MerlinPageTitle.tmuxContext(ctl.name, ctl.window)" in TERMINAL
+    assert "MerlinPageTitle.set(" in TERMINAL
+
+
 def test_unconfirmed_connection_conditionally_clears_its_attempt():
     assert "MerlinSessionIdentity.clearAfterClose(" in TERMINAL
     assert "attemptedIdentity, sessionConfirmed, e.code" in TERMINAL

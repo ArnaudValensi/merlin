@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-machine-name="{{ machine_name | default('') }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Merlin{% endblock %}</title>
+    <title>{% if machine_name %}{{ machine_name }} · {% endif %}{% block title %}Merlin{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
@@ -13,6 +13,7 @@
     <script src="/static/vendor/chart.min.js"></script>
     <script src="/static/vendor/chartjs-adapter-date-fns.min.js"></script>
     <script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>
+    <script src="/static/page-title.js"></script>
     <script src="/static/dashboard.js"></script>
 </head>
 <body>

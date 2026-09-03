@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Bot — Merlin Dashboard{% endblock %}
+{% block title %}bot{% if active_tab != 'overview' %}: {{ active_tab }}{% endif %}{% endblock %}
 
 {% block content %}
 <h2 class="page-title">Bot</h2>

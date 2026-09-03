@@ -573,6 +573,28 @@ session), `/window/rename`, `/window/kill`. Switching and jump-to-window are
 separately. SSH clients attach to `merlin-dev` and use the tmux status line to
 switch windows; the web switcher is a browser feature.
 
+## Browser Page Titles
+
+Titles are navigation metadata for people running several Merlin instances and
+many tabs. The shared grammar is machine-first because browsers truncate the
+right side of narrow tabs:
+
+```text
+<machine> · <lowercase app>: <compact context>
+```
+
+`lib/merlin_ext.py` publishes `machine_name` to every template. Managed
+instances use `MERLIN_ENVIRONMENT_SLUG`; self-hosted instances use the OS
+hostname. `templates/base.html` owns the machine prefix and each page's `title`
+block supplies only its lowercase app label and any server-rendered context.
+Do not add `Merlin` or `Dashboard` as a suffix; the favicon carries product
+identity. The generic no-metadata fallback remains `Merlin`.
+
+Client-rendered context uses `static/page-title.js` rather than writing
+`document.title` directly. Keep it compact: Files uses the current path leaf,
+Commits the repository leaf, Notes the note title, and Terminal the confirmed
+tmux `session/window`. Missing context is omitted without leaving a colon.
+
 ## Adding a New Page
 
 1. Create `templates/newpage.html` extending `base.html`

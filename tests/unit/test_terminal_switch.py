@@ -33,7 +33,7 @@ def test_switch_session_switches_and_reports(monkeypatch):
     monkeypatch.setattr(
         tr.board_sweep,
         "client_session_info",
-        lambda tty: tr.board_sweep.ClientSession("beta", "$2", 200),
+        lambda tty: tr.board_sweep.ClientSession("beta", "$2", 200, "@4", 1, "api"),
     )
 
     ws = FakeWS()
@@ -41,7 +41,9 @@ def test_switch_session_switches_and_reports(monkeypatch):
     asyncio.run(tr._switch_session(ws, "/dev/pts/9", "beta", state))
 
     assert calls["switch"] == ("/dev/pts/9", "beta")
-    assert state.last_reported == tr.board_sweep.ClientSession("beta", "$2", 200)
+    assert state.last_reported == tr.board_sweep.ClientSession(
+        "beta", "$2", 200, "@4", 1, "api"
+    )
     assert len(ws.sent) == 1
     assert ws.sent[0][0] == "\x00"  # NUL-prefixed control frame
     assert json.loads(ws.sent[0][1:]) == {
@@ -49,6 +51,9 @@ def test_switch_session_switches_and_reports(monkeypatch):
         "name": "beta",
         "id": "$2",
         "created": 200,
+        "window_id": "@4",
+        "window_index": 1,
+        "window": "api",
     }
 
 
@@ -62,7 +67,7 @@ def test_report_current_session_frame(monkeypatch):
     monkeypatch.setattr(
         tr.board_sweep,
         "client_session_info",
-        lambda tty: tr.board_sweep.ClientSession("alpha", "$1", 100),
+        lambda tty: tr.board_sweep.ClientSession("alpha", "$1", 100, "@3", 0, "shell"),
     )
     ws = FakeWS()
     asyncio.run(tr._report_current_session(ws, "/dev/pts/9"))
@@ -71,7 +76,46 @@ def test_report_current_session_frame(monkeypatch):
         "name": "alpha",
         "id": "$1",
         "created": 100,
+        "window_id": "@3",
+        "window_index": 0,
+        "window": "shell",
     }
+
+
+def test_session_watcher_reports_native_window_changes(monkeypatch):
+    """Window switches and renames update the browser even within one session."""
+    shell = tr.board_sweep.ClientSession("alpha", "$1", 100, "@3", 0, "shell")
+    api = tr.board_sweep.ClientSession("alpha", "$1", 100, "@4", 1, "api")
+    renamed = tr.board_sweep.ClientSession("alpha", "$1", 100, "@4", 1, "server")
+    reads = 0
+
+    async def fake_read(_tty):
+        nonlocal reads
+        current = (shell, api, renamed)[min(reads, 2)]
+        reads += 1
+        return current
+
+    monkeypatch.setattr(tr, "_read_current_session", fake_read)
+
+    async def run():
+        ws = FakeWS()
+        task = asyncio.create_task(
+            tr._watch_current_session(ws, "/dev/pts/9", interval=0)
+        )
+        try:
+            for _ in range(30):
+                if len(ws.sent) == 3:
+                    break
+                await asyncio.sleep(0)
+            assert len(ws.sent) == 3
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        return [json.loads(message[1:]) for message in ws.sent]
+
+    frames = asyncio.run(run())
+    assert [frame["window_id"] for frame in frames] == ["@3", "@4", "@4"]
+    assert [frame["window"] for frame in frames] == ["shell", "api", "server"]
 
 
 def test_session_watcher_reports_tmux_native_switches_once(monkeypatch):

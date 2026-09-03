@@ -149,6 +149,7 @@
 
     function selectRepo(path, skipUrlUpdate) {
         currentRepo = path;
+        MerlinPageTitle.set('commits', MerlinPageTitle.pathContext(path));
         localStorage.setItem('merlin-commits-repo', path);
         updateRepoIndicator();
 
@@ -177,6 +178,7 @@
     }
 
     function showEmptyRepoState() {
+        MerlinPageTitle.set('commits');
         repoIndicator.style.display = 'none';
         noRepoState.style.display = '';
         commitsFilters.style.display = 'none';

@@ -364,6 +364,7 @@
 
     async function browse(fsPath, pushState) {
         currentPath = fsPath;
+        MerlinPageTitle.set('files', MerlinPageTitle.pathContext(fsPath));
 
         // Leaving the current listing (into a subdir or a file detail) stops any
         // inline audition; the row it belongs to is about to disappear.

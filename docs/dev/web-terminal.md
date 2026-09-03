@@ -113,8 +113,11 @@ In `terminal/routes.py`:
    - PTY → WebSocket: forward output via `bridge.read()` through an
      incremental UTF-8 decoder (multibyte sequences can split across reads)
 9. Report the attached session as a NUL-prefixed control frame containing its
-   current `name`, `id`, and `created` fields
-10. Watch that client's current session and report native tmux switches
+   current `name`, `id`, `created`, `window_id`, `window_index`, and `window`
+   fields. The browser uses the display names for its tab title; stable ids
+   continue to own restoration and frame deduplication.
+10. Watch that client's current session and window and report native tmux
+    switches or window renames
 11. Handle resize and per-client session-switch messages
 12. Clean up on disconnect: close the bridge, then `terminate_client()`
    SIGHUPs the tmux client, waits for it to exit, and escalates to SIGKILL

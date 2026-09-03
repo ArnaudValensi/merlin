@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Terminal — Merlin{% endblock %}
+{% block title %}term{% endblock %}
 
 {% block content %}
 <div class="terminal-col">
@@ -1927,6 +1927,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     var ctl = JSON.parse(d.slice(1));
                     if (ctl && ctl.type === 'session') {
                         currentSession = ctl.name || '';
+                        MerlinPageTitle.set(
+                            'term',
+                            MerlinPageTitle.tmuxContext(ctl.name, ctl.window),
+                        );
                         if (MerlinSessionIdentity.confirm(ctl)) {
                             sessionConfirmed = true;
                         }

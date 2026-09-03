@@ -357,6 +357,7 @@ const NoteView = {
             const title = slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
             const today = new Date().toISOString().slice(0, 10);
             this._rawContent = `---\ntype: reference\ntitle: ${title}\ndescription: \ntags: []\ncreated: ${today}\nupdated: ${today}\n---\n\n# ${title}\n\n`;
+            MerlinPageTitle.set('notes', title);
             // Hide delete button for unsaved new notes
             const deleteBtn = document.getElementById('btn-delete');
             if (deleteBtn) deleteBtn.style.display = 'none';
@@ -447,6 +448,10 @@ const NoteView = {
 
         // Then render content
         const { meta, body } = this._parseFrontmatter(this._rawContent);
+        MerlinPageTitle.set(
+            'notes',
+            meta.title || MerlinPageTitle.pathContext(this._path),
+        );
 
         // Header
         if (headerEl && meta.title) {

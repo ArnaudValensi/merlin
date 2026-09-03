@@ -17,6 +17,9 @@ Usage::
 """
 
 import logging
+import os
+import socket
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
@@ -39,7 +42,28 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(f"merlin.ext.{safe}")
 
 
-_TEMPLATE_GLOBALS: dict = {}
+def resolve_machine_name(
+    environ: Mapping[str, str] | None = None,
+    hostname: Callable[[], str] | None = None,
+) -> str:
+    """Return the stable, user-facing machine label for browser titles.
+
+    Managed containers inherit their environment slug, which is more useful
+    than Podman's generated hostname. Self-hosted instances use the OS hostname.
+    A failed hostname lookup must not prevent template rendering.
+    """
+    env = os.environ if environ is None else environ
+    environment_slug = env.get("MERLIN_ENVIRONMENT_SLUG", "").strip()
+    if environment_slug:
+        return environment_slug
+
+    try:
+        return ((hostname or socket.gethostname)() or "").strip()
+    except OSError:
+        return ""
+
+
+_TEMPLATE_GLOBALS: dict = {"machine_name": resolve_machine_name()}
 _INSTANCES: list[Jinja2Templates] = []
 
 
