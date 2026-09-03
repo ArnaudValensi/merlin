@@ -2,6 +2,22 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.33.0 (2026-09-03)
+
+### Added
+- **Audio files play inline in the file browser** — Tap the play icon on an audio row to audition it without leaving the listing or opening a viewer.
+- **Machine-first browser tab titles** — Tabs now read `<machine> · <page>`, so several Merlin instances stay distinguishable when browsers truncate a narrow tab.
+- **Codex sees Merlin's skills** — Merlin's canonical skill set is now mirrored into Codex CLI's skills directory alongside Claude and the agents path.
+
+### Changed
+- **SSH gives you a shell, not a tmux session** — `ssh <env>` now opens your normal login shell. SSH is the raw machine; the web terminal owns sessions and agents. To reach the shared tmux session on purpose, use `ssh <env> -t tmux attach`. Note that work no longer survives a dropped SSH connection unless you asked for tmux.
+- **File browser rows are real links** — Middle-click, Ctrl/Cmd-click, Shift-click and the browser's link menu now open files and folders in new tabs, while a normal click keeps the fast in-page navigation.
+- **Requires Python 3.13** — Up from 3.12. Installs managed by uv pick this up automatically; a system Python older than 3.13 will no longer run Merlin.
+
+### Fixed
+- **Session switching works on macOS** — The Sessions panel could not change session or window on macOS: clicks were silently ignored while the native tmux tabs kept working. Per-tab session restore was inert there for the same reason, and now works too.
+- **Agent-state pills always appear** — A tmux server started by anything other than the web terminal ran without the activity pills and without clearing the green done pill, for as long as that server lived.
+
 ## v0.32.2 (2026-08-20)
 
 ### Fixed
