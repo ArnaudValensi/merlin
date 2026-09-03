@@ -235,12 +235,9 @@ class TestInlineAudition:
         _play_button(page, "one.wav").click()
         page.wait_for_selector(".dir-entry.playing", timeout=5000)
 
-        # Tapping the row body (not the play control) opens the detail view.
+        # Tapping the row link (not the play control) opens the detail view.
         # That navigation must stop the inline audition.
-        page.click(
-            '.dir-entry:has(.dir-entry-play[data-audition-path$="/three.wav"]) '
-            ".dir-entry-name"
-        )
+        page.get_by_role("link", name="Open file three.wav", exact=True).click()
         page.wait_for_selector("#file-view", state="visible", timeout=5000)
         page.wait_for_function(
             "() => document.querySelectorAll('.dir-entry.playing').length === 0",

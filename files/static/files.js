@@ -294,7 +294,7 @@
     function routeFromUrl() {
         const urlPath = window.location.pathname;
         if (urlPath.startsWith('/files/')) {
-            browse('/' + urlPath.slice(7), false);
+            browse(filePathFromUrl(urlPath), false);
             return;
         }
         const saved = localStorage.getItem('merlin-files-path');
@@ -306,8 +306,47 @@
         }
     }
 
+    function fileBrowserUrl(fsPath) {
+        if (fsPath === '/') return '/files';
+        const encodedPath = fsPath.split('/')
+            .map(segment => encodeURIComponent(segment))
+            .join('/');
+        return '/files' + encodedPath;
+    }
+
+    function filePathFromUrl(urlPath) {
+        const encodedPath = urlPath.slice('/files'.length);
+        return encodedPath.split('/')
+            .map(segment => {
+                try {
+                    return decodeURIComponent(segment);
+                } catch {
+                    // A malformed externally entered escape should reach the
+                    // normal not-found UI, not abort File Browser startup.
+                    return segment;
+                }
+            })
+            .join('/') || '/';
+    }
+
+    function handleFileLinkClick(event, fsPath) {
+        if (
+            event.defaultPrevented ||
+            event.button !== 0 ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.shiftKey ||
+            event.altKey
+        ) {
+            return;
+        }
+
+        event.preventDefault();
+        navigateTo(fsPath, true);
+    }
+
     function navigateTo(fsPath, pushState) {
-        const urlPath = fsPath === '/' ? '/files' : '/files' + fsPath;
+        const urlPath = fileBrowserUrl(fsPath);
         if (pushState && window.location.pathname !== urlPath) {
             history.pushState(null, '', urlPath);
         }
@@ -524,11 +563,8 @@
         const rootLink = document.createElement('a');
         rootLink.className = 'breadcrumb-segment';
         rootLink.textContent = '/';
-        rootLink.href = '/files';
-        rootLink.addEventListener('click', (e) => {
-            e.preventDefault();
-            navigateTo('/', true);
-        });
+        rootLink.href = fileBrowserUrl('/');
+        rootLink.addEventListener('click', (e) => handleFileLinkClick(e, '/'));
         breadcrumbs.appendChild(rootLink);
 
         if (fsPath === '/') return;
@@ -548,11 +584,8 @@
             link.className = 'breadcrumb-segment';
             link.textContent = parts[i];
             const targetPath = cumulative;
-            link.href = '/files' + targetPath;
-            link.addEventListener('click', (e) => {
-                e.preventDefault();
-                navigateTo(targetPath, true);
-            });
+            link.href = fileBrowserUrl(targetPath);
+            link.addEventListener('click', (e) => handleFileLinkClick(e, targetPath));
 
             if (i === parts.length - 1) {
                 link.classList.add('breadcrumb-current');
@@ -655,7 +688,9 @@
             }
             row.appendChild(time);
 
-            // Click handler
+            // Selection rows remain actions. Normal rows expose a real anchor
+            // so the browser owns middle-click, modifier-click, context menus,
+            // and keyboard link behavior.
             if (selectionMode) {
                 row.addEventListener('click', () => {
                     if (selectedPaths.has(entryPath)) selectedPaths.delete(entryPath);
@@ -664,7 +699,15 @@
                     rerenderRows();
                 });
             } else {
-                row.addEventListener('click', () => navigateTo(entryPath, true));
+                const link = document.createElement('a');
+                link.className = 'dir-entry-link';
+                link.href = fileBrowserUrl(entryPath);
+                link.setAttribute(
+                    'aria-label',
+                    'Open ' + (entry.type === 'dir' ? 'folder ' : 'file ') + entry.name
+                );
+                link.addEventListener('click', (e) => handleFileLinkClick(e, entryPath));
+                row.appendChild(link);
             }
 
             dirEntries.appendChild(row);
@@ -946,6 +989,12 @@
             if (!nameEl) continue;
             const displayName = nameEl.textContent.replace(/\/$/, '');
             if (displayName !== currentName) continue;
+
+            // The normal browse row has a full-row link overlay. Rename turns
+            // the row into an inline form, so remove navigation before placing
+            // the input beneath it.
+            const rowLink = row.querySelector('.dir-entry-link');
+            if (rowLink) rowLink.remove();
 
             const input = document.createElement('input');
             input.type = 'text';
@@ -1261,9 +1310,8 @@
 
         container.querySelectorAll('a[data-internal]').forEach(link => {
             link.addEventListener('click', (e) => {
-                e.preventDefault();
                 const target = link.getAttribute('data-internal');
-                navigateTo(target, true);
+                handleFileLinkClick(e, target);
             });
         });
 
@@ -1333,7 +1381,7 @@
                     return prefix + 'href="' + href + '" target="_blank" rel="noopener"';
                 }
                 const resolved = resolvePath(fileDir, href);
-                const urlPath = '/files' + resolved;
+                const urlPath = fileBrowserUrl(resolved);
                 return prefix + 'href="' + urlPath + '" data-internal="' + esc(resolved) + '"';
             }
         );

@@ -25,6 +25,12 @@ that directory or file directly. The page remembers your last directory
 and reopens it next visit (the filesystem root is never restored); the
 first visit opens the launch directory.
 
+Rows are native browser links. A normal click keeps the fast in-page
+navigation, while middle-click, Ctrl/Cmd-click, Shift-click, and the browser's
+link context menu can open a file or directory elsewhere without leaving the
+current listing. The play icon on an audio row remains a separate inline
+audition control, and rows stop being links while selection mode is active.
+
 ## Open and read files
 
 Tap a file to open it. Text and code render as a line-numbered table with
