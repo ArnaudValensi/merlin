@@ -79,6 +79,7 @@ cwd:
 
 - `~/.claude/skills/<name>` (Claude Code)
 - `~/.agents/skills/<name>` (engines that read it natively)
+- `$CODEX_HOME/skills/<name>` (Codex, default `~/.codex/skills`; written unconditionally, harmless if Codex isn't installed)
 
 Shims never overwrite a path Merlin does not own: only symlinks pointing into
 the Merlin home are managed; foreign entries are skipped with a warning.

@@ -322,6 +322,16 @@ def claude_skills_dir() -> Path:
     return Path.home() / ".claude" / "skills"
 
 
+def codex_skills_dir() -> Path:
+    """Codex's personal skill location ($CODEX_HOME/skills).
+
+    Written unconditionally (mirrors codex_hooks_path()); harmless if Codex
+    isn't installed, and already populated the moment it is.
+    """
+    codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    return codex_home.expanduser() / "skills"
+
+
 def _is_merlin_link(entry: Path) -> bool:
     """True if entry is a symlink we own (raw target inside the canonical dir)."""
     if not entry.is_symlink():
@@ -367,12 +377,13 @@ def sync_shim_links(target_dir: Path) -> None:
 
 
 def sync_interactive_shims() -> None:
-    """Refresh the user-scope shims (~/.claude/skills and ~/.agents/skills).
+    """Refresh the user-scope shims (~/.claude/skills, ~/.agents/skills, and
+    $CODEX_HOME/skills).
 
     This is what gives the user's own terminal agents Merlin's skills from
     any cwd. Called at server startup and by 'merlin setup'.
     """
-    for target in (claude_skills_dir(), agents_skills_dir()):
+    for target in (claude_skills_dir(), agents_skills_dir(), codex_skills_dir()):
         try:
             sync_shim_links(target)
         except OSError as e:

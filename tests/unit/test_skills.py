@@ -383,7 +383,7 @@ class TestMainSources:
 
 
 # ---------------------------------------------------------------------------
-# Shim links (~/.agents/skills, ~/.claude/skills)
+# Shim links (~/.agents/skills, ~/.claude/skills, $CODEX_HOME/skills)
 # ---------------------------------------------------------------------------
 
 
@@ -450,11 +450,17 @@ class TestShimLinks:
         assert taken.is_dir() and not taken.is_symlink()
         assert "skipped" in caplog.text.lower()
 
-    def test_sync_interactive_shims_covers_both_scopes(self, tmp_path):
+    def test_sync_interactive_shims_covers_all_scopes(self, tmp_path):
         self._canonical_with_skill(tmp_path, "demo")
         skills.sync_interactive_shims()
         assert (self.home / ".claude" / "skills" / "demo").is_symlink()
         assert (self.home / ".agents" / "skills" / "demo").is_symlink()
+        assert (self.home / ".codex" / "skills" / "demo").is_symlink()
+
+    def test_codex_skills_dir_respects_codex_home(self, tmp_path, monkeypatch):
+        codex_home = tmp_path / "custom-codex-home"
+        monkeypatch.setenv("CODEX_HOME", str(codex_home))
+        assert skills.codex_skills_dir() == codex_home / "skills"
 
 
 # ---------------------------------------------------------------------------
