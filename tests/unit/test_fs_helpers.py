@@ -5,6 +5,7 @@ import pytest
 from files.fs_helpers import (
     IMAGE_EXTENSIONS,
     MODEL_3D_EXTENSIONS,
+    PDF_EXTENSIONS,
     TEXT_MAX_BYTES,
     _check_not_shallow,
     create_item,
@@ -302,6 +303,34 @@ class TestGetFileInfo:
             assert info["is_3d_model"] is True, (
                 f"Expected {ext} to be detected as 3D model"
             )
+
+    def test_pdf_file_is_pdf(self, tmp_path):
+        f = tmp_path / "report.pdf"
+        f.write_bytes(b"%PDF-1.4\n")
+        info = get_file_info(f)
+        assert info["is_pdf"] is True
+        assert info["is_text"] is False
+        assert info["is_image"] is False
+        assert info["is_3d_model"] is False
+
+    def test_non_pdf_files_are_not_pdf(self, tmp_path):
+        for name, data in (
+            ("README.md", b"# hi"),
+            ("photo.png", b"\x89PNG\r\n"),
+            ("bracket.stl", b"solid\n"),
+            ("noext", b"plain text"),
+        ):
+            f = tmp_path / name
+            f.write_bytes(data)
+            info = get_file_info(f)
+            assert info["is_pdf"] is False, f"Expected {name} to not be a PDF"
+
+    def test_all_pdf_extensions_detected(self, tmp_path):
+        for ext in PDF_EXTENSIONS:
+            f = tmp_path / f"test{ext}"
+            f.write_bytes(b"%PDF-1.4\n")
+            info = get_file_info(f)
+            assert info["is_pdf"] is True, f"Expected {ext} to be detected as PDF"
 
 
 # ---------------------------------------------------------------------------

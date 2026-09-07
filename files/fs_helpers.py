@@ -21,6 +21,9 @@ VIDEO_EXTENSIONS = {".mp4", ".webm", ".ogv", ".mov", ".mkv", ".avi"}
 # 3D model extensions for inline preview
 MODEL_3D_EXTENSIONS = {".stl", ".obj"}
 
+# PDF extension for inline preview (rendered client-side via pdf.js)
+PDF_EXTENSIONS = {".pdf"}
+
 # Text file max size for reading content (2 MB)
 TEXT_MAX_BYTES = 2 * 1024 * 1024
 
@@ -242,6 +245,7 @@ def get_file_info(path: Path) -> dict[str, Any]:
     is_audio = ext in AUDIO_EXTENSIONS
     is_video = ext in VIDEO_EXTENSIONS
     is_3d_model = ext in MODEL_3D_EXTENSIONS
+    is_pdf = ext in PDF_EXTENSIONS
     is_text = _is_text_file(path, mime_type)
 
     return {
@@ -255,6 +259,7 @@ def get_file_info(path: Path) -> dict[str, Any]:
         "is_audio": is_audio,
         "is_video": is_video,
         "is_3d_model": is_3d_model,
+        "is_pdf": is_pdf,
         "mime_type": mime_type,
     }
 
