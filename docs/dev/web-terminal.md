@@ -229,7 +229,8 @@ therefore independent of both the PTY bridge and `AgentEngine`.
 - Transcribes via `transcribe.py` (SaaS proxy → OpenAI Whisper → local faster-whisper)
 - **With PTY registered**: returns `202 Accepted`, transcribes in background, writes text to the PTY through `bridge.write()` via `_transcribe_and_inject()`
 - **Without PTY**: returns `200` with `{"text": "..."}` for client-side injection (fallback)
-- PTY registry: `register_pty()` / `unregister_pty()` / `get_pty_bridge()` in `routes.py`
+- PTY registry: `register_pty()` / `unregister_pty()` / `get_pty_bridge()` / `get_pty_client_tty()` in `routes.py`. Registration records the tmux client tty alongside the bridge.
+- **Copy-mode guard**: a `bridge.write()` feeds bytes to the tmux client as if typed. If the pane is scrolled it is in tmux copy-mode, a modal keyboard grab, so those bytes would fire copy-mode key bindings (navigation, and some that kill the pane) instead of landing at the prompt. Before writing, `_transcribe_and_inject()` calls `board.sweep.exit_copy_mode(client_tty)`, which cancels the mode on the client's active pane only if it is in one. Leaving copy-mode returns the view to the bottom; that tradeoff is deliberate (dictation belongs at the prompt). The `200` fallback path injects client-side and is not covered by this guard.
 
 ## Authentication
 

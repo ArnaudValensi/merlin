@@ -235,9 +235,9 @@ class TestTerminalWebSocket:
         captured = {}
         orig_register = tr.register_pty
 
-        def capture_register(key, bridge):
+        def capture_register(key, bridge, client_tty=None):
             captured["bridge"] = bridge
-            orig_register(key, bridge)
+            orig_register(key, bridge, client_tty)
 
         try:
             with (
@@ -331,11 +331,25 @@ class TestPtyRegistry:
     def setup_method(self):
         """Clear registry before each test."""
         tr._pty_registry.clear()
+        tr._pty_client_tty.clear()
 
     def test_register_pty_stores_bridge(self):
         bridge = _StubBridge(42)
         tr.register_pty("terminal", bridge)
         assert tr.get_pty_bridge("terminal") is bridge
+
+    def test_register_pty_stores_client_tty(self):
+        tr.register_pty("terminal", _StubBridge(42), "/dev/pts/7")
+        assert tr.get_pty_client_tty("terminal") == "/dev/pts/7"
+
+    def test_get_pty_client_tty_none_without_tty(self):
+        tr.register_pty("terminal", _StubBridge(42))
+        assert tr.get_pty_client_tty("terminal") is None
+
+    def test_unregister_pty_clears_client_tty(self):
+        tr.register_pty("terminal", _StubBridge(42), "/dev/pts/7")
+        tr.unregister_pty("terminal")
+        assert tr.get_pty_client_tty("terminal") is None
 
     def test_get_pty_bridge_returns_none_when_empty(self):
         assert tr.get_pty_bridge("terminal") is None

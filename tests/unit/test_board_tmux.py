@@ -181,6 +181,55 @@ def test_switch_client_and_current_session(tmux_server):
         os.close(fd)
 
 
+def test_exit_copy_mode_cancels_scroll(tmux_server):
+    """Attach a real client, put its pane in copy-mode, and confirm
+    exit_copy_mode leaves it (and is a no-op / False when not in a mode)."""
+    pid, fd = pty.fork()
+    if pid == 0:
+        child_env = os.environ.copy()
+        child_env.pop("TMUX", None)
+        if child_env.get("TERM") == "dumb":
+            child_env["TERM"] = "xterm-256color"
+        os.execvpe(
+            "tmux",
+            ["tmux", "-L", _SOCK, "attach", "-t", "alpha"],
+            child_env,
+        )
+        os._exit(1)
+    try:
+        deadline = time.monotonic() + 3.0
+        tty = ""
+        while time.monotonic() < deadline:
+            clients = _tmux("list-clients", "-F", "#{client_tty}")
+            if clients.returncode == 0 and clients.stdout.strip():
+                tty = clients.stdout.splitlines()[0]
+                break
+            time.sleep(0.05)
+        assert tty, "tmux client did not attach"
+
+        def in_mode() -> str:
+            return _tmux(
+                "display-message", "-p", "-t", tty, "#{pane_in_mode}"
+            ).stdout.strip()
+
+        # Not in a mode: nothing to cancel.
+        assert in_mode() == "0"
+        assert sweep.exit_copy_mode(tty) is False
+
+        # Enter copy-mode (what a scroll does), then cancel it.
+        assert _tmux("copy-mode", "-t", tty).returncode == 0
+        time.sleep(0.2)
+        assert in_mode() == "1"
+        assert sweep.exit_copy_mode(tty) is True
+        time.sleep(0.2)
+        assert in_mode() == "0"
+
+        # Empty / unknown tty is a safe False.
+        assert sweep.exit_copy_mode("") is False
+    finally:
+        os.close(fd)
+
+
 def test_create_or_get_starts_a_configured_server(monkeypatch, tmp_path, request):
     """When this call is the one that starts tmux, the server gets Merlin's conf.
 

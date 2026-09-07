@@ -320,6 +320,33 @@ def switch_client(tty: str, target: str) -> bool:
     return _run_ok(["switch-client", "-c", tty, "-t", target])
 
 
+def exit_copy_mode(tty: str) -> bool:
+    """Leave copy-mode in a client's active pane, if it is in a mode.
+
+    Server-side text injection writes bytes to the tmux client as if typed.
+    While a pane is scrolled it is in copy-mode, a modal keyboard grab: those
+    bytes are then read as copy-mode key bindings (``q`` cancels, letters jump
+    the cursor, some sequences kill the pane) instead of reaching the program.
+    Cancelling the mode first makes injected text land at the prompt.
+
+    Targets the pane the client (by tty) is currently viewing, so it never
+    disturbs another browser tab. Returns True when a mode was cancelled,
+    False otherwise (not in a mode, unknown client, or tmux unavailable).
+    Best-effort: any failure just yields False.
+    """
+    if not tty:
+        return False
+    out = _tmux_capture(
+        ["display-message", "-p", "-t", tty, "#{pane_in_mode}\t#{pane_id}"]
+    )
+    if not out:
+        return False
+    parts = out.strip().split("\t")
+    if len(parts) != 2 or parts[0] != "1" or not parts[1]:
+        return False
+    return _run_ok(["send-keys", "-t", parts[1], "-X", "cancel"])
+
+
 def rename_session(old: str, new: str) -> bool:
     """Rename a tmux session. Best-effort; returns False on any failure."""
     if not old or not new:

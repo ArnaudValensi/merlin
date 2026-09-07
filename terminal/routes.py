@@ -176,21 +176,37 @@ def _voice_available() -> bool:
 # ---------------------------------------------------------------------------
 
 _pty_registry: dict[str, PtyBridge] = {}
+_pty_client_tty: dict[str, str] = {}
 
 
-def register_pty(session_key: str, bridge: PtyBridge) -> None:
-    """Register a PTY bridge for server-side text injection."""
+def register_pty(
+    session_key: str, bridge: PtyBridge, client_tty: str | None = None
+) -> None:
+    """Register a PTY bridge for server-side text injection.
+
+    ``client_tty`` is the tmux client this bridge writes to. It lets an
+    injection leave copy-mode on that client's active pane first, so scrolled
+    panes do not turn injected text into copy-mode key bindings.
+    """
     _pty_registry[session_key] = bridge
+    if client_tty:
+        _pty_client_tty[session_key] = client_tty
 
 
 def unregister_pty(session_key: str) -> None:
     """Unregister a PTY bridge."""
     _pty_registry.pop(session_key, None)
+    _pty_client_tty.pop(session_key, None)
 
 
 def get_pty_bridge(session_key: str) -> PtyBridge | None:
     """Get the PTY bridge for a session, or None if not registered."""
     return _pty_registry.get(session_key)
+
+
+def get_pty_client_tty(session_key: str) -> str | None:
+    """Get the tmux client tty for a registered PTY, or None if unknown."""
+    return _pty_client_tty.get(session_key)
 
 
 def set_cwd(cwd: str) -> None:
@@ -268,7 +284,11 @@ def _unlink_safe(path: str) -> None:
 
 
 async def _transcribe_and_inject(
-    tmp_path: str, language: str, bridge: PtyBridge, auto_enter: bool
+    tmp_path: str,
+    language: str,
+    bridge: PtyBridge,
+    auto_enter: bool,
+    client_tty: str | None = None,
 ) -> None:
     """Transcribe audio and write result directly to the PTY."""
     from transcribe import transcribe
@@ -278,6 +298,14 @@ async def _transcribe_and_inject(
             None, transcribe, tmp_path, language
         )
         if text:
+            if client_tty:
+                # If the pane is scrolled it is in tmux copy-mode, and the
+                # bytes below would be read as copy-mode key bindings instead
+                # of landing at the prompt (some can even kill the pane). Leave
+                # the mode first. Off the event loop: it shells out to tmux.
+                await asyncio.get_event_loop().run_in_executor(
+                    None, board_sweep.exit_copy_mode, client_tty
+                )
             if not await bridge.write(text.encode("utf-8")):
                 logger.warning("PTY write failed (terminal may be closed)")
             elif auto_enter:
@@ -328,8 +356,9 @@ async def transcribe_audio(
     if bridge is not None:
         # Server-side injection: return immediately, transcribe in background
         should_enter = auto_enter.lower() in ("true", "1")
+        client_tty = get_pty_client_tty("terminal")
         asyncio.create_task(
-            _transcribe_and_inject(tmp.name, lang, bridge, should_enter)
+            _transcribe_and_inject(tmp.name, lang, bridge, should_enter, client_tty)
         )
         return JSONResponse({"status": "accepted"}, status_code=202)
 
@@ -508,7 +537,7 @@ async def terminal_ws(websocket: WebSocket):
         await terminate_client(pid)
         await websocket.close(code=1011, reason="PTY setup failed")
         return
-    register_pty("terminal", bridge)
+    register_pty("terminal", bridge, client_tty)
     session_report_state = SessionReportState()
 
     # Check if child is still alive
