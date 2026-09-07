@@ -2,6 +2,11 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.34.0 (2026-09-07)
+
+### Fixed
+- **Voice dictation while scrolled no longer misfires** — Recording a voice message with the terminal scrolled up used to feed the transcribed text into tmux's scrollback mode, where it triggered stray commands and could even close the pane. Dictation now snaps back to the prompt and inserts the text cleanly.
+
 ## v0.33.0 (2026-09-03)
 
 ### Added
