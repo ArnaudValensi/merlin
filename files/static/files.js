@@ -507,6 +507,10 @@
         if (audio) audio.pause();
         const video = fileContent.querySelector('video');
         if (video) video.pause();
+        // Stop a running PDF document (its worker) when leaving the file view
+        if (window.merlinPdf && typeof window.merlinPdf.disposePdfContext === 'function') {
+            window.merlinPdf.disposePdfContext();
+        }
         dirView.style.display = '';
         fileView.style.display = 'none';
         fileDeleteConfirm.style.display = 'none';
@@ -1192,6 +1196,10 @@
         if (window.merlin3D && typeof window.merlin3D.disposeThreeContext === 'function') {
             window.merlin3D.disposeThreeContext();
         }
+        // Tear down any previous PDF document (stops its worker, frees canvases)
+        if (window.merlinPdf && typeof window.merlinPdf.disposePdfContext === 'function') {
+            window.merlinPdf.disposePdfContext();
+        }
 
         // Clear stale sibling UI; updateSiblingUI() will repopulate after ensureSiblings resolves
         fileNavCluster.style.display = 'none';
@@ -1216,6 +1224,8 @@
             renderVideoPreview(info);
         } else if (info.is_3d_model) {
             await render3DPreview(info);
+        } else if (info.is_pdf) {
+            await renderPdfPreview(info);
         } else if (info.is_text && isMarkdown(info.name)) {
             mdToggle.style.display = '';
             mdToggle.textContent = 'Raw';
@@ -1246,6 +1256,25 @@
             // Wipe any partial DOM, fall back to binary info with the file's metadata
             fileContent.innerHTML = '';
             renderBinaryInfo(info);
+        } finally {
+            fileLoading.style.display = 'none';
+        }
+    }
+
+    async function renderPdfPreview(info) {
+        if (!window.merlinPdf || typeof window.merlinPdf.renderPdfPreview !== 'function') {
+            // Module failed to load (offline, JS error) — fall back to binary
+            renderBinaryInfo(info);
+            return;
+        }
+        fileLoading.style.display = '';
+        try {
+            await window.merlinPdf.renderPdfPreview(info, fileContent);
+        } catch (err) {
+            console.error('PDF preview failed:', err);
+            // Wipe any partial DOM, fall back to binary info with a reason
+            fileContent.innerHTML = '';
+            renderBinaryInfo(info, 'Could not preview this PDF: ' + (err && err.message ? err.message : err));
         } finally {
             fileLoading.style.display = 'none';
         }
@@ -1632,7 +1661,7 @@
         attachSwipeNavigation(wrapper);
     }
 
-    function renderBinaryInfo(info) {
+    function renderBinaryInfo(info, message) {
         const wrapper = document.createElement('div');
         wrapper.className = 'binary-info';
         const iconEl = document.createElement('div');
@@ -1643,6 +1672,13 @@
         name.className = 'binary-name';
         name.textContent = info.name;
         wrapper.appendChild(name);
+        // Optional reason banner (e.g. a preview that could not render)
+        if (message) {
+            const banner = document.createElement('div');
+            banner.className = 'binary-message';
+            banner.textContent = message;
+            wrapper.appendChild(banner);
+        }
         const details = document.createElement('div');
         details.className = 'binary-details';
         const ext = info.name.includes('.') ? info.name.split('.').pop() : '';
