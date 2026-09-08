@@ -237,6 +237,38 @@ class TestPdfZoom:
         )
         page.close()
 
+    def test_zoom_keeps_viewport_center_anchored(self, browser_context, test_files):
+        """Regression: zooming must keep the vertical center of the viewport
+        anchored, not let the document drift/scroll away. From a mid-document
+        scroll position, the center-of-viewport fraction should stay roughly
+        constant across a zoom (and must not jump back to the top)."""
+        ctx, url = browser_context
+        page = _open_pdf(ctx, url, str(test_files / "sample_2page.pdf"))
+        page.wait_for_selector(".pdf-page canvas", timeout=15000)
+
+        # Scroll to the middle of the document.
+        page.eval_on_selector(
+            ".pdf-scroll", "el => el.scrollTop = (el.scrollHeight - el.clientHeight) / 2"
+        )
+        before = page.evaluate("""() => {
+            const el = document.querySelector('.pdf-scroll');
+            return (el.scrollTop + el.clientHeight / 2) / el.scrollHeight;
+        }""")
+        # Zoom in.
+        page.click(".pdf-zoom button:last-child")
+        after = page.evaluate("""() => {
+            const el = document.querySelector('.pdf-scroll');
+            return {
+                ratio: (el.scrollTop + el.clientHeight / 2) / el.scrollHeight,
+                scrollTop: el.scrollTop,
+            };
+        }""")
+        assert after["scrollTop"] > 5, "zoom jumped the document back to the top"
+        assert abs(after["ratio"] - before) < 0.05, (
+            f"viewport center drifted on zoom ({before:.3f} -> {after['ratio']:.3f})"
+        )
+        page.close()
+
 
 # ---------------------------------------------------------------------------
 # Bad-file fallback

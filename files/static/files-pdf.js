@@ -333,8 +333,19 @@ function relayout(state) {
 function setZoom(state, next) {
     const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
     if (Math.abs(clamped - state.zoomFactor) < 0.001) return;
+
+    // Anchor the vertical center of the viewport so the document doesn't drift
+    // under the user as the pages grow/shrink. Capture the center as a fraction
+    // of the scrollable height, then restore it after the synchronous resize.
+    const el = state.scrollEl;
+    const prevScrollH = el.scrollHeight || 1;
+    const ratio = (el.scrollTop + el.clientHeight / 2) / prevScrollH;
+
     state.zoomFactor = clamped;
-    relayout(state);
+    relayout(state); // resizes all pages synchronously, so scrollHeight is live
+
+    const newScrollH = el.scrollHeight;
+    el.scrollTop = Math.max(0, ratio * newScrollH - el.clientHeight / 2);
     updateTestHandle(state);
 }
 
@@ -377,6 +388,13 @@ function onTouchStart(state, e) {
     if (e.touches.length === 2) {
         state.pinchStartDist = touchDist(e.touches[0], e.touches[1]);
         state.pinchStartZoom = state.zoomFactor;
+        // Scale the preview around the viewport's vertical center so the point
+        // under the pinch stays put — and matches setZoom's center anchor, so
+        // there's no jump when the gesture commits. Scroll is frozen (we
+        // preventDefault two-finger moves), so this origin stays valid.
+        const el = state.scrollEl;
+        const originY = el.scrollTop + el.clientHeight / 2;
+        state.pagesEl.style.transformOrigin = '50% ' + originY + 'px';
     } else if (e.touches.length === 1) {
         // Double-tap detection.
         const now = Date.now();
@@ -401,7 +419,7 @@ function onTouchMove(state, e) {
             Math.max(MIN_ZOOM, state.pinchStartZoom * ratio),
         );
         const rel = live / state.zoomFactor;
-        state.pagesEl.style.transformOrigin = 'top center';
+        // transform-origin was set at pinch start (viewport center).
         state.pagesEl.style.transform = 'scale(' + rel + ')';
         state.pendingPinchZoom = live;
     }
