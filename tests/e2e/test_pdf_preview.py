@@ -213,6 +213,30 @@ class TestPdfZoom:
         assert after > before
         page.close()
 
+    def test_zoom_resizes_rendered_page_synchronously(
+        self, browser_context, test_files
+    ):
+        """Regression: on zoom, an already-rendered page's on-screen width must
+        grow in the same turn (before the debounced sharp re-render). If it only
+        grew after the debounce, the page would snap back to the old size for a
+        few frames on pinch release."""
+        ctx, url = browser_context
+        page = _open_pdf(ctx, url, str(test_files / "sample_2page.pdf"))
+        page.wait_for_selector(".pdf-page canvas", timeout=15000)
+        before_w = page.evaluate(
+            "() => document.querySelector('.pdf-page').getBoundingClientRect().width"
+        )
+        # Bump the zoom and read the width back immediately, without waiting for
+        # the ~150ms re-render debounce.
+        new_w = page.evaluate("""() => {
+            document.querySelector('.pdf-zoom button:last-child').click();
+            return document.querySelector('.pdf-page').getBoundingClientRect().width;
+        }""")
+        assert new_w > before_w + 1, (
+            f"rendered page did not resize synchronously ({before_w} -> {new_w})"
+        )
+        page.close()
+
 
 # ---------------------------------------------------------------------------
 # Bad-file fallback

@@ -845,34 +845,49 @@
 }
 
 /* PDF preview (pdf.js) */
+/* .pdf-preview is a non-scrolling positioned shell so the counter + zoom
+   chrome stays fixed; .pdf-scroll inside it is the element that scrolls. */
 .pdf-preview {
     position: relative;
     width: 100%;
     height: calc(100vh - 180px);
     min-height: 320px;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
+    overflow: hidden;
     background: var(--bg-page);
 }
 
+.pdf-scroll {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    /* Scroll both axes: once zoomed wider than the viewport the page pans
+       horizontally instead of being clamped (which would distort it). */
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
 .pdf-pages {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    display: block;
     padding: 12px 0;
 }
 
 .pdf-page {
+    display: block;
+    /* margin auto centers a page narrower than the viewport; a wider (zoomed)
+       page collapses the margins and overflows into horizontal scroll. */
     margin: 0 auto 12px auto;
-    max-width: 100%;
     background: #fff; /* page paper stays white regardless of theme */
     box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
 }
 
 .pdf-page canvas {
+    /* width:100% + height:auto keeps the canvas at its true aspect ratio no
+       matter how wide the page element is set — no squish when zoomed. */
     display: block;
     width: 100%;
-    height: 100%;
+    height: auto;
 }
 
 .pdf-counter {

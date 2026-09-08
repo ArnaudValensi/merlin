@@ -38,16 +38,22 @@ let ctx = null; // active document state, see mountDocument()
 async function renderPdfPreview(info, container) {
     disposePdfContext();
 
+    // .pdf-preview is a non-scrolling positioned shell so the counter + zoom
+    // chrome stays put; the inner .pdf-scroll is the one that scrolls.
     const wrapper = document.createElement('div');
     wrapper.className = 'pdf-preview';
-    // Own vertical panning; block the browser's own pinch-zoom so we can drive
-    // zoom ourselves without zooming the whole dashboard.
-    wrapper.style.touchAction = 'pan-y';
     container.appendChild(wrapper);
+
+    const scrollEl = document.createElement('div');
+    scrollEl.className = 'pdf-scroll';
+    // Allow panning both axes (needed once zoomed wider than the viewport), but
+    // reserve pinch for us — block the browser's own pinch-zoom of the page.
+    scrollEl.style.touchAction = 'pan-x pan-y';
+    wrapper.appendChild(scrollEl);
 
     const pagesEl = document.createElement('div');
     pagesEl.className = 'pdf-pages';
-    wrapper.appendChild(pagesEl);
+    scrollEl.appendChild(pagesEl);
 
     const counter = document.createElement('div');
     counter.className = 'pdf-counter';
@@ -92,10 +98,10 @@ async function renderPdfPreview(info, container) {
         throw err;
     }
 
-    await mountDocument(wrapper, pagesEl, counter, zoomOut, zoomIn, doc);
+    await mountDocument(wrapper, scrollEl, pagesEl, counter, zoomOut, zoomIn, doc);
 }
 
-async function mountDocument(wrapper, pagesEl, counter, zoomOut, zoomIn, doc) {
+async function mountDocument(wrapper, scrollEl, pagesEl, counter, zoomOut, zoomIn, doc) {
     const numPages = doc.numPages;
 
     // Read page 1 to size placeholders. Most PDFs are uniform; each page's real
@@ -106,6 +112,7 @@ async function mountDocument(wrapper, pagesEl, counter, zoomOut, zoomIn, doc) {
     const state = {
         doc,
         wrapper,
+        scrollEl,
         pagesEl,
         counter,
         numPages,
@@ -155,11 +162,11 @@ async function mountDocument(wrapper, pagesEl, counter, zoomOut, zoomIn, doc) {
                 if (entry.isIntersecting) {
                     renderPage(state, page);
                 } else {
-                    unrenderPage(page);
+                    unrenderPage(state, page);
                 }
             }
         },
-        { root: wrapper, rootMargin: '200% 0px' },
+        { root: scrollEl, rootMargin: '200% 0px' },
     );
     state.pages.forEach((p) => state.observer.observe(p.el));
 
@@ -171,7 +178,7 @@ async function mountDocument(wrapper, pagesEl, counter, zoomOut, zoomIn, doc) {
     state.resizeObserver.observe(wrapper);
 
     // Page counter follows scroll.
-    wrapper.addEventListener('scroll', () => onScroll(state), { passive: true });
+    scrollEl.addEventListener('scroll', () => onScroll(state), { passive: true });
     updateCounter(state);
 
     // Zoom controls.
@@ -179,16 +186,16 @@ async function mountDocument(wrapper, pagesEl, counter, zoomOut, zoomIn, doc) {
     zoomIn.addEventListener('click', () => applyZoom(state, ZOOM_STEP));
     state.onKeyDown = (e) => onKeyDown(state, e);
     document.addEventListener('keydown', state.onKeyDown);
-    wrapper.addEventListener('wheel', (e) => onWheel(state, e), { passive: false });
+    scrollEl.addEventListener('wheel', (e) => onWheel(state, e), { passive: false });
 
     // Touch: pinch-to-zoom + double-tap.
-    wrapper.addEventListener('touchstart', (e) => onTouchStart(state, e), {
+    scrollEl.addEventListener('touchstart', (e) => onTouchStart(state, e), {
         passive: false,
     });
-    wrapper.addEventListener('touchmove', (e) => onTouchMove(state, e), {
+    scrollEl.addEventListener('touchmove', (e) => onTouchMove(state, e), {
         passive: false,
     });
-    wrapper.addEventListener('touchend', (e) => onTouchEnd(state, e), {
+    scrollEl.addEventListener('touchend', (e) => onTouchEnd(state, e), {
         passive: false,
     });
 
@@ -204,13 +211,16 @@ function cssScale(state) {
 }
 
 function computeFitScale(state) {
-    const avail = (state.wrapper.clientWidth || 1) - 24; // side margins
+    const avail = (state.scrollEl.clientWidth || 1) - 24; // side margins
     const maxWidth = Math.min(Math.max(avail, 1), MAX_PAGE_CSS_WIDTH);
     state.fitScale = Math.max(0.1, maxWidth / state.pageWidthPts);
 }
 
 function sizePlaceholder(state, page) {
-    const cssW = state.pageWidthPts * cssScale(state);
+    // Reserve space for an unrendered page. Both dimensions are needed so the
+    // IntersectionObserver and scroll height are correct before it renders.
+    // Use the page's own width once known; fall back to page 1's estimate.
+    const cssW = (page.widthPts || state.pageWidthPts) * cssScale(state);
     page.el.style.width = Math.floor(cssW) + 'px';
     page.el.style.height = Math.floor(cssW * page.aspect) + 'px';
 }
@@ -230,13 +240,17 @@ async function renderPage(state, page) {
 
     const css = cssScale(state);
     const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
+    const base = pdfPage.getViewport({ scale: 1 });
     const displayVp = pdfPage.getViewport({ scale: css });
     const renderVp = pdfPage.getViewport({ scale: css * dpr });
 
-    // Correct placeholder + stored aspect from the real page.
+    // Correct stored per-page metrics from the real page, and set the width.
+    // Height is left to the canvas (width:100%; height:auto) so the aspect ratio
+    // is preserved even when zoomed wider than the viewport — no distortion.
+    page.widthPts = base.width;
     page.aspect = displayVp.height / displayVp.width;
     page.el.style.width = Math.floor(displayVp.width) + 'px';
-    page.el.style.height = Math.floor(displayVp.height) + 'px';
+    page.el.style.height = 'auto';
 
     const canvas = document.createElement('canvas');
     canvas.width = Math.floor(renderVp.width);
@@ -257,6 +271,7 @@ async function renderPage(state, page) {
                 page.canvas.parentNode.removeChild(page.canvas);
             }
             page.canvas = null;
+            sizePlaceholder(state, page); // restore reserved height
         }
     } finally {
         page.renderTask = null;
@@ -264,7 +279,7 @@ async function renderPage(state, page) {
     }
 }
 
-function unrenderPage(page) {
+function unrenderPage(state, page) {
     if (page.renderTask) {
         try {
             page.renderTask.cancel();
@@ -278,13 +293,25 @@ function unrenderPage(page) {
     }
     page.canvas = null;
     page.rendered = false;
+    // Reserve the page's space again so scroll height / observer stay correct.
+    sizePlaceholder(state, page);
 }
 
-// Re-size every placeholder and re-render the pages that currently have a
-// canvas (i.e. the visible set), debounced so a zoom drag doesn't thrash.
+// Re-size all pages to the new scale immediately, then re-render (sharpen) the
+// visible ones on a debounce so a zoom drag doesn't thrash. Resizing rendered
+// pages synchronously is what avoids the pinch-release flicker: the existing
+// canvas (width:100%; height:auto) instantly rescales to the committed zoom in
+// the same frame the transform is cleared, so there is no snap-back to the old
+// size while we wait for the sharp re-render.
 function relayout(state) {
     for (const page of state.pages) {
-        if (!page.canvas) sizePlaceholder(state, page);
+        if (page.canvas) {
+            const w = (page.widthPts || state.pageWidthPts) * cssScale(state);
+            page.el.style.width = Math.floor(w) + 'px';
+            page.el.style.height = 'auto'; // canvas keeps the aspect
+        } else {
+            sizePlaceholder(state, page);
+        }
     }
     if (state.rerenderTimer) clearTimeout(state.rerenderTimer);
     state.rerenderTimer = setTimeout(() => {
@@ -292,7 +319,7 @@ function relayout(state) {
         if (state.destroyed) return;
         for (const page of state.pages) {
             if (page.canvas) {
-                unrenderPage(page);
+                unrenderPage(state, page);
                 renderPage(state, page);
             }
         }
@@ -405,7 +432,7 @@ function onScroll(state) {
 
 function updateCounter(state) {
     // The current page is the last one whose top is at or above the viewport top.
-    const top = state.wrapper.scrollTop;
+    const top = state.scrollEl.scrollTop;
     let current = 1;
     for (const page of state.pages) {
         if (page.el.offsetTop - 16 <= top) {
