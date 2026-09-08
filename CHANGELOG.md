@@ -2,6 +2,11 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.35.0 (2026-09-08)
+
+### Added
+- **PDFs preview inline in the file browser** — Open a `.pdf` and it renders in place, the way Markdown does, instead of forcing a download. Scroll through the pages, pinch or use the zoom buttons to read fine print, and it works the same on a phone as on the desktop. A corrupt or password-protected file falls back to a clear message with a download link.
+
 ## v0.34.0 (2026-09-07)
 
 ### Fixed
