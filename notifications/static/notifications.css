@@ -1,0 +1,116 @@
+/* Notifications popover: the sessions panel's visual language (dashboard.css
+   vars, Geist, 6px radius). Docked above the bell on desktop, a sheet above
+   the terminal's bottom bar on mobile. The bell itself is styled with the
+   other status-bar buttons in terminal.html. */
+
+.notif-popover {
+  position: fixed;
+  z-index: 220;                 /* above the status bar (210) and the sheet (200) */
+  display: none;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  overflow: hidden;
+}
+.notif-popover.open { display: flex; }
+
+.notif-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.notif-title {
+  flex: 1 1 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.notif-close {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+}
+.notif-close:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+.notif-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+
+/* One setting per row: label left, switch right, the whole row is the target. */
+.notif-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  color: var(--text-primary);
+  user-select: none;
+}
+.notif-row:hover { border-color: var(--text-muted); }
+.notif-row.disabled { opacity: 0.55; cursor: not-allowed; }
+.notif-row.on { border-color: rgba(52, 211, 153, 0.35); }
+.notif-label { flex: 1 1 auto; font-size: 13px; }
+.notif-sentence { font-size: 12px; color: var(--text-secondary); line-height: 1.45; }
+
+/* The switch: a checkbox drawn as a pill. Keyboard-usable (the input stays
+   focusable), green when on, like the vim-mode toggle. */
+.notif-switch { position: relative; flex: 0 0 auto; width: 34px; height: 20px; display: inline-block; }
+.notif-switch input {
+  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
+  opacity: 0; cursor: inherit;
+}
+.notif-knob {
+  position: absolute; inset: 0;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  transition: background 0.15s, border-color 0.15s;
+  pointer-events: none;
+}
+.notif-knob::after {
+  content: '';
+  position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform 0.15s, background 0.15s;
+}
+.notif-switch input:checked + .notif-knob { background: rgba(52, 211, 153, 0.18); border-color: rgba(52, 211, 153, 0.5); }
+.notif-switch input:checked + .notif-knob::after { transform: translateX(14px); background: var(--accent-green); }
+.notif-switch input:focus-visible + .notif-knob { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+
+.notif-status {
+  font-family: 'Geist Mono', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  padding: 0 2px;
+  min-height: 16px;
+}
+
+/* Mobile: a full-width sheet sitting on the bottom bar, like the sessions
+   sheet, with room for a thumb. */
+@media (max-width: 768px) {
+  .notif-popover {
+    width: auto;
+    max-width: none;
+    border-radius: 12px 12px 0 0;
+    border-bottom: none;
+  }
+  .notif-row { padding: 12px 12px; }
+  .notif-body { padding: 12px 14px 18px; }
+}

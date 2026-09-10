@@ -236,7 +236,21 @@ def _resolve_enabled(ext_id: str, tier: str, state: dict) -> bool:
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Merlin", docs_url=None, redoc_url=None)
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Startup does nothing (background tasks start in ``_run`` below, next to
+    the other tasks). Shutdown is the one hook uvicorn runs before it re-raises
+    SIGTERM, so the attention watcher is stopped cleanly here."""
+    yield
+    from notifications import watcher as _notif_watcher
+
+    await _notif_watcher.stop()
+
+
+app = FastAPI(title="Merlin", docs_url=None, redoc_url=None, lifespan=_lifespan)
 
 
 class NoCacheStaticMiddleware(BaseHTTPMiddleware):
@@ -1003,6 +1017,13 @@ import board
 
 mount_module(board, "board")
 
+# Notifications: core module. Attention events from the tmux sweep (the
+# watcher task starts in _run), the popover's API and assets. Events ride the
+# board poll. /api/notifications + /static/notifications.
+import notifications
+
+mount_module(notifications, "notifications")
+
 # Webhooks front desk — intentionally mounted WITHOUT require_auth (terminal
 # precedent): /webhooks/* is public and self-authenticating via per-hook
 # secrets, verified inside the module. Everything under /api stays gated.
@@ -1489,6 +1510,13 @@ def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
         import job
 
         await job.start()
+
+        # Attention watcher: turns @agent_state transitions into notification
+        # events. Inert without tmux (it sleeps and retries), stopped by the
+        # app lifespan at shutdown.
+        from notifications import watcher as notif_watcher
+
+        tasks.append(notif_watcher.start())
 
         # Start all extensions with start() hooks
         for info in extension_registry.values():

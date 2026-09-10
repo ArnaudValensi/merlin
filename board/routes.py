@@ -64,15 +64,27 @@ api_router = APIRouter()
 
 
 @api_router.get("")
-def api_board(current: str = ""):
+def api_board(current: str = "", since: str = ""):
     """The session -> window tree. Runs the session and window sweeps and builds
     the view. ``current`` is the session this client is on (the browser learns it
     over the terminal WebSocket and passes it back), used only to mark the
-    current session; it never affects another client."""
+    current session; it never affects another client.
+
+    ``since`` is the page's attention cursor: the response carries the events
+    after it under ``events``, the new position under ``cursor``, and under
+    ``dropped`` the number of events lost before they could be read (0
+    normally). No cursor returns no events, so a fresh page never replays."""
+    from notifications import watcher as notif_watcher
+
     now = time.time()
     sessions = sweep.run_session_sweep()
     windows = sweep.run_sweep()
-    return model.build_tree(sessions, windows, current, now)
+    tree = model.build_tree(sessions, windows, current, now)
+    events, cursor, dropped = notif_watcher.watcher.events_since(since)
+    tree["events"] = [e.to_dict() for e in events]
+    tree["cursor"] = cursor
+    tree["dropped"] = dropped
+    return tree
 
 
 @api_router.post("/session/new")

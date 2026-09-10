@@ -48,3 +48,24 @@ test('sets the document title from its machine data attribute', () => {
     assert.equal(PageTitle.set('FILES', 'marketing', doc), 'ovh · files: marketing');
     assert.equal(doc.title, 'ovh · files: marketing');
 });
+
+test('setCount prefixes the title and survives a later set()', () => {
+    const doc = {
+        documentElement: { dataset: { machineName: 'ovh' } },
+        title: '',
+    };
+
+    PageTitle.set('term', 'api/main', doc);
+    assert.equal(PageTitle.setCount(3, doc), '(3) ovh · term: api/main');
+    assert.equal(doc.title, '(3) ovh · term: api/main');
+    // A session switch re-titles the page: the count stays.
+    assert.equal(PageTitle.set('term', 'api/review', doc), '(3) ovh · term: api/review');
+    assert.equal(PageTitle.setCount(0, doc), 'ovh · term: api/review');
+    assert.equal(PageTitle.setCount(-2, doc), 'ovh · term: api/review');
+    assert.equal(PageTitle.setCount('x', doc), 'ovh · term: api/review');
+});
+
+test('withCount formats the prefix only for a positive count', () => {
+    assert.equal(PageTitle.withCount('ovh · term', 2), '(2) ovh · term');
+    assert.equal(PageTitle.withCount('ovh · term', 0), 'ovh · term');
+});

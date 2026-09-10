@@ -1,7 +1,10 @@
 /* Session switcher — the content of the terminal's Sessions panel.
-   Vanilla JS, IIFE. window.SessionsBoard.init({container, onAttention, onJump,
-   onClose}) builds its own shell into `container`, polls /api/board, and renders
-   tmux's session -> window tree with an agent-activity overlay.
+   Vanilla JS, IIFE. window.SessionsBoard.init({container, onAttention, onEvents,
+   onJump, onClose}) builds its own shell into `container`, polls /api/board, and
+   renders tmux's session -> window tree with an agent-activity overlay. The poll
+   also carries attention events (a window flipping to done or ask) behind a
+   cursor. `onEvents(events)` receives them and the notifications module turns
+   them into browser notifications.
 
    Interaction (Tree-Style-Tab-like): a session is a collapsible group. Click a
    session header to FOLD it; click a window to switch this client to it
@@ -22,7 +25,8 @@ window.SessionsBoard = (function () {
             sessions: [], counts: { sessions: 0, waiting: 0, working: 0, asking: 0 },
             current: '', query: '', lastSig: null, paused: false,
             folded: loadFolded(),
-            onAttention: function () {}, onJump: function () {}, onClose: null };
+            cursor: '',   // attention cursor: '' on a fresh page, so nothing replays
+            onAttention: function () {}, onEvents: function () {}, onJump: function () {}, onClose: null };
 
   function loadFolded() {
     try { return new Set(JSON.parse(localStorage.getItem(FOLD_KEY) || '[]')); }
@@ -496,10 +500,27 @@ window.SessionsBoard = (function () {
     S.onAttention(v.attention || 0, S.counts.asking || 0);
   }
 
+  // Attention events ride the poll. They are consumed on EVERY successful poll,
+  // whether or not the tree changed: an event is a transition, not a state, so
+  // it can arrive with an unchanged signature. The first poll sends no cursor
+  // and gets none, so a reload never replays old notifications.
+  function consumeEvents(v) {
+    if (typeof v.cursor === 'string') S.cursor = v.cursor;
+    if (v.dropped > 0) console.warn('[merlin] ' + v.dropped + ' attention event(s) missed');
+    var events = v.events || [];
+    if (events.length) {
+      try { S.onEvents(events); } catch (e) { console.warn('[merlin] onEvents failed', e); }
+    }
+  }
+
   function load() {
     if (S.paused) return Promise.resolve();
-    return api('?current=' + encodeURIComponent(S.current)).then(function (v) {
-      if (v && sigOf(v) !== S.lastSig) render(v);
+    var q = '?current=' + encodeURIComponent(S.current);
+    if (S.cursor) q += '&since=' + encodeURIComponent(S.cursor);
+    return api(q).then(function (v) {
+      if (!v) return;
+      consumeEvents(v);
+      if (sigOf(v) !== S.lastSig) render(v);
     });
   }
 
@@ -612,6 +633,7 @@ window.SessionsBoard = (function () {
   function init(opts) {
     S.root = opts.container;
     S.onAttention = opts.onAttention || function () {};
+    S.onEvents = opts.onEvents || function () {};
     S.onJump = opts.onJump || function () {};
     S.onClose = opts.onClose || null;
     buildShell(S.root);

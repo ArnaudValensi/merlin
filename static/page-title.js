@@ -38,19 +38,43 @@ const MerlinPageTitle = (() => {
         return sessionPart || windowPart;
     };
 
+    // Attention count, shown as a "(n) " prefix. Kept here so a later set()
+    // (a session switch re-titling the terminal) never loses it, and so no
+    // page ever writes document.title on its own.
+    let count = 0;
+    let last = null;
+
+    const withCount = (title, n) => (n > 0 ? '(' + n + ') ' + title : title);
+
     const set = (app, context, providedDocument) => {
         const doc = providedDocument || (
             typeof document !== 'undefined' ? document : null
         );
-        if (!doc) return format('', app, context);
+        if (!doc) return withCount(format('', app, context), count);
         const root = doc.documentElement;
         const machine = root && root.dataset ? root.dataset.machineName : '';
-        const title = format(machine, app, context);
+        const title = withCount(format(machine, app, context), count);
         doc.title = title;
+        last = { app, context, doc };
         return title;
     };
 
-    return { clean, format, pathContext, tmuxContext, set };
+    // Change the count and re-apply the last title. A page that has not set a
+    // title yet gets the prefix on its server-rendered one.
+    const setCount = (n, providedDocument) => {
+        const value = Number(n);
+        count = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+        if (last) return set(last.app, last.context, last.doc);
+        const doc = providedDocument || (
+            typeof document !== 'undefined' ? document : null
+        );
+        if (!doc) return '';
+        const base = clean(doc.title).replace(/^\(\d+\) /, '');
+        doc.title = withCount(base, count);
+        return doc.title;
+    };
+
+    return { clean, format, pathContext, tmuxContext, set, setCount, withCount };
 })();
 
 if (typeof globalThis !== 'undefined') {

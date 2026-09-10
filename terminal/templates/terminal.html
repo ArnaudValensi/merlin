@@ -67,6 +67,10 @@
     <button id="toolbar-toggle" title="Toggle keyboard toolbar">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M6 16h12"/></svg>
     </button>
+    <button id="notif-btn" title="Notifications">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+        <span id="notif-dot" hidden></span>
+    </button>
     <button id="sessions-btn" title="Sessions — your parallel agent windows">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
         <span id="sessions-badge" hidden></span>
@@ -79,6 +83,8 @@
 <div id="sessions-divider" class="sessions-divider" title="Drag to resize"></div>
 <div id="sessions-backdrop" class="sessions-backdrop"></div>
 <aside id="sessions-panel" class="sessions-panel" aria-label="Sessions"></aside>
+<!-- Notifications popover: opened by the bell in the status bar. -->
+<div id="notif-popover" class="notif-popover" role="dialog" aria-label="Notifications" hidden></div>
 
 <!-- Folder picker modal (shared component) — used here to cd the terminal -->
 <div id="folder-picker-modal" class="picker-modal" role="dialog" aria-modal="true" aria-label="Change directory" style="display:none">
@@ -107,6 +113,7 @@
 <link rel="stylesheet" href="/static/vendor/geistmono-nerd-font.css">
 <link rel="stylesheet" href="/static/vendor/xterm.min.css">
 <link rel="stylesheet" href="/static/board/board.css">
+<link rel="stylesheet" href="/static/notifications/notifications.css">
 <link rel="stylesheet" href="/static/folder-picker.css">
 <script src="/static/folder-picker.js"></script>
 <script src="/static/vendor/xterm.min.js"></script>
@@ -114,6 +121,7 @@
 <script src="/static/vendor/xterm-addon-web-links.min.js"></script>
 <script src="/static/vendor/sortable.min.js"></script>
 <script src="/static/board/board.js"></script>
+<script src="/static/notifications/notifications.js"></script>
 {# Shared clipboard ladder — the same partial /clipboard-test includes, so the
    diagnostic page and the terminal can never disagree about what a paste does. #}
 <script>{% include "clipboard-core.js" %}</script>
@@ -179,6 +187,28 @@
     font-size: 9px; font-weight: 700; line-height: 14px; text-align: center;
 }
 #sessions-btn.has-asking #sessions-badge { background: var(--accent-blue); color: #08111f; }
+
+/* Notifications bell: same shape as its neighbours. Blue while its popover is
+   open. The dot is a hint (permission granted, no push yet), not an alert. */
+#notif-btn {
+    position: relative;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    padding: 2px 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    height: 24px;
+}
+#notif-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+#notif-btn.active { color: var(--accent-blue); border-color: rgba(74, 158, 255, 0.45); }
+#notif-dot {
+    position: absolute; top: -3px; right: -3px;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent-blue);
+}
 </style>
 <script>
 // Sessions board wiring. Mobile: the button opens a fullscreen modal. Desktop:
@@ -266,6 +296,17 @@
         divider.addEventListener('pointercancel', endDrag);
     }
 
+    // Notifications: the bell and its popover, the badge and the title count,
+    // and the in-tab Notification rule fed by the poll's events.
+    var notif = window.MerlinNotifications;
+    if (notif) {
+        notif.init({
+            bell: document.getElementById('notif-btn'),
+            dot: document.getElementById('notif-dot'),
+            popover: document.getElementById('notif-popover'),
+        });
+    }
+
     window.SessionsBoard.init({
         container: panel,
         onJump: function () { if (!desktop()) close(); },   // jumping closes the modal (mobile)
@@ -275,7 +316,9 @@
             else { badge.hidden = true; btn.classList.remove('has-waiting'); }
             // Asking outranks waiting: a live turn is blocked, not just unread.
             btn.classList.toggle('has-asking', asking > 0);
+            if (notif) notif.setAttention(n);
         },
+        onEvents: function (events) { if (notif) notif.handleEvents(events); },
     });
 })();
 </script>
@@ -1110,6 +1153,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let ws = null;
     let currentSession = '';
+    let currentWindowId = '';
+
+    // Deep link (decision 11): /terminal?target=<session>:<window_id> switches
+    // this client to that window once its tmux client is confirmed (the first
+    // session frame), then the parameter is dropped from the URL so a reload
+    // does not switch again. A stale target fails inside tmux, harmlessly.
+    let pendingTarget = '';
+    try {
+        const params = new URLSearchParams(location.search);
+        const t = params.get('target');
+        if (t && /^[^:]+:@\d+$/.test(t)) pendingTarget = t;
+        if (params.has('target')) {
+            params.delete('target');
+            const q = params.toString();
+            history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + location.hash);
+        }
+    } catch (_) { /* no URL API, no deep link */ }
 
     // Bridge for the Sessions panel (board.js). Switching sessions is per-client
     // and only the WebSocket knows which tmux client this browser is, so the
@@ -1125,6 +1185,7 @@ document.addEventListener('DOMContentLoaded', () => {
             term.focus();
         },
         currentSession: function () { return currentSession; },
+        currentWindow: function () { return currentWindowId; },
         // Why the last paste did what it did — see handlePaste().
         lastPasteResult: function () { return lastPasteResult; },
     };
@@ -1927,6 +1988,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     var ctl = JSON.parse(d.slice(1));
                     if (ctl && ctl.type === 'session') {
                         currentSession = ctl.name || '';
+                        currentWindowId = ctl.window_id || '';
+                        if (pendingTarget) {
+                            const target = pendingTarget;
+                            pendingTarget = '';
+                            if (target !== currentSession + ':' + currentWindowId) {
+                                window.MerlinTerminal.switchSession(target);
+                            }
+                        }
                         MerlinPageTitle.set(
                             'term',
                             MerlinPageTitle.tmuxContext(ctl.name, ctl.window),
