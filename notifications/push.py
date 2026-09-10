@@ -416,17 +416,33 @@ class PushSender:
         self._send = send
         self.subject = subject
         self._last_push: dict[str, float] = {}
+        self._reserve_lock = threading.Lock()
 
     # -- suppression --------------------------------------------------------
 
     def suppression_reason(self, event: Event) -> str:
-        """Why this event gets no push, or an empty string."""
+        """Why this event gets no push, or an empty string. Read-only."""
         if self.is_displayed(event.target):
             return "displayed"
-        last = self._last_push.get(event.sid)
+        with self._reserve_lock:
+            last = self._last_push.get(event.sid)
         if last is not None and self._clock() - last < self.min_interval:
             return "recent"
         return ""
+
+    def reserve(self, event: Event) -> str:
+        """Check the two rules and, when nothing suppresses the event, reserve
+        the sid for the rate limit in the same step. Atomic: two deliveries
+        for one sid can never both pass. A suppressed event reserves nothing."""
+        if self.is_displayed(event.target):
+            return "displayed"
+        with self._reserve_lock:
+            last = self._last_push.get(event.sid)
+            now = self._clock()
+            if last is not None and now - last < self.min_interval:
+                return "recent"
+            self._last_push[event.sid] = now
+            return ""
 
     # -- sending ------------------------------------------------------------
 
@@ -491,21 +507,25 @@ class PushSender:
         """Send off the event loop (``pywebpush`` is synchronous)."""
         return await asyncio.to_thread(self.send_all_sync, payload, only)
 
-    def deliver_sync(self, event: Event) -> SendResult:
-        """Push one attention event, unless a suppression rule applies. Every
-        store access happens here, off the event loop."""
-        reason = self.suppression_reason(event)
-        if reason:
-            return SendResult(skipped=reason)
-        if not self.store.all():
-            return SendResult(skipped="no subscriptions")
-        self._last_push[event.sid] = self._clock()
-        return self.send_all_sync(build_payload(event))
+    def _has_subscriptions(self) -> bool:
+        return bool(self.store.all())
 
     async def deliver(self, event: Event) -> SendResult:
-        """The entry point the watcher's listener uses. Never raises."""
+        """Push one attention event, unless a suppression rule applies. The
+        entry point the watcher's listener uses. Never raises.
+
+        The store is read in a thread. The suppression check and the sid
+        reservation run on the event loop with no await between them (and
+        under a lock besides), so concurrent deliveries for one sid cannot
+        both send, and ``is_displayed`` reads the terminal's registry on the
+        thread that owns it."""
         try:
-            return await asyncio.to_thread(self.deliver_sync, event)
+            if not await asyncio.to_thread(self._has_subscriptions):
+                return SendResult(skipped="no subscriptions")
+            reason = self.reserve(event)
+            if reason:
+                return SendResult(skipped=reason)
+            return await self.send_all(build_payload(event))
         except Exception:
             logger.exception("Push delivery failed")
             return SendResult(skipped="error")

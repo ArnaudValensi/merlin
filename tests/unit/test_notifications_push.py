@@ -481,3 +481,64 @@ class TestAsyncEntryPoints:
         )
         result = sender.test_sync({"title": "t"}, SUB["endpoint"])
         assert not isinstance(result, str) and result.sent == 1
+
+
+class TestAtomicSuppression:
+    def test_concurrent_deliveries_for_one_sid_send_once(self, tmp_path, monkeypatch):
+        rec = Recorder()
+        sender, store = make_sender(tmp_path, rec, clock=lambda: 1000.0)
+        store.add(SUB, "a")
+        # Both preflights leave their threads together, so both reach the
+        # suppression step believing nothing was pushed yet.
+        gate = threading.Barrier(2)
+        original = sender.store.all
+        preflights = [0]
+
+        def all_with_gate():
+            # Only the two preflight reads meet at the gate. The later read
+            # inside the send itself passes straight through.
+            preflights[0] += 1
+            if preflights[0] <= 2:
+                gate.wait(5)
+            return original()
+
+        monkeypatch.setattr(sender.store, "all", all_with_gate)
+
+        async def both():
+            return await asyncio.gather(
+                sender.deliver(event()), sender.deliver(event(state="ask"))
+            )
+
+        results = asyncio.run(both())
+        assert sorted((r.sent, r.skipped) for r in results) == [(0, "recent"), (1, "")]
+        assert len(rec.calls) == 1
+
+    def test_concurrent_suppressed_event_does_not_arm_the_limit(self, tmp_path):
+        rec = Recorder()
+        sender, store = make_sender(
+            tmp_path, rec, is_displayed=lambda t: t == "alpha:@9", clock=lambda: 1000.0
+        )
+        store.add(SUB, "a")
+
+        async def both():
+            return await asyncio.gather(
+                sender.deliver(event(wid="@9")), sender.deliver(event(wid="@1"))
+            )
+
+        results = asyncio.run(both())
+        assert sorted((r.sent, r.skipped) for r in results) == [
+            (0, "displayed"),
+            (1, ""),
+        ]
+        # The displayed one reserved nothing: a later event for the sid still sends
+        # only because the sent one reserved it. Check the reservation belongs to
+        # the sent event by moving the clock past the window.
+        sender._clock = lambda: 1030.0
+        assert asyncio.run(sender.deliver(event(wid="@1"))).sent == 1
+
+    def test_reserve_is_atomic_across_threads(self, tmp_path):
+        rec = Recorder()
+        sender, _ = make_sender(tmp_path, rec, clock=lambda: 5.0)
+        results, errors = run_threads(16, lambda _i: sender.reserve(event()))
+        assert errors == []
+        assert results.count("") == 1 and results.count("recent") == 15

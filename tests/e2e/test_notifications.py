@@ -768,3 +768,65 @@ def test_browser_refusing_to_unsubscribe_keeps_both_sides_on(
         assert pg.evaluate("sessionStorage.getItem('fake-push-sub')") == "1"
     finally:
         ctx.close()
+
+
+def test_registered_device_reads_as_on_before_the_bell_is_opened(
+    browser, server, push_service
+):
+    base, _ = push_service
+    endpoint = f"{base}/push/preload"
+    ctx = browser.new_context(viewport={"width": 1100, "height": 720})
+    ctx.add_init_script(STUBS)
+    ctx.add_init_script(push_stub(endpoint, fake_subscription_keys()))
+    pg = ctx.new_page()
+    try:
+        _open_bell(pg, server)
+        pg.locator("#notif-push-toggle").check()
+        pg.wait_for_selector("#notif-devices .notif-device-me", timeout=10000)
+        pg.reload()
+        open_terminal(pg, server)
+        # The hint dot (permission granted, no push) must settle to hidden
+        # without any tap, since this device is on both sides.
+        pg.wait_for_function(
+            "document.getElementById('notif-dot').hidden === true", timeout=10000
+        )
+        pg.click("#notif-btn")
+        pg.wait_for_selector("#notif-push-toggle", timeout=15000)
+        assert pg.locator("#notif-push-toggle").is_checked()
+        pg.locator("#notif-push-toggle").uncheck()
+        pg.wait_for_function("!document.getElementById('notif-devices')", timeout=10000)
+    finally:
+        ctx.close()
+
+
+def test_failed_registration_then_a_successful_retry_in_the_same_popover(
+    browser, server, push_service
+):
+    base, _ = push_service
+    endpoint = f"{base}/push/retry"
+    ctx = browser.new_context(viewport={"width": 1100, "height": 720})
+    ctx.add_init_script(STUBS)
+    ctx.add_init_script(push_stub(endpoint, fake_subscription_keys()))
+    pg = ctx.new_page()
+    try:
+        _open_bell(pg, server)
+        pg.route(
+            "**/api/notifications/subscribe",
+            lambda route: route.fulfill(status=500, body="{}"),
+        )
+        pg.locator("#notif-push-toggle").click()
+        pg.wait_for_function(
+            "document.getElementById('notif-status').textContent.includes('Could not subscribe')",
+            timeout=10000,
+        )
+        pg.unroute("**/api/notifications/subscribe")
+        pg.locator("#notif-push-toggle").click()
+        pg.wait_for_selector("#notif-devices .notif-device-me", timeout=10000)
+        assert pg.locator("#notif-push-toggle").is_checked()
+        status = pg.inner_text("#notif-status")
+        assert "Could not subscribe" not in status
+        assert "error" not in (pg.get_attribute("#notif-status", "class") or "")
+        pg.locator("#notif-push-toggle").uncheck()
+        pg.wait_for_function("!document.getElementById('notif-devices')", timeout=10000)
+    finally:
+        ctx.close()

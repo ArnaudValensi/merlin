@@ -164,7 +164,7 @@ window.MerlinNotifications = (function () {
     return '';   // the server derives one from the user agent
   }
   function subscribePush() {
-    S.busy = true; S.pending = true; render();
+    S.busy = true; S.pending = true; S.lastError = ''; S.lastInfo = ''; render();
     return api('/public-key').then(function (r) {
       if (!r.ok || !r.body || !r.body.key) throw new Error('no key');
       return registration().then(function (reg) {
@@ -484,7 +484,9 @@ window.MerlinNotifications = (function () {
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePop(); });
     window.addEventListener('resize', function () { if (S.open) place(); });
     render();
-    refreshSubscription().then(render);
+    // Both sides before the first real render: push is on only when the
+    // browser subscription is also on file, so the bell's hint needs the list.
+    Promise.all([refreshSubscription(), refreshDevices()]).then(render);
     // A permission can change under us (site settings): reflect it on return.
     document.addEventListener('visibilitychange', function () { if (!document.hidden) render(); });
   }
