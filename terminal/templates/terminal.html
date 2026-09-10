@@ -2022,6 +2022,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         socket.onclose = (e) => {
             if (ws !== socket) return;
+            // A probe aimed at this socket is moot once it is closed: its
+            // deadline must never fire against the socket that replaces it.
+            cancelProbe();
             if (e.code === 4401) {
                 setStatus('disconnected', 'Unauthorized — reload page');
                 return; // don't reconnect on auth failure
@@ -2056,9 +2059,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let pongTimer = null;
     const probeStats = { probes: 0, pongs: 0, replaced: 0 };
 
+    function cancelProbe() {
+        if (pongTimer) { clearTimeout(pongTimer); pongTimer = null; }
+    }
     function replaceSocket(why) {
         probeStats.replaced++;
-        clearTimeout(pongTimer); pongTimer = null;
+        cancelProbe();
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
         reconnectDelay = 1000;
         console.info('[merlin] replacing terminal socket: ' + why);
@@ -2066,15 +2072,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     function probeSocket() {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const probed = ws;   // the deadline belongs to this socket only
         probeStats.probes++;
-        clearTimeout(pongTimer);
-        pongTimer = setTimeout(() => replaceSocket('no pong'), PONG_TIMEOUT_MS);
-        try { ws.send(JSON.stringify({ type: 'ping' })); }
-        catch (_) { replaceSocket('send failed'); }
+        cancelProbe();
+        pongTimer = setTimeout(() => {
+            pongTimer = null;
+            if (ws !== probed) return;   // already replaced or reconnected
+            replaceSocket('no pong');
+        }, PONG_TIMEOUT_MS);
+        try { probed.send(JSON.stringify({ type: 'ping' })); }
+        catch (_) { if (ws === probed) replaceSocket('send failed'); }
     }
     function onPong() {
         probeStats.pongs++;
-        clearTimeout(pongTimer); pongTimer = null;
+        cancelProbe();
     }
     document.addEventListener('visibilitychange', () => {
         if (document.hidden) { hiddenAt = Date.now(); return; }

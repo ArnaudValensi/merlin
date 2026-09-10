@@ -476,3 +476,76 @@ def test_reconnect_probe_after_an_absence(page, server):
         "document.getElementById('status-dot').className === 'connected'", timeout=15000
     )
     page.wait_for_function("window.MerlinTerminal.currentSession()", timeout=15000)
+
+
+# The first socket dies on its probe (a phone's half-open socket, but closing
+# right away so the ordinary reconnect path runs). The reconnect must win and
+# the probe's deadline must not tear the new socket down.
+DEAD_ON_PING = """
+(function () {
+  const Orig = window.WebSocket;
+  let first = true;
+  class DeadOnPing extends Orig {
+    constructor(...a) { super(...a); this.__dead = first; first = false; }
+    send(d) {
+      if (this.__dead && typeof d === 'string' && d.includes('"ping"')) { this.close(); return; }
+      super.send(d);
+    }
+  }
+  window.WebSocket = DeadOnPing;
+})();
+"""
+
+
+def test_probe_deadline_never_hits_the_reconnected_socket(browser, server):
+    ctx = browser.new_context(viewport={"width": 1100, "height": 720})
+    ctx.add_init_script(DEAD_ON_PING)
+    pg = ctx.new_page()
+    try:
+        open_terminal(pg, server)
+        pg.evaluate(
+            "() => { Object.defineProperty(document, 'hidden', {get: () => true, configurable: true});"
+            " document.dispatchEvent(new Event('visibilitychange')); }"
+        )
+        pg.wait_for_timeout(2500)
+        pg.evaluate(
+            "() => { Object.defineProperty(document, 'hidden', {get: () => false, configurable: true});"
+            " document.dispatchEvent(new Event('visibilitychange')); }"
+        )
+        # The probe kills the socket, the ordinary reconnect brings a new one.
+        pg.wait_for_function(
+            "window.MerlinTerminal.probeStats().probes === 1", timeout=5000
+        )
+        pg.wait_for_function(
+            "document.getElementById('status-dot').className === 'disconnected'"
+            " || document.getElementById('status-dot').className === 'connecting'",
+            timeout=5000,
+        )
+        pg.wait_for_function(
+            "document.getElementById('status-dot').className === 'connected'",
+            timeout=15000,
+        )
+        # Past the original probe deadline: still the same healthy socket.
+        pg.wait_for_timeout(4000)
+        stats = pg.evaluate("window.MerlinTerminal.probeStats()")
+        assert stats == {"probes": 1, "pongs": 0, "replaced": 0}
+        assert (
+            pg.evaluate("document.getElementById('status-dot').className")
+            == "connected"
+        )
+        # And the new socket answers a probe normally.
+        pg.evaluate(
+            "() => { Object.defineProperty(document, 'hidden', {get: () => true, configurable: true});"
+            " document.dispatchEvent(new Event('visibilitychange')); }"
+        )
+        pg.wait_for_timeout(2500)
+        pg.evaluate(
+            "() => { Object.defineProperty(document, 'hidden', {get: () => false, configurable: true});"
+            " document.dispatchEvent(new Event('visibilitychange')); }"
+        )
+        pg.wait_for_function(
+            "window.MerlinTerminal.probeStats().pongs === 1", timeout=10000
+        )
+        assert pg.evaluate("window.MerlinTerminal.probeStats().replaced") == 0
+    finally:
+        ctx.close()
