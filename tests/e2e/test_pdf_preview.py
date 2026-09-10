@@ -248,7 +248,8 @@ class TestPdfZoom:
 
         # Scroll to the middle of the document.
         page.eval_on_selector(
-            ".pdf-scroll", "el => el.scrollTop = (el.scrollHeight - el.clientHeight) / 2"
+            ".pdf-scroll",
+            "el => el.scrollTop = (el.scrollHeight - el.clientHeight) / 2",
         )
         before = page.evaluate("""() => {
             const el = document.querySelector('.pdf-scroll');
