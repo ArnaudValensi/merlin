@@ -46,15 +46,19 @@ def tmux_env(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def server(tmux_env):
-    """Merlin without auth on a random port, on its own tmux server."""
+def server(tmux_env, tmp_path_factory):
+    """Merlin without auth on a random port, on its own tmux server and its
+    own home, so nothing touches ~/.merlin (config, jobs, logs, server state)."""
     port = _find_free_port()
+    home = tmp_path_factory.mktemp("home")
+    (home / "config.env").write_text("DASHBOARD_PASS=\n")
     env = dict(tmux_env)
     env["DASHBOARD_PASS"] = ""
     env["MERLIN_SAAS_TOKEN"] = ""
     env["DISCORD_BOT_TOKEN"] = ""
     env["DISCORD_CHANNEL_IDS"] = ""
-    env.pop("MERLIN_HOME", None)
+    env["MERLIN_HOME"] = str(home)
+    env["MERLIN_DEV"] = "1"
 
     merlin_root = os.path.dirname(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -232,6 +236,92 @@ def test_deep_link_switches_the_client_and_drops_the_parameter(
         f"window.MerlinTerminal.currentWindow() === '{wid}'", timeout=10000
     )
     assert "target=" not in page.url
+
+
+# Holds the first session control frame (NUL-prefixed) until the test releases
+# it, so the ordering between the deep link and the socket can be observed.
+HOLD_FIRST_FRAME = """
+(function () {
+  const Orig = window.WebSocket;
+  window.__frameHeld = false;
+  window.__releaseFrame = null;
+  class Held extends Orig {
+    set onmessage(fn) {
+      super.onmessage = (e) => {
+        if (!window.__frameHeld && typeof e.data === 'string' && e.data.charCodeAt(0) === 0) {
+          window.__frameHeld = true;
+          window.__releaseFrame = () => fn(e);
+          return;
+        }
+        fn(e);
+      };
+    }
+    get onmessage() { return super.onmessage; }
+  }
+  window.WebSocket = Held;
+})();
+"""
+
+
+def test_deep_link_is_kept_until_the_socket_is_confirmed(
+    browser, server, tmux_env, agent_window
+):
+    wid = agent_window
+    ctx = browser.new_context(viewport={"width": 1100, "height": 720})
+    ctx.add_init_script(STUBS)
+    ctx.add_init_script(HOLD_FIRST_FRAME)
+    pg = ctx.new_page()
+    try:
+        pg.goto(f"{server}/terminal?target={SESSION}:{wid}")
+        pg.wait_for_function("window.__frameHeld === true", timeout=30000)
+        pg.wait_for_timeout(500)
+        # No confirmed session yet: the target must still be in the URL.
+        assert pg.evaluate("window.MerlinTerminal.currentWindow()") == ""
+        assert f"target={SESSION}" in pg.url
+        pg.evaluate("window.__releaseFrame()")
+        pg.wait_for_function(
+            f"window.MerlinTerminal.currentWindow() === '{wid}'", timeout=10000
+        )
+        pg.wait_for_function("!location.search.includes('target=')", timeout=5000)
+    finally:
+        ctx.close()
+
+
+def test_overlapping_polls_deliver_an_event_once(page, server, tmux_env, agent_window):
+    wid = agent_window
+    held = []
+    page.route("**/api/board?*", lambda route: held.append(route))
+    # A burst of triggers while one request is held: only one may be in flight.
+    page.evaluate(
+        "() => { for (let i = 0; i < 5; i++) window.SessionsBoard.refresh();"
+        " window.dispatchEvent(new Event('focus'));"
+        " document.dispatchEvent(new Event('visibilitychange')); }"
+    )
+    # A poll may already be in flight when the route lands: the burst is then
+    # coalesced behind it and the next request is the held one. Waits go
+    # through the page (not time.sleep): the sync API only dispatches route
+    # handlers while a Playwright call is running.
+    for _ in range(100):
+        if held:
+            break
+        page.wait_for_timeout(100)
+    page.wait_for_timeout(3000)  # the 2s interval fires at least once more
+    assert len(held) == 1
+    # The transition happens while that request is held.
+    tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_state", "done")
+    page.wait_for_timeout(2500)  # let the watcher sweep it
+    before = page.evaluate("window.SessionsBoard.cursor()")
+    held[0].continue_()
+    page.unroute("**/api/board?*")
+    page.wait_for_function("window.__notifs.length === 1", timeout=10000)
+    after = page.evaluate("window.SessionsBoard.cursor()")
+    assert after != before
+    # The coalesced follow-up poll and the ones after it replay nothing and
+    # never move the cursor backwards.
+    page.wait_for_timeout(5000)
+    assert page.evaluate("window.__notifs.length") == 1
+    later = page.evaluate("window.SessionsBoard.cursor()")
+    assert int(later.split(":")[1]) >= int(after.split(":")[1])
 
 
 def test_popover_toggle_asks_once_and_persists(page, server):

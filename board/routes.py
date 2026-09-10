@@ -68,7 +68,7 @@ def api_board(current: str = "", since: str = ""):
     """The session -> window tree. Runs the session and window sweeps and builds
     the view. ``current`` is the session this client is on (the browser learns it
     over the terminal WebSocket and passes it back), used only to mark the
-    current session; it never affects another client.
+    current session. It never affects another client.
 
     ``since`` is the page's attention cursor: the response carries the events
     after it under ``events``, the new position under ``cursor``, and under

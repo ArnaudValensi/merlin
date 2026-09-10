@@ -1157,19 +1157,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Deep link (decision 11): /terminal?target=<session>:<window_id> switches
     // this client to that window once its tmux client is confirmed (the first
-    // session frame), then the parameter is dropped from the URL so a reload
-    // does not switch again. A stale target fails inside tmux, harmlessly.
+    // session frame). The parameter stays in the URL until the switch has
+    // been sent, so a reload before that still honours it, and is dropped
+    // right after so a later reload does not switch again. A stale target
+    // fails inside tmux, harmlessly.
     let pendingTarget = '';
     try {
-        const params = new URLSearchParams(location.search);
-        const t = params.get('target');
+        const t = new URLSearchParams(location.search).get('target');
         if (t && /^[^:]+:@\d+$/.test(t)) pendingTarget = t;
-        if (params.has('target')) {
+    } catch (_) { /* no URL API, no deep link */ }
+    function dropTargetParam() {
+        try {
+            const params = new URLSearchParams(location.search);
+            if (!params.has('target')) return;
             params.delete('target');
             const q = params.toString();
             history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + location.hash);
-        }
-    } catch (_) { /* no URL API, no deep link */ }
+        } catch (_) { /* ignore */ }
+    }
 
     // Bridge for the Sessions panel (board.js). Switching sessions is per-client
     // and only the WebSocket knows which tmux client this browser is, so the
@@ -1995,6 +2000,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             if (target !== currentSession + ':' + currentWindowId) {
                                 window.MerlinTerminal.switchSession(target);
                             }
+                            dropTargetParam();
                         }
                         MerlinPageTitle.set(
                             'term',

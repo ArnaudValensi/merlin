@@ -513,15 +513,33 @@ window.SessionsBoard = (function () {
     }
   }
 
+  // One poll in flight at a time. load() is called from many places (the
+  // interval, focus, visibility, the first session frame, switch timers), and
+  // two overlapping requests would leave with the same cursor and deliver the
+  // same event twice, or an older response could move the cursor backwards. A
+  // trigger during a request is coalesced into one more poll right after it.
+  var inFlight = null, queued = false;
   function load() {
     if (S.paused) return Promise.resolve();
+    if (inFlight) { queued = true; return inFlight; }
+    var sent = S.cursor;
     var q = '?current=' + encodeURIComponent(S.current);
-    if (S.cursor) q += '&since=' + encodeURIComponent(S.cursor);
-    return api(q).then(function (v) {
-      if (!v) return;
-      consumeEvents(v);
-      if (sigOf(v) !== S.lastSig) render(v);
+    if (sent) q += '&since=' + encodeURIComponent(sent);
+    inFlight = api(q).then(function (v) {
+      inFlight = null;
+      try {
+        if (v) {
+          // Only the response to the current cursor may consume events. A
+          // response to an older cursor (defensive, serialization already
+          // prevents it) must neither replay nor regress the cursor.
+          if (sent === S.cursor) consumeEvents(v);
+          if (sigOf(v) !== S.lastSig) render(v);
+        }
+      } finally {
+        if (queued) { queued = false; setTimeout(load, 0); }
+      }
     });
+    return inFlight;
   }
 
   // --- new session from a name -------------------------------------------
@@ -650,5 +668,6 @@ window.SessionsBoard = (function () {
     refresh: load,
     setCurrentSession: setCurrentSession,
     openNewWindow: openNewWindow,
+    cursor: function () { return S.cursor; },
   };
 })();
