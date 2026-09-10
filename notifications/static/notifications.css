@@ -125,3 +125,49 @@
   .notif-row { padding: 12px 12px; }
   .notif-body { padding: 12px 14px 18px; }
 }
+
+/* Devices: one dense row per subscription, this browser's marked. */
+.notif-devices { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.notif-device {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.notif-device:hover { background: var(--bg-hover); }
+.notif-device-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+.notif-device-me {
+  flex: 0 0 auto;
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  color: var(--accent-green);
+}
+.notif-device-when { flex: 0 0 auto; font-family: 'Geist Mono', monospace; font-size: 10px; color: var(--text-muted); }
+.notif-device-remove {
+  flex: 0 0 auto;
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: none; color: var(--text-muted); cursor: pointer; border-radius: 6px;
+}
+.notif-device-remove:hover { color: var(--accent-red); background: rgba(248, 113, 113, 0.1); }
+
+/* The test button: a quiet text button, full width, like a row. */
+.notif-test {
+  margin-top: 4px;
+  width: 100%;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-family: 'Geist', sans-serif;
+  font-size: 12px;
+  cursor: pointer;
+}
+.notif-test:hover:not(:disabled) { color: var(--text-primary); border-color: var(--text-muted); }
+.notif-test:disabled { opacity: 0.5; cursor: not-allowed; }
+.notif-status.error { color: var(--accent-red); }
+.notif-push-slot { display: flex; flex-direction: column; gap: 6px; }

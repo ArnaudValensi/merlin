@@ -14,9 +14,23 @@ window.MerlinNotifications = (function () {
   var ICON = '/static/favicon.svg';
 
   var S = { bell: null, dot: null, pop: null, body: null, toggle: null, toggleRow: null,
-            status: null, notice: null, pushSlot: null,
-            pushSubscribed: false, open: false, attention: 0,
+            status: null, notice: null, pushSlot: null, pushRow: null, pushToggle: null,
+            devices: null, testBtn: null,
+            pushSubscribed: false, subscription: null, open: false, attention: 0,
+            busy: false, deviceList: [],
             tmux: null };   // null: unknown, false: no tmux server at the last sweep
+
+  function api(path, method, body) {
+    var opts = { method: method || 'GET', headers: { Accept: 'application/json' } };
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    return fetch('/api/notifications' + path, opts).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; },
+                           function () { return { ok: r.ok, status: r.status, body: null }; });
+    });
+  }
 
   // --- capability -------------------------------------------------------
   function hasApi() { return typeof Notification !== 'undefined' && !!Notification; }
@@ -104,6 +118,92 @@ window.MerlinNotifications = (function () {
     } catch (e) { /* ignore */ }
   }
 
+  // --- Web Push (decision 9 and 13) ----------------------------------------
+  function pushSupported() {
+    return secure() && 'serviceWorker' in navigator && 'PushManager' in window;
+  }
+  function urlBase64ToUint8Array(base64) {
+    var padding = '='.repeat((4 - (base64.length % 4)) % 4);
+    var raw = atob((base64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function registration() {
+    return navigator.serviceWorker.getRegistration('/').then(function (reg) {
+      if (reg) return reg;
+      return navigator.serviceWorker.ready;
+    });
+  }
+  // What this browser holds, read when the popover opens.
+  function refreshSubscription() {
+    if (!pushSupported()) { S.subscription = null; S.pushSubscribed = false; return Promise.resolve(); }
+    return registration().then(function (reg) { return reg.pushManager.getSubscription(); })
+      .then(function (sub) { S.subscription = sub || null; S.pushSubscribed = !!sub; })
+      .catch(function () { S.subscription = null; S.pushSubscribed = false; });
+  }
+  function refreshDevices() {
+    return api('/devices').then(function (r) {
+      S.deviceList = (r.ok && r.body && r.body.devices) || [];
+    }).catch(function () { S.deviceList = []; });
+  }
+  function labelForThisDevice() {
+    var d = navigator.userAgentData;
+    if (d && d.platform) {
+      var brand = (d.brands || []).map(function (b) { return b.brand; })
+        .filter(function (b) { return !/Not|Chromium/.test(b); })[0];
+      return d.platform + (brand ? ' · ' + brand : '');
+    }
+    return '';   // the server derives one from the user agent
+  }
+  function subscribePush() {
+    S.busy = true; render();
+    return api('/public-key').then(function (r) {
+      if (!r.ok || !r.body || !r.body.key) throw new Error('no key');
+      return registration().then(function (reg) {
+        return reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(r.body.key),
+        });
+      });
+    }).then(function (sub) {
+      S.subscription = sub;
+      return api('/subscribe', 'POST', { subscription: sub.toJSON(), label: labelForThisDevice() });
+    }).then(function (r) {
+      if (!r.ok) throw new Error('subscribe failed');
+      S.pushSubscribed = true;
+      return refreshDevices();
+    }).catch(function (e) {
+      S.pushSubscribed = false;
+      S.lastError = (e && e.name === 'NotAllowedError') ? 'Notifications were not allowed, so push stays off.' : 'Could not subscribe this device to push.';
+    }).then(function () { S.busy = false; render(); });
+  }
+  function unsubscribePush() {
+    S.busy = true; render();
+    var sub = S.subscription;
+    var endpoint = sub ? sub.endpoint : '';
+    var p = sub ? sub.unsubscribe().catch(function () {}) : Promise.resolve();
+    return p.then(function () {
+      S.subscription = null; S.pushSubscribed = false;
+      if (endpoint) return api('/subscribe', 'DELETE', { endpoint: endpoint });
+    }).then(refreshDevices).catch(function () {}).then(function () { S.busy = false; render(); });
+  }
+  function removeDevice(endpoint) {
+    if (S.subscription && S.subscription.endpoint === endpoint) return unsubscribePush();
+    return api('/subscribe', 'DELETE', { endpoint: endpoint }).then(refreshDevices).then(render);
+  }
+  function sendTest() {
+    S.busy = true; S.lastError = ''; render();
+    var body = S.subscription ? { endpoint: S.subscription.endpoint } : {};
+    return api('/test', 'POST', body).then(function (r) {
+      if (r.ok && r.body && r.body.ok) S.lastInfo = 'Test sent' + (S.subscription ? ' to this device.' : ' to every device.');
+      else if (r.status === 409) S.lastError = 'No device is subscribed yet.';
+      else S.lastError = 'The test push failed' + (r.body && r.body.removed ? ' and a dead subscription was removed.' : '.');
+      return refreshDevices();
+    }).catch(function () { S.lastError = 'The test push failed.'; })
+      .then(function () { S.busy = false; render(); });
+  }
+
   // --- the popover (decision 13) ------------------------------------------
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -143,25 +243,93 @@ window.MerlinNotifications = (function () {
       if (S.dot) S.dot.hidden = true;
       return;
     }
-    // Push slot (the toggle itself arrives with push). On an iPhone browser
-    // that is not the installed app, the slot carries the install sentence.
-    S.pushSlot.textContent = '';
-    if (isIos() && !isStandalone()) {
-      S.pushSlot.appendChild(el('div', 'notif-sentence', 'On iPhone, add Merlin to the Home Screen first, then enable push from there.'));
-    }
+    renderPush();
     var r = reason();
     var on = enabled();
     S.toggle.disabled = !r.ok;
     S.toggle.checked = on;
     S.toggleRow.classList.toggle('disabled', !r.ok);
     S.toggleRow.classList.toggle('on', on);
-    if (!r.ok) S.status.textContent = r.text;
+    if (S.lastError) S.status.textContent = S.lastError;
+    else if (S.lastInfo) S.status.textContent = S.lastInfo;
+    else if (!r.ok) S.status.textContent = r.text;
+    else if (on && S.pushSubscribed) S.status.textContent = 'On here and pushed to this device, even with the tab closed.';
     else if (on) S.status.textContent = 'On. You get a notification when an agent finishes or needs an answer, except for the window you are looking at.';
+    else if (S.pushSubscribed) S.status.textContent = 'Push is on for this device. Turn on the browser toggle for notifications while a tab is open.';
     else if (permission() === 'granted') S.status.textContent = 'Off. Turn on to be notified when an agent finishes or needs an answer.';
     else S.status.textContent = 'Turn on to be notified when an agent finishes or needs an answer. The browser will ask once.';
+    S.status.classList.toggle('error', !!S.lastError);
     // The dot is a hint, never an alert: this page may notify, but nothing
     // reaches this device with the tab closed until push is on.
     if (S.dot) S.dot.hidden = !(permission() === 'granted' && !S.pushSubscribed);
+  }
+
+  // The push slot: the toggle, or the iPhone sentence, or why push is off.
+  function renderPush() {
+    S.pushSlot.textContent = '';
+    if (isIos() && !isStandalone()) {
+      S.pushSlot.appendChild(el('div', 'notif-sentence', 'On iPhone, add Merlin to the Home Screen first, then enable push from there.'));
+    } else {
+      var row = el('label', 'notif-row');
+      row.id = 'notif-push-row';
+      row.appendChild(el('span', 'notif-label', 'Push to this device'));
+      var sw = el('span', 'notif-switch');
+      var t = el('input', null, null);
+      t.type = 'checkbox';
+      t.id = 'notif-push-toggle';
+      t.checked = S.pushSubscribed;
+      var ok = pushSupported() && permission() !== 'denied';
+      t.disabled = !ok || S.busy;
+      row.classList.toggle('disabled', !ok);
+      row.classList.toggle('on', S.pushSubscribed);
+      t.addEventListener('change', function () { t.checked ? subscribePush() : unsubscribePush(); });
+      sw.appendChild(t);
+      sw.appendChild(el('span', 'notif-knob'));
+      row.appendChild(sw);
+      S.pushSlot.appendChild(row);
+      if (!pushSupported()) {
+        S.pushSlot.appendChild(el('div', 'notif-sentence', secure()
+          ? 'This browser has no Web Push support.'
+          : 'Push needs HTTPS. See the notifications doc for the one Caddy block that adds it.'));
+      }
+    }
+    // Devices: every subscription the instance holds, this one marked.
+    var mine = S.subscription ? S.subscription.endpoint : '';
+    if (S.deviceList.length) {
+      var list = el('div', 'notif-devices');
+      list.id = 'notif-devices';
+      S.deviceList.forEach(function (d) {
+        var row = el('div', 'notif-device');
+        row.appendChild(el('span', 'notif-device-name', d.label || 'Device'));
+        if (d.endpoint === mine) row.appendChild(el('span', 'notif-device-me', 'this device'));
+        var when = d.last_success ? 'pushed ' + timeAgoShort(d.last_success) : 'added ' + timeAgoShort(d.created);
+        row.appendChild(el('span', 'notif-device-when', when));
+        var rm = el('button', 'notif-device-remove', null);
+        rm.type = 'button';
+        rm.title = 'Remove this device';
+        rm.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+        rm.addEventListener('click', function (e) { e.preventDefault(); removeDevice(d.endpoint); });
+        row.appendChild(rm);
+        list.appendChild(row);
+      });
+      S.pushSlot.appendChild(list);
+    }
+    var test = el('button', 'notif-test', 'Send a test');
+    test.type = 'button';
+    test.id = 'notif-test-btn';
+    test.disabled = S.busy || !S.deviceList.length;
+    test.addEventListener('click', function (e) { e.preventDefault(); sendTest(); });
+    S.pushSlot.appendChild(test);
+  }
+
+  function timeAgoShort(iso) {
+    var t = Date.parse(iso);
+    if (!t) return '';
+    var s = Math.max(0, (Date.now() - t) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + ' min ago';
+    if (s < 86400) return Math.floor(s / 3600) + ' h ago';
+    return Math.floor(s / 86400) + ' d ago';
   }
 
   function onToggle() {
@@ -217,14 +385,20 @@ window.MerlinNotifications = (function () {
     pop.appendChild(body);
   }
 
-  // What the watcher sees, read when the popover opens (not polled).
+  // What the watcher sees, read when the popover opens. Not polled, with one
+  // exception: while the popover shows the "no tmux server" notice it checks
+  // again every two seconds, because opening the terminal starts the server
+  // and the next sweep clears the notice.
+  var statusTimer = null;
   function refreshStatus() {
+    clearTimeout(statusTimer); statusTimer = null;
     return fetch('/api/notifications/status', { headers: { Accept: 'application/json' } })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (st) {
         if (!st) return;
         S.tmux = st.swept ? st.tmux : null;
         render();
+        if (S.open && S.tmux === false) statusTimer = setTimeout(refreshStatus, 2000);
       })
       .catch(function () { /* keep the last known state */ });
   }
@@ -250,8 +424,10 @@ window.MerlinNotifications = (function () {
   function openPop() {
     if (S.open) return;
     S.open = true;
+    S.lastError = ''; S.lastInfo = '';
     render();
     refreshStatus();
+    Promise.all([refreshSubscription(), refreshDevices()]).then(render);
     S.pop.hidden = false;
     S.pop.classList.add('open');
     place();
@@ -261,6 +437,7 @@ window.MerlinNotifications = (function () {
   function closePop() {
     if (!S.open) return;
     S.open = false;
+    clearTimeout(statusTimer); statusTimer = null;
     S.pop.hidden = true;
     S.pop.classList.remove('open');
     S.bell.classList.remove('active');
@@ -268,6 +445,9 @@ window.MerlinNotifications = (function () {
   }
   function togglePop() { S.open ? closePop() : openPop(); }
   function onDocClick(e) {
+    // A click inside the popover can re-render it before bubbling here, and
+    // its target is then detached: that is not a click outside.
+    if (!document.contains(e.target)) return;
     if (S.pop.contains(e.target) || S.bell.contains(e.target)) return;
     closePop();
   }
@@ -283,6 +463,7 @@ window.MerlinNotifications = (function () {
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePop(); });
     window.addEventListener('resize', function () { if (S.open) place(); });
     render();
+    refreshSubscription().then(render);
     // A permission can change under us (site settings): reflect it on return.
     document.addEventListener('visibilitychange', function () { if (!document.hidden) render(); });
   }

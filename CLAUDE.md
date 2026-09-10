@@ -90,6 +90,7 @@ New to the codebase? Read `architecture.md` first, then `extension-system.md` an
 | [`docs/dev/extension-system.md`](docs/dev/extension-system.md) | Extension tiers, interface, state, registry, Extensions/Settings pages |
 | [`docs/dev/skill-system.md`](docs/dev/skill-system.md) | Skill registry: sources, precedence (core > extension > user), canonical aggregation, engine adapters, shims, `merlin skills` |
 | [`docs/dev/dashboard-architecture.md`](docs/dev/dashboard-architecture.md) | Dashboard theme, CSS variables, JS patterns, API endpoints |
+| [`docs/dev/notifications.md`](docs/dev/notifications.md) | Attention watcher, event cursor, poll transport, in-tab rule, manifest and worker, Web Push, suppression, the seams kept for the hub |
 | [`docs/dev/claude-code-reference.md`](docs/dev/claude-code-reference.md) | Claude Code CLI flags and options |
 | [`docs/dev/releasing.md`](docs/dev/releasing.md) | Tagging, GitHub Releases, install/update flow, rollback |
 | [`docs/dev/standalone-cli.md`](docs/dev/standalone-cli.md) | Standalone CLI design: paths, install, update, dev mode |

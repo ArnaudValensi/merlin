@@ -1596,8 +1596,10 @@ def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
         # Attention watcher: turns @agent_state transitions into notification
         # events. Inert without tmux (it sleeps and retries), stopped by the
         # app lifespan at shutdown.
+        from notifications import routes as notif_routes
         from notifications import watcher as notif_watcher
 
+        notif_routes.wire_push()
         tasks.append(notif_watcher.start())
 
         # Start all extensions with start() hooks

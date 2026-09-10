@@ -549,3 +549,127 @@ def test_probe_deadline_never_hits_the_reconnected_socket(browser, server):
         assert pg.evaluate("window.MerlinTerminal.probeStats().replaced") == 0
     finally:
         ctx.close()
+
+
+# ---------------------------------------------------------------------------
+# M3: Web Push through the popover, against a push service run by the test
+# ---------------------------------------------------------------------------
+
+import base64
+import http.server
+import json
+import threading
+
+
+@pytest.fixture(scope="module")
+def push_service():
+    """A stand-in push service: records every POST and answers 201."""
+    records = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            headers = {k.lower(): v for k, v in self.headers.items()}
+            records.append({"path": self.path, "headers": headers, "body": body})
+            self.send_response(201)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", records
+    httpd.shutdown()
+
+
+def fake_subscription_keys():
+    """Real P-256 keys, so the server's encryption is exercised for real."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    priv = ec.generate_private_key(ec.SECP256R1())
+    raw = priv.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+    b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()  # noqa: E731
+    return {"p256dh": b64(raw), "auth": b64(os.urandom(16))}
+
+
+def push_stub(endpoint, keys):
+    """PushManager as the popover sees it, on the real registration."""
+    return """
+(function () {
+  const ENDPOINT = %s, KEYS = %s;
+  const fake = {
+    __sub: null,
+    getSubscription: async () => fake.__sub,
+    subscribe: async (opts) => {
+      window.__subscribeOpts = { userVisibleOnly: opts.userVisibleOnly, keyLen: opts.applicationServerKey.length };
+      fake.__sub = {
+        endpoint: ENDPOINT,
+        toJSON: () => ({ endpoint: ENDPOINT, keys: KEYS }),
+        unsubscribe: async () => { fake.__sub = null; return true; },
+      };
+      return fake.__sub;
+    },
+  };
+  Object.defineProperty(ServiceWorkerRegistration.prototype, 'pushManager', { get: () => fake, configurable: true });
+})();
+""" % (json.dumps(endpoint), json.dumps(keys))
+
+
+def test_push_toggle_subscribes_tests_and_unsubscribes(browser, server, push_service):
+    base, records = push_service
+    endpoint = f"{base}/push/e2e-1"
+    ctx = browser.new_context(viewport={"width": 1100, "height": 720})
+    ctx.add_init_script(STUBS)
+    ctx.add_init_script(push_stub(endpoint, fake_subscription_keys()))
+    pg = ctx.new_page()
+    try:
+        open_terminal(pg, server)
+        pg.evaluate("navigator.serviceWorker.ready")
+        pg.click("#notif-btn")
+        # Right after the first attach the watcher may still report no tmux
+        # server: the popover re-checks every two seconds until it clears.
+        pg.wait_for_selector("#notif-push-toggle", timeout=15000)
+        toggle = pg.locator("#notif-push-toggle")
+        assert not toggle.is_checked()
+        assert pg.locator("#notif-test-btn").is_disabled()
+        toggle.check()
+        pg.wait_for_selector("#notif-devices .notif-device-me", timeout=10000)
+        opts = pg.evaluate("window.__subscribeOpts")
+        assert opts == {"userVisibleOnly": True, "keyLen": 65}
+        devices = pg.request.get(f"{server}/api/notifications/devices").json()[
+            "devices"
+        ]
+        assert [d["endpoint"] for d in devices] == [endpoint]
+        assert devices[0]["label"]  # derived from the user agent or the client hints
+
+        # A test push goes through the real sender to the fake service.
+        pg.click("#notif-test-btn")
+        pg.wait_for_function(
+            "document.getElementById('notif-status').textContent.includes('Test sent')",
+            timeout=15000,
+        )
+        assert len(records) == 1
+        h = records[0]["headers"]
+        assert records[0]["path"] == "/push/e2e-1"
+        assert h["ttl"] == "300"
+        assert h["urgency"] == "high"
+        assert h["content-encoding"] == "aes128gcm"
+        assert h["authorization"].startswith("vapid ")
+        assert len(records[0]["body"]) > 0
+        devices = pg.request.get(f"{server}/api/notifications/devices").json()[
+            "devices"
+        ]
+        assert devices[0]["last_success"]
+
+        toggle.uncheck()
+        pg.wait_for_function("!document.getElementById('notif-devices')", timeout=10000)
+        assert (
+            pg.request.get(f"{server}/api/notifications/devices").json()["devices"]
+            == []
+        )
+    finally:
+        ctx.close()

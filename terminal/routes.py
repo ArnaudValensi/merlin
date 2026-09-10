@@ -101,6 +101,26 @@ class SessionReportState:
         self.lock = asyncio.Lock()
 
 
+# One entry per connected terminal socket: what its tmux client displays, as
+# last reported to the browser. Push suppression reads it (no push for a
+# window someone is looking at). Registered on connect, dropped on disconnect.
+_client_views: set[SessionReportState] = set()
+
+
+def displayed_targets() -> set[str]:
+    """``session:window_id`` for every window a connected client displays."""
+    out: set[str] = set()
+    for state in list(_client_views):
+        current = state.last_reported
+        if current is not None and current.window_id:
+            out.add(f"{current.name}:{current.window_id}")
+    return out
+
+
+def is_displayed(target: str) -> bool:
+    return target in displayed_targets()
+
+
 async def _send_session_if_changed(
     websocket: WebSocket,
     current: board_sweep.ClientSession,
@@ -539,6 +559,7 @@ async def terminal_ws(websocket: WebSocket):
         return
     register_pty("terminal", bridge, client_tty)
     session_report_state = SessionReportState()
+    _client_views.add(session_report_state)
 
     # Check if child is still alive
     try:
@@ -633,6 +654,7 @@ async def terminal_ws(websocket: WebSocket):
     finally:
         # Sync teardown first, so hooks and fds are gone even if this
         # handler is itself cancelled (server shutdown).
+        _client_views.discard(session_report_state)
         unregister_pty("terminal")
         bridge.close()
         for task in (pty_reader, ws_reader, session_watcher):

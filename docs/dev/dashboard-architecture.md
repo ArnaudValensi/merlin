@@ -569,6 +569,11 @@ session), `/window/rename`, `/window/kill`. Switching and jump-to-window are
 - **Families.** `child` nests one indent under its parent within a session;
   `sibling` (the default) stays flat. Depth-capped in CSS.
 
+**Notifications.** The poll also carries attention events (`?since=<cursor>` →
+`events`, `cursor`, `dropped`): a window flipping to done or ask becomes a
+browser notification, an app badge, a title count and a Web Push. See
+[`notifications.md`](notifications.md).
+
 **Known limits:** in-session Task sub-agents (no tmux window) do not surface
 separately. SSH clients attach to `merlin-dev` and use the tmux status line to
 switch windows; the web switcher is a browser feature.

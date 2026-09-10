@@ -137,6 +137,10 @@ settings in either file are left alone.
 > pills until you exit and relaunch the agent in that window. New sessions pick
 > it up right away, once Codex's hook definitions are trusted.
 
+Want to be told instead of looking? The bell in the bottom bar turns the same signal into
+browser notifications, an app badge and push to your phone. See
+[Notifications](notifications.md).
+
 ## Copy and paste
 
 Desktop copy: select with the mouse; on release the selection lands in

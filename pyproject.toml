@@ -16,6 +16,7 @@ dependencies = [
     "pydantic",
     "python-dotenv",
     "python-multipart",
+    "pywebpush>=2.5.0",
     "pyyaml",
     "uvicorn[standard]",
     "zipstream-ng",

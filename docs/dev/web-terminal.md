@@ -222,6 +222,13 @@ options or the state pill; when identity is not ready, it uses a private actor
 key without claiming liveness. It no-ops outside tmux. Historical capture is
 therefore independent of both the PTY bridge and `AgentEngine`.
 
+The same `@agent_state` feeds the notifications feature: a server-side watcher
+sweeps it every two seconds and turns transitions into browser notifications
+and Web Push, with events riding the Sessions panel's poll. The bell in the
+status bar, the `target` deep link, the `ping` control message and the
+reconnect rule after a phone suspension are documented in
+[`notifications.md`](notifications.md).
+
 ### Transcription API
 
 `POST /api/terminal/transcribe`:
