@@ -137,15 +137,22 @@ window.MerlinNotifications = (function () {
   }
   // What this browser holds, read when the popover opens.
   function refreshSubscription() {
-    if (!pushSupported()) { S.subscription = null; S.pushSubscribed = false; return Promise.resolve(); }
+    if (!pushSupported()) { S.subscription = null; reconcile(); return Promise.resolve(); }
     return registration().then(function (reg) { return reg.pushManager.getSubscription(); })
-      .then(function (sub) { S.subscription = sub || null; S.pushSubscribed = !!sub; })
-      .catch(function () { S.subscription = null; S.pushSubscribed = false; });
+      .then(function (sub) { S.subscription = sub || null; reconcile(); })
+      .catch(function () { S.subscription = null; reconcile(); });
   }
   function refreshDevices() {
     return api('/devices').then(function (r) {
       S.deviceList = (r.ok && r.body && r.body.devices) || [];
-    }).catch(function () { S.deviceList = []; });
+      reconcile();
+    }).catch(function () { S.deviceList = []; reconcile(); });
+  }
+  // Push is on for this device only when the browser holds a subscription AND
+  // the instance has it on file: either side alone cannot deliver.
+  function reconcile() {
+    var sub = S.subscription;
+    S.pushSubscribed = !!sub && S.deviceList.some(function (d) { return d.endpoint === sub.endpoint; });
   }
   function labelForThisDevice() {
     var d = navigator.userAgentData;
@@ -157,7 +164,7 @@ window.MerlinNotifications = (function () {
     return '';   // the server derives one from the user agent
   }
   function subscribePush() {
-    S.busy = true; render();
+    S.busy = true; S.pending = true; render();
     return api('/public-key').then(function (r) {
       if (!r.ok || !r.body || !r.body.key) throw new Error('no key');
       return registration().then(function (reg) {
@@ -168,25 +175,38 @@ window.MerlinNotifications = (function () {
       });
     }).then(function (sub) {
       S.subscription = sub;
-      return api('/subscribe', 'POST', { subscription: sub.toJSON(), label: labelForThisDevice() });
-    }).then(function (r) {
-      if (!r.ok) throw new Error('subscribe failed');
-      S.pushSubscribed = true;
-      return refreshDevices();
+      return api('/subscribe', 'POST', { subscription: sub.toJSON(), label: labelForThisDevice() })
+        .then(function (r) {
+          if (r.ok) return refreshDevices();
+          // The instance did not record it: a browser-only subscription would
+          // read as "on" and never deliver. Roll it back so both sides agree.
+          return sub.unsubscribe().catch(function () {}).then(function () {
+            S.subscription = null;
+            throw new Error('subscribe failed');
+          });
+        });
     }).catch(function (e) {
-      S.pushSubscribed = false;
-      S.lastError = (e && e.name === 'NotAllowedError') ? 'Notifications were not allowed, so push stays off.' : 'Could not subscribe this device to push.';
+      S.lastError = (e && e.name === 'NotAllowedError') ? 'Notifications were not allowed, so push stays off.' : 'Could not subscribe this device to push. Try again.';
+      reconcile();
     }).then(function () { S.busy = false; render(); });
   }
   function unsubscribePush() {
-    S.busy = true; render();
+    S.busy = true; S.pending = false; S.lastError = ''; render();
     var sub = S.subscription;
-    var endpoint = sub ? sub.endpoint : '';
-    var p = sub ? sub.unsubscribe().catch(function () {}) : Promise.resolve();
-    return p.then(function () {
-      S.subscription = null; S.pushSubscribed = false;
-      if (endpoint) return api('/subscribe', 'DELETE', { endpoint: endpoint });
-    }).then(refreshDevices).catch(function () {}).then(function () { S.busy = false; render(); });
+    if (!sub) { S.busy = false; reconcile(); render(); return Promise.resolve(); }
+    var endpoint = sub.endpoint;
+    // Browser first. If it keeps the subscription, nothing is cleared: the
+    // device stays on both sides and the toggle stays on with the reason.
+    return sub.unsubscribe().then(function () {
+      S.subscription = null;
+      return api('/subscribe', 'DELETE', { endpoint: endpoint }).then(function (r) {
+        if (!r.ok) S.lastError = 'The browser dropped the subscription but the instance still lists this device. Remove it from the list.';
+      }, function () {
+        S.lastError = 'The browser dropped the subscription but the instance still lists this device. Remove it from the list.';
+      });
+    }, function () {
+      S.lastError = 'The browser kept the subscription, so push stays on. Try again.';
+    }).then(refreshDevices).then(function () { S.busy = false; render(); });
   }
   function removeDevice(endpoint) {
     if (S.subscription && S.subscription.endpoint === endpoint) return unsubscribePush();
@@ -277,7 +297,8 @@ window.MerlinNotifications = (function () {
       var t = el('input', null, null);
       t.type = 'checkbox';
       t.id = 'notif-push-toggle';
-      t.checked = S.pushSubscribed;
+      // While a request runs, show the state the tap asked for, not the old one.
+      t.checked = S.busy ? !!S.pending : S.pushSubscribed;
       var ok = pushSupported() && permission() !== 'denied';
       t.disabled = !ok || S.busy;
       row.classList.toggle('disabled', !ok);

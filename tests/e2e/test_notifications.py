@@ -597,21 +597,29 @@ def fake_subscription_keys():
 
 
 def push_stub(endpoint, keys):
-    """PushManager as the popover sees it, on the real registration."""
+    """PushManager as the popover sees it, on the real registration. The
+    fake keeps its subscription in sessionStorage so a reload sees it, and
+    window.__unsubscribeFails makes the browser refuse to drop it."""
     return """
 (function () {
   const ENDPOINT = %s, KEYS = %s;
+  const KEY = 'fake-push-sub';
+  function make() {
+    return {
+      endpoint: ENDPOINT,
+      toJSON: () => ({ endpoint: ENDPOINT, keys: KEYS }),
+      unsubscribe: async () => {
+        if (window.__unsubscribeFails) throw new Error('browser refused');
+        sessionStorage.removeItem(KEY); return true;
+      },
+    };
+  }
   const fake = {
-    __sub: null,
-    getSubscription: async () => fake.__sub,
+    getSubscription: async () => (sessionStorage.getItem(KEY) ? make() : null),
     subscribe: async (opts) => {
       window.__subscribeOpts = { userVisibleOnly: opts.userVisibleOnly, keyLen: opts.applicationServerKey.length };
-      fake.__sub = {
-        endpoint: ENDPOINT,
-        toJSON: () => ({ endpoint: ENDPOINT, keys: KEYS }),
-        unsubscribe: async () => { fake.__sub = null; return true; },
-      };
-      return fake.__sub;
+      sessionStorage.setItem(KEY, '1');
+      return make();
     },
   };
   Object.defineProperty(ServiceWorkerRegistration.prototype, 'pushManager', { get: () => fake, configurable: true });
@@ -671,5 +679,92 @@ def test_push_toggle_subscribes_tests_and_unsubscribes(browser, server, push_ser
             pg.request.get(f"{server}/api/notifications/devices").json()["devices"]
             == []
         )
+    finally:
+        ctx.close()
+
+
+def _open_bell(pg, server):
+    open_terminal(pg, server)
+    pg.evaluate("navigator.serviceWorker.ready")
+    pg.click("#notif-btn")
+    pg.wait_for_selector("#notif-push-toggle", timeout=15000)
+
+
+def test_failed_registration_rolls_the_browser_subscription_back(
+    browser, server, push_service
+):
+    base, _ = push_service
+    ctx = browser.new_context(viewport={"width": 1100, "height": 720})
+    ctx.add_init_script(STUBS)
+    ctx.add_init_script(push_stub(f"{base}/push/rollback", fake_subscription_keys()))
+    pg = ctx.new_page()
+    try:
+        _open_bell(pg, server)
+        pg.route(
+            "**/api/notifications/subscribe",
+            lambda route: route.fulfill(status=500, body="{}"),
+        )
+        pg.locator(
+            "#notif-push-toggle"
+        ).click()  # not check(): the box must not flip here
+        pg.wait_for_function(
+            "document.getElementById('notif-status').textContent.includes('Could not subscribe')",
+            timeout=10000,
+        )
+        assert not pg.locator("#notif-push-toggle").is_checked()
+        assert (
+            pg.evaluate("sessionStorage.getItem('fake-push-sub')") is None
+        )  # rolled back
+        pg.unroute("**/api/notifications/subscribe")
+        # A reload and reopen agree: nothing is on, the instance lists no device.
+        pg.reload()
+        _open_bell(pg, server)
+        assert not pg.locator("#notif-push-toggle").is_checked()
+        assert (
+            pg.request.get(f"{server}/api/notifications/devices").json()["devices"]
+            == []
+        )
+    finally:
+        ctx.close()
+
+
+def test_browser_refusing_to_unsubscribe_keeps_both_sides_on(
+    browser, server, push_service
+):
+    base, _ = push_service
+    endpoint = f"{base}/push/keep"
+    ctx = browser.new_context(viewport={"width": 1100, "height": 720})
+    ctx.add_init_script(STUBS)
+    ctx.add_init_script(push_stub(endpoint, fake_subscription_keys()))
+    pg = ctx.new_page()
+    try:
+        _open_bell(pg, server)
+        pg.locator(
+            "#notif-push-toggle"
+        ).click()  # not check(): the box must not flip here
+        pg.wait_for_selector("#notif-devices .notif-device-me", timeout=10000)
+        pg.evaluate("window.__unsubscribeFails = true")
+        pg.locator("#notif-push-toggle").click()  # not uncheck(): the box must stay on
+        pg.wait_for_function(
+            "document.getElementById('notif-status').textContent.includes('kept the subscription')",
+            timeout=10000,
+        )
+        assert pg.locator("#notif-push-toggle").is_checked()
+        devices = pg.request.get(f"{server}/api/notifications/devices").json()[
+            "devices"
+        ]
+        assert [d["endpoint"] for d in devices] == [endpoint]
+        # After a reload the state is still consistent: on, with the device listed.
+        pg.reload()
+        _open_bell(pg, server)
+        assert pg.locator("#notif-push-toggle").is_checked()
+        # And a browser-only subscription (server record gone) reads as off.
+        pg.request.delete(
+            f"{server}/api/notifications/subscribe", data={"endpoint": endpoint}
+        )
+        pg.reload()
+        _open_bell(pg, server)
+        assert not pg.locator("#notif-push-toggle").is_checked()
+        assert pg.evaluate("sessionStorage.getItem('fake-push-sub')") == "1"
     finally:
         ctx.close()

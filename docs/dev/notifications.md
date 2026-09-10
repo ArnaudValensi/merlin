@@ -1,4 +1,4 @@
-# Notifications — Internals
+# Notifications: Internals
 
 Implementation reference for the notifications feature. The user guide is
 [`docs/notifications.md`](../notifications.md). The module is `notifications/`, three files with

@@ -11,9 +11,17 @@ Files, both mode 0600 under ``~/.merlin/notifications/``:
 - ``subscriptions.json``: one entry per endpoint with a device label, a
   created timestamp and a last-success timestamp.
 
-A store file that fails to parse is moved aside under another name and the
-store starts empty. Nothing here raises into the watcher: a send that fails
-is logged with ``log_event``, and a 404 or 410 removes the subscription.
+A store file that fails to parse, or holds the wrong shape, is moved aside
+under another name and the store starts empty. Nothing here raises into the
+watcher: a send that fails is logged with ``log_event``, and a 404 or 410
+removes the subscription.
+
+Threads: route handlers run in FastAPI's worker threads and sends run in
+``asyncio.to_thread``, so the stores are shared between threads. Every
+read-modify-write of a store runs whole under its lock, the key pair is
+generated once under a lock, and files are written through a unique temp
+file in the destination directory before an atomic rename. Async entry
+points never touch a store on the event loop.
 
 Suppression, push only: no push when a connected terminal client currently
 displays the event's window (the caller says which windows are displayed),
@@ -23,15 +31,19 @@ and no second push for the same sid within 20 seconds.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
+import tempfile
+import threading
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 if TYPE_CHECKING:
     from .watcher import Event
@@ -50,40 +62,50 @@ def _now_iso(clock: Callable[[], float]) -> str:
 
 
 def _write_private(path: Path, data: dict) -> None:
-    """Write JSON atomically with mode 0600 (the temp file too)."""
+    """Write JSON atomically with mode 0600. The temp file is unique (two
+    writers never share one name) and lives in the destination directory so
+    the final rename is atomic."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=path.name + ".", suffix=".tmp", dir=str(path.parent)
+    )
     try:
+        os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w") as f:
             json.dump(data, f, indent=2)
             f.write("\n")
+        os.replace(tmp_name, str(path))
     except BaseException:
-        tmp.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
         raise
-    os.chmod(str(tmp), 0o600)
-    os.replace(str(tmp), str(path))
     os.chmod(str(path), 0o600)
 
 
+def _set_aside(path: Path, why: str) -> None:
+    """Keep a bad store file under ``<name>.corrupt-<timestamp>`` and log it."""
+    aside = path.with_name(f"{path.name}.corrupt-{int(time.time() * 1000)}")
+    try:
+        os.replace(str(path), str(aside))
+    except OSError:
+        pass
+    logger.warning("Unreadable %s moved to %s: %s", path.name, aside.name, why)
+
+
 def _read_private(path: Path) -> dict | None:
-    """Read a JSON object. A file that does not parse is kept aside under
-    ``<name>.corrupt-<timestamp>`` and None is returned, never an exception."""
+    """Read a JSON object. A file that does not parse, or is not an object, is
+    set aside and None is returned, never an exception."""
     if not path.exists():
         return None
     try:
         data = json.loads(path.read_text())
-        if isinstance(data, dict):
-            return data
-        raise ValueError("not an object")
     except (OSError, ValueError) as exc:
-        aside = path.with_name(f"{path.name}.corrupt-{int(time.time())}")
-        try:
-            os.replace(str(path), str(aside))
-        except OSError:
-            pass
-        logger.warning("Unreadable %s moved to %s: %s", path.name, aside.name, exc)
+        _set_aside(path, str(exc))
         return None
+    if not isinstance(data, dict):
+        _set_aside(path, "not a JSON object")
+        return None
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -98,16 +120,29 @@ class VapidKeys:
         self.path = path
         self._private_pem: str | None = None
         self._public_key: str | None = None
+        self._lock = threading.Lock()
 
     def _load(self) -> None:
-        if self._private_pem is not None:
-            return
-        data = _read_private(self.path)
-        if data and isinstance(data.get("private_pem"), str) and data.get("public_key"):
-            self._private_pem = data["private_pem"]
-            self._public_key = str(data["public_key"])
-            return
-        self._generate()
+        # Under the lock: two first readers (a route thread and a send thread)
+        # must agree on one pair, never generate two and keep the wrong one.
+        with self._lock:
+            if self._private_pem is not None:
+                return
+            data = _read_private(self.path)
+            pem = data.get("private_pem") if data else None
+            public = data.get("public_key") if data else None
+            if (
+                isinstance(pem, str)
+                and pem.startswith("-----BEGIN")
+                and isinstance(public, str)
+                and public
+            ):
+                self._private_pem = pem
+                self._public_key = public
+                return
+            if data is not None:
+                _set_aside(self.path, "not a key pair")
+            self._generate()
 
     def _generate(self) -> None:
         from cryptography.hazmat.primitives.serialization import (
@@ -140,13 +175,6 @@ class VapidKeys:
         assert self._private_pem is not None
         return self._private_pem
 
-    def vapid(self) -> Any:
-        """The key as ``pywebpush`` takes it (a ``Vapid`` object: the string
-        form it accepts is raw base64, not PEM)."""
-        from py_vapid import Vapid
-
-        return Vapid.from_pem(self.private_pem.encode())
-
     @property
     def public_key(self) -> str:
         """The application server key, base64url of the uncompressed point,
@@ -154,6 +182,13 @@ class VapidKeys:
         self._load()
         assert self._public_key is not None
         return self._public_key
+
+    def vapid(self) -> Any:
+        """The key as ``pywebpush`` takes it (a ``Vapid`` object: the string
+        form it accepts is raw base64, not PEM)."""
+        from py_vapid import Vapid
+
+        return Vapid.from_pem(self.private_pem.encode())
 
 
 # ---------------------------------------------------------------------------
@@ -190,30 +225,36 @@ class SubscriptionStore:
         self.path = path
         self._clock = clock
         self._subs: dict[str, Subscription] | None = None
+        # Every read-modify-write runs whole under this lock: route threads
+        # and send threads share the store.
+        self._lock = threading.RLock()
 
     def _load(self) -> dict[str, Subscription]:
         if self._subs is not None:
             return self._subs
         subs: dict[str, Subscription] = {}
         data = _read_private(self.path)
-        for endpoint, raw in (data or {}).get("subscriptions", {}).items():
-            try:
-                keys = raw["keys"]
-                if (
-                    not isinstance(keys, dict)
-                    or not keys.get("p256dh")
-                    or not keys.get("auth")
-                ):
-                    continue
-                subs[endpoint] = Subscription(
-                    endpoint=endpoint,
-                    keys={"p256dh": str(keys["p256dh"]), "auth": str(keys["auth"])},
-                    label=str(raw.get("label", "")),
-                    created=str(raw.get("created", "")),
-                    last_success=str(raw.get("last_success", "")),
-                )
-            except (KeyError, TypeError, AttributeError):
+        raw_subs: Any = data.get("subscriptions") if data is not None else {}
+        if not isinstance(raw_subs, dict):
+            _set_aside(self.path, "subscriptions is not a mapping")
+            raw_subs = {}
+        for endpoint, raw in raw_subs.items():
+            if not isinstance(raw, dict):
                 continue
+            keys = raw.get("keys")
+            if (
+                not isinstance(keys, dict)
+                or not keys.get("p256dh")
+                or not keys.get("auth")
+            ):
+                continue
+            subs[str(endpoint)] = Subscription(
+                endpoint=str(endpoint),
+                keys={"p256dh": str(keys["p256dh"]), "auth": str(keys["auth"])},
+                label=str(raw.get("label", "")),
+                created=str(raw.get("created", "")),
+                last_success=str(raw.get("last_success", "")),
+            )
         self._subs = subs
         return subs
 
@@ -225,10 +266,12 @@ class SubscriptionStore:
         )
 
     def all(self) -> list[Subscription]:
-        return sorted(self._load().values(), key=lambda s: s.created)
+        with self._lock:
+            return sorted(self._load().values(), key=lambda s: s.created)
 
     def get(self, endpoint: str) -> Subscription | None:
-        return self._load().get(endpoint)
+        with self._lock:
+            return self._load().get(endpoint)
 
     def add(self, info: dict, label: str) -> Subscription:
         """Add or refresh a subscription from a ``PushSubscription.toJSON()``.
@@ -239,51 +282,99 @@ class SubscriptionStore:
             raise ValueError("endpoint must be a URL")
         if not isinstance(keys, dict) or not keys.get("p256dh") or not keys.get("auth"):
             raise ValueError("subscription keys are missing")
-        subs = self._load()
-        existing = subs.get(endpoint)
-        sub = Subscription(
-            endpoint=endpoint,
-            keys={"p256dh": str(keys["p256dh"]), "auth": str(keys["auth"])},
-            label=(label or "").strip()[:80]
-            or (existing.label if existing else "Device"),
-            created=existing.created if existing else _now_iso(self._clock),
-            last_success=existing.last_success if existing else "",
-        )
-        subs[endpoint] = sub
-        self._save()
-        return sub
+        with self._lock:
+            subs = self._load()
+            existing = subs.get(endpoint)
+            sub = Subscription(
+                endpoint=endpoint,
+                keys={"p256dh": str(keys["p256dh"]), "auth": str(keys["auth"])},
+                label=(label or "").strip()[:80]
+                or (existing.label if existing else "Device"),
+                created=existing.created if existing else _now_iso(self._clock),
+                last_success=existing.last_success if existing else "",
+            )
+            subs[endpoint] = sub
+            self._save()
+            return sub
 
     def remove(self, endpoint: str) -> bool:
-        subs = self._load()
-        if endpoint not in subs:
-            return False
-        del subs[endpoint]
-        self._save()
-        return True
+        with self._lock:
+            subs = self._load()
+            if endpoint not in subs:
+                return False
+            del subs[endpoint]
+            self._save()
+            return True
 
     def mark_success(self, endpoint: str) -> None:
-        sub = self._load().get(endpoint)
-        if sub is None:
-            return
-        sub.last_success = _now_iso(self._clock)
-        self._save()
+        with self._lock:
+            sub = self._load().get(endpoint)
+            if sub is None:
+                return
+            sub.last_success = _now_iso(self._clock)
+            self._save()
+
+
+# ---------------------------------------------------------------------------
+# The payload
+# ---------------------------------------------------------------------------
+
+# Bounds on the user-controlled strings, so the payload is complete JSON well
+# under the limit before any encryption.
+_TITLE_MAX = 120
+_TAG_MAX = 200
+
+
+def _clip(text: str, limit: int) -> str:
+    text = text or ""
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def deep_link(target: str) -> str:
+    """``/terminal?target=<session>:<window_id>``, the target query-encoded so
+    a session name holding ``&`` or ``#`` survives ``URLSearchParams``."""
+    return "/terminal?target=" + quote(target, safe="")
+
+
+def build_payload(event: Event) -> dict:
+    """The push payload the service worker shows. Complete JSON, strictly
+    under 3 KB once encoded (``encode_payload`` checks)."""
+    title = f"{event.project or event.session} · {event.window_name or 'window'}"
+    return {
+        "title": _clip(title, _TITLE_MAX),
+        "body": "Needs an answer" if event.state == "ask" else "Finished",
+        "tag": _clip(event.sid, _TAG_MAX),
+        "url": deep_link(event.target),
+        "sid": _clip(event.sid, _TAG_MAX),
+        "state": event.state,
+    }
+
+
+def encode_payload(payload: dict) -> str:
+    """Serialize a payload, shortening its strings structurally (never slicing
+    the JSON) until the UTF-8 form is strictly under the limit."""
+    limits = {"title": _TITLE_MAX, "body": 200, "tag": _TAG_MAX, "sid": _TAG_MAX}
+    data = dict(payload)
+    for key, limit in limits.items():
+        if isinstance(data.get(key), str):
+            data[key] = _clip(data[key], limit)
+    for _ in range(8):
+        text = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+        if len(text.encode("utf-8")) < PAYLOAD_LIMIT:
+            return text
+        # Still too big (a very long url or state): halve every string.
+        for key, value in list(data.items()):
+            if isinstance(value, str) and len(value) > 8:
+                data[key] = _clip(value, max(8, len(value) // 2))
+    return json.dumps(
+        {"title": "Merlin", "body": str(data.get("body", "")), "url": "/terminal"},
+        separators=(",", ":"),
+    )
 
 
 # ---------------------------------------------------------------------------
 # The sender
 # ---------------------------------------------------------------------------
-
-
-def build_payload(event: Event) -> dict:
-    """The push payload the service worker shows. Under 3 KB."""
-    return {
-        "title": f"{event.project or event.session} · {event.window_name or 'window'}",
-        "body": "Needs an answer" if event.state == "ask" else "Finished",
-        "tag": event.sid,
-        "url": f"/terminal?target={event.target}",
-        "sid": event.sid,
-        "state": event.state,
-    }
 
 
 @dataclass
@@ -344,10 +435,7 @@ class PushSender:
         ``failed``. Never raises."""
         from structured_log import log_event
 
-        data = json.dumps(payload, separators=(",", ":"))
-        if len(data.encode()) > PAYLOAD_LIMIT:
-            payload = dict(payload, body=payload.get("body", "")[:200])
-            data = json.dumps(payload, separators=(",", ":"))[:PAYLOAD_LIMIT]
+        data = encode_payload(payload)
         try:
             self._send(
                 subscription_info=sub.info(),
@@ -403,17 +491,31 @@ class PushSender:
         """Send off the event loop (``pywebpush`` is synchronous)."""
         return await asyncio.to_thread(self.send_all_sync, payload, only)
 
+    def deliver_sync(self, event: Event) -> SendResult:
+        """Push one attention event, unless a suppression rule applies. Every
+        store access happens here, off the event loop."""
+        reason = self.suppression_reason(event)
+        if reason:
+            return SendResult(skipped=reason)
+        if not self.store.all():
+            return SendResult(skipped="no subscriptions")
+        self._last_push[event.sid] = self._clock()
+        return self.send_all_sync(build_payload(event))
+
     async def deliver(self, event: Event) -> SendResult:
-        """Push one attention event, unless a suppression rule applies. The
-        entry point the watcher's listener uses. Never raises."""
+        """The entry point the watcher's listener uses. Never raises."""
         try:
-            reason = self.suppression_reason(event)
-            if reason:
-                return SendResult(skipped=reason)
-            if not self.store.all():
-                return SendResult(skipped="no subscriptions")
-            self._last_push[event.sid] = self._clock()
-            return await self.send_all(build_payload(event))
+            return await asyncio.to_thread(self.deliver_sync, event)
         except Exception:
             logger.exception("Push delivery failed")
             return SendResult(skipped="error")
+
+    def test_sync(self, payload: dict, endpoint: str = "") -> SendResult | str:
+        """A test push to one device or to all, bypassing suppression. Returns
+        the result, or ``"unknown"`` / ``"none"`` when there is nothing to
+        send to. Runs off the loop like every other store access."""
+        if endpoint and self.store.get(endpoint) is None:
+            return "unknown"
+        if not self.store.all():
+            return "none"
+        return self.send_all_sync(payload, [endpoint] if endpoint else None)

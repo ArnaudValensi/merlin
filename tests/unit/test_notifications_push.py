@@ -11,7 +11,13 @@ import pytest
 
 from board.sweep import Window
 from notifications import push
-from notifications.push import PushSender, SubscriptionStore, VapidKeys, build_payload
+from notifications.push import (
+    PushSender,
+    SubscriptionStore,
+    VapidKeys,
+    build_payload,
+    encode_payload,
+)
 from notifications.watcher import Watcher
 
 
@@ -169,7 +175,7 @@ class TestPayload:
             "title": "merlin-saas · build",
             "body": "Finished",
             "tag": "s1",
-            "url": "/terminal?target=alpha:@1",
+            "url": "/terminal?target=alpha%3A%401",
             "sid": "s1",
             "state": "done",
         }
@@ -295,3 +301,183 @@ class TestSuppression:
         assert asyncio.run(sender.deliver(event())).skipped == "displayed"
         shown.clear()
         assert asyncio.run(sender.deliver(event())).sent == 1
+
+
+# ---------------------------------------------------------------------------
+# Review round: concurrency, semantic corruption, payload bounds
+# ---------------------------------------------------------------------------
+
+import threading  # noqa: E402
+
+
+def run_threads(n, fn):
+    errors, results = [], []
+    start = threading.Barrier(n)
+
+    def body(i):
+        try:
+            start.wait(5)
+            results.append(fn(i))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=body, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(20)
+    return results, errors
+
+
+class TestConcurrency:
+    def test_first_use_of_the_keys_from_many_threads_agrees_on_one_pair(self, tmp_path):
+        keys = VapidKeys(tmp_path / "vapid.json")
+        results, errors = run_threads(32, lambda _i: keys.public_key)
+        assert errors == []
+        assert len(set(results)) == 1
+        assert (
+            json.loads((tmp_path / "vapid.json").read_text())["public_key"]
+            == results[0]
+        )
+        assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+
+    def test_concurrent_adds_keep_every_device_and_a_valid_file(self, tmp_path):
+        store = SubscriptionStore(tmp_path / "subscriptions.json")
+
+        def add(i):
+            return store.add(
+                {"endpoint": f"https://push.example/{i}", "keys": SUB["keys"]}, f"d{i}"
+            ).endpoint
+
+        results, errors = run_threads(64, add)
+        assert errors == []
+        assert len(set(results)) == 64
+        data = json.loads((tmp_path / "subscriptions.json").read_text())
+        assert len(data["subscriptions"]) == 64
+        assert len(SubscriptionStore(tmp_path / "subscriptions.json").all()) == 64
+        assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+
+    def test_concurrent_add_remove_and_success_never_corrupt(self, tmp_path):
+        store = SubscriptionStore(tmp_path / "s.json")
+        for i in range(8):
+            store.add(
+                {"endpoint": f"https://push.example/{i}", "keys": SUB["keys"]}, "x"
+            )
+
+        def op(i):
+            ep = f"https://push.example/{i % 8}"
+            if i % 3 == 0:
+                store.mark_success(ep)
+            elif i % 3 == 1:
+                store.remove(ep)
+            else:
+                store.add({"endpoint": ep, "keys": SUB["keys"]}, "y")
+            return True
+
+        _, errors = run_threads(48, op)
+        assert errors == []
+        json.loads((tmp_path / "s.json").read_text())  # still valid JSON
+        assert SubscriptionStore(tmp_path / "s.json").all() is not None
+
+
+class TestSemanticCorruption:
+    @pytest.mark.parametrize(
+        "text", ['{"subscriptions": []}', "null", "[1, 2]", '"x"', "{}"]
+    )
+    def test_wrong_shapes_recover(self, tmp_path, text):
+        path = tmp_path / "subscriptions.json"
+        path.write_text(text)
+        store = SubscriptionStore(path)
+        assert store.all() == []
+        store.add(SUB, "a")
+        assert (
+            json.loads(path.read_text())["subscriptions"][SUB["endpoint"]]["label"]
+            == "a"
+        )
+        if text != "{}":
+            assert any(
+                p.name.startswith("subscriptions.json.corrupt-")
+                for p in tmp_path.iterdir()
+            )
+
+    def test_entries_of_the_wrong_shape_are_skipped(self, tmp_path):
+        path = tmp_path / "s.json"
+        path.write_text(
+            json.dumps(
+                {"subscriptions": {"https://a/b": 5, "https://a/c": {"keys": {}}}}
+            )
+        )
+        assert SubscriptionStore(path).all() == []
+
+    @pytest.mark.parametrize(
+        "text",
+        ['{"public_key": "x"}', '{"private_pem": "nope", "public_key": "x"}', "[]"],
+    )
+    def test_key_file_of_the_wrong_shape_is_regenerated(self, tmp_path, text):
+        path = tmp_path / "vapid.json"
+        path.write_text(text)
+        keys = VapidKeys(path)
+        assert keys.private_pem.startswith("-----BEGIN PRIVATE KEY-----")
+        assert any(p.name.startswith("vapid.json.corrupt-") for p in tmp_path.iterdir())
+
+
+class TestPayloadBounds:
+    def test_long_unicode_names_yield_complete_json_under_the_limit(self):
+        ev = event(cwd="/h/" + "é" * 3000, name="ü" * 3000, sid="s" * 500)
+        data = encode_payload(build_payload(ev))
+        assert len(data.encode("utf-8")) < 3 * 1024
+        parsed = json.loads(data)
+        assert parsed["url"] == "/terminal?target=alpha%3A%401"
+        assert parsed["title"].endswith("…") and len(parsed["title"]) <= 120
+        assert parsed["state"] == "done"
+
+    def test_oversized_url_is_shortened_structurally(self):
+        data = encode_payload(
+            {"title": "t", "body": "b", "url": "/x?" + "a" * 5000, "state": "done"}
+        )
+        assert len(data.encode()) < 3 * 1024
+        json.loads(data)
+
+    def test_target_with_query_delimiters_is_encoded(self):
+        payload = build_payload(event(session="a&b#c=d"))
+        assert payload["url"] == "/terminal?target=a%26b%23c%3Dd%3A%401"
+        from urllib.parse import parse_qs, urlsplit
+
+        assert parse_qs(urlsplit(payload["url"]).query)["target"] == ["a&b#c=d:@1"]
+
+    def test_send_one_sends_the_bounded_payload(self, tmp_path):
+        rec = Recorder()
+        sender, store = make_sender(tmp_path, rec)
+        store.add(SUB, "a")
+        asyncio.run(sender.deliver(event(name="n" * 5000)))
+        data = rec.calls[0]["data"]
+        assert len(data.encode("utf-8")) < 3 * 1024
+        assert json.loads(data)["url"] == "/terminal?target=alpha%3A%401"
+
+
+class TestAsyncEntryPoints:
+    def test_deliver_reads_the_store_off_the_loop(self, tmp_path, monkeypatch):
+        rec = Recorder()
+        sender, store = make_sender(tmp_path, rec)
+        store.add(SUB, "a")
+        seen = []
+        original = sender.store.all
+
+        def spy():
+            seen.append(threading.current_thread() is threading.main_thread())
+            return original()
+
+        monkeypatch.setattr(sender.store, "all", spy)
+        assert asyncio.run(sender.deliver(event())).sent == 1
+        assert seen and not any(seen)
+
+    def test_test_sync_outcomes(self, tmp_path):
+        rec = Recorder()
+        sender, store = make_sender(tmp_path, rec)
+        assert sender.test_sync({"title": "t"}) == "none"
+        store.add(SUB, "a")
+        assert (
+            sender.test_sync({"title": "t"}, "https://push.example/nope") == "unknown"
+        )
+        result = sender.test_sync({"title": "t"}, SUB["endpoint"])
+        assert not isinstance(result, str) and result.sent == 1

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -38,6 +39,7 @@ api_router = APIRouter()
 
 _sender: PushSender | None = None
 _sender_home: Path | None = None
+_sender_lock = threading.Lock()
 
 
 def notifications_dir() -> Path:
@@ -56,14 +58,15 @@ def get_sender() -> PushSender:
     """The one sender per Merlin home (tests point the home elsewhere)."""
     global _sender, _sender_home
     home = notifications_dir()
-    if _sender is None or _sender_home != home:
-        _sender = PushSender(
-            SubscriptionStore(home / "subscriptions.json"),
-            VapidKeys(home / "vapid.json"),
-            is_displayed=_is_displayed,
-        )
-        _sender_home = home
-    return _sender
+    with _sender_lock:
+        if _sender is None or _sender_home != home:
+            _sender = PushSender(
+                SubscriptionStore(home / "subscriptions.json"),
+                VapidKeys(home / "vapid.json"),
+                is_displayed=_is_displayed,
+            )
+            _sender_home = home
+        return _sender
 
 
 def _on_event(event: _watcher.Event) -> None:
@@ -178,11 +181,6 @@ async def api_test(req: TestReq):
     """Send a test push to one device, or to all of them. Bypasses the
     suppression rules: the user asked for it."""
     sender = get_sender()
-    only = [req.endpoint] if req.endpoint else None
-    if only and sender.store.get(req.endpoint) is None:
-        raise HTTPException(status_code=404, detail="Unknown device")
-    if not sender.store.all():
-        raise HTTPException(status_code=409, detail="No device is subscribed")
     payload = {
         "title": "Merlin · test",
         "body": "Push works on this device",
@@ -191,7 +189,13 @@ async def api_test(req: TestReq):
         "sid": "",
         "state": "test",
     }
-    result = await sender.send_all(payload, only)
+    # The store may read its file here: off the event loop, like every send.
+    result = await asyncio.to_thread(sender.test_sync, payload, req.endpoint)
+    if result == "unknown":
+        raise HTTPException(status_code=404, detail="Unknown device")
+    if result == "none":
+        raise HTTPException(status_code=409, detail="No device is subscribed")
+    assert not isinstance(result, str)
     return {
         "ok": result.sent > 0,
         "sent": result.sent,
