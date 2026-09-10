@@ -1,4 +1,4 @@
-"""Notifications — attention events from tmux, in-tab notifications, the
+"""Notifications: attention events from tmux, in-tab notifications, the
 installable app and Web Push. Three files with fixed responsibilities (kept as
 seams for the hub epic): ``watcher.py`` produces events and knows nothing about
 delivery, ``push.py`` sends and knows nothing about tmux, ``routes.py`` glues

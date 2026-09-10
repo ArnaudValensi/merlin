@@ -93,11 +93,20 @@ class TestTransitions:
         w = make()
         assert w.observe([win(sid="", state="", name="zsh")]) == []
 
-    def test_agent_window_without_sid_is_keyed_by_window_id(self):
+    def test_agent_window_without_sid_is_ignored(self):
         w = make()
-        (ev,) = w.observe([win(sid="", state="done", wid="@3")])
-        assert ev.sid == "win:@3"
         assert w.observe([win(sid="", state="done", wid="@3")]) == []
+        assert w.observe([win(sid="", state="ask", wid="@3")]) == []
+
+    def test_sid_appearing_on_a_done_window_emits_exactly_once(self):
+        # The sweep can catch the SessionStart hooks between the state and the
+        # sid being stamped. The row counts once, under its stable sid, never
+        # a second time when the sid shows up.
+        w = make()
+        assert w.observe([win(sid="", state="done", wid="@3")]) == []
+        (ev,) = w.observe([win(sid="s9", state="done", wid="@3")])
+        assert ev.sid == "s9"
+        assert w.observe([win(sid="s9", state="done", wid="@3")]) == []
 
     def test_window_gone_then_back_in_done_is_a_new_transition(self):
         w = make()
@@ -218,6 +227,41 @@ class TestCursor:
         assert [e.sid for e in events] == ["s2", "s3", "s4"]
         assert dropped == 2
 
+    def test_old_epoch_with_ring_overrun_reports_dropped_count(self):
+        w = make(ring_size=3)
+        for i in range(5):
+            w.observe([win(sid=f"s{i}", state="done")])
+        events, cursor, dropped = w.events_since("deadbeef:42")
+        assert [e.sid for e in events] == ["s2", "s3", "s4"]
+        assert dropped == 2
+        assert cursor == w.cursor
+
+    def test_cursor_and_events_are_one_snapshot_under_concurrent_publication(self):
+        # Contract: whatever interleaving a poll thread sees, the cursor it
+        # gets back never runs ahead of the events it received. Both a
+        # publication and a read wait on the same lock, so a read either lands
+        # entirely before the event (nothing, cursor :0) or entirely after it
+        # (the event, cursor :1). Never nothing with cursor :1.
+        import threading
+
+        w = make()
+        _, c0, _ = w.events_since(None)
+        results: list[tuple[list[Event], str, int]] = []
+        w._lock.acquire()
+        publisher = threading.Thread(target=lambda: w.observe([win(state="done")]))
+        reader = threading.Thread(target=lambda: results.append(w.events_since(c0)))
+        publisher.start()
+        reader.start()
+        publisher.join(0.05)
+        reader.join(0.05)
+        assert publisher.is_alive() and reader.is_alive()  # both parked on the lock
+        w._lock.release()
+        publisher.join(2)
+        reader.join(2)
+        (events, cursor, dropped) = results[0]
+        assert len(events) == int(cursor.split(":")[1])
+        assert dropped == 0
+
     def test_cursor_ahead_of_seq_returns_nothing(self):
         w = make()
         w.observe([win(state="done")])
@@ -264,3 +308,34 @@ class TestTask:
         await mod.stop()
         assert t1.done()
         await mod.stop()  # a second stop is a no-op
+
+    @pytest.mark.asyncio
+    async def test_stop_reraises_its_own_cancellation(self, monkeypatch):
+        class Stuck(Watcher):
+            async def run(self, stop):
+                await asyncio.Event().wait()  # never honours stop
+
+        monkeypatch.setattr(mod, "watcher", Stuck(lambda: []))
+        monkeypatch.setattr(mod, "_task", None)
+        monkeypatch.setattr(mod, "_stop", None)
+        task = mod.start()
+        stopper = asyncio.create_task(mod.stop(timeout=10))
+        await asyncio.sleep(0.02)
+        stopper.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stopper
+        assert task.cancelled() or task.done()
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_a_task_that_overruns_the_timeout(self, monkeypatch):
+        class Stuck(Watcher):
+            async def run(self, stop):
+                await asyncio.Event().wait()
+
+        monkeypatch.setattr(mod, "watcher", Stuck(lambda: []))
+        monkeypatch.setattr(mod, "_task", None)
+        monkeypatch.setattr(mod, "_stop", None)
+        task = mod.start()
+        await mod.stop(timeout=0.05)
+        await asyncio.sleep(0)
+        assert task.cancelled() or task.done()

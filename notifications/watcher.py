@@ -16,10 +16,21 @@ epic forwards these events from a node without touching tmux here.
 Cursor semantics. A cursor is ``<epoch>:<seq>``. ``epoch`` is minted once per
 process, ``seq`` counts events in that process. A page presenting a cursor
 from another epoch has survived a Merlin restart: it gets every event of the
-new process (none of which it can have consumed) and a fresh cursor. A page
-whose ``seq`` fell behind the ring gets what is left plus the number of events
-that were lost, so nothing is dropped silently. A page with no cursor gets no
-events and the current cursor, so a reload never replays.
+new process still in the ring (none of which it can have consumed) and a fresh
+cursor. Whenever events the page has not consumed were evicted from the ring,
+in either epoch, the response carries their number, so nothing is dropped
+silently. A page with no cursor gets no events and the current cursor, so a
+reload never replays.
+
+Publication and reads share one lock: the poll handler runs in a worker thread
+while the watcher publishes on the event loop, and a cursor must never move
+past an event that is not in the ring yet.
+
+Only windows carrying a stable ``@agent_sid`` are tracked. The identity hook
+mints the sid at SessionStart, in the same hook group as the state hook, so a
+state without a sid is a transient race between the two (SessionStart sets
+idle, which never notifies anyway). Tracking such a row under a provisional
+key would emit the same transition a second time once the sid appears.
 
 A missing tmux server is an ordinary state: the sweep reports it, the watcher
 remembers it for the popover, keeps its last known states so a transient
@@ -30,9 +41,11 @@ the server's task list.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import secrets
+import threading
 import time
 from collections import deque
 from collections.abc import Callable
@@ -78,13 +91,6 @@ def _project_of(cwd: str) -> str:
     return os.path.basename(cwd.rstrip("/")) if cwd else ""
 
 
-def _key_of(w: Window) -> str:
-    """The identity a window is tracked by: its stable sid, or its window id
-    for an agent window that carries a state but no sid (started before the
-    identity hook was installed)."""
-    return w.sid or f"win:{w.window_id}"
-
-
 class Watcher:
     """Diff successive sweeps into attention events. Pure about tmux: it only
     ever reads sweeps, through the callable it was given."""
@@ -108,6 +114,7 @@ class Watcher:
         self._seq = 0
         self._ring: deque[Event] = deque(maxlen=ring_size)
         self._last: dict[str, str] = {}
+        self._lock = threading.Lock()
         self._listeners: list[Callable[[Event], None]] = []
         self.tmux_available: bool | None = None  # None until the first sweep
         self.swept_once = False
@@ -116,6 +123,10 @@ class Watcher:
 
     @property
     def cursor(self) -> str:
+        with self._lock:
+            return self._cursor()
+
+    def _cursor(self) -> str:
         return f"{self.epoch}:{self._seq}"
 
     def add_listener(self, fn: Callable[[Event], None]) -> None:
@@ -140,11 +151,10 @@ class Watcher:
         current: dict[str, str] = {}
         seen: dict[str, Window] = {}
         for w in windows:
-            if not w.state:
+            if not w.state or not w.sid:
                 continue
-            key = _key_of(w)
-            current[key] = w.state
-            seen[key] = w
+            current[w.sid] = w.state
+            seen[w.sid] = w
 
         events: list[Event] = []
         for key, state in current.items():
@@ -152,23 +162,27 @@ class Watcher:
                 continue
             if self._last.get(key) == state:
                 continue
-            events.append(self._emit(seen[key], key))
+            events.append(self._emit(seen[key]))
         self._last = current
         return events
 
-    def _emit(self, w: Window, key: str) -> Event:
-        self._seq += 1
-        ev = Event(
-            seq=self._seq,
-            sid=key,
-            session=w.session,
-            window_id=w.window_id,
-            window_name=w.name,
-            state=w.state,
-            project=_project_of(w.cwd),
-            ts=datetime.fromtimestamp(self._clock(), tz=timezone.utc).isoformat(),
-        )
-        self._ring.append(ev)
+    def _emit(self, w: Window) -> Event:
+        ts = datetime.fromtimestamp(self._clock(), tz=timezone.utc).isoformat()
+        # Seq and ring move together under the lock, so a concurrent read
+        # never sees a cursor ahead of the events it can return.
+        with self._lock:
+            self._seq += 1
+            ev = Event(
+                seq=self._seq,
+                sid=w.sid,
+                session=w.session,
+                window_id=w.window_id,
+                window_name=w.name,
+                state=w.state,
+                project=_project_of(w.cwd),
+                ts=ts,
+            )
+            self._ring.append(ev)
         for fn in list(self._listeners):
             try:
                 fn(ev)
@@ -177,23 +191,27 @@ class Watcher:
         return ev
 
     def events_since(self, cursor: str | None) -> tuple[list[Event], str, int]:
-        """Events after ``cursor``, the new cursor, and how many events between
-        the cursor and the oldest kept one were lost to the ring (0 normally).
+        """Events after ``cursor``, the new cursor, and how many unconsumed
+        events were evicted from the ring before they could be read (0
+        normally).
 
         No cursor: nothing, just the current position. Another epoch: every
-        event this process holds. Same epoch: the events after ``seq``.
+        event this process still holds, with the count of those it no longer
+        holds. Same epoch: the events after ``seq``, with the count of those
+        between ``seq`` and the oldest kept one. All three values come from
+        one snapshot taken under the publication lock.
         """
-        if not cursor:
-            return [], self.cursor, 0
-        epoch, _, seq_s = cursor.partition(":")
-        if epoch != self.epoch or not seq_s.isdigit():
-            return list(self._ring), self.cursor, 0
-        since = int(seq_s)
-        if since >= self._seq:
-            return [], self.cursor, 0
-        oldest = self._ring[0].seq if self._ring else self._seq + 1
-        dropped = max(0, oldest - since - 1)
-        return [e for e in self._ring if e.seq > since], self.cursor, dropped
+        with self._lock:
+            now = self._cursor()
+            if not cursor:
+                return [], now, 0
+            epoch, _, seq_s = cursor.partition(":")
+            since = int(seq_s) if epoch == self.epoch and seq_s.isdigit() else 0
+            if since >= self._seq:
+                return [], now, 0
+            oldest = self._ring[0].seq if self._ring else self._seq + 1
+            dropped = max(0, oldest - since - 1)
+            return [e for e in self._ring if e.seq > since], now, dropped
 
     # -- the background task ----------------------------------------------
 
@@ -241,7 +259,10 @@ def start() -> asyncio.Task:
 
 
 async def stop(timeout: float = 6.0) -> None:
-    """Stop the watcher task and wait for it, cancelling if it overruns."""
+    """Stop the watcher task and wait for it, cancelling if it overruns.
+
+    A cancellation of this coroutine itself cancels the watcher task and is
+    then re-raised, so a caller's cancellation is never swallowed."""
     global _task, _stop
     task, event = _task, _stop
     _task = _stop = None
@@ -250,7 +271,13 @@ async def stop(timeout: float = 6.0) -> None:
     event.set()
     try:
         await asyncio.wait_for(task, timeout=timeout)
-    except (TimeoutError, asyncio.CancelledError):
+    except TimeoutError:
+        logger.warning("Attention watcher did not stop in %.0fs, cancelling", timeout)
         task.cancel()
+    except asyncio.CancelledError:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+        raise
     except Exception:
         logger.exception("Attention watcher ended with an error")
