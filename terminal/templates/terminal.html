@@ -1991,6 +1991,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (typeof d === 'string' && d.charCodeAt(0) === 0) {
                 try {
                     var ctl = JSON.parse(d.slice(1));
+                    if (ctl && ctl.type === 'pong') { onPong(); return; }
                     if (ctl && ctl.type === 'session') {
                         currentSession = ctl.name || '';
                         currentWindowId = ctl.window_id || '';
@@ -2039,6 +2040,54 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Terminal input -> WebSocket
     term.onData((data) => { sendToTerminal(data); });
+
+    // -----------------------------------------------------------------------
+    // Reconnect after a suspension (decision 18 of the notifications epic)
+    // -----------------------------------------------------------------------
+    // A phone suspends an installed web app, kills its sockets and does not
+    // tell the page, which then shows a frozen terminal until a keystroke
+    // times out. Record when the page left the foreground. On return after a
+    // short absence, probe the socket with a ping and replace it if no pong
+    // comes back. After a long absence, replace it without waiting.
+    const SHORT_ABSENCE_MS = 2000;
+    const LONG_ABSENCE_MS = 60000;
+    const PONG_TIMEOUT_MS = 3000;
+    let hiddenAt = 0;
+    let pongTimer = null;
+    const probeStats = { probes: 0, pongs: 0, replaced: 0 };
+
+    function replaceSocket(why) {
+        probeStats.replaced++;
+        clearTimeout(pongTimer); pongTimer = null;
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        reconnectDelay = 1000;
+        console.info('[merlin] replacing terminal socket: ' + why);
+        connect();
+    }
+    function probeSocket() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        probeStats.probes++;
+        clearTimeout(pongTimer);
+        pongTimer = setTimeout(() => replaceSocket('no pong'), PONG_TIMEOUT_MS);
+        try { ws.send(JSON.stringify({ type: 'ping' })); }
+        catch (_) { replaceSocket('send failed'); }
+    }
+    function onPong() {
+        probeStats.pongs++;
+        clearTimeout(pongTimer); pongTimer = null;
+    }
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) { hiddenAt = Date.now(); return; }
+        if (!hiddenAt) return;
+        const away = Date.now() - hiddenAt;
+        hiddenAt = 0;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;  // closed sockets already reconnect
+        if (away >= LONG_ABSENCE_MS) replaceSocket('away ' + Math.round(away / 1000) + 's');
+        else if (away >= SHORT_ABSENCE_MS) probeSocket();
+    });
+    // Restored from the back-forward cache: the old socket is gone for sure.
+    window.addEventListener('pageshow', (e) => { if (e.persisted) replaceSocket('bfcache'); });
+    window.MerlinTerminal.probeStats = function () { return Object.assign({}, probeStats); };
 
     // Resize handling
     function onResize() {

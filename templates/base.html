@@ -7,6 +7,10 @@
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0f1117">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <script>if(localStorage.getItem('sidebar-collapsed')==='1')document.documentElement.classList.add('sc')</script>
     <link rel="stylesheet" href="/static/vendor/geist-fonts.css">
     <link rel="stylesheet" href="/static/dashboard.css">
@@ -14,6 +18,17 @@
     <script src="/static/vendor/chartjs-adapter-date-fns.min.js"></script>
     <script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>
     <script src="/static/page-title.js"></script>
+    <script>
+    // The service worker (push and notification clicks only, no fetch
+    // interception). Registered at the root so its scope covers every page.
+    // Secure contexts only: plain HTTP on a LAN address has no worker.
+    if ('serviceWorker' in navigator && window.isSecureContext) {
+        window.addEventListener('load', function () {
+            navigator.serviceWorker.register('/sw.js?v={{ merlin_version | default("dev") | urlencode }}', { scope: '/' })
+                .catch(function () { /* unsupported or blocked: the page works without it */ });
+        });
+    }
+    </script>
     <script src="/static/dashboard.js"></script>
 </head>
 <body>

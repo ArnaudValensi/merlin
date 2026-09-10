@@ -31,7 +31,12 @@ from urllib.parse import quote
 
 from dotenv import load_dotenv
 from fastapi import Body, Depends, FastAPI, Form, Request, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -353,6 +358,82 @@ def logout():
     response = RedirectResponse(url="/login", status_code=303)
     clear_auth_cookie(response)
     return response
+
+
+# ---------------------------------------------------------------------------
+# Installable app: manifest and service worker (unauthenticated on purpose)
+# ---------------------------------------------------------------------------
+
+# Browsers fetch both without the page's context, so they are the only two
+# unauthenticated app-shell routes. Neither carries anything sensitive: the
+# manifest names the machine, the worker shows pushes and handles clicks.
+
+_MANIFEST_THEME = "#0f1117"  # --bg-primary
+_MANIFEST_ACCENT = "#34d399"  # --accent-green
+
+
+def _merlin_version() -> str:
+    from cli import get_version
+
+    return get_version()
+
+
+def build_manifest(machine: str) -> dict:
+    """The web app manifest. One instance installs as one app, told apart on
+    a home screen by the machine name."""
+    label = machine.strip() or "Merlin"
+    return {
+        "name": f"Merlin · {label}" if machine.strip() else "Merlin",
+        "short_name": label[:30],
+        "description": "Merlin terminal and agent sessions",
+        "start_url": "/terminal",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": _MANIFEST_THEME,
+        "theme_color": _MANIFEST_THEME,
+        "icons": [
+            {
+                "src": "/static/icons/icon-192.png",
+                "sizes": "192x192",
+                "type": "image/png",
+            },
+            {
+                "src": "/static/icons/icon-512.png",
+                "sizes": "512x512",
+                "type": "image/png",
+            },
+            {
+                "src": "/static/icons/icon-maskable-512.png",
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "maskable",
+            },
+        ],
+    }
+
+
+@app.get("/manifest.webmanifest")
+def web_manifest():
+    from merlin_ext import resolve_machine_name
+
+    return JSONResponse(
+        build_manifest(resolve_machine_name()),
+        media_type="application/manifest+json",
+    )
+
+
+_SW_PATH = Path(__file__).parent / "notifications" / "static" / "sw.js"
+
+
+@app.get("/sw.js")
+def service_worker():
+    """The worker at the root of the origin, so its scope covers /terminal.
+    Never cached by the browser: the registration URL carries the version."""
+    return FileResponse(
+        str(_SW_PATH),
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1307,6 +1388,7 @@ register_template_globals(
     saas_mode=bool(MERLIN_SAAS_TOKEN),
     saas_api_url=MERLIN_SAAS_API,
     extensions_error_count=_extensions_with_errors,
+    merlin_version=_merlin_version(),  # versions the service worker URL
 )
 
 

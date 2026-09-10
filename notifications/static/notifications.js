@@ -13,8 +13,10 @@ window.MerlinNotifications = (function () {
   var PREF_KEY = 'notify-in-browser';   // per-browser preference, decision 13
   var ICON = '/static/favicon.svg';
 
-  var S = { bell: null, dot: null, pop: null, toggle: null, toggleRow: null,
-            status: null, pushSubscribed: false, open: false, attention: 0 };
+  var S = { bell: null, dot: null, pop: null, body: null, toggle: null, toggleRow: null,
+            status: null, notice: null, pushSlot: null,
+            pushSubscribed: false, open: false, attention: 0,
+            tmux: null };   // null: unknown, false: no tmux server at the last sweep
 
   // --- capability -------------------------------------------------------
   function hasApi() { return typeof Notification !== 'undefined' && !!Notification; }
@@ -41,6 +43,8 @@ window.MerlinNotifications = (function () {
   }
   function bodyOf(ev) { return ev.state === 'ask' ? 'Needs an answer' : 'Finished'; }
 
+  function deepLink(ev) { return '/terminal?target=' + encodeURIComponent(ev.target); }
+
   function show(ev) {
     var n;
     try {
@@ -49,7 +53,8 @@ window.MerlinNotifications = (function () {
       });
     } catch (e) {
       // Some browsers only show notifications from a service worker (Android
-      // Chrome). Nothing to do here without one.
+      // Chrome). The worker's click handler then lands on the deep link.
+      showViaWorker(ev);
       return;
     }
     n.onclick = function () {
@@ -59,6 +64,17 @@ window.MerlinNotifications = (function () {
       }
       try { n.close(); } catch (e) { /* already gone */ }
     };
+  }
+
+  function showViaWorker(ev) {
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.getRegistration('/').then(function (reg) {
+      if (!reg) return;
+      return reg.showNotification(titleOf(ev), {
+        body: bodyOf(ev), tag: ev.sid || ev.target, icon: ICON,
+        data: { url: deepLink(ev), sid: ev.sid, state: ev.state },
+      });
+    }).catch(function () { /* no worker, no notification */ });
   }
 
   // Called by board.js with the events of one poll. Skips an event for the
@@ -103,8 +119,36 @@ window.MerlinNotifications = (function () {
     return { ok: true, text: '' };
   }
 
+  // iOS delivers Web Push only to an installed web app (16.4 and later).
+  function isIos() {
+    var ua = navigator.userAgent || '';
+    return /iPhone|iPad|iPod/.test(ua) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+  function isStandalone() {
+    if (navigator.standalone === true) return true;
+    try { return window.matchMedia('(display-mode: standalone)').matches; } catch (e) { return false; }
+  }
+
   function render() {
     if (!S.pop) return;
+    // The whole popover has one message when the last sweep found no tmux
+    // server: nothing can be watched (Merlin runs outside tmux, its terminal
+    // clients live in one).
+    var noTmux = S.tmux === false;
+    S.notice.hidden = !noTmux;
+    S.body.hidden = noTmux;
+    if (noTmux) {
+      S.notice.textContent = 'Notifications need a running tmux server. Open the terminal to start one, then come back here.';
+      if (S.dot) S.dot.hidden = true;
+      return;
+    }
+    // Push slot (the toggle itself arrives with push). On an iPhone browser
+    // that is not the installed app, the slot carries the install sentence.
+    S.pushSlot.textContent = '';
+    if (isIos() && !isStandalone()) {
+      S.pushSlot.appendChild(el('div', 'notif-sentence', 'On iPhone, add Merlin to the Home Screen first, then enable push from there.'));
+    }
     var r = reason();
     var on = enabled();
     S.toggle.disabled = !r.ok;
@@ -146,7 +190,13 @@ window.MerlinNotifications = (function () {
     head.appendChild(close);
     pop.appendChild(head);
 
+    S.notice = el('div', 'notif-notice');
+    S.notice.id = 'notif-notice';
+    S.notice.hidden = true;
+    pop.appendChild(S.notice);
+
     var body = el('div', 'notif-body');
+    S.body = body;
     S.toggleRow = el('label', 'notif-row');
     S.toggleRow.appendChild(el('span', 'notif-label', 'Notify in this browser'));
     var sw = el('span', 'notif-switch');
@@ -158,10 +208,25 @@ window.MerlinNotifications = (function () {
     sw.appendChild(el('span', 'notif-knob'));
     S.toggleRow.appendChild(sw);
     body.appendChild(S.toggleRow);
+    S.pushSlot = el('div', 'notif-push-slot');
+    S.pushSlot.id = 'notif-push-slot';
+    body.appendChild(S.pushSlot);
     S.status = el('div', 'notif-status');
     S.status.id = 'notif-status';
     body.appendChild(S.status);
     pop.appendChild(body);
+  }
+
+  // What the watcher sees, read when the popover opens (not polled).
+  function refreshStatus() {
+    return fetch('/api/notifications/status', { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (st) {
+        if (!st) return;
+        S.tmux = st.swept ? st.tmux : null;
+        render();
+      })
+      .catch(function () { /* keep the last known state */ });
   }
 
   function isDesktop() { return window.matchMedia('(min-width: 769px)').matches; }
@@ -186,6 +251,7 @@ window.MerlinNotifications = (function () {
     if (S.open) return;
     S.open = true;
     render();
+    refreshStatus();
     S.pop.hidden = false;
     S.pop.classList.add('open');
     place();
@@ -230,5 +296,6 @@ window.MerlinNotifications = (function () {
     open: openPop,
     close: closePop,
     setPushSubscribed: function (v) { S.pushSubscribed = !!v; render(); },
+    refreshStatus: refreshStatus,
   };
 })();

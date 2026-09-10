@@ -596,6 +596,14 @@ async def terminal_ws(websocket: WebSocket):
                                 session_report_state,
                             )
                             continue
+                        if msg_type == "ping":
+                            # Liveness probe from a page coming back to the
+                            # foreground: a half-open socket after a phone
+                            # suspension sends fine but never answers.
+                            await websocket.send_text(
+                                "\x00" + json.dumps({"type": "pong"})
+                            )
+                            continue
                     except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                         pass
                 # Regular input — write to PTY

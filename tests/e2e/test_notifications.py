@@ -351,3 +351,128 @@ def test_popover_toggle_asks_once_and_persists(page, server):
     assert page.evaluate("window.__asked") == 1
     page.keyboard.press("Escape")
     page.wait_for_selector("#notif-popover.open", state="detached", timeout=5000)
+
+
+# ---------------------------------------------------------------------------
+# M2: the installable app
+# ---------------------------------------------------------------------------
+
+
+def test_manifest_is_served_with_its_type(page, server):
+    r = page.request.get(f"{server}/manifest.webmanifest")
+    assert r.status == 200
+    assert r.headers["content-type"].startswith("application/manifest+json")
+    body = r.json()
+    assert body["display"] == "standalone"
+    assert body["start_url"] == "/terminal"
+
+
+def test_worker_registers_and_never_intercepts(page, server):
+    open_terminal(page, server)
+    scope = page.evaluate("navigator.serviceWorker.ready.then(r => r.scope)")
+    assert scope == f"{server}/"
+    # Once the worker controls the page, a request still goes to the network.
+    page.reload()
+    page.wait_for_selector(".xterm-screen", timeout=30000)
+    page.wait_for_function("navigator.serviceWorker.controller !== null", timeout=10000)
+    with page.expect_response("**/api/notifications/status") as resp:
+        page.evaluate("fetch('/api/notifications/status')")
+    assert resp.value.from_service_worker is False
+    with page.expect_response("**/terminal") as resp:
+        page.reload()
+    assert resp.value.from_service_worker is False
+
+
+def test_installability_criteria(page, server):
+    """Chromium's own verdict on the manifest, recorded for the journal."""
+    open_terminal(page, server)
+    page.evaluate("navigator.serviceWorker.ready")
+    cdp = page.context.new_cdp_session(page)
+    manifest = cdp.send("Page.getAppManifest")
+    assert manifest["errors"] == []
+    errors = cdp.send("Page.getInstallabilityErrors")["installabilityErrors"]
+    print("installability errors:", errors)
+    ids = {e["errorId"] for e in errors}
+    # Headless has no user engagement and may not run the full audit, but the
+    # manifest itself must raise nothing.
+    manifest_errors = {
+        "manifest-missing-name-or-short-name",
+        "manifest-missing-suitable-icon",
+        "manifest-display-not-supported",
+        "manifest-empty",
+        "start-url-not-valid",
+        "no-icon-available",
+        "no-matching-service-worker",
+        "no-manifest",
+    }
+    assert not (ids & manifest_errors), errors
+
+
+def test_popover_says_when_there_is_no_tmux_server(page, server):
+    open_terminal(page, server)
+    page.evaluate(
+        "() => { const orig = window.fetch; window.fetch = (u, o) => "
+        "String(u).includes('/api/notifications/status') ? "
+        "Promise.resolve(new Response(JSON.stringify({tmux: false, swept: true, cursor: 'x:0'}), "
+        "{headers: {'Content-Type': 'application/json'}})) : orig(u, o); }"
+    )
+    page.click("#notif-btn")
+    page.wait_for_selector("#notif-notice:not([hidden])", timeout=5000)
+    assert "tmux server" in page.inner_text("#notif-notice")
+    assert page.locator("#notif-browser-toggle").is_hidden()
+
+
+def test_popover_on_an_iphone_browser_asks_to_install_first(browser, server):
+    ctx = browser.new_context(
+        viewport={"width": 390, "height": 844},
+        user_agent=(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        ),
+        is_mobile=True,
+        has_touch=True,
+    )
+    ctx.add_init_script(STUBS)
+    pg = ctx.new_page()
+    try:
+        open_terminal(pg, server)
+        pg.click("#notif-btn")
+        pg.wait_for_selector("#notif-popover.open", timeout=5000)
+        assert "Home Screen" in pg.inner_text("#notif-push-slot")
+    finally:
+        ctx.close()
+
+
+def test_reconnect_probe_after_an_absence(page, server):
+    open_terminal(page, server)
+    hide = (
+        "() => { Object.defineProperty(document, 'hidden', {get: () => true, configurable: true});"
+        " document.dispatchEvent(new Event('visibilitychange')); }"
+    )
+    show = (
+        "() => { Object.defineProperty(document, 'hidden', {get: () => false, configurable: true});"
+        " document.dispatchEvent(new Event('visibilitychange')); }"
+    )
+    # Short absence: a probe, a pong, the socket kept.
+    page.evaluate(hide)
+    page.wait_for_timeout(2500)
+    page.evaluate(show)
+    page.wait_for_function(
+        "window.MerlinTerminal.probeStats().pongs === 1", timeout=10000
+    )
+    stats = page.evaluate("window.MerlinTerminal.probeStats()")
+    assert stats["probes"] == 1 and stats["replaced"] == 0
+    # Long absence (the clock jumps a while the page is hidden): replaced.
+    page.evaluate(hide)
+    page.evaluate(
+        "() => { const real = Date.now; window.__realNow = real; Date.now = () => real() + 120000; }"
+    )
+    page.evaluate(show)
+    page.wait_for_function(
+        "window.MerlinTerminal.probeStats().replaced === 1", timeout=10000
+    )
+    page.evaluate("() => { Date.now = window.__realNow; }")
+    page.wait_for_function(
+        "document.getElementById('status-dot').className === 'connected'", timeout=15000
+    )
+    page.wait_for_function("window.MerlinTerminal.currentSession()", timeout=15000)

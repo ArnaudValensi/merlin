@@ -47,6 +47,17 @@
 .notif-close:hover { color: var(--text-primary); background: var(--bg-hover); }
 
 .notif-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+.notif-body[hidden], .notif-notice[hidden] { display: none; }
+
+/* The one-message state (no tmux server): replaces the body. */
+.notif-notice {
+  padding: 14px 12px 16px;
+  font-family: 'Geist Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.notif-push-slot:empty { display: none; }
 
 /* One setting per row: label left, switch right, the whole row is the target. */
 .notif-row {
