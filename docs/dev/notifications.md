@@ -47,12 +47,19 @@ looked: its span is unknown and the body omits the duration rather than guessing
 
 **The pane capture.** For each window that transitioned, and only those, the watcher reads
 the window's active pane with `board.sweep.capture_pane` (`tmux capture-pane -p`, 3 second
-timeout, read-only) and cleans it with `content.clean_snippet`. In `tick()` the captures
-run concurrently in threads (`asyncio.to_thread`, one per event) between the diff and the
-emit, so the listeners and the ring see the finished event. A capture that fails, times
-out, raises or yields only chrome gives an event with an empty snippet, never a missing
-or a delayed event beyond the capture timeout. A watcher built with a scripted sweep
-captures nothing unless given a `capture` too, so unit tests never touch a real tmux.
+timeout, read-only) and cleans it with `content.clean_snippet`. The capture never runs on
+the sweep's clock: `tick()` reserves each transition in order with its timestamp and
+starts its capture in an owned task (`_enrich`, `asyncio.to_thread`), then returns, so the
+next sweep runs on schedule and a stalled pane cannot hide a later transition of another
+window. When a capture completes, the reservation queue is published from its head while
+the head's capture is done (`_publish_ready`), so events reach the ring and the listeners
+in transition order, each carrying its transition's `ts`. A capture that fails, times out,
+raises or yields only chrome publishes its event with an empty snippet, never a missing
+event. At shutdown `run()` waits up to `CAPTURE_SETTLE` (4 seconds, above one capture
+timeout) for the captures in flight to publish, then cancels the rest, which withdraws
+their reservations. `observe()` is the synchronous path (tests, scripted sweeps) and
+captures inline. A watcher built with a scripted sweep captures nothing unless given a
+`capture` too, so unit tests never touch a real tmux.
 
 **Ring and cursor.** Events sit in a `deque(maxlen=200)`. A cursor is `<epoch>:<seq>`, the
 epoch minted per process. `events_since(cursor)` returns `(events, cursor, dropped)`:

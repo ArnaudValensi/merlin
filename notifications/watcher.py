@@ -18,11 +18,14 @@ window was ``busy`` before the transition (``busy_seconds``, counted from the
 sweep that last saw it enter ``busy``, unknown when Merlin never saw that),
 and a ``snippet`` of the agent's last lines, read from the window's pane at
 the transition. The capture runs off the event loop, only for windows that
-produced an event, and a capture that fails, times out or yields nothing
-gives an event without a snippet, never a missing event. The text: ``title``
-and ``body``, composed once here by ``content.compose`` and shown verbatim
-by the page and the service worker. Fields are only ever added: the hub
-forwards these events.
+produced an event, and never on the sweep's clock: ``tick`` reserves each
+transition in order and starts its capture in an owned task, the next sweep
+runs on schedule, and the event is published once its capture completes,
+in transition order and with the transition's timestamp. A capture that
+fails, times out or yields nothing gives an event without a snippet, never
+a missing event. The text: ``title`` and ``body``, composed once here by
+``content.compose`` and shown verbatim by the page and the service worker.
+Fields are only ever added: the hub forwards these events.
 
 Cursor semantics. A cursor is ``<epoch>:<seq>``. ``epoch`` is minted once per
 process, ``seq`` counts events in that process. A page presenting a cursor
@@ -74,6 +77,9 @@ logger = logging.getLogger("merlin.notifications")
 ATTENTION_STATES = frozenset({"done", "ask"})
 SWEEP_INTERVAL = 2.0
 RING_SIZE = 200
+# How long a stopping watcher waits for the captures in flight (each is
+# bounded by the capture's own timeout) before cancelling them.
+CAPTURE_SETTLE = 4.0
 
 
 @dataclass(frozen=True)
@@ -107,6 +113,17 @@ class Event:
 
 def _project_of(cwd: str) -> str:
     return os.path.basename(cwd.rstrip("/")) if cwd else ""
+
+
+@dataclass
+class _Reserved:
+    """A transition seen by a sweep, waiting for its pane capture before it
+    is published. ``snippet`` is None until the capture completed."""
+
+    window: Window
+    busy_seconds: int | None
+    ts: str
+    snippet: str | None = None
 
 
 def _capture_window(w: Window) -> str | None:
@@ -147,6 +164,7 @@ class Watcher:
         self._capture = capture or _no_capture
         self._machine = machine
         self.interval = interval
+        self.capture_settle = CAPTURE_SETTLE
         self._clock = clock
         self.epoch = secrets.token_hex(4)
         self._seq = 0
@@ -154,6 +172,9 @@ class Watcher:
         self._last: dict[str, str] = {}
         # sid -> clock time of the sweep that last saw the window enter busy.
         self._busy_since: dict[str, float] = {}
+        # Transitions in order, each waiting for its capture (the task path).
+        self._reserved: deque[_Reserved] = deque()
+        self._captures: set[asyncio.Task] = set()
         self._lock = threading.Lock()
         self._listeners: list[Callable[[Event], None]] = []
         self.tmux_available: bool | None = None  # None until the first sweep
@@ -194,7 +215,13 @@ class Watcher:
         windows.
         """
         pending = self._transitions(windows)
-        return [self._emit(w, busy, self._snippet_of(w)) for w, busy in pending]
+        return [
+            self._emit(w, busy, self._snippet_of(w), self._stamp())
+            for w, busy in pending
+        ]
+
+    def _stamp(self) -> str:
+        return datetime.fromtimestamp(self._clock(), tz=timezone.utc).isoformat()
 
     def _transitions(
         self, windows: list[Window] | None
@@ -245,8 +272,9 @@ class Watcher:
             logger.exception("Pane capture failed for %s:%s", w.session, w.window_id)
             return ""
 
-    def _emit(self, w: Window, busy_seconds: int | None, snippet: str) -> Event:
-        ts = datetime.fromtimestamp(self._clock(), tz=timezone.utc).isoformat()
+    def _emit(
+        self, w: Window, busy_seconds: int | None, snippet: str, ts: str
+    ) -> Event:
         machine = self.machine
         title, body = compose(
             state=w.state,
@@ -308,10 +336,12 @@ class Watcher:
 
     # -- the background task ----------------------------------------------
 
-    async def tick(self) -> list[Event]:
-        """One sweep off the event loop, folded in, the panes of the windows
-        that transitioned captured off the loop too (concurrently, each
-        bounded by the capture's timeout). Never raises."""
+    async def tick(self) -> int:
+        """One sweep off the event loop, folded in. Every transition is
+        reserved in order with its timestamp and its pane capture starts in
+        an owned task: the sweep never waits for a capture, so a stalled pane
+        cannot delay the next sweep or hide a later transition. Returns the
+        number of transitions reserved. Never raises."""
         try:
             windows = await asyncio.to_thread(self._sweep)
         except Exception:
@@ -321,19 +351,53 @@ class Watcher:
             pending = self._transitions(windows)
         except Exception:
             logger.exception("Attention diff failed")
-            return []
-        if not pending:
-            return []
-        snippets = await asyncio.gather(
-            *(asyncio.to_thread(self._snippet_of, w) for w, _ in pending)
-        )
-        return [
-            self._emit(w, busy, snippet)
-            for (w, busy), snippet in zip(pending, snippets, strict=True)
-        ]
+            return 0
+        for w, busy in pending:
+            item = _Reserved(w, busy, self._stamp())
+            self._reserved.append(item)
+            task = asyncio.create_task(self._enrich(item), name="notifications-capture")
+            self._captures.add(task)
+            task.add_done_callback(self._captures.discard)
+        return len(pending)
+
+    async def _enrich(self, item: _Reserved) -> None:
+        """Capture the pane of one reserved transition off the loop, then
+        publish every reserved transition whose capture is complete, oldest
+        first. Only shutdown cancels this: the reservation is then withdrawn
+        so the ones behind it are never wedged."""
+        try:
+            snippet = await asyncio.to_thread(self._snippet_of, item.window)
+        except asyncio.CancelledError:
+            with contextlib.suppress(ValueError):
+                self._reserved.remove(item)
+            raise
+        except Exception:
+            logger.exception("Pane capture failed")
+            snippet = ""
+        item.snippet = snippet
+        self._publish_ready()
+
+    def _publish_ready(self) -> None:
+        """Publish the head of the reservation queue while its capture is
+        done, so events go out in transition order."""
+        while self._reserved:
+            snippet = self._reserved[0].snippet
+            if snippet is None:
+                break
+            item = self._reserved.popleft()
+            self._emit(item.window, item.busy_seconds, snippet, item.ts)
+
+    async def settle(self, timeout: float | None = None) -> None:
+        """Wait for the captures in flight, up to ``timeout``, so that their
+        events are published. Shutdown and tests use it."""
+        tasks = [t for t in self._captures if not t.done()]
+        if tasks:
+            await asyncio.wait(tasks, timeout=timeout)
 
     async def run(self, stop: asyncio.Event) -> None:
-        """Sweep every ``interval`` seconds until ``stop`` is set."""
+        """Sweep every ``interval`` seconds until ``stop`` is set, then let
+        the captures in flight publish (bounded by ``capture_settle``) and
+        cancel any that overrun."""
         logger.info("Attention watcher started (every %.1fs)", self.interval)
         try:
             while not stop.is_set():
@@ -343,7 +407,12 @@ class Watcher:
                 except TimeoutError:
                     pass
         finally:
-            logger.info("Attention watcher stopped")
+            try:
+                await self.settle(self.capture_settle)
+            finally:
+                for task in list(self._captures):
+                    task.cancel()
+                logger.info("Attention watcher stopped")
 
 
 watcher = Watcher()

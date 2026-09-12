@@ -271,10 +271,11 @@ class TestCursor:
 class TestTask:
     @pytest.mark.asyncio
     async def test_tick_runs_the_sweep_off_the_loop_and_folds_it(self):
-        w = make([[win(state="done")]])
-        evs = await w.tick()
-        assert len(evs) == 1
+        w = make([[win(state="done")]], machine="m")
+        assert await w.tick() == 1
         assert w.tmux_available is True
+        await w.settle()
+        assert len(w.events_since("other:0")[0]) == 1
 
     @pytest.mark.asyncio
     async def test_tick_swallows_a_raising_sweep(self):
@@ -282,7 +283,7 @@ class TestTask:
             raise OSError("tmux exploded")
 
         w = Watcher(boom)
-        assert await w.tick() == []
+        assert await w.tick() == 0
         assert w.tmux_available is False
 
     @pytest.mark.asyncio
@@ -551,6 +552,9 @@ class TestCaptureAndComposition:
 
 
 class TestTickCapture:
+    """The task path: captures in owned tasks, never on the sweep's clock,
+    events published in transition order once their capture completes."""
+
     @pytest.mark.asyncio
     async def test_tick_captures_off_the_loop_only_for_transitions(self):
         import threading
@@ -570,12 +574,14 @@ class TestTickCapture:
             capture=capture,
             machine="m",
         )
-        first = await w.tick()
-        second = await w.tick()
-        assert [e.sid for e in first] == ["b"]
-        assert [e.sid for e in second] == ["a"]
-        assert second[0].body == "Finished: Hello from a"
-        assert threads and all(t != loop_thread for t in threads)
+        got = []
+        w.add_listener(got.append)
+        assert await w.tick() == 1
+        assert await w.tick() == 1
+        await w.settle()
+        assert [e.sid for e in got] == ["b", "a"]
+        assert got[1].body == "Finished: Hello from a"
+        assert len(threads) == 2 and all(t != loop_thread for t in threads)
 
     @pytest.mark.asyncio
     async def test_tick_with_a_raising_capture_still_emits_and_notifies(self):
@@ -586,13 +592,115 @@ class TestTickCapture:
 
         w = make([[win(state="done")]], capture=capture, machine="m")
         w.add_listener(got.append)
-        (ev,) = await w.tick()
-        assert ev.body == "Finished" and got == [ev]
+        await w.tick()
+        await w.settle()
+        (ev,) = got
+        assert ev.body == "Finished" and ev.snippet == ""
 
     @pytest.mark.asyncio
-    async def test_tick_emits_after_the_capture_so_listeners_see_the_snippet(self):
+    async def test_the_event_is_published_after_the_capture_with_the_snippet(self):
         got = []
         w = make([[win(state="done")]], capture=lambda _w: "● Ready.\n", machine="m")
         w.add_listener(got.append)
         await w.tick()
+        await w.settle()
         assert got[0].snippet == "Ready."
+        assert w.events_since("other:0")[0] == got
+
+    @pytest.mark.asyncio
+    async def test_a_stalled_capture_neither_delays_the_sweep_nor_hides_a_transition(
+        self,
+    ):
+        import threading
+
+        gate = threading.Event()
+
+        def capture(window):
+            if window.sid == "slow":
+                gate.wait(5)
+            return "● from " + window.sid + "\n"
+
+        w = make(
+            [
+                [win(sid="slow", state="done"), win(sid="fast", state="busy")],
+                [win(sid="slow", state="done"), win(sid="fast", state="done")],
+                [win(sid="slow", state="done"), win(sid="fast", state="busy")],
+                [win(sid="slow", state="done"), win(sid="fast", state="done")],
+            ],
+            capture=capture,
+            machine="m",
+        )
+        got = []
+        w.add_listener(got.append)
+        loop = asyncio.get_running_loop()
+        t0 = loop.time()
+        try:
+            reserved = [await w.tick() for _ in range(4)]
+            # The sweeps kept going while the first capture was stalled, and
+            # the later transition of the other window was seen both times.
+            assert loop.time() - t0 < 1.0
+            assert reserved == [1, 1, 0, 1]
+            await asyncio.sleep(0.05)
+            assert got == []  # transition order: nothing passes the stalled head
+            assert w.events_since("other:0") == ([], w.cursor, 0)
+        finally:
+            gate.set()
+        await w.settle(timeout=5)
+        assert [(e.sid, e.state, e.seq) for e in got] == [
+            ("slow", "done", 1),
+            ("fast", "done", 2),
+            ("fast", "done", 3),
+        ]
+        assert [e.snippet for e in got] == ["from slow", "from fast", "from fast"]
+        assert got[0].ts <= got[1].ts <= got[2].ts
+        assert w.events_since("other:0")[0] == got
+
+    @pytest.mark.asyncio
+    async def test_run_keeps_sweeping_while_a_capture_is_slow(self):
+        import time as _time
+
+        sweeps = []
+        script = [[win(state="done")]]
+
+        def sweep():
+            sweeps.append(1)
+            return script.pop(0) if script else []
+
+        def capture(_w):
+            _time.sleep(0.25)
+            return "● Slow.\n"
+
+        w = Watcher(sweep, capture=capture, machine="m", interval=0.01)
+        stop = asyncio.Event()
+        task = asyncio.create_task(w.run(stop))
+        await asyncio.sleep(0.08)
+        assert len(sweeps) >= 3
+        stop.set()
+        await asyncio.wait_for(task, timeout=2)
+        # The stop let the capture in flight publish its event.
+        (ev,) = w.events_since("other:0")[0]
+        assert ev.snippet == "Slow."
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_a_capture_that_overruns_the_settle(self):
+        import threading
+
+        gate = threading.Event()
+
+        def capture(_w):
+            gate.wait(5)
+            return "● Late.\n"
+
+        w = Watcher(lambda: [win(state="done")], capture=capture, machine="m")
+        w.capture_settle = 0.05
+        stop = asyncio.Event()
+        task = asyncio.create_task(w.run(stop))
+        await asyncio.sleep(0.02)
+        stop.set()
+        try:
+            await asyncio.wait_for(task, timeout=2)
+            await asyncio.sleep(0.01)
+            assert w._captures == set() and list(w._reserved) == []
+            assert w.events_since("other:0") == ([], w.cursor, 0)
+        finally:
+            gate.set()
