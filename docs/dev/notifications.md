@@ -56,9 +56,11 @@ the head's capture is done (`_publish_ready`), so events reach the ring and the 
 in transition order, each carrying its transition's `ts`. A capture that fails, times out,
 raises or yields only chrome publishes its event with an empty snippet, never a missing
 event. At shutdown `run()` waits up to `CAPTURE_SETTLE` (4 seconds, above one capture
-timeout) for the captures in flight to publish, then cancels the rest, which withdraws
-their reservations. `observe()` is the synchronous path (tests, scripted sweeps) and
-captures inline. A watcher built with a scripted sweep captures nothing unless given a
+timeout) for the captures in flight to publish, then cancels the rest and waits for their
+cleanup: a cancelled capture withdraws its reservation and publishes the completed ones
+behind it, and `run()` returns with no reservation and no task left, so a later start is
+never wedged by stale state. `observe()` is the synchronous path (tests, scripted sweeps)
+and captures inline. A watcher built with a scripted sweep captures nothing unless given a
 `capture` too, so unit tests never touch a real tmux.
 
 **Ring and cursor.** Events sit in a `deque(maxlen=200)`. A cursor is `<epoch>:<seq>`, the

@@ -368,8 +368,11 @@ class Watcher:
         try:
             snippet = await asyncio.to_thread(self._snippet_of, item.window)
         except asyncio.CancelledError:
+            # Withdraw this reservation and let the ones behind it that
+            # already have their snippet go out, so nothing is left wedged.
             with contextlib.suppress(ValueError):
                 self._reserved.remove(item)
+            self._publish_ready()
             raise
         except Exception:
             logger.exception("Pane capture failed")
@@ -396,8 +399,9 @@ class Watcher:
 
     async def run(self, stop: asyncio.Event) -> None:
         """Sweep every ``interval`` seconds until ``stop`` is set, then let
-        the captures in flight publish (bounded by ``capture_settle``) and
-        cancel any that overrun."""
+        the captures in flight publish (bounded by ``capture_settle``),
+        cancel any that overrun and wait for their cleanup, so the watcher
+        returns with no reservation and no task left behind."""
         logger.info("Attention watcher started (every %.1fs)", self.interval)
         try:
             while not stop.is_set():
@@ -410,9 +414,24 @@ class Watcher:
             try:
                 await self.settle(self.capture_settle)
             finally:
-                for task in list(self._captures):
-                    task.cancel()
+                await self._cancel_captures()
                 logger.info("Attention watcher stopped")
+
+    async def _cancel_captures(self) -> None:
+        """Cancel the captures still running and wait for each one's cleanup
+        (the reservation withdrawn, the followers published), then make sure
+        no reservation survives, so a later ``run`` starts clean."""
+        pending = [t for t in self._captures if not t.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        if self._reserved:
+            logger.warning(
+                "Attention watcher dropped %d reservation(s) at stop",
+                len(self._reserved),
+            )
+            self._reserved.clear()
 
 
 watcher = Watcher()

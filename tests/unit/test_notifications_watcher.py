@@ -699,8 +699,87 @@ class TestTickCapture:
         stop.set()
         try:
             await asyncio.wait_for(task, timeout=2)
-            await asyncio.sleep(0.01)
             assert w._captures == set() and list(w._reserved) == []
             assert w.events_since("other:0") == ([], w.cursor, 0)
+        finally:
+            gate.set()
+
+    @pytest.mark.asyncio
+    async def test_stop_with_a_stalled_head_publishes_the_completed_follower(self):
+        """A follower whose capture finished waits behind a stalled head.
+        Stopping cancels the head, publishes the follower exactly once,
+        leaves no reservation or task behind, and a later run starts clean."""
+        import threading
+
+        gate = threading.Event()
+
+        def capture(window):
+            if window.sid == "slow":
+                gate.wait(5)
+            return "● from " + window.sid + "\n"
+
+        script = [
+            [win(sid="slow", state="done"), win(sid="fast", state="busy")],
+            [win(sid="slow", state="done"), win(sid="fast", state="done")],
+        ]
+
+        def sweep():
+            return script.pop(0) if script else []
+
+        w = Watcher(sweep, capture=capture, machine="m", interval=0.01)
+        w.capture_settle = 0.05
+        got = []
+        w.add_listener(got.append)
+        stop = asyncio.Event()
+        task = asyncio.create_task(w.run(stop))
+        await asyncio.sleep(0.08)
+        # The follower's capture is done, the head's is stalled: queue of two.
+        assert [(r.window.sid, r.snippet) for r in w._reserved] == [
+            ("slow", None),
+            ("fast", "from fast"),
+        ]
+        assert got == []
+        stop.set()
+        try:
+            await asyncio.wait_for(task, timeout=2)
+            assert [(e.sid, e.snippet) for e in got] == [("fast", "from fast")]
+            assert w._captures == set() and list(w._reserved) == []
+            assert w.events_since("other:0")[0] == got
+            # A later run on the same watcher is not wedged by stale state.
+            script.append([win(sid="next", state="done")])
+            stop2 = asyncio.Event()
+            task2 = asyncio.create_task(w.run(stop2))
+            await asyncio.sleep(0.05)
+            stop2.set()
+            await asyncio.wait_for(task2, timeout=2)
+            assert [e.sid for e in got] == ["fast", "next"]
+            assert list(w._reserved) == [] and w._captures == set()
+        finally:
+            gate.set()
+
+    @pytest.mark.asyncio
+    async def test_module_stop_cancelling_run_still_cleans_the_captures(
+        self, monkeypatch
+    ):
+        import threading
+
+        gate = threading.Event()
+
+        def capture(_w):
+            gate.wait(5)
+            return "● Late.\n"
+
+        w = Watcher(lambda: [win(state="done")], capture=capture, machine="m")
+        w.capture_settle = 5.0  # longer than the stop timeout: run is cancelled
+        monkeypatch.setattr(mod, "watcher", w)
+        monkeypatch.setattr(mod, "_task", None)
+        monkeypatch.setattr(mod, "_stop", None)
+        task = mod.start()
+        await asyncio.sleep(0.02)
+        try:
+            await mod.stop(timeout=0.05)
+            await asyncio.sleep(0.02)
+            assert task.done()
+            assert w._captures == set() and list(w._reserved) == []
         finally:
             gate.set()

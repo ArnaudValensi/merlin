@@ -153,6 +153,11 @@ def open_terminal(page, server, query=""):
     )
 
 
+def sid_of(wid):
+    """The agent sid stamped on an e2e window, unique per window."""
+    return "sid-e2e-" + wid.lstrip("@")
+
+
 @pytest.fixture
 def agent_window(tmux_env, server, page):
     """A second, non-current window stamped like an agent window."""
@@ -169,7 +174,10 @@ def agent_window(tmux_env, server, page):
         "-F",
         "#{window_id}",
     )
-    tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_sid", "sid-e2e-1")
+    # One sid per window: the watcher keys on it, and a sid reused by the next
+    # test's window would carry this window's last state over as a transition
+    # unless a sweep happened to see the gap between the kill and the create.
+    tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_sid", sid_of(wid))
     tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_cwd", "/tmp/projx")
     tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_state", "busy")
     yield wid
@@ -188,7 +196,7 @@ def test_transition_notifies_badges_and_titles(page, server, tmux_env, agent_win
     n = page.evaluate("window.__notifs[0]")
     assert n["title"] == f"agent · {SESSION} · {machine_of(page)}"
     assert n["options"]["body"].startswith("Finished")
-    assert n["options"]["tag"] == "sid-e2e-1"
+    assert n["options"]["tag"] == sid_of(wid)
     assert n["options"]["data"]["target"] == f"{SESSION}:{wid}"
 
     # Badge and title follow the attention count.
