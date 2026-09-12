@@ -59,6 +59,18 @@ Sends resize message:
 {"type": "resize", "cols": 80, "rows": 24}
 ```
 
+### Installed App Safe Areas
+
+Installed on a phone (the manifest's `standalone` display), the page runs edge to
+edge. The terminal template overrides the `viewport` block of `base.html` with
+`viewport-fit=cover`, which makes the `env(safe-area-inset-*)` values real, and pads
+`.main` by the top inset (the status bar is `black-translucent`) and
+`#terminal-status` by the bottom, left and right insets. The bottom bar therefore
+sits above the home indicator strip and clear of the rounded corners, and the
+sessions sheet and the notifications popover, which stack on that bar, follow it.
+In a browser tab every inset is zero and nothing changes. Playwright cannot emulate
+the insets: verify on a phone screenshot.
+
 ### Touch Gesture Implementation
 
 A transparent `#touch-overlay` div sits on top of the terminal and captures all touch events on mobile (`@media (pointer: coarse)`). On desktop, the overlay has `pointer-events: none` so mouse events pass through to xterm.js normally.

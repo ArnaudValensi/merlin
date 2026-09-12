@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}term{% endblock %}
+{# Installed on a phone, the page runs edge to edge: cover the notch and the home
+   indicator, and pad by the safe-area insets below (only the terminal page does). #}
+{% block viewport %}width=device-width, initial-scale=1.0, viewport-fit=cover{% endblock %}
 
 {% block content %}
 <div class="terminal-col">
@@ -335,6 +338,8 @@
 
     .main {
         padding: 0 !important;
+        /* Under the status bar in an installed app (black-translucent + cover). */
+        padding-top: env(safe-area-inset-top) !important;
         display: flex;
         flex-direction: column;
         height: 100vh;
@@ -490,7 +495,13 @@
         display: flex;
         align-items: center;
         gap: 6px;
-        padding: 4px 12px;
+        /* The home indicator strip and the rounded corners of an installed app:
+           the insets are zero in a browser tab, so this only lifts the bar on
+           a phone running Merlin as an app. */
+        padding: 4px
+            calc(12px + env(safe-area-inset-right))
+            calc(4px + env(safe-area-inset-bottom))
+            calc(12px + env(safe-area-inset-left));
         background: var(--bg-secondary);
         border-top: 1px solid var(--border);
         font-size: 12px;

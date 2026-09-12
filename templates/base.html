@@ -2,7 +2,7 @@
 <html lang="en" data-machine-name="{{ machine_name | default('') }}">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="{% block viewport %}width=device-width, initial-scale=1.0{% endblock %}">
     <title>{% if machine_name %}{{ machine_name }} · {% endif %}{% block title %}Merlin{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
