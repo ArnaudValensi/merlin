@@ -82,5 +82,11 @@ Point the DNS name at the machine and open port 443. Merlin itself keeps listeni
   notification setting in the system settings.
 - **A device in the list never gets a push.** Remove it and subscribe again from that
   device. A subscription the push service reports as gone is removed on its own.
+- **Push is refused with `BadJwtToken` (self-hosted, iPhone or Mac).** Apple's push
+  service checks that the sender names a real domain. Merlin uses the instance's public
+  `https` URL when it knows it, and `https://merlincloud.dev` otherwise. Behind your own
+  tunnel or reverse proxy, set `MERLIN_DASHBOARD_URL` to the public `https` URL of the
+  instance (Settings, or `config.env`), then send a test again. Merlin Cloud environments
+  need nothing.
 - **Where the instance keeps it.** `~/.merlin/notifications/` holds the VAPID key pair and
   the subscriptions, both readable by your user only.

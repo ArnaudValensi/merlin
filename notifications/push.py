@@ -26,6 +26,14 @@ points never touch a store on the event loop.
 Suppression, push only: no push when a connected terminal client currently
 displays the event's window (the caller says which windows are displayed),
 and no second push for the same sid within 20 seconds.
+
+The VAPID subject (RFC 8292, the contact the push service can reach about
+this sender) is the instance's public base URL when it is ``https``, else the
+project contact ``https://merlincloud.dev``. Apple's push service refuses a
+subject on a made-up domain with ``403 BadJwtToken``, Chrome and Firefox do
+not check. The subject is computed at send time and never stored, so an
+environment rename or a new ``MERLIN_DASHBOARD_URL`` takes effect on the next
+push without touching the key pair or the subscriptions.
 """
 
 from __future__ import annotations
@@ -54,7 +62,27 @@ TTL_SECONDS = 300
 URGENCY = "high"
 MIN_INTERVAL_SECONDS = 20.0
 PAYLOAD_LIMIT = 3 * 1024
-VAPID_SUBJECT = "mailto:merlin@localhost"
+FALLBACK_SUBJECT = "https://merlincloud.dev"
+
+
+def vapid_subject(resolve: Callable[[], tuple[str, str]] | None = None) -> str:
+    """The VAPID subject for this send: the public base URL when its scheme
+    is ``https`` (the override, the portal's answer or the environment slug),
+    otherwise ``FALLBACK_SUBJECT``. The LAN ``http://`` tier, an empty answer
+    and a resolver that raises all fall back. Never raises, never caches."""
+    if resolve is None:
+        from job.webhook import resolve_public_base
+
+        resolve = resolve_public_base
+    try:
+        base, _tier = resolve()
+    except Exception:
+        logger.debug("Public base lookup failed, using the fallback subject")
+        return FALLBACK_SUBJECT
+    base = (base or "").strip()
+    if base.lower().startswith("https://") and len(base) > len("https://"):
+        return base
+    return FALLBACK_SUBJECT
 
 
 def _now_iso(clock: Callable[[], float]) -> str:
@@ -395,7 +423,8 @@ class PushSender:
     """Send attention events to every subscription, with the two push-only
     suppression rules. ``is_displayed(target)`` is supplied by the caller (the
     terminal knows which windows its connected clients show, this module does
-    not)."""
+    not). ``subject`` is called once per batch of sends for the VAPID subject
+    claim (the hub passes its own)."""
 
     def __init__(
         self,
@@ -406,7 +435,7 @@ class PushSender:
         clock: Callable[[], float] = time.time,
         min_interval: float = MIN_INTERVAL_SECONDS,
         send: Callable[..., Any] = _default_send,
-        subject: str = VAPID_SUBJECT,
+        subject: Callable[[], str] = vapid_subject,
     ) -> None:
         self.store = store
         self.keys = keys
@@ -446,9 +475,10 @@ class PushSender:
 
     # -- sending ------------------------------------------------------------
 
-    def send_one(self, sub: Subscription, payload: dict) -> str:
+    def send_one(self, sub: Subscription, payload: dict, subject: str = "") -> str:
         """Send one push synchronously. Returns ``sent``, ``removed`` or
-        ``failed``. Never raises."""
+        ``failed``. Never raises. ``subject`` is the VAPID subject for this
+        send, computed here when the caller did not (a batch computes it once)."""
         from structured_log import log_event
 
         data = encode_payload(payload)
@@ -457,7 +487,7 @@ class PushSender:
                 subscription_info=sub.info(),
                 data=data,
                 vapid_private_key=self.keys.vapid(),
-                vapid_claims={"sub": self.subject},
+                vapid_claims={"sub": subject or self.subject()},
                 ttl=TTL_SECONDS,
                 headers={"Urgency": URGENCY},
                 timeout=10,
@@ -489,10 +519,13 @@ class PushSender:
     ) -> SendResult:
         result = SendResult()
         wanted = set(only) if only is not None else None
+        subject = ""
         for sub in self.store.all():
             if wanted is not None and sub.endpoint not in wanted:
                 continue
-            outcome = self.send_one(sub, payload)
+            # Computed at send time, once per batch, never stored on the sender.
+            subject = subject or self.subject()
+            outcome = self.send_one(sub, payload, subject)
             if outcome == "sent":
                 result.sent += 1
             elif outcome == "removed":

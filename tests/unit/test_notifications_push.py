@@ -186,7 +186,155 @@ class TestPayload:
 def make_sender(tmp_path, recorder=None, **kw):
     store = SubscriptionStore(tmp_path / "s.json", clock=lambda: 1.0)
     keys = VapidKeys(tmp_path / "vapid.json")
+    # A fixed subject by default: only the subject tests go through the real
+    # resolver, which would otherwise ask the portal in SaaS mode.
+    kw.setdefault("subject", lambda: "https://wiz.merlincloud.dev")
     return PushSender(store, keys, send=recorder or Recorder(), **kw), store
+
+
+class TestSubject:
+    """Decision 1: the public https base is the subject, anything else is
+    the project contact, computed at send time and never stored."""
+
+    @pytest.mark.parametrize(
+        "base,tier,expected",
+        [
+            ("https://box.example.org", "override", "https://box.example.org"),
+            (
+                "https://wizard.merlincloud.dev",
+                "saas",
+                "https://wizard.merlincloud.dev",
+            ),
+            (
+                "https://wizard.merlincloud.dev",
+                "slug",
+                "https://wizard.merlincloud.dev",
+            ),
+            ("http://box.example.org:3123", "override", push.FALLBACK_SUBJECT),
+            ("http://192.168.1.4:3123", "ip", push.FALLBACK_SUBJECT),
+            ("", "ip", push.FALLBACK_SUBJECT),
+            ("https://", "override", push.FALLBACK_SUBJECT),
+            ("HTTPS://Box.Example.org", "override", "HTTPS://Box.Example.org"),
+        ],
+    )
+    def test_rule_per_tier(self, base, tier, expected):
+        assert push.vapid_subject(lambda: (base, tier)) == expected
+
+    def test_a_failing_resolver_falls_back(self):
+        def boom():
+            raise RuntimeError("no network")
+
+        assert push.vapid_subject(boom) == push.FALLBACK_SUBJECT
+
+    def test_fallback_is_the_project_contact(self):
+        assert push.FALLBACK_SUBJECT == "https://merlincloud.dev"
+
+    @pytest.fixture
+    def bare_env(self, monkeypatch):
+        """No override, no SaaS token, no slug, and a cold whoami memo."""
+        from job import webhook
+
+        for key in (
+            "MERLIN_DASHBOARD_URL",
+            "MERLIN_SAAS_TOKEN",
+            "MERLIN_ENVIRONMENT_SLUG",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setattr(webhook, "_whoami_host", None)
+        monkeypatch.setattr(webhook, "_whoami_at", None)
+        return webhook
+
+    def test_override_tier_through_the_real_resolver(self, bare_env, monkeypatch):
+        monkeypatch.setenv("MERLIN_DASHBOARD_URL", "https://box.example.org/")
+        assert push.vapid_subject() == "https://box.example.org"
+        monkeypatch.setenv("MERLIN_DASHBOARD_URL", "box.example.org:3123")
+        assert push.vapid_subject() == push.FALLBACK_SUBJECT
+
+    def test_saas_tier_through_the_real_resolver(self, bare_env, monkeypatch):
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", "mrl_x")
+        monkeypatch.setattr(
+            bare_env, "_saas_public_host", lambda: "wiz.merlincloud.dev"
+        )
+        assert push.vapid_subject() == "https://wiz.merlincloud.dev"
+
+    def test_slug_tier_through_the_real_resolver(self, bare_env, monkeypatch):
+        monkeypatch.setenv("MERLIN_ENVIRONMENT_SLUG", "wiz")
+        assert push.vapid_subject() == "https://wiz.merlincloud.dev"
+
+    def test_ip_tier_through_the_real_resolver(self, bare_env, monkeypatch):
+        monkeypatch.setattr(bare_env, "_local_ip", lambda: "192.168.1.4")
+        base, tier = bare_env.resolve_public_base()
+        assert tier == "ip" and base.startswith("http://192.168.1.4:")
+        assert push.vapid_subject() == push.FALLBACK_SUBJECT
+
+    def test_claims_carry_the_public_base(self, tmp_path, monkeypatch):
+        from job import webhook
+
+        monkeypatch.setattr(
+            webhook,
+            "resolve_public_base",
+            lambda: ("https://wiz.merlincloud.dev", "saas"),
+        )
+        rec = Recorder()
+        sender, store = make_sender(tmp_path, rec, subject=push.vapid_subject)
+        store.add(SUB, "a")
+        assert asyncio.run(sender.deliver(event())).sent == 1
+        assert rec.calls[0]["vapid_claims"] == {"sub": "https://wiz.merlincloud.dev"}
+
+    def test_claims_fall_back_on_the_lan_tier_and_on_failure(
+        self, tmp_path, monkeypatch
+    ):
+        from job import webhook
+
+        rec = Recorder()
+        sender, store = make_sender(tmp_path, rec, subject=push.vapid_subject)
+        store.add(SUB, "a")
+        monkeypatch.setattr(
+            webhook, "resolve_public_base", lambda: ("http://10.0.0.2:3123", "ip")
+        )
+        assert asyncio.run(sender.deliver(event(sid="s1"))).sent == 1
+
+        def boom():
+            raise RuntimeError("portal down")
+
+        monkeypatch.setattr(webhook, "resolve_public_base", boom)
+        assert asyncio.run(sender.deliver(event(sid="s2"))).sent == 1
+        assert [c["vapid_claims"]["sub"] for c in rec.calls] == [
+            push.FALLBACK_SUBJECT
+        ] * 2
+
+    def test_subject_is_computed_at_send_time_not_stored(self, tmp_path):
+        answers = ["https://old.merlincloud.dev", "https://new.merlincloud.dev"]
+        rec = Recorder()
+        sender, store = make_sender(tmp_path, rec, subject=lambda: answers.pop(0))
+        store.add(SUB, "a")
+        asyncio.run(sender.deliver(event(sid="s1")))
+        asyncio.run(sender.deliver(event(sid="s2")))
+        assert [c["vapid_claims"]["sub"] for c in rec.calls] == [
+            "https://old.merlincloud.dev",
+            "https://new.merlincloud.dev",
+        ]
+        assert not any(
+            isinstance(v, str) and v.startswith("https://")
+            for v in vars(sender).values()
+        )
+
+    def test_one_batch_resolves_the_subject_once(self, tmp_path):
+        calls = []
+
+        def subject():
+            calls.append(1)
+            return "https://wiz.merlincloud.dev"
+
+        rec = Recorder()
+        sender, store = make_sender(tmp_path, rec, subject=subject)
+        store.add(SUB, "a")
+        store.add({"endpoint": "https://push.example/b", "keys": SUB["keys"]}, "b")
+        assert asyncio.run(sender.deliver(event())).sent == 2
+        assert len(calls) == 1
+        assert {c["vapid_claims"]["sub"] for c in rec.calls} == {
+            "https://wiz.merlincloud.dev"
+        }
 
 
 class TestSender:
@@ -200,7 +348,7 @@ class TestSender:
         assert call["subscription_info"] == SUB
         assert call["ttl"] == 300
         assert call["headers"] == {"Urgency": "high"}
-        assert call["vapid_claims"] == {"sub": push.VAPID_SUBJECT}
+        assert call["vapid_claims"] == {"sub": "https://wiz.merlincloud.dev"}
         from py_vapid import Vapid
 
         assert isinstance(call["vapid_private_key"], Vapid)

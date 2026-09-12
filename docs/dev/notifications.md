@@ -118,6 +118,17 @@ starts empty. A send answered with 404 or 410 removes the subscription. Any othe
 logged with `log_event("push_failed", ...)` and never raised. TTL 300, urgency `high`,
 payload under 3 KB: `title`, `body`, `tag`, `url` (`/terminal?target=...`), `sid`, `state`.
 
+**The VAPID subject** (`vapid_subject`) is the contact claim the push service can hold the
+sender to (RFC 8292). Apple's service validates its domain and answers `403 BadJwtToken` to
+a placeholder, Chrome and Firefox do not check, which is why a fake push service cannot
+catch it. The rule: the instance's public base URL (`job.webhook.resolve_public_base`, the
+`MERLIN_DASHBOARD_URL` override, then the portal's whoami answer, then the environment slug)
+when its scheme is `https`, otherwise the project contact `https://merlincloud.dev`. The LAN
+`http://` tier, an empty answer and a resolver that raises all fall back. It is computed
+once per batch of sends, at send time, and never stored: a renamed environment or a new
+override applies to the next push, and nothing about the key pair or the subscriptions
+changes. `PushSender` takes the rule as a `subject` callable so the hub can pass its own.
+
 **Suppression, push only** (`PushSender.suppression_reason`): no push when a connected
 terminal socket displays the event's window (`terminal.routes.is_displayed`, fed by a
 per-connection registry of the last reported session frame), and no second push for the
@@ -147,6 +158,7 @@ knows both. Nothing else needs to move.
 - `tests/unit/test_notifications_routes.py`: the poll transport, the routes and their auth,
   the lifespan, the glue, the displayed-window registry.
 - `tests/unit/test_notifications_push.py`: stores, 0600 modes, corrupt files, VAPID once,
+  the subject rule per tier and on failure (claims asserted on the replaced `pywebpush`),
   payload, the sender with `pywebpush` replaced, the suppression rules with a fake clock.
 - `tests/unit/test_notifications_app.py`: manifest, worker, icons, page shell.
 - `tests/e2e/test_notifications.py`: the browser side over `http://localhost` on a throwaway

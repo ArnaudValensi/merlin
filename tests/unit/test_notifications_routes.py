@@ -164,6 +164,8 @@ def recorder(monkeypatch, tmp_path):
     sender = nroutes.get_sender()
     rec = Recorder()
     monkeypatch.setattr(sender, "_send", rec)
+    # A fixed subject: the real rule would ask the portal in SaaS mode.
+    monkeypatch.setattr(sender, "subject", lambda: "https://wiz.merlincloud.dev")
     return rec
 
 
@@ -278,6 +280,9 @@ class TestGlue:
         asyncio.run(run())
         assert len(recorder.calls) == 1
         assert recorder.calls[0]["subscription_info"]["endpoint"] == SUB["endpoint"]
+        assert recorder.calls[0]["vapid_claims"] == {
+            "sub": "https://wiz.merlincloud.dev"
+        }
 
     def test_listener_without_a_loop_is_a_no_op(self, recorder):
         from notifications.watcher import Watcher

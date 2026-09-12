@@ -29,6 +29,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 SESSION = "merlin-dev"  # the session the web terminal creates on first attach
+PUBLIC_URL = (
+    "https://e2e.merlin.test"  # the instance's public URL, for the VAPID subject
+)
 
 
 def _find_free_port():
@@ -59,6 +62,9 @@ def server(tmux_env, tmp_path_factory):
     env["DISCORD_CHANNEL_IDS"] = ""
     env["MERLIN_HOME"] = str(home)
     env["MERLIN_DEV"] = "1"
+    # A public https URL for the instance: the VAPID subject rule picks it up
+    # over any environment slug the shell may carry, so the claim is known.
+    env["MERLIN_DASHBOARD_URL"] = PUBLIC_URL
 
     merlin_root = os.path.dirname(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -585,6 +591,14 @@ def push_service():
     httpd.shutdown()
 
 
+def vapid_claims(authorization):
+    """The claims of the JWT in a ``vapid t=<jwt>, k=<key>`` header."""
+    token = authorization.split("t=", 1)[1].split(",", 1)[0].strip()
+    payload = token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload))
+
+
 def fake_subscription_keys():
     """Real P-256 keys, so the server's encryption is exercised for real."""
     from cryptography.hazmat.primitives.asymmetric import ec
@@ -667,6 +681,9 @@ def test_push_toggle_subscribes_tests_and_unsubscribes(browser, server, push_ser
         assert h["urgency"] == "high"
         assert h["content-encoding"] == "aes128gcm"
         assert h["authorization"].startswith("vapid ")
+        # The VAPID token names the instance's public https URL as its subject
+        # (Apple refuses a placeholder domain with BadJwtToken).
+        assert vapid_claims(h["authorization"])["sub"] == PUBLIC_URL
         assert len(records[0]["body"]) > 0
         devices = pg.request.get(f"{server}/api/notifications/devices").json()[
             "devices"
