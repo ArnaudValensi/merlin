@@ -1,8 +1,5 @@
 {% extends "base.html" %}
 {% block title %}term{% endblock %}
-{# Installed on a phone, the page runs edge to edge: cover the notch and the home
-   indicator, and pad by the safe-area insets below (only the terminal page does). #}
-{% block viewport %}width=device-width, initial-scale=1.0, viewport-fit=cover{% endblock %}
 
 {% block content %}
 <div class="terminal-col">
@@ -338,8 +335,6 @@
 
     .main {
         padding: 0 !important;
-        /* Under the status bar in an installed app (black-translucent + cover). */
-        padding-top: env(safe-area-inset-top) !important;
         display: flex;
         flex-direction: column;
         height: 100vh;
@@ -491,17 +486,21 @@
     #paste-toast:active { background: rgba(74, 158, 255, 0.15); }
 
     /* --- Status bar --- */
+    /* Installed on a phone, the page runs under the home indicator strip and the
+       rounded corners. viewport-fit=cover would expose the real inset through
+       env(), but it changes how iOS scrolls the page when the keyboard opens and
+       the terminal relies on that native behaviour, so the bar is lifted by the
+       fixed height of the strip instead (34pt on every iPhone with a home
+       indicator, a little more than the iPad's 20pt). Nothing changes in a tab. */
+    @media (display-mode: standalone) {
+        #terminal-status { padding-bottom: calc(4px + 34px); }
+    }
+
     #terminal-status {
         display: flex;
         align-items: center;
         gap: 6px;
-        /* The home indicator strip and the rounded corners of an installed app:
-           the insets are zero in a browser tab, so this only lifts the bar on
-           a phone running Merlin as an app. */
-        padding: 4px
-            calc(12px + env(safe-area-inset-right))
-            calc(4px + env(safe-area-inset-bottom))
-            calc(12px + env(safe-area-inset-left));
+        padding: 4px 12px;
         background: var(--bg-secondary);
         border-top: 1px solid var(--border);
         font-size: 12px;

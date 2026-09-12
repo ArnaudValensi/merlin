@@ -59,17 +59,19 @@ Sends resize message:
 {"type": "resize", "cols": 80, "rows": 24}
 ```
 
-### Installed App Safe Areas
+### Installed App Bottom Bar
 
-Installed on a phone (the manifest's `standalone` display), the page runs edge to
-edge. The terminal template overrides the `viewport` block of `base.html` with
-`viewport-fit=cover`, which makes the `env(safe-area-inset-*)` values real, and pads
-`.main` by the top inset (the status bar is `black-translucent`) and
-`#terminal-status` by the bottom, left and right insets. The bottom bar therefore
-sits above the home indicator strip and clear of the rounded corners, and the
-sessions sheet and the notifications popover, which stack on that bar, follow it.
-In a browser tab every inset is zero and nothing changes. Playwright cannot emulate
-the insets: verify on a phone screenshot.
+Installed on a phone (the manifest's `standalone` display), the page runs under the
+home indicator strip and the screen's rounded corners, so `#terminal-status` gains a
+34pt bottom padding under `@media (display-mode: standalone)`. The sessions sheet and
+the notifications popover stack on that bar and follow it. Nothing changes in a
+browser tab.
+
+`viewport-fit=cover` with `env(safe-area-inset-*)` was tried first and reverted: it
+changes how iOS scrolls the page when the software keyboard opens (the input ended up
+under the status bar with a blank band above the keyboard), and the terminal relies on
+that native behaviour, having no visual-viewport handling of its own. Playwright cannot
+emulate either, so verify on a phone screenshot, keyboard closed and open.
 
 ### Touch Gesture Implementation
 
