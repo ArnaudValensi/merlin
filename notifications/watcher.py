@@ -13,6 +13,17 @@ ring that pages read through a cursor (``events_since``), and listeners
 registered with ``add_listener`` receive each event as it is produced. The hub
 epic forwards these events from a node without touching tmux here.
 
+An event carries the facts and the finished text. The facts: how long the
+window was ``busy`` before the transition (``busy_seconds``, counted from the
+sweep that last saw it enter ``busy``, unknown when Merlin never saw that),
+and a ``snippet`` of the agent's last lines, read from the window's pane at
+the transition. The capture runs off the event loop, only for windows that
+produced an event, and a capture that fails, times out or yields nothing
+gives an event without a snippet, never a missing event. The text: ``title``
+and ``body``, composed once here by ``content.compose`` and shown verbatim
+by the page and the service worker. Fields are only ever added: the hub
+forwards these events.
+
 Cursor semantics. A cursor is ``<epoch>:<seq>``. ``epoch`` is minted once per
 process, ``seq`` counts events in that process. A page presenting a cursor
 from another epoch has survived a Merlin restart: it gets every event of the
@@ -53,6 +64,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from .content import clean_snippet, compose
+
 if TYPE_CHECKING:
     from board.sweep import Window
 
@@ -75,6 +88,11 @@ class Event:
     state: str
     project: str
     ts: str
+    machine: str = ""
+    busy_seconds: int | None = None
+    snippet: str = ""
+    title: str = ""
+    body: str = ""
 
     @property
     def target(self) -> str:
@@ -91,14 +109,31 @@ def _project_of(cwd: str) -> str:
     return os.path.basename(cwd.rstrip("/")) if cwd else ""
 
 
+def _capture_window(w: Window) -> str | None:
+    from board.sweep import capture_pane
+
+    return capture_pane(w.session, w.window_id)
+
+
+def _no_capture(_w: Window) -> str | None:
+    return None
+
+
 class Watcher:
     """Diff successive sweeps into attention events. Pure about tmux: it only
-    ever reads sweeps, through the callable it was given."""
+    ever reads sweeps and panes through the callables it was given.
+
+    With no ``sweep`` the watcher reads the real tmux server and captures
+    real panes. A scripted sweep has no panes behind it, so it captures
+    nothing unless a ``capture`` is given too. ``machine`` is the environment
+    name in every title (``resolve_machine_name`` when not given)."""
 
     def __init__(
         self,
         sweep: Callable[[], list[Window] | None] | None = None,
         *,
+        capture: Callable[[Window], str | None] | None = None,
+        machine: str | None = None,
         interval: float = SWEEP_INTERVAL,
         ring_size: int = RING_SIZE,
         clock: Callable[[], float] = time.time,
@@ -107,17 +142,32 @@ class Watcher:
             from board.sweep import run_sweep_checked
 
             sweep = run_sweep_checked
+            capture = capture or _capture_window
         self._sweep = sweep
+        self._capture = capture or _no_capture
+        self._machine = machine
         self.interval = interval
         self._clock = clock
         self.epoch = secrets.token_hex(4)
         self._seq = 0
         self._ring: deque[Event] = deque(maxlen=ring_size)
         self._last: dict[str, str] = {}
+        # sid -> clock time of the sweep that last saw the window enter busy.
+        self._busy_since: dict[str, float] = {}
         self._lock = threading.Lock()
         self._listeners: list[Callable[[Event], None]] = []
         self.tmux_available: bool | None = None  # None until the first sweep
         self.swept_once = False
+
+    @property
+    def machine(self) -> str:
+        """The environment name, resolved once on first use (after
+        ``config.env`` is loaded, not at import)."""
+        if self._machine is None:
+            from merlin_ext import resolve_machine_name
+
+            self._machine = resolve_machine_name()
+        return self._machine
 
     # -- events ----------------------------------------------------------
 
@@ -135,13 +185,24 @@ class Watcher:
         self._listeners.append(fn)
 
     def observe(self, windows: list[Window] | None) -> list[Event]:
-        """Fold one sweep into the state and return the events it produced.
+        """Fold one sweep into the state and return the events it produced,
+        capturing the panes synchronously (``tick`` is the off-loop path).
 
         ``None`` means the sweep could not run (no tmux server, or tmux
         failed): the previous states are kept so a transient failure never
         re-fires a notification when the server comes back with the same
         windows.
         """
+        pending = self._transitions(windows)
+        return [self._emit(w, busy, self._snippet_of(w)) for w, busy in pending]
+
+    def _transitions(
+        self, windows: list[Window] | None
+    ) -> list[tuple[Window, int | None]]:
+        """Diff one sweep against the last: the windows that transitioned
+        into ``done`` or ``ask``, each with how long it was busy before, or
+        None when the watcher never saw it enter ``busy``. Updates the state,
+        emits nothing."""
         self.swept_once = True
         if windows is None:
             self.tmux_available = False
@@ -156,18 +217,45 @@ class Watcher:
             current[w.sid] = w.state
             seen[w.sid] = w
 
-        events: list[Event] = []
+        now = self._clock()
+        pending: list[tuple[Window, int | None]] = []
         for key, state in current.items():
-            if state not in ATTENTION_STATES:
+            prev = self._last.get(key)
+            if state == "busy":
+                # Entering busy from a state this watcher saw. A window first
+                # seen busy went busy before Merlin looked: unknown start.
+                if prev is not None and prev != "busy":
+                    self._busy_since[key] = now
                 continue
-            if self._last.get(key) == state:
+            if state not in ATTENTION_STATES or prev == state:
                 continue
-            events.append(self._emit(seen[key]))
+            since = self._busy_since.pop(key, None)
+            busy = int(round(max(0.0, now - since))) if since is not None else None
+            pending.append((seen[key], busy))
+        self._busy_since = {k: v for k, v in self._busy_since.items() if k in current}
         self._last = current
-        return events
+        return pending
 
-    def _emit(self, w: Window) -> Event:
+    def _snippet_of(self, w: Window) -> str:
+        """The cleaned snippet of a window's pane. Never raises: a capture
+        that fails is an empty snippet, and the event still goes out."""
+        try:
+            return clean_snippet(self._capture(w))
+        except Exception:
+            logger.exception("Pane capture failed for %s:%s", w.session, w.window_id)
+            return ""
+
+    def _emit(self, w: Window, busy_seconds: int | None, snippet: str) -> Event:
         ts = datetime.fromtimestamp(self._clock(), tz=timezone.utc).isoformat()
+        machine = self.machine
+        title, body = compose(
+            state=w.state,
+            window_name=w.name,
+            session=w.session,
+            machine=machine,
+            busy_seconds=busy_seconds,
+            snippet=snippet,
+        )
         # Seq and ring move together under the lock, so a concurrent read
         # never sees a cursor ahead of the events it can return.
         with self._lock:
@@ -181,6 +269,11 @@ class Watcher:
                 state=w.state,
                 project=_project_of(w.cwd),
                 ts=ts,
+                machine=machine,
+                busy_seconds=busy_seconds,
+                snippet=snippet,
+                title=title,
+                body=body,
             )
             self._ring.append(ev)
         for fn in list(self._listeners):
@@ -216,17 +309,28 @@ class Watcher:
     # -- the background task ----------------------------------------------
 
     async def tick(self) -> list[Event]:
-        """One sweep off the event loop, folded in. Never raises."""
+        """One sweep off the event loop, folded in, the panes of the windows
+        that transitioned captured off the loop too (concurrently, each
+        bounded by the capture's timeout). Never raises."""
         try:
             windows = await asyncio.to_thread(self._sweep)
         except Exception:
             logger.exception("Attention sweep failed")
             windows = None
         try:
-            return self.observe(windows)
+            pending = self._transitions(windows)
         except Exception:
             logger.exception("Attention diff failed")
             return []
+        if not pending:
+            return []
+        snippets = await asyncio.gather(
+            *(asyncio.to_thread(self._snippet_of, w) for w, _ in pending)
+        )
+        return [
+            self._emit(w, busy, snippet)
+            for (w, busy), snippet in zip(pending, snippets, strict=True)
+        ]
 
     async def run(self, stop: asyncio.Event) -> None:
         """Sweep every ``interval`` seconds until ``stop`` is set."""

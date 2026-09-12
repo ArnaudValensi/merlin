@@ -252,6 +252,26 @@ def _tmux_capture(args: list[str]) -> str | None:
     return proc.stdout if proc.returncode == 0 else None
 
 
+def capture_pane(session: str, window_id: str, timeout: float = 3.0) -> str | None:
+    """The visible text of a window's active pane (``tmux capture-pane -p``),
+    or None when tmux is unavailable, the window is gone, or the call fails
+    or overruns ``timeout``. Read-only, and the caller runs it off the event
+    loop: this is how the attention watcher reads the agent's last lines."""
+    if not shutil.which("tmux") or not session or not window_id:
+        return None
+    try:
+        proc = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", f"{session}:{window_id}"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
 def client_session(tty: str) -> str | None:
     """The tmux session a client (identified by its tty) is attached to.
 

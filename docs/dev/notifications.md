@@ -7,6 +7,7 @@ fixed responsibilities that the future hub relay reuses unchanged.
 ```
 notifications/
 ├── watcher.py     # tmux sweep -> attention events (knows nothing about delivery)
+├── content.py     # pure: the title, the body, the duration, the snippet cleaning
 ├── push.py        # VAPID keys, subscription store, Web Push sender (knows nothing about tmux)
 ├── routes.py      # /api/notifications, and the glue: sender subscribed to the watcher
 └── static/
@@ -31,7 +32,27 @@ the next tick. `tick()` never raises. The task starts in `main._run()` next to t
 and the app lifespan's shutdown stops it (`watcher.stop()`).
 
 **Event shape** (`Event.to_dict()`): `seq`, `sid`, `session`, `window_id`, `window_name`,
-`state`, `project` (basename of `@agent_cwd`), `ts` (UTC ISO), `target` (`session:window_id`).
+`state`, `project` (basename of `@agent_cwd`), `ts` (UTC ISO), `target` (`session:window_id`),
+plus the fields added for the content: `machine` (the environment name), `busy_seconds`
+(an integer, or `null` when unknown), `snippet`, `title` and `body`. Fields are only ever
+added, never renamed or removed: the hub forwards these events.
+
+**Busy tracking.** `_busy_since` maps a sid to the clock time of the sweep that last saw
+the window enter `busy` from a state the watcher had seen. A transition into `done` or `ask`
+takes that span (`busy_seconds`, rounded) and spends it, so an `ask` answered (`busy`) and
+then `done` counts from the answer. A window first seen `busy` went busy before Merlin
+looked: its span is unknown and the body omits the duration rather than guessing. An
+`idle` in between does not reset the span, a later `busy` does (the last entry wins). A
+`None` sweep keeps the spans with the states, a window that disappears loses its span.
+
+**The pane capture.** For each window that transitioned, and only those, the watcher reads
+the window's active pane with `board.sweep.capture_pane` (`tmux capture-pane -p`, 3 second
+timeout, read-only) and cleans it with `content.clean_snippet`. In `tick()` the captures
+run concurrently in threads (`asyncio.to_thread`, one per event) between the diff and the
+emit, so the listeners and the ring see the finished event. A capture that fails, times
+out, raises or yields only chrome gives an event with an empty snippet, never a missing
+or a delayed event beyond the capture timeout. A watcher built with a scripted sweep
+captures nothing unless given a `capture` too, so unit tests never touch a real tmux.
 
 **Ring and cursor.** Events sit in a `deque(maxlen=200)`. A cursor is `<epoch>:<seq>`, the
 epoch minted per process. `events_since(cursor)` returns `(events, cursor, dropped)`:
@@ -44,6 +65,43 @@ epoch minted per process. `events_since(cursor)` returns `(events, cursor, dropp
 
 Publication (seq plus ring append) and reads share one `threading.Lock`, because the board
 handler is synchronous and runs in a worker thread while the watcher publishes on the loop.
+
+## What a notification says
+
+`content.py` is pure and composes once, server-side. The watcher hands it the facts and
+carries the result in the event's `title` and `body`. The page, the push payload and the
+service worker show those two strings verbatim: there is no second composition in
+JavaScript, and the hub inherits the same text by forwarding the event.
+
+**Title**: `<window> · <session> · <environment>`, most specific first, `·` U+00B7. A
+missing window name reads `window`, a missing environment is omitted with its separator.
+The environment is `machine_name` (`lib/merlin_ext.resolve_machine_name`: the environment
+slug on Merlin Cloud, the hostname elsewhere), resolved lazily on the first event so
+`config.env` is loaded by then. The cwd basename (`project`) stays in the event but leaves
+the title.
+
+**Body**: the state, then what happened. `Needs an answer: <snippet>` for `ask`, `Finished
+after <duration>: <snippet>` for `done` with a known duration, `Finished: <snippet>` without
+one, and each of the three without the colon and the snippet when there is no snippet.
+
+**Duration** (`format_duration`): `40 s` under a minute, `14 min` under an hour, `1 h 20 min`
+beyond, `3 h` when the minutes round to nothing, `12 h` once the hours pass the single
+digit. Rounded at every step (`59.6` seconds is `1 min`).
+
+**Snippet** (`clean_snippet`): from the pane's visible text, ANSI sequences and control
+characters removed, non-breaking spaces and tabs read as spaces. The last prompt line
+(a line starting with `❯`, Claude Code's input line and the cursor of its option dialogs,
+or `›`, Codex's) and everything below it go. Then the chrome above it: rule and box lines
+(a first character in the box-drawing block, `────`, `╭`, `│`, `╰`, Codex's `─ Worked for
+1m 16s ───`), the timing line (`✻ Cogitated for 1m 14s · done`, any glyph then a word then
+`for` and a number) and blank lines. What remains ends with the agent's last message: walk
+back over non-empty lines up to three, stopping after the line that starts the message
+(`●` or `•`, stripped from the result) or at chrome. Whitespace is collapsed, the lines
+are joined by single spaces, and the result is clipped to 240 characters with `…`. A
+capture of only chrome, or none, gives an empty snippet. The rules are pinned by the
+fixtures under `tests/unit/fixtures/panes/`: a Claude Code pane after a turn, a Claude
+Code pane with an open question (the question sits above the `❯` option cursor), a Codex
+pane after a turn, and a pane holding only the input chrome.
 
 ## The poll transport
 
@@ -61,8 +119,8 @@ an older cursor neither replays nor regresses the cursor.
 - **The in-tab rule.** Preference `notify-in-browser` in `localStorage`, plus a granted
   permission, plus a secure context. An event shows a `Notification` unless the page is
   visible and the event's window is this client's current window
-  (`MerlinTerminal.currentWindow()`, from the socket's session frame). Title
-  `<project or session> · <window name>`, body `Finished` or `Needs an answer`, tag the sid,
+  (`MerlinTerminal.currentWindow()`, from the socket's session frame). The event's `title`
+  and `body` are shown as they come (see "What a notification says"), tag the sid,
   icon the favicon. Click focuses the tab and switches through
   `MerlinTerminal.switchSession(target)`. Where `new Notification` throws (Android Chrome),
   the worker's `showNotification` is used with the deep link.
@@ -117,6 +175,12 @@ A store file that fails to parse is moved to `<name>.corrupt-<timestamp>` and th
 starts empty. A send answered with 404 or 410 removes the subscription. Any other failure is
 logged with `log_event("push_failed", ...)` and never raised. TTL 300, urgency `high`,
 payload under 3 KB: `title`, `body`, `tag`, `url` (`/terminal?target=...`), `sid`, `state`.
+`title` and `body` are the event's own. `encode_payload` clips `title` to 120 and `body` to
+300 characters (the snippet inside it is already clipped at 240, the state and the duration
+fit in front), `tag` and `sid` to 200, then halves every string until the UTF-8 JSON is
+strictly under 3 KB, and falls back to a minimal payload past that. The snippet is the one
+piece of pane content that leaves the machine: Web Push encrypts the payload end to end
+with the subscription's keys (RFC 8291), the push service relays ciphertext.
 
 **The VAPID subject** (`vapid_subject`) is the contact claim the push service can hold the
 sender to (RFC 8292). Apple's service validates its domain and answers `403 BadJwtToken` to
@@ -154,7 +218,11 @@ knows both. Nothing else needs to move.
 ## Tests
 
 - `tests/unit/test_notifications_watcher.py`: transitions, tmux gone and back, event shape,
-  cursor semantics (restart, overrun, concurrent publication), the task.
+  cursor semantics (restart, overrun, concurrent publication), the task, the busy tracking,
+  the capture (only for transitioned windows, off the loop in `tick`, failing or raising
+  still emits) and the composed fields on the event.
+- `tests/unit/test_notifications_content.py`: the title, the eight body shapes, the duration
+  at its boundaries, the snippet cleaning against the pane fixtures and the edge rules.
 - `tests/unit/test_notifications_routes.py`: the poll transport, the routes and their auth,
   the lifespan, the glue, the displayed-window registry.
 - `tests/unit/test_notifications_push.py`: stores, 0600 modes, corrupt files, VAPID once,
@@ -163,4 +231,7 @@ knows both. Nothing else needs to move.
 - `tests/unit/test_notifications_app.py`: manifest, worker, icons, page shell.
 - `tests/e2e/test_notifications.py`: the browser side over `http://localhost` on a throwaway
   instance with its own home and tmux server, including the push flow against a push
-  service run by the test (real VAPID and `aes128gcm` encryption, fake endpoint).
+  service run by the test (real VAPID and `aes128gcm` encryption, fake endpoint), and the
+  content: a window whose pane holds known text flipped to `done` and to `ask` shows the
+  `window · session · machine` title and a body ending with that text, with the duration
+  once the watcher has seen the window enter busy.

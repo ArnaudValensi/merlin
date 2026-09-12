@@ -339,3 +339,260 @@ class TestTask:
         await mod.stop(timeout=0.05)
         await asyncio.sleep(0)
         assert task.cancelled() or task.done()
+
+
+class TestBusyTracking:
+    """The duration is counted from the sweep that last saw the window enter
+    busy, and it is unknown when the watcher never saw that."""
+
+    def clock(self):
+        t = {"now": 100.0}
+
+        def read():
+            return t["now"]
+
+        return t, read
+
+    def test_busy_then_done_gives_the_duration(self):
+        t, clock = self.clock()
+        w = make(clock=clock, machine="m")
+        w.observe([win(state="idle")])
+        t["now"] = 110.0
+        w.observe([win(state="busy")])
+        t["now"] = 950.0
+        (ev,) = w.observe([win(state="done")])
+        assert ev.busy_seconds == 840
+        assert ev.body == "Finished after 14 min"
+
+    def test_first_seen_done_gives_none(self):
+        w = make(machine="m")
+        (ev,) = w.observe([win(state="done")])
+        assert ev.busy_seconds is None
+        assert ev.body == "Finished"
+
+    def test_first_seen_busy_is_an_unknown_start(self):
+        # Merlin started after the agent went busy: no duration, not a wrong one.
+        t, clock = self.clock()
+        w = make(clock=clock)
+        w.observe([win(state="busy")])
+        t["now"] = 200.0
+        (ev,) = w.observe([win(state="done")])
+        assert ev.busy_seconds is None
+
+    def test_busy_idle_busy_done_counts_from_the_last_busy(self):
+        t, clock = self.clock()
+        w = make(clock=clock)
+        w.observe([win(state="idle")])
+        t["now"] = 110.0
+        w.observe([win(state="busy")])
+        t["now"] = 500.0
+        w.observe([win(state="idle")])
+        t["now"] = 600.0
+        w.observe([win(state="busy")])
+        t["now"] = 640.0
+        (ev,) = w.observe([win(state="done")])
+        assert ev.busy_seconds == 40
+
+    def test_busy_stays_busy_keeps_the_original_start(self):
+        t, clock = self.clock()
+        w = make(clock=clock)
+        w.observe([win(state="idle")])
+        t["now"] = 110.0
+        w.observe([win(state="busy")])
+        t["now"] = 120.0
+        w.observe([win(state="busy")])
+        t["now"] = 170.0
+        (ev,) = w.observe([win(state="done")])
+        assert ev.busy_seconds == 60
+
+    def test_the_span_is_spent_by_the_transition(self):
+        # busy -> ask counts the span, ask -> done without a new busy has none.
+        t, clock = self.clock()
+        w = make(clock=clock)
+        w.observe([win(state="idle")])
+        t["now"] = 110.0
+        w.observe([win(state="busy")])
+        t["now"] = 150.0
+        (ask,) = w.observe([win(state="ask")])
+        assert ask.busy_seconds == 40
+        t["now"] = 160.0
+        (done,) = w.observe([win(state="done")])
+        assert done.busy_seconds is None
+
+    def test_ask_answered_then_done_counts_from_the_answer(self):
+        t, clock = self.clock()
+        w = make(clock=clock)
+        w.observe([win(state="idle")])
+        t["now"] = 110.0
+        w.observe([win(state="busy")])
+        t["now"] = 150.0
+        w.observe([win(state="ask")])
+        t["now"] = 200.0
+        w.observe([win(state="busy")])
+        t["now"] = 230.0
+        (ev,) = w.observe([win(state="done")])
+        assert ev.busy_seconds == 30
+
+    def test_a_none_sweep_keeps_the_start(self):
+        t, clock = self.clock()
+        w = make(clock=clock)
+        w.observe([win(state="idle")])
+        t["now"] = 110.0
+        w.observe([win(state="busy")])
+        t["now"] = 120.0
+        assert w.observe(None) == []
+        t["now"] = 170.0
+        (ev,) = w.observe([win(state="done")])
+        assert ev.busy_seconds == 60
+
+    def test_a_window_that_disappears_is_forgotten(self):
+        t, clock = self.clock()
+        w = make(clock=clock)
+        w.observe([win(state="idle")])
+        t["now"] = 110.0
+        w.observe([win(state="busy")])
+        w.observe([])
+        assert w._busy_since == {}
+        t["now"] = 500.0
+        (ev,) = w.observe([win(state="done")])
+        assert ev.busy_seconds is None
+
+
+class TestCaptureAndComposition:
+    def test_snippet_is_captured_and_composed_into_the_event(self):
+        captured = []
+
+        def capture(window):
+            captured.append(window.window_id)
+            return "● The report is written.\n\n────\n❯ \n────\n"
+
+        w = make(capture=capture, machine="sandbox")
+        (ev,) = w.observe([win(state="done", name="claude", session="proj")])
+        assert captured == ["@1"]
+        assert ev.snippet == "The report is written."
+        assert ev.machine == "sandbox"
+        assert ev.title == "claude · proj · sandbox"
+        assert ev.body == "Finished: The report is written."
+        d = ev.to_dict()
+        for key in ("machine", "busy_seconds", "snippet", "title", "body", "target"):
+            assert key in d
+        assert d["project"] == "proj"
+
+    def test_ask_body(self):
+        w = make(capture=lambda _w: "Which one?\n ❯ 1. A\n   2. B\n", machine="m")
+        (ev,) = w.observe([win(state="ask")])
+        assert ev.body == "Needs an answer: Which one?"
+
+    def test_capture_only_for_windows_that_transitioned(self):
+        captured = []
+
+        def capture(window):
+            captured.append(window.sid)
+            return ""
+
+        w = make(capture=capture)
+        w.observe([win(sid="a", state="busy"), win(sid="b", state="done")])
+        w.observe([win(sid="a", state="busy"), win(sid="b", state="done")])
+        w.observe([win(sid="a", state="done"), win(sid="b", state="done")])
+        assert captured == ["b", "a"]
+
+    def test_a_scripted_watcher_captures_nothing_by_default(self):
+        w = make(machine="m")
+        (ev,) = w.observe([win(state="done")])
+        assert ev.snippet == "" and ev.body == "Finished"
+
+    def test_capture_that_raises_still_produces_the_event(self):
+        def capture(_w):
+            raise RuntimeError("tmux hung")
+
+        w = make(capture=capture, machine="m")
+        (ev,) = w.observe([win(state="done")])
+        assert ev.snippet == ""
+        assert ev.body == "Finished"
+
+    def test_capture_that_returns_none_or_chrome_gives_no_snippet(self):
+        w = make(capture=lambda _w: None, machine="m")
+        (ev,) = w.observe([win(state="done")])
+        assert ev.snippet == ""
+        w = make(capture=lambda _w: "────\n❯ \n────\n", machine="m")
+        (ev,) = w.observe([win(sid="z", state="done")])
+        assert ev.snippet == ""
+
+    def test_machine_missing_leaves_the_title_without_it(self):
+        w = make(machine="")
+        (ev,) = w.observe([win(state="done", name="", session="s")])
+        assert ev.title == "window · s"
+
+    def test_machine_resolves_lazily_when_not_given(self, monkeypatch):
+        import merlin_ext
+
+        monkeypatch.setattr(merlin_ext, "resolve_machine_name", lambda: "lazy")
+        w = make()
+        assert w._machine is None
+        (ev,) = w.observe([win(state="done")])
+        assert ev.machine == "lazy"
+
+    def test_event_fields_are_additive(self):
+        w = make(machine="m")
+        (ev,) = w.observe([win(state="done")])
+        d = ev.to_dict()
+        for key in (
+            "seq",
+            "sid",
+            "session",
+            "window_id",
+            "window_name",
+            "state",
+            "project",
+            "ts",
+            "target",
+        ):
+            assert key in d
+
+
+class TestTickCapture:
+    @pytest.mark.asyncio
+    async def test_tick_captures_off_the_loop_only_for_transitions(self):
+        import threading
+
+        loop_thread = threading.get_ident()
+        threads = []
+
+        def capture(window):
+            threads.append(threading.get_ident())
+            return "● Hello from " + window.sid + "\n"
+
+        w = make(
+            [
+                [win(sid="a", state="busy"), win(sid="b", state="done")],
+                [win(sid="a", state="done"), win(sid="b", state="done")],
+            ],
+            capture=capture,
+            machine="m",
+        )
+        first = await w.tick()
+        second = await w.tick()
+        assert [e.sid for e in first] == ["b"]
+        assert [e.sid for e in second] == ["a"]
+        assert second[0].body == "Finished: Hello from a"
+        assert threads and all(t != loop_thread for t in threads)
+
+    @pytest.mark.asyncio
+    async def test_tick_with_a_raising_capture_still_emits_and_notifies(self):
+        got = []
+
+        def capture(_w):
+            raise OSError("no tmux")
+
+        w = make([[win(state="done")]], capture=capture, machine="m")
+        w.add_listener(got.append)
+        (ev,) = await w.tick()
+        assert ev.body == "Finished" and got == [ev]
+
+    @pytest.mark.asyncio
+    async def test_tick_emits_after_the_capture_so_listeners_see_the_snippet(self):
+        got = []
+        w = make([[win(state="done")]], capture=lambda _w: "● Ready.\n", machine="m")
+        w.add_listener(got.append)
+        await w.tick()
+        assert got[0].snippet == "Ready."

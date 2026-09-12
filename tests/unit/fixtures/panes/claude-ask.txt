@@ -1,0 +1,16 @@
+● Bash(uv run pytest tests/unit -q)
+  ⎿  2167 passed in 92.03s
+
+● Before I remove the old constant, one question.
+
+ ☐ Constant
+ Should VAPID_SUBJECT stay as an alias of FALLBACK_SUBJECT for one release?
+
+ ❯ 1. Keep the alias (Recommended)
+      Nothing outside merlin imports it, so this is belt and braces
+   2. Remove it now
+   3. Other
+
+ Enter to select · ↑↓ to navigate · Esc to cancel
+
+

@@ -11,6 +11,7 @@ Requires: chromium + tmux.
 """
 
 import os
+import re
 import shutil
 import signal
 import socket
@@ -185,8 +186,8 @@ def test_transition_notifies_badges_and_titles(page, server, tmux_env, agent_win
     tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_state", "done")
     page.wait_for_function("window.__notifs.length === 1", timeout=10000)
     n = page.evaluate("window.__notifs[0]")
-    assert n["title"] == "projx · agent"
-    assert n["options"]["body"] == "Finished"
+    assert n["title"] == f"agent · {SESSION} · {machine_of(page)}"
+    assert n["options"]["body"].startswith("Finished")
     assert n["options"]["tag"] == "sid-e2e-1"
     assert n["options"]["data"]["target"] == f"{SESSION}:{wid}"
 
@@ -215,7 +216,77 @@ def test_ask_notifies_with_its_own_body(page, server, tmux_env, agent_window):
     wid = agent_window
     tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_state", "ask")
     page.wait_for_function("window.__notifs.length === 1", timeout=10000)
-    assert page.evaluate("window.__notifs[0].options.body") == "Needs an answer"
+    assert page.evaluate("window.__notifs[0].options.body").startswith(
+        "Needs an answer"
+    )
+
+
+def machine_of(page):
+    """The environment name the instance publishes on the page (the same
+    word the manifest and every title use)."""
+    return page.evaluate("document.documentElement.dataset.machineName || ''")
+
+
+def print_in_pane(tmux_env, wid, text):
+    """Leave ``text`` as the last line of the window's pane with no shell
+    prompt after it (the shell is replaced by a sleep), so the watcher's
+    capture reads exactly that. Returns once the pane shows it."""
+    tmux(
+        tmux_env,
+        "send-keys",
+        "-t",
+        wid,
+        f'clear; printf "{text}\\n"; exec sleep 300',
+        "Enter",
+    )
+    for _ in range(50):
+        shown = tmux(tmux_env, "capture-pane", "-p", "-t", wid).rstrip()
+        if shown.splitlines() == [text]:
+            return
+        time.sleep(0.1)
+    raise AssertionError(f"pane never showed {text!r}: {shown!r}")
+
+
+def test_done_carries_the_title_order_and_the_pane_tail(
+    page, server, tmux_env, agent_window
+):
+    wid = agent_window
+    print_in_pane(tmux_env, wid, "The report is written")
+    tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_state", "done")
+    page.wait_for_function("window.__notifs.length === 1", timeout=10000)
+    n = page.evaluate("window.__notifs[0]")
+    assert n["title"] == f"agent · {SESSION} · {machine_of(page)}"
+    assert machine_of(page)
+    # First seen busy: the watcher never saw the window enter busy, so no
+    # duration, and the body is the state and the pane's last line.
+    assert n["options"]["body"] == "Finished: The report is written"
+
+
+def test_ask_carries_the_question_and_done_the_duration(
+    page, server, tmux_env, agent_window
+):
+    wid = agent_window
+    print_in_pane(tmux_env, wid, "Which branch should I use?")
+    page.wait_for_timeout(2500)  # the watcher has seen the window busy
+    # idle, then busy again: this time the watcher sees the window enter busy.
+    tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_state", "idle")
+    page.wait_for_timeout(2500)
+    tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_state", "busy")
+    page.wait_for_timeout(2500)
+    tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_state", "ask")
+    page.wait_for_function("window.__notifs.length === 1", timeout=10000)
+    n = page.evaluate("window.__notifs[0]")
+    assert n["title"] == f"agent · {SESSION} · {machine_of(page)}"
+    assert n["options"]["body"] == "Needs an answer: Which branch should I use?"
+    # Answered (busy) then finished: the duration counts from the answer.
+    tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_state", "busy")
+    page.wait_for_timeout(2500)
+    tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_state", "done")
+    page.wait_for_function("window.__notifs.length === 2", timeout=10000)
+    body = page.evaluate("window.__notifs[1].options.body")
+    assert re.fullmatch(r"Finished after \d+ s: Which branch should I use\?", body), (
+        body
+    )
 
 
 def test_current_window_is_not_notified_while_visible(

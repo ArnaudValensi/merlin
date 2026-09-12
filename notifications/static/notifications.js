@@ -52,18 +52,16 @@ window.MerlinNotifications = (function () {
     return s && w ? s + ':' + w : '';
   }
 
-  function titleOf(ev) {
-    return (ev.project || ev.session || '') + ' · ' + (ev.window_name || 'window');
-  }
-  function bodyOf(ev) { return ev.state === 'ask' ? 'Needs an answer' : 'Finished'; }
-
+  // The title and the body come composed from the instance (the event
+  // carries them, the push payload carries the same): shown verbatim, never
+  // composed here.
   function deepLink(ev) { return '/terminal?target=' + encodeURIComponent(ev.target); }
 
   function show(ev) {
     var n;
     try {
-      n = new Notification(titleOf(ev), {
-        body: bodyOf(ev), tag: ev.sid || ev.target, icon: ICON, data: { target: ev.target },
+      n = new Notification(ev.title || 'Merlin', {
+        body: ev.body || '', tag: ev.sid || ev.target, icon: ICON, data: { target: ev.target },
       });
     } catch (e) {
       // Some browsers only show notifications from a service worker (Android
@@ -84,8 +82,8 @@ window.MerlinNotifications = (function () {
     if (!('serviceWorker' in navigator)) return;
     navigator.serviceWorker.getRegistration('/').then(function (reg) {
       if (!reg) return;
-      return reg.showNotification(titleOf(ev), {
-        body: bodyOf(ev), tag: ev.sid || ev.target, icon: ICON,
+      return reg.showNotification(ev.title || 'Merlin', {
+        body: ev.body || '', tag: ev.sid || ev.target, icon: ICON,
         data: { url: deepLink(ev), sid: ev.sid, state: ev.state },
       });
     }).catch(function () { /* no worker, no notification */ });

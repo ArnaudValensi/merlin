@@ -13,6 +13,16 @@ tapping the notification lands you in that window. Nothing is on until you turn 
 - **Push to your devices with the tab closed.** The instance sends a Web Push to every
   device you subscribed. Clicking it opens Merlin on that window.
 
+**What a notification shows.** The title is the window, the session and the environment,
+most specific first: `claude · merlin-saas · sandbox`. The body says what happened:
+`Finished after 14 min: All 58 tests pass, ready to commit.` or `Needs an answer: Which
+branch should I deploy from?`. The duration is how long the agent worked since your last
+prompt (omitted when Merlin was started after the agent went busy), and the text after the
+colon is the tail of what the agent last wrote, read from its terminal pane at that moment,
+at most three lines and 240 characters. That snippet is the only piece of your terminal
+that leaves the machine, and Web Push encrypts it end to end with your device's keys, so
+the push service relays it without being able to read it.
+
 The signal is the same one the Sessions panel and the status-bar pills show: the tmux
 `@agent_state` stamped by the agent hooks (see [Agent-state pills](terminal.md#agent-state-pills)).
 Merlin sweeps it every two seconds, so a notification arrives within a couple of seconds.

@@ -1,0 +1,21 @@
+● Bash(uv run pytest tests/unit/test_notifications_content.py -q)
+  ⎿  58 passed in 1.36s
+
+● The composition module is in place and the tests pass. The title reads
+  window first, then the session, then the environment, and the body leads
+  with the state before the snippet.
+
+  Next I will wire the watcher's busy tracking and run the full validate
+  before committing.
+
+✻ Cogitated for 1m 14s · done 8:51 PM
+
+──────────────────────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ↑ 1 age…
+                    ✔ Update installed · Restart to update
+                    new task? /clear to save 500.6k tokens
+                                                       /rc
+
+

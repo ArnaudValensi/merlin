@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import stat
+from dataclasses import replace
 
 import pytest
 
@@ -24,7 +25,7 @@ from notifications.watcher import Watcher
 def event(
     sid="s1", state="done", wid="@1", session="alpha", cwd="/h/u/proj", name="claude"
 ):
-    w = Watcher(lambda: [])
+    w = Watcher(lambda: [], machine="box")
     (ev,) = w.observe(
         [
             Window(
@@ -172,7 +173,7 @@ class TestPayload:
     def test_shape(self):
         p = build_payload(event(cwd="/home/u/merlin-saas", name="build"))
         assert p == {
-            "title": "merlin-saas · build",
+            "title": "build · alpha · box",
             "body": "Finished",
             "tag": "s1",
             "url": "/terminal?target=alpha%3A%401",
@@ -181,6 +182,13 @@ class TestPayload:
         }
         assert build_payload(event(state="ask"))["body"] == "Needs an answer"
         assert len(json.dumps(p)) < 3 * 1024
+
+    def test_title_and_body_come_from_the_event_verbatim(self):
+        ev = event(name="claude", session="proj")
+        ev = replace(ev, title="claude · proj · box", body="Finished after 40 s: Done.")
+        p = build_payload(ev)
+        assert p["title"] == "claude · proj · box"
+        assert p["body"] == "Finished after 40 s: Done."
 
 
 def make_sender(tmp_path, recorder=None, **kw):
@@ -355,7 +363,7 @@ class TestSender:
         assert (
             call["vapid_private_key"].private_pem() == sender.keys.private_pem.encode()
         )
-        assert json.loads(call["data"])["title"] == "proj · claude"
+        assert json.loads(call["data"])["title"] == "claude · alpha · box"
         assert store.get(SUB["endpoint"]).last_success
 
     def test_410_and_404_remove_the_subscription(self, tmp_path):
@@ -570,6 +578,24 @@ class TestSemanticCorruption:
 
 
 class TestPayloadBounds:
+    def test_long_snippet_fits_the_body_bound_and_the_payload_limit(self):
+        # The watcher clips the snippet at 240, the body bound sits at 300 so
+        # the state and the duration fit in front of it. A body past the
+        # bound (a snippet nobody clipped) is shortened structurally.
+        snippet = "é" * 240
+        ev = replace(
+            event(), snippet=snippet, body="Finished after 1 h 20 min: " + snippet
+        )
+        data = encode_payload(build_payload(ev))
+        assert len(data.encode("utf-8")) < 3 * 1024
+        parsed = json.loads(data)
+        assert parsed["body"] == "Finished after 1 h 20 min: " + snippet
+        long_body = "Finished: " + "x" * 5000
+        data = encode_payload(build_payload(replace(event(), body=long_body)))
+        parsed = json.loads(data)
+        assert len(parsed["body"]) == 300 and parsed["body"].endswith("…")
+        assert len(data.encode("utf-8")) < 3 * 1024
+
     def test_long_unicode_names_yield_complete_json_under_the_limit(self):
         ev = event(cwd="/h/" + "é" * 3000, name="ü" * 3000, sid="s" * 500)
         data = encode_payload(build_payload(ev))

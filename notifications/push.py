@@ -348,8 +348,10 @@ class SubscriptionStore:
 # ---------------------------------------------------------------------------
 
 # Bounds on the user-controlled strings, so the payload is complete JSON well
-# under the limit before any encryption.
+# under the limit before any encryption. The body holds the snippet (already
+# clipped at 240 by the watcher), so its limit sits above that.
 _TITLE_MAX = 120
+_BODY_MAX = 300
 _TAG_MAX = 200
 
 
@@ -365,12 +367,12 @@ def deep_link(target: str) -> str:
 
 
 def build_payload(event: Event) -> dict:
-    """The push payload the service worker shows. Complete JSON, strictly
-    under 3 KB once encoded (``encode_payload`` checks)."""
-    title = f"{event.project or event.session} · {event.window_name or 'window'}"
+    """The push payload the service worker shows: the event's own ``title``
+    and ``body`` (composed once by the watcher, shown verbatim). Complete
+    JSON, strictly under 3 KB once encoded (``encode_payload`` checks)."""
     return {
-        "title": _clip(title, _TITLE_MAX),
-        "body": "Needs an answer" if event.state == "ask" else "Finished",
+        "title": _clip(event.title, _TITLE_MAX),
+        "body": _clip(event.body, _BODY_MAX),
         "tag": _clip(event.sid, _TAG_MAX),
         "url": deep_link(event.target),
         "sid": _clip(event.sid, _TAG_MAX),
@@ -381,7 +383,7 @@ def build_payload(event: Event) -> dict:
 def encode_payload(payload: dict) -> str:
     """Serialize a payload, shortening its strings structurally (never slicing
     the JSON) until the UTF-8 form is strictly under the limit."""
-    limits = {"title": _TITLE_MAX, "body": 200, "tag": _TAG_MAX, "sid": _TAG_MAX}
+    limits = {"title": _TITLE_MAX, "body": _BODY_MAX, "tag": _TAG_MAX, "sid": _TAG_MAX}
     data = dict(payload)
     for key, limit in limits.items():
         if isinstance(data.get(key), str):

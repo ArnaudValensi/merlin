@@ -1,0 +1,21 @@
+──────────────────────────────────────────────────────────────────────────────
+
+• ACCEPT
+
+  Reviewed and accepted exact commit
+  0a50f6309bfb70b02b4e7f27ee80d6d2b43d88ce.
+
+  Verified the subject rule, send-time resolution, fallback
+  behavior, unchanged key/subscription storage, tests, docs,
+  scope, and frozen commits. Independent checks passed: 75
+  unit tests, Ruff, Ty, and git diff --check.
+
+  Response recorded for m1-subject-001. Reviewer is ready
+  for the next request.
+
+─ Worked for 3m 32s ──────────────────────────────────────────────────────────
+
+
+› Ask Codex to do anything
+
+  gpt-5.6-sol xhigh · ~/merlin-saas
