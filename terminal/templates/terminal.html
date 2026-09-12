@@ -486,16 +486,6 @@
     #paste-toast:active { background: rgba(74, 158, 255, 0.15); }
 
     /* --- Status bar --- */
-    /* Installed on a phone, the page runs under the home indicator strip and the
-       rounded corners. viewport-fit=cover would expose the real inset through
-       env(), but it changes how iOS scrolls the page when the keyboard opens and
-       the terminal relies on that native behaviour, so the bar is lifted by the
-       fixed height of the strip instead (34pt on every iPhone with a home
-       indicator, a little more than the iPad's 20pt). Nothing changes in a tab. */
-    @media (display-mode: standalone) {
-        #terminal-status { padding-bottom: calc(4px + 34px); }
-    }
-
     #terminal-status {
         display: flex;
         align-items: center;
@@ -506,6 +496,16 @@
         font-size: 12px;
         color: var(--text-muted);
         flex-shrink: 0;
+    }
+
+    /* Installed on a phone, the page runs under the home indicator strip and the
+       rounded corners. viewport-fit=cover would expose the real inset through
+       env(), but it changes how iOS scrolls the page when the keyboard opens and
+       the terminal relies on that native behaviour, so the bar is lifted by the
+       fixed height of the strip instead (34pt on every iPhone with a home
+       indicator, a little more than the iPad's 20pt). Nothing changes in a tab. */
+    @media (display-mode: standalone) {
+        #terminal-status { padding-bottom: calc(4px + 34px); }
     }
 
     #status-dot {
