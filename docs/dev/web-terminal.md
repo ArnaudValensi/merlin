@@ -68,10 +68,24 @@ the notifications popover stack on that bar and follow it. Nothing changes in a
 browser tab.
 
 `viewport-fit=cover` with `env(safe-area-inset-*)` was tried first and reverted: it
-changes how iOS scrolls the page when the software keyboard opens (the input ended up
-under the status bar with a blank band above the keyboard), and the terminal relies on
-that native behaviour, having no visual-viewport handling of its own. Playwright cannot
-emulate either, so verify on a phone screenshot, keyboard closed and open.
+changes how iOS scrolls the page when the software keyboard opens, and the page had
+no handling of its own then. Playwright cannot emulate the insets, so verify on a
+phone screenshot.
+
+### Software Keyboard
+
+The keyboard slides over the page without resizing it, and iOS scrolls a focused
+field into view only when a typed word is committed (a space, punctuation, return
+with predictive text on), so without help the input line stayed behind the keyboard
+until the first space. `followKeyboard()` in `terminal.html` sizes `.main` to
+`window.visualViewport.height` whenever it is smaller than the layout viewport and
+pins the scroll at the top, so the bottom bar and the input line land above the
+keyboard as it animates. It runs only on coarse-pointer devices and leaves a
+pinch-zoomed page alone. The resize to the PTY is coalesced: `fitAddon.fit()` runs
+on every observer callback, the `resize` message goes out once, 120 ms after the
+last one, so tmux repaints once per keyboard or window movement. Playwright cannot
+open the iOS keyboard: verify on the phone, keyboard opening and closing, in a Safari
+tab and in the installed app.
 
 ### Touch Gesture Implementation
 

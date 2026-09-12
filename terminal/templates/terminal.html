@@ -2110,9 +2110,14 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('pageshow', (e) => { if (e.persisted) replaceSocket('bfcache'); });
     window.MerlinTerminal.probeStats = function () { return Object.assign({}, probeStats); };
 
-    // Resize handling
-    function onResize() {
-        fitAddon.fit();
+    // Resize handling. The grid refits at once so the DOM never lags the box,
+    // and the PTY hears about it once the size has settled: a keyboard sliding
+    // in or a window being dragged fires many observer callbacks, and tmux
+    // would repaint for each of them.
+    const RESIZE_SETTLE_MS = 120;
+    let resizeSettle = null;
+    function sendResize() {
+        resizeSettle = null;
         if (ws && ws.readyState === WebSocket.OPEN) {
             const dims = fitAddon.proposeDimensions();
             if (dims) {
@@ -2120,11 +2125,40 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     }
+    function onResize() {
+        fitAddon.fit();
+        if (resizeSettle) clearTimeout(resizeSettle);
+        resizeSettle = setTimeout(sendResize, RESIZE_SETTLE_MS);
+    }
 
     const resizeObserver = new ResizeObserver(() => onResize());
     resizeObserver.observe(container);
     window.addEventListener('resize', onResize);
     window.addEventListener('orientationchange', () => setTimeout(onResize, 100));
+
+    // Follow the software keyboard. On a phone the keyboard slides over the
+    // page without resizing it, and iOS only scrolls a focused field into view
+    // once a typed word is committed, so the input line sat behind the keyboard
+    // until the first space. The visual viewport is the part of the screen the
+    // keyboard leaves free: the page column is sized to it whenever it is
+    // smaller than the layout viewport, and the scroll is pinned at the top so
+    // the browser never pans the page on its own. Pinch zoom also shrinks the
+    // visual viewport, so a zoomed page is left alone.
+    (function followKeyboard() {
+        const vv = window.visualViewport;
+        const main = document.querySelector('.main');
+        if (!vv || !main || !window.matchMedia('(pointer: coarse)').matches) return;
+        function apply() {
+            if (Math.abs(vv.scale - 1) > 0.01) return;
+            const free = Math.round(vv.height);
+            if (free < window.innerHeight - 1) main.style.height = free + 'px';
+            else main.style.height = '';
+            if (window.scrollY || vv.offsetTop) window.scrollTo(0, 0);
+        }
+        vv.addEventListener('resize', apply);
+        vv.addEventListener('scroll', apply);
+        apply();
+    })();
 
     // -----------------------------------------------------------------------
     // Bracketed paste mode tracking
