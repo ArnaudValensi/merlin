@@ -104,13 +104,14 @@
 .notif-switch input:checked + .notif-knob::after { transform: translateX(14px); background: var(--accent-green); }
 .notif-switch input:focus-visible + .notif-knob { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
 
+/* The one sentence that says what the toggle does here: same type as the
+   rest of the popover, not code. */
 .notif-status {
-  font-family: 'Geist Mono', monospace;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   padding: 0 2px;
-  min-height: 16px;
+  min-height: 18px;
 }
 
 /* Mobile: a full-width sheet sitting on the bottom bar, like the sessions
@@ -128,6 +129,11 @@
 
 /* Devices: one dense row per subscription, this browser's marked. */
 .notif-devices { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.notif-devices-title {
+  padding: 2px 10px 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
 .notif-device {
   display: flex;
   align-items: center;

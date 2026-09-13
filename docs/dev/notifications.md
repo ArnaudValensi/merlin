@@ -139,13 +139,20 @@ an older cursor neither replays nor regresses the cursor.
 - **Badge and title.** `setAttention(n)` from the panel's `onAttention` drives
   `navigator.setAppBadge` / `clearAppBadge` when present, and `MerlinPageTitle.setCount(n)`,
   which prefixes `(n) ` and survives later `set()` calls. No page writes `document.title`.
-- **The popover.** The only `Notification.requestPermission()` call is the browser toggle's
-  change handler. The push toggle subscribes with `PushManager.subscribe` using the key from
-  `/api/notifications/public-key` and posts `toJSON()` to `/subscribe`. The devices list,
-  the remove action and **Send a test** call the routes below. `/api/notifications/status`
-  is read when the popover opens: `swept` and `tmux === false` replace the whole body with
-  the tmux sentence. An iPhone browser that is not the installed app gets the install
-  sentence in place of the push toggle.
+- **The popover.** One toggle, "Notify me on this device", `#notif-toggle`. Its change
+  handler holds the only `Notification.requestPermission()` call. On: the permission, the
+  `notify-in-browser` preference, then, where `pushPossible()` (secure context with the
+  APIs, not an iPhone browser tab), `PushManager.subscribe` with the key from
+  `/api/notifications/public-key` and `toJSON()` posted to `/subscribe`. A push that cannot
+  be set up leaves the toggle on (the tab notifies) and `pushError` names why (Brave's
+  setting, a refusal). Off: the preference and, when subscribed, the browser subscription
+  and `DELETE /subscribe`. The toggle reads as on when the preference is on with a granted
+  permission, or when the device is subscribed. One sentence, `#notif-status`, says what
+  the device gets. The devices list and the remove action call the routes below.
+  **Test it** pushes to this device when subscribed and otherwise shows the tab's own
+  notification. `/api/notifications/status` is read when the popover opens: `swept` and
+  `tmux === false` replace the whole body with the tmux sentence. An iPhone browser that
+  is not the installed app gets the install sentence under the toggle.
 - **The deep link.** `/terminal?target=<session>:<window_id>` is applied by `terminal.html`
   on the first confirmed session frame and only then stripped from the URL.
 

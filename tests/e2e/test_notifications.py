@@ -420,20 +420,31 @@ def test_popover_toggle_asks_once_and_persists(page, server):
     )
     page.click("#notif-btn")
     page.wait_for_selector("#notif-popover.open", timeout=5000)
-    toggle = page.locator("#notif-browser-toggle")
+    toggle = page.locator("#notif-toggle")
     assert not toggle.is_checked()
     assert page.evaluate("window.__asked") == 0  # nothing asked on open
+    assert page.locator("#notif-test-btn").is_disabled()
     toggle.check()
     page.wait_for_function(
         "localStorage.getItem('notify-in-browser') === '1'", timeout=5000
     )
     assert page.evaluate("window.__asked") == 1
-    assert "On." in page.inner_text("#notif-status")
+    # On here. Push was attempted against the real PushManager and could not
+    # be set up in a headless browser, which the sentence says, toggle still on.
+    page.wait_for_function(
+        "document.getElementById('notif-status').textContent.startsWith('On while Merlin is open')",
+        timeout=10000,
+    )
+    assert toggle.is_checked()
+    page.wait_for_function(
+        "!document.getElementById('notif-toggle').disabled", timeout=10000
+    )
     toggle.uncheck()
     page.wait_for_function(
         "localStorage.getItem('notify-in-browser') === '0'", timeout=5000
     )
     assert page.evaluate("window.__asked") == 1
+    assert page.inner_text("#notif-status").startswith("Off.")
     page.keyboard.press("Escape")
     page.wait_for_selector("#notif-popover.open", state="detached", timeout=5000)
 
@@ -504,7 +515,7 @@ def test_popover_says_when_there_is_no_tmux_server(page, server):
     page.click("#notif-btn")
     page.wait_for_selector("#notif-notice:not([hidden])", timeout=5000)
     assert "tmux server" in page.inner_text("#notif-notice")
-    assert page.locator("#notif-browser-toggle").is_hidden()
+    assert page.locator("#notif-toggle").is_hidden()
 
 
 def test_popover_on_an_iphone_browser_asks_to_install_first(browser, server):
@@ -720,11 +731,15 @@ def push_stub(endpoint, keys):
 """ % (json.dumps(endpoint), json.dumps(keys))
 
 
+PREF_OFF = "localStorage.setItem('notify-in-browser', '0');"
+
+
 def test_push_toggle_subscribes_tests_and_unsubscribes(browser, server, push_service):
     base, records = push_service
     endpoint = f"{base}/push/e2e-1"
     ctx = browser.new_context(viewport={"width": 1100, "height": 720})
     ctx.add_init_script(STUBS)
+    ctx.add_init_script(PREF_OFF)
     ctx.add_init_script(push_stub(endpoint, fake_subscription_keys()))
     pg = ctx.new_page()
     try:
@@ -733,12 +748,19 @@ def test_push_toggle_subscribes_tests_and_unsubscribes(browser, server, push_ser
         pg.click("#notif-btn")
         # Right after the first attach the watcher may still report no tmux
         # server: the popover re-checks every two seconds until it clears.
-        pg.wait_for_selector("#notif-push-toggle", timeout=15000)
-        toggle = pg.locator("#notif-push-toggle")
+        pg.wait_for_selector("#notif-toggle", timeout=15000)
+        toggle = pg.locator("#notif-toggle")
         assert not toggle.is_checked()
         assert pg.locator("#notif-test-btn").is_disabled()
+        # One tap: the permission (granted by the stub), the preference, the
+        # push subscription, and the device on the instance.
         toggle.check()
         pg.wait_for_selector("#notif-devices .notif-device-me", timeout=10000)
+        assert pg.evaluate("localStorage.getItem('notify-in-browser')") == "1"
+        pg.wait_for_function(
+            "document.getElementById('notif-status').textContent.startsWith('On. You will be told here')",
+            timeout=10000,
+        )
         opts = pg.evaluate("window.__subscribeOpts")
         assert opts == {"userVisibleOnly": True, "keyLen": 65}
         devices = pg.request.get(f"{server}/api/notifications/devices").json()[
@@ -769,12 +791,15 @@ def test_push_toggle_subscribes_tests_and_unsubscribes(browser, server, push_ser
         ]
         assert devices[0]["last_success"]
 
+        # Off drops both: the preference and the subscription.
         toggle.uncheck()
         pg.wait_for_function("!document.getElementById('notif-devices')", timeout=10000)
         assert (
             pg.request.get(f"{server}/api/notifications/devices").json()["devices"]
             == []
         )
+        assert pg.evaluate("localStorage.getItem('notify-in-browser')") == "0"
+        assert pg.inner_text("#notif-status").startswith("Off.")
     finally:
         ctx.close()
 
@@ -783,7 +808,7 @@ def _open_bell(pg, server):
     open_terminal(pg, server)
     pg.evaluate("navigator.serviceWorker.ready")
     pg.click("#notif-btn")
-    pg.wait_for_selector("#notif-push-toggle", timeout=15000)
+    pg.wait_for_selector("#notif-toggle", timeout=15000)
 
 
 def test_failed_registration_rolls_the_browser_subscription_back(
@@ -792,6 +817,7 @@ def test_failed_registration_rolls_the_browser_subscription_back(
     base, _ = push_service
     ctx = browser.new_context(viewport={"width": 1100, "height": 720})
     ctx.add_init_script(STUBS)
+    ctx.add_init_script(PREF_OFF)
     ctx.add_init_script(push_stub(f"{base}/push/rollback", fake_subscription_keys()))
     pg = ctx.new_page()
     try:
@@ -800,22 +826,23 @@ def test_failed_registration_rolls_the_browser_subscription_back(
             "**/api/notifications/subscribe",
             lambda route: route.fulfill(status=500, body="{}"),
         )
-        pg.locator(
-            "#notif-push-toggle"
-        ).click()  # not check(): the box must not flip here
+        pg.locator("#notif-toggle").check()
         pg.wait_for_function(
-            "document.getElementById('notif-status').textContent.includes('Could not subscribe')",
+            "document.getElementById('notif-status').textContent.includes('could not be set up')",
             timeout=10000,
         )
-        assert not pg.locator("#notif-push-toggle").is_checked()
-        assert (
-            pg.evaluate("sessionStorage.getItem('fake-push-sub')") is None
-        )  # rolled back
+        # On here (the tab notifies), the browser subscription rolled back so
+        # neither side lists a device, and the bell hints at the missing push.
+        assert pg.locator("#notif-toggle").is_checked()
+        assert pg.evaluate("sessionStorage.getItem('fake-push-sub')") is None
+        assert pg.evaluate("document.getElementById('notif-dot').hidden") is False
         pg.unroute("**/api/notifications/subscribe")
-        # A reload and reopen agree: nothing is on, the instance lists no device.
+        # A reload resurrects nothing: the instance lists no device, and the
+        # toggle reads off (the init scripts reset the preference on every
+        # load, so the preference itself is not what is asserted here).
         pg.reload()
         _open_bell(pg, server)
-        assert not pg.locator("#notif-push-toggle").is_checked()
+        assert not pg.locator("#notif-toggle").is_checked()
         assert (
             pg.request.get(f"{server}/api/notifications/devices").json()["devices"]
             == []
@@ -831,21 +858,20 @@ def test_browser_refusing_to_unsubscribe_keeps_both_sides_on(
     endpoint = f"{base}/push/keep"
     ctx = browser.new_context(viewport={"width": 1100, "height": 720})
     ctx.add_init_script(STUBS)
+    ctx.add_init_script(PREF_OFF)
     ctx.add_init_script(push_stub(endpoint, fake_subscription_keys()))
     pg = ctx.new_page()
     try:
         _open_bell(pg, server)
-        pg.locator(
-            "#notif-push-toggle"
-        ).click()  # not check(): the box must not flip here
+        pg.locator("#notif-toggle").check()
         pg.wait_for_selector("#notif-devices .notif-device-me", timeout=10000)
         pg.evaluate("window.__unsubscribeFails = true")
-        pg.locator("#notif-push-toggle").click()  # not uncheck(): the box must stay on
+        pg.locator("#notif-toggle").click()  # not uncheck(): the box must stay on
         pg.wait_for_function(
             "document.getElementById('notif-status').textContent.includes('kept the subscription')",
             timeout=10000,
         )
-        assert pg.locator("#notif-push-toggle").is_checked()
+        assert pg.locator("#notif-toggle").is_checked()
         devices = pg.request.get(f"{server}/api/notifications/devices").json()[
             "devices"
         ]
@@ -853,14 +879,15 @@ def test_browser_refusing_to_unsubscribe_keeps_both_sides_on(
         # After a reload the state is still consistent: on, with the device listed.
         pg.reload()
         _open_bell(pg, server)
-        assert pg.locator("#notif-push-toggle").is_checked()
-        # And a browser-only subscription (server record gone) reads as off.
+        assert pg.locator("#notif-toggle").is_checked()
+        # And a browser-only subscription (server record gone) reads as off,
+        # the preference having been dropped by the tap that turned it off.
         pg.request.delete(
             f"{server}/api/notifications/subscribe", data={"endpoint": endpoint}
         )
         pg.reload()
         _open_bell(pg, server)
-        assert not pg.locator("#notif-push-toggle").is_checked()
+        assert not pg.locator("#notif-toggle").is_checked()
         assert pg.evaluate("sessionStorage.getItem('fake-push-sub')") == "1"
     finally:
         ctx.close()
@@ -873,11 +900,12 @@ def test_registered_device_reads_as_on_before_the_bell_is_opened(
     endpoint = f"{base}/push/preload"
     ctx = browser.new_context(viewport={"width": 1100, "height": 720})
     ctx.add_init_script(STUBS)
+    ctx.add_init_script(PREF_OFF)
     ctx.add_init_script(push_stub(endpoint, fake_subscription_keys()))
     pg = ctx.new_page()
     try:
         _open_bell(pg, server)
-        pg.locator("#notif-push-toggle").check()
+        pg.locator("#notif-toggle").check()
         pg.wait_for_selector("#notif-devices .notif-device-me", timeout=10000)
         pg.reload()
         open_terminal(pg, server)
@@ -887,9 +915,9 @@ def test_registered_device_reads_as_on_before_the_bell_is_opened(
             "document.getElementById('notif-dot').hidden === true", timeout=10000
         )
         pg.click("#notif-btn")
-        pg.wait_for_selector("#notif-push-toggle", timeout=15000)
-        assert pg.locator("#notif-push-toggle").is_checked()
-        pg.locator("#notif-push-toggle").uncheck()
+        pg.wait_for_selector("#notif-toggle", timeout=15000)
+        assert pg.locator("#notif-toggle").is_checked()
+        pg.locator("#notif-toggle").uncheck()
         pg.wait_for_function("!document.getElementById('notif-devices')", timeout=10000)
     finally:
         ctx.close()
@@ -902,6 +930,7 @@ def test_failed_registration_then_a_successful_retry_in_the_same_popover(
     endpoint = f"{base}/push/retry"
     ctx = browser.new_context(viewport={"width": 1100, "height": 720})
     ctx.add_init_script(STUBS)
+    ctx.add_init_script(PREF_OFF)
     ctx.add_init_script(push_stub(endpoint, fake_subscription_keys()))
     pg = ctx.new_page()
     try:
@@ -910,19 +939,25 @@ def test_failed_registration_then_a_successful_retry_in_the_same_popover(
             "**/api/notifications/subscribe",
             lambda route: route.fulfill(status=500, body="{}"),
         )
-        pg.locator("#notif-push-toggle").click()
+        pg.locator("#notif-toggle").check()
         pg.wait_for_function(
-            "document.getElementById('notif-status').textContent.includes('Could not subscribe')",
+            "document.getElementById('notif-status').textContent.includes('could not be set up')",
             timeout=10000,
         )
         pg.unroute("**/api/notifications/subscribe")
-        pg.locator("#notif-push-toggle").click()
+        # The retry the sentence names: off, then on again.
+        pg.locator("#notif-toggle").uncheck()
+        pg.wait_for_function(
+            "document.getElementById('notif-status').textContent.startsWith('Off.')",
+            timeout=10000,
+        )
+        pg.locator("#notif-toggle").check()
         pg.wait_for_selector("#notif-devices .notif-device-me", timeout=10000)
-        assert pg.locator("#notif-push-toggle").is_checked()
+        assert pg.locator("#notif-toggle").is_checked()
         status = pg.inner_text("#notif-status")
-        assert "Could not subscribe" not in status
+        assert "could not be set up" not in status
         assert "error" not in (pg.get_attribute("#notif-status", "class") or "")
-        pg.locator("#notif-push-toggle").uncheck()
+        pg.locator("#notif-toggle").uncheck()
         pg.wait_for_function("!document.getElementById('notif-devices')", timeout=10000)
     finally:
         ctx.close()

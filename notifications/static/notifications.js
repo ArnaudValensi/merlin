@@ -17,7 +17,7 @@ window.MerlinNotifications = (function () {
             status: null, notice: null, pushSlot: null, pushRow: null, pushToggle: null,
             devices: null, testBtn: null,
             pushSubscribed: false, subscription: null, open: false, attention: 0,
-            busy: false, deviceList: [],
+            busy: false, deviceList: [], pushError: '',
             tmux: null };   // null: unknown, false: no tmux server at the last sweep
 
   function api(path, method, body) {
@@ -200,10 +200,10 @@ window.MerlinNotifications = (function () {
             throw new Error('subscribe failed');
           });
         });
-    }).catch(function (e) {
-      if (e && e.name === 'NotAllowedError') S.lastError = 'Notifications were not allowed, so push stays off.';
-      else if (navigator.brave) S.lastError = 'Brave blocks push until "Use Google services for push messaging" is on, in brave://settings/privacy. Without it, notifications need a Merlin tab open.';
-      else S.lastError = 'Could not subscribe this device to push. Try again.';
+    }).then(function () { S.pushError = ''; }, function (e) {
+      if (e && e.name === 'NotAllowedError') S.pushError = 'The browser did not allow push.';
+      else if (navigator.brave) S.pushError = 'Brave blocks push until "Use Google services for push messaging" is on, in brave://settings/privacy.';
+      else S.pushError = 'Push could not be set up. Turn off and on to retry.';
       reconcile();
     }).then(function () { S.busy = false; render(); });
   }
@@ -215,7 +215,7 @@ window.MerlinNotifications = (function () {
     // Browser first. If it keeps the subscription, nothing is cleared: the
     // device stays on both sides and the toggle stays on with the reason.
     return sub.unsubscribe().then(function () {
-      S.subscription = null;
+      S.subscription = null; S.pushError = '';
       return api('/subscribe', 'DELETE', { endpoint: endpoint }).then(function (r) {
         if (!r.ok) S.lastError = 'The browser dropped the subscription but the instance still lists this device. Remove it from the list.';
       }, function () {
@@ -229,12 +229,20 @@ window.MerlinNotifications = (function () {
     if (S.subscription && S.subscription.endpoint === endpoint) return unsubscribePush();
     return api('/subscribe', 'DELETE', { endpoint: endpoint }).then(refreshDevices).then(render);
   }
+  // The test goes through this device's own channel: a push when it is
+  // subscribed, otherwise the notification the open tab would show.
   function sendTest() {
-    S.busy = true; S.lastError = ''; render();
-    var body = S.subscription ? { endpoint: S.subscription.endpoint } : {};
-    return api('/test', 'POST', body).then(function (r) {
-      if (r.ok && r.body && r.body.ok) S.lastInfo = 'Test sent' + (S.subscription ? ' to this device.' : ' to every device.');
-      else if (r.status === 409) S.lastError = 'No device is subscribed yet.';
+    S.busy = true; S.lastError = ''; S.lastInfo = ''; render();
+    if (!S.pushSubscribed) {
+      if (enabled()) {
+        show({ title: 'Merlin', body: 'This is a test. You are told here while Merlin is open.', sid: 'test', target: '' });
+        S.lastInfo = 'Test shown.';
+      }
+      S.busy = false; render();
+      return Promise.resolve();
+    }
+    return api('/test', 'POST', { endpoint: S.subscription.endpoint }).then(function (r) {
+      if (r.ok && r.body && r.body.ok) S.lastInfo = 'Test sent to this device.';
       else S.lastError = 'The test push failed' + (r.body && r.body.removed ? ' and a dead subscription was removed.' : '.');
       return refreshDevices();
     }).catch(function () { S.lastError = 'The test push failed.'; })
@@ -267,6 +275,21 @@ window.MerlinNotifications = (function () {
     try { return window.matchMedia('(display-mode: standalone)').matches; } catch (e) { return false; }
   }
 
+  // Push is possible here: a secure context with the APIs, and not an iPhone
+  // browser tab (iOS delivers push to the installed app only).
+  function pushPossible() { return pushSupported() && !(isIos() && !isStandalone()); }
+
+  // Why this device is not told when Merlin is closed, in one sentence.
+  function pushWhy() {
+    if (isIos() && !isStandalone()) return 'Add Merlin to the Home Screen to be told when it is closed.';
+    if (!secure()) return 'Push needs HTTPS to reach this device when Merlin is closed. See the notifications doc.';
+    if (!pushSupported()) return 'This browser has no Web Push, so nothing reaches it when Merlin is closed.';
+    if (S.pushError) return S.pushError;
+    return 'Turn off and on again to also be told when Merlin is closed.';
+  }
+
+  function isOn() { return enabled() || S.pushSubscribed; }
+
   function render() {
     if (!S.pop) return;
     // The whole popover has one message when the last sweep found no tmux
@@ -280,66 +303,43 @@ window.MerlinNotifications = (function () {
       if (S.dot) S.dot.hidden = true;
       return;
     }
-    renderPush();
+    renderSlot();
     var r = reason();
-    var on = enabled();
-    S.toggle.disabled = !r.ok;
-    S.toggle.checked = on;
+    var on = isOn();
+    S.toggle.disabled = !r.ok || S.busy;
+    // While a request runs, show the state the tap asked for, not the old one.
+    S.toggle.checked = S.busy ? !!S.pending : on;
     S.toggleRow.classList.toggle('disabled', !r.ok);
     S.toggleRow.classList.toggle('on', on);
-    if (S.lastError) S.status.textContent = S.lastError;
-    else if (S.lastInfo) S.status.textContent = S.lastInfo;
-    else if (!r.ok) S.status.textContent = r.text;
-    else if (on && S.pushSubscribed) S.status.textContent = 'On. Shown by this tab while you are here, pushed to this device when you are not, even with the browser closed.';
-    else if (on) S.status.textContent = 'On. Shown while a Merlin tab is open, in front or in the background, except for the window you are looking at.';
-    else if (S.pushSubscribed) S.status.textContent = 'Push is on for this device. Turn on the browser toggle for notifications while a tab is open.';
-    else if (permission() === 'granted') S.status.textContent = 'Off. Turn on to be notified when an agent finishes or needs an answer.';
-    else S.status.textContent = 'Turn on to be notified when an agent finishes or needs an answer. The browser will ask once.';
+    S.testBtn.disabled = S.busy || !on;
+    var text;
+    if (S.lastError) text = S.lastError;
+    else if (S.lastInfo) text = S.lastInfo;
+    else if (!r.ok) text = r.text;
+    else if (on && S.pushSubscribed) text = 'On. You will be told here, and on this device even when Merlin is closed.';
+    else if (on) text = 'On while Merlin is open in this browser. ' + pushWhy();
+    else if (permission() === 'granted') text = 'Off. Turn on to be told when an agent finishes or needs an answer.';
+    else text = 'Turn on to be told when an agent finishes or needs an answer. The browser will ask once.';
+    S.status.textContent = text;
     S.status.classList.toggle('error', !!S.lastError);
-    // The dot is a hint, never an alert: this page may notify, but nothing
-    // reaches this device with the tab closed until push is on.
-    if (S.dot) S.dot.hidden = !(permission() === 'granted' && !S.pushSubscribed);
+    // The dot is a hint, never an alert: on here, but nothing reaches this
+    // device when Merlin is closed.
+    if (S.dot) S.dot.hidden = !(on && !S.pushSubscribed && pushPossible());
   }
 
-  // The push slot: the toggle, or the iPhone sentence, or why push is off.
-  function renderPush() {
+  // The slot under the toggle: the iPhone sentence, the devices that get a
+  // push, and the test button.
+  function renderSlot() {
     S.pushSlot.textContent = '';
     if (isIos() && !isStandalone()) {
-      S.pushSlot.appendChild(el('div', 'notif-sentence', 'On iPhone, add Merlin to the Home Screen first, then enable push from there.'));
-    } else {
-      var row = el('label', 'notif-row');
-      row.id = 'notif-push-row';
-      row.appendChild(el('span', 'notif-label', 'Push to this device'));
-      var sw = el('span', 'notif-switch');
-      var t = el('input', null, null);
-      t.type = 'checkbox';
-      t.id = 'notif-push-toggle';
-      // While a request runs, show the state the tap asked for, not the old one.
-      t.checked = S.busy ? !!S.pending : S.pushSubscribed;
-      var ok = pushSupported() && permission() !== 'denied';
-      t.disabled = !ok || S.busy;
-      row.classList.toggle('disabled', !ok);
-      row.classList.toggle('on', S.pushSubscribed);
-      t.addEventListener('change', function () { t.checked ? subscribePush() : unsubscribePush(); });
-      sw.appendChild(t);
-      sw.appendChild(el('span', 'notif-knob'));
-      row.appendChild(sw);
-      S.pushSlot.appendChild(row);
-      if (!pushSupported()) {
-        S.pushSlot.appendChild(el('div', 'notif-sentence', secure()
-          ? 'This browser has no Web Push support. Notifications need a Merlin tab open.'
-          : 'Push needs HTTPS. See the notifications doc for the one Caddy block that adds it.'));
-      } else {
-        S.pushSlot.appendChild(el('div', 'notif-sentence', S.pushSubscribed
-          ? 'Push reaches this device even with the browser closed.'
-          : 'Without push, notifications need a Merlin tab open. With it, they reach this device even with the browser closed.'));
-      }
+      S.pushSlot.appendChild(el('div', 'notif-sentence', 'On iPhone, add Merlin to the Home Screen to be told when Merlin is closed.'));
     }
     // Devices: every subscription the instance holds, this one marked.
     var mine = S.subscription ? S.subscription.endpoint : '';
     if (S.deviceList.length) {
       var list = el('div', 'notif-devices');
       list.id = 'notif-devices';
+      list.appendChild(el('div', 'notif-devices-title', 'Devices told when Merlin is closed'));
       S.deviceList.forEach(function (d) {
         var row = el('div', 'notif-device');
         row.appendChild(el('span', 'notif-device-name', d.label || 'Device'));
@@ -349,19 +349,14 @@ window.MerlinNotifications = (function () {
         var rm = el('button', 'notif-device-remove', null);
         rm.type = 'button';
         rm.title = 'Remove this device';
-        rm.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+        rm.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
         rm.addEventListener('click', function (e) { e.preventDefault(); removeDevice(d.endpoint); });
         row.appendChild(rm);
         list.appendChild(row);
       });
       S.pushSlot.appendChild(list);
     }
-    var test = el('button', 'notif-test', 'Send a test');
-    test.type = 'button';
-    test.id = 'notif-test-btn';
-    test.disabled = S.busy || !S.deviceList.length;
-    test.addEventListener('click', function (e) { e.preventDefault(); sendTest(); });
-    S.pushSlot.appendChild(test);
+    S.pushSlot.appendChild(S.testBtn);
   }
 
   function timeAgoShort(iso) {
@@ -374,17 +369,30 @@ window.MerlinNotifications = (function () {
     return Math.floor(s / 86400) + ' d ago';
   }
 
+  // One toggle: "notify me on this device". Off drops the preference and the
+  // push subscription. On asks the permission (the one prompt, from this
+  // tap), keeps the preference, then subscribes to push where the platform
+  // allows it. A push that cannot be set up leaves the toggle on: the open
+  // tab still notifies, and the sentence says what is missing.
   function onToggle() {
-    if (!S.toggle.checked) { setPref(false); render(); return; }
-    if (!hasApi()) { S.toggle.checked = false; render(); return; }
-    // The one permission prompt, from a tap.
+    S.lastError = ''; S.lastInfo = '';
+    if (!S.toggle.checked) {
+      setPref(false);
+      if (S.pushSubscribed) { S.pending = false; unsubscribePush(); } else render();
+      return;
+    }
+    if (!hasApi()) { render(); return; }
     var p;
     try { p = Notification.requestPermission(); } catch (e) { p = null; }
     if (!p || typeof p.then !== 'function') { p = Promise.resolve(permission()); }
+    S.busy = true; S.pending = true; render();
     p.then(function (result) {
-      setPref(result === 'granted');
+      var granted = result === 'granted';
+      setPref(granted);
+      S.busy = false;
+      if (granted && pushPossible() && !S.pushSubscribed) return subscribePush();
       render();
-    }, function () { setPref(false); render(); });
+    }, function () { setPref(false); S.busy = false; render(); });
   }
 
   function build() {
@@ -408,11 +416,11 @@ window.MerlinNotifications = (function () {
     var body = el('div', 'notif-body');
     S.body = body;
     S.toggleRow = el('label', 'notif-row');
-    S.toggleRow.appendChild(el('span', 'notif-label', 'Notify in this browser'));
+    S.toggleRow.appendChild(el('span', 'notif-label', 'Notify me on this device'));
     var sw = el('span', 'notif-switch');
     S.toggle = el('input', null, null);
     S.toggle.type = 'checkbox';
-    S.toggle.id = 'notif-browser-toggle';
+    S.toggle.id = 'notif-toggle';
     S.toggle.addEventListener('change', onToggle);
     sw.appendChild(S.toggle);
     sw.appendChild(el('span', 'notif-knob'));
@@ -421,6 +429,10 @@ window.MerlinNotifications = (function () {
     S.pushSlot = el('div', 'notif-push-slot');
     S.pushSlot.id = 'notif-push-slot';
     body.appendChild(S.pushSlot);
+    S.testBtn = el('button', 'notif-test', 'Test it');
+    S.testBtn.type = 'button';
+    S.testBtn.id = 'notif-test-btn';
+    S.testBtn.addEventListener('click', function (e) { e.preventDefault(); sendTest(); });
     S.status = el('div', 'notif-status');
     S.status.id = 'notif-status';
     body.appendChild(S.status);

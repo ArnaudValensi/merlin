@@ -34,18 +34,23 @@ Merlin sweeps it every two seconds, so a notification arrives within a couple of
 ## Turn it on
 
 Open the terminal page and tap the **bell** in the bottom bar, left of the Sessions button.
+One toggle, **Notify me on this device**. Turning it on asks the browser for permission
+once, then does what the device allows:
 
-1. **Notify in this browser**: the browser asks for permission once. This is per browser,
-   and it is what shows notifications while a Merlin tab is open.
-2. **Push to this device**: subscribes this browser to push. Works with every tab closed.
-   Each device you subscribe is listed with a remove button, and **Send a test** sends one
-   push right away so you can check the device gets it.
+- On a desktop browser or an installed phone app, you are told while Merlin is open, and
+  pushed to the device when it is not, even with the browser closed.
+- Where push is not possible (an iPhone browser tab, Brave with its push setting off, plain
+  HTTP), you are told while a Merlin tab is open, and the sentence under the toggle says
+  what would lift that.
 
-Both toggles are independent. A phone usually wants push only, a desktop both.
+Each device you turned on is listed, with a remove button, and **Test it** sends one
+notification to this device through whatever it has: a push when it is subscribed, the
+tab's own notification otherwise.
 
-Push is quiet on purpose in two cases: no push for a window that a connected browser is
-currently displaying, and no second push for the same window within 20 seconds (an agent
-bouncing between busy and done at every prompt does not spam you).
+Push is quiet on purpose in two cases: no push while you are at a Merlin page (visible,
+with input in the last five minutes), where the page tells you itself, and no second push
+for the same window within 20 seconds (an agent bouncing between busy and done at every
+prompt does not spam you).
 
 ## Install Merlin on a phone
 
