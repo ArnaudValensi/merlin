@@ -129,7 +129,9 @@ an older cursor neither replays nor regresses the cursor.
   permission, plus a secure context. An attended page (visible, with input in the last
   five minutes, the instance's own threshold) shows a `Notification` for every event but
   the one for this client's current window (`MerlinTerminal.currentWindow()`, from the
-  socket's session frame). A hidden or idle page shows nothing: the push covers it. The event's `title`
+  socket's session frame). A hidden or idle page stands down only when this browser holds
+  a push subscription, since the push then covers it. Without one the open tab is the
+  only channel and keeps notifying from the background. The event's `title`
   and `body` are shown as they come (see "What a notification says"), tag the sid,
   icon the favicon. Click focuses the tab and switches through
   `MerlinTerminal.switchSession(target)`. Where `new Notification` throws (Android Chrome),
@@ -211,8 +213,9 @@ within `ACTIVE_SECONDS` (five minutes): the page is attended, it shows the event
 out. The page reports its visibility as `{type: "visibility", visible}` on connect and
 on every `visibilitychange` (a backgrounded app keeps its socket open for tens of
 seconds), and its input arrives on the same socket. The page applies the same five
-minute threshold to itself (`attended()` in `notifications.js`), so an idle page shows
-nothing and leaves the event to the push. Reasons in `PushSender.suppression_reason`:
+minute threshold to itself (`attended()` in `notifications.js`), so an idle or hidden
+page with a push subscription leaves the event to the push, and one without keeps
+showing it. Reasons in `PushSender.suppression_reason`:
 `attended`, and `recent` for the second rule, no second push for the same sid within
 20 seconds. A suppressed event does not arm the rate limit.
 

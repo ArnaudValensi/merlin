@@ -103,15 +103,18 @@ window.MerlinNotifications = (function () {
   }
 
   // Called by board.js with the events of one poll. An attended page shows
-  // every event but the window it displays. A hidden page shows nothing
-  // (the push reaches the device), and so does an idle one.
+  // every event but the window it displays. A hidden or idle page stands
+  // down only when this browser holds a push subscription, since the push
+  // then reaches the device. Without one the open tab is the only channel
+  // and keeps notifying from the background.
   function handleEvents(events) {
     if (!enabled()) return;
-    if (!attended()) return;
+    if (!attended() && S.pushSubscribed) return;
+    var visible = document.visibilityState === 'visible';
     var here = currentTarget();
     (events || []).forEach(function (ev) {
       if (!ev || !ev.target) return;
-      if (here && ev.target === here) return;
+      if (visible && here && ev.target === here) return;
       show(ev);
     });
   }
@@ -198,7 +201,9 @@ window.MerlinNotifications = (function () {
           });
         });
     }).catch(function (e) {
-      S.lastError = (e && e.name === 'NotAllowedError') ? 'Notifications were not allowed, so push stays off.' : 'Could not subscribe this device to push. Try again.';
+      if (e && e.name === 'NotAllowedError') S.lastError = 'Notifications were not allowed, so push stays off.';
+      else if (navigator.brave) S.lastError = 'Brave blocks push until "Use Google services for push messaging" is on, in brave://settings/privacy. Without it, notifications need a Merlin tab open.';
+      else S.lastError = 'Could not subscribe this device to push. Try again.';
       reconcile();
     }).then(function () { S.busy = false; render(); });
   }
@@ -285,8 +290,8 @@ window.MerlinNotifications = (function () {
     if (S.lastError) S.status.textContent = S.lastError;
     else if (S.lastInfo) S.status.textContent = S.lastInfo;
     else if (!r.ok) S.status.textContent = r.text;
-    else if (on && S.pushSubscribed) S.status.textContent = 'On here and pushed to this device, even with the tab closed.';
-    else if (on) S.status.textContent = 'On. You get a notification when an agent finishes or needs an answer, except for the window you are looking at.';
+    else if (on && S.pushSubscribed) S.status.textContent = 'On. Shown by this tab while you are here, pushed to this device when you are not, even with the browser closed.';
+    else if (on) S.status.textContent = 'On. Shown while a Merlin tab is open, in front or in the background, except for the window you are looking at.';
     else if (S.pushSubscribed) S.status.textContent = 'Push is on for this device. Turn on the browser toggle for notifications while a tab is open.';
     else if (permission() === 'granted') S.status.textContent = 'Off. Turn on to be notified when an agent finishes or needs an answer.';
     else S.status.textContent = 'Turn on to be notified when an agent finishes or needs an answer. The browser will ask once.';
@@ -322,8 +327,12 @@ window.MerlinNotifications = (function () {
       S.pushSlot.appendChild(row);
       if (!pushSupported()) {
         S.pushSlot.appendChild(el('div', 'notif-sentence', secure()
-          ? 'This browser has no Web Push support.'
+          ? 'This browser has no Web Push support. Notifications need a Merlin tab open.'
           : 'Push needs HTTPS. See the notifications doc for the one Caddy block that adds it.'));
+      } else {
+        S.pushSlot.appendChild(el('div', 'notif-sentence', S.pushSubscribed
+          ? 'Push reaches this device even with the browser closed.'
+          : 'Without push, notifications need a Merlin tab open. With it, they reach this device even with the browser closed.'));
       }
     }
     // Devices: every subscription the instance holds, this one marked.

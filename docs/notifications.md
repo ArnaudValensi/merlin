@@ -9,12 +9,13 @@ tapping the notification lands you in that window. Nothing is on until you turn 
 - **A count in the tab title and on the app icon.** `(2) worker-1 · term` means two windows
   want you. No permission needed, it is on everywhere.
 - **Browser notifications while a tab is open.** One per transition, replaced (not stacked)
-  when the same window flips again. Not shown for the window you are looking at. When
-  push is on as well, each event reaches you once: on the screen you are using when
-  you are at a Merlin page, on your devices as a push when you are not, or when the
-  page has been idle for five minutes.
-- **Push to your devices with the tab closed.** The instance sends a Web Push to every
-  device you subscribed. Clicking it opens Merlin on that window.
+  when the same window flips again. Not shown for the window you are looking at. The tab
+  keeps notifying from the background, with the delay browsers impose on hidden tabs.
+- **Push to your devices with the browser closed.** The instance sends a Web Push to every
+  device you subscribed. Clicking it opens Merlin on that window. This is what push buys
+  over the open tab: no tab needed, no background delay, and it survives sleep. Each
+  event reaches you once: on the screen you are using when you are at a Merlin page, as
+  a push when you are not, or when the page has been idle for five minutes.
 
 **What a notification shows.** The title is the window, the session and the environment,
 most specific first: `claude · merlin-saas · sandbox`. The body says what happened:
@@ -93,6 +94,10 @@ Point the DNS name at the machine and open port 443. Merlin itself keeps listeni
 - **Push arrives on the desktop but not on the phone.** On iPhone, open the app from the
   home screen and enable push from there, not from Safari. On Android, check the app's
   notification setting in the system settings.
+- **The push toggle refuses to turn on in Brave.** Brave ships with "Use Google services
+  for push messaging" off, in `brave://settings/privacy`, and Chromium browsers deliver
+  Web Push only through that service. Turn it on, or keep a Merlin tab open instead: the
+  tab notifies you as long as it is open.
 - **A device in the list never gets a push.** Remove it and subscribe again from that
   device. A subscription the push service reports as gone is removed on its own.
 - **Push is refused with `BadJwtToken` (self-hosted, iPhone or Mac).** Apple's push
