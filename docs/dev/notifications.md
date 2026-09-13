@@ -202,10 +202,12 @@ once per batch of sends, at send time, and never stored: a renamed environment o
 override applies to the next push, and nothing about the key pair or the subscriptions
 changes. `PushSender` takes the rule as a `subject` callable so the hub can pass its own.
 
-**Suppression, push only** (`PushSender.suppression_reason`): no push when a connected
-terminal socket displays the event's window (`terminal.routes.is_displayed`, fed by a
-per-connection registry of the last reported session frame), and no second push for the
-same sid within 20 seconds. A suppressed event does not arm the rate limit. In-tab
+**Suppression, push only** (`PushSender.suppression_reason`): no push when a visible
+connected terminal socket displays the event's window (`terminal.routes.is_displayed`,
+fed by a per-connection registry of the last reported session frame and of the page's
+visibility, which the page sends as `{type: "visibility", visible}` on connect and on
+every `visibilitychange`, since a backgrounded app keeps its socket open for tens of
+seconds), and no second push for the same sid within 20 seconds. A suppressed event does not arm the rate limit. In-tab
 notifications keep their own rule.
 
 **Routes** (`mount_module`, under `require_auth`): `GET /api/notifications/status`,

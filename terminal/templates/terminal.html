@@ -1992,6 +1992,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (dims) {
                 socket.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
             }
+            sendVisibility(socket);
         };
 
         socket.onmessage = (e) => {
@@ -2098,6 +2099,13 @@ document.addEventListener('DOMContentLoaded', () => {
         probeStats.pongs++;
         cancelProbe();
     }
+    // The server suppresses a push for a window a visible client shows. The
+    // socket alone cannot tell: a backgrounded app keeps it open for a while.
+    function sendVisibility(socket) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        socket.send(JSON.stringify({ type: 'visibility', visible: !document.hidden }));
+    }
+    document.addEventListener('visibilitychange', () => sendVisibility(ws));
     document.addEventListener('visibilitychange', () => {
         if (document.hidden) { hiddenAt = Date.now(); return; }
         if (!hiddenAt) return;

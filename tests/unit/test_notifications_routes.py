@@ -308,3 +308,23 @@ class TestDisplayedTargets:
         finally:
             troutes._client_views.discard(state)
         assert troutes.is_displayed("alpha:@1") is False
+
+    def test_hidden_page_counts_as_nobody_looking(self):
+        """A backgrounded app keeps its socket open for a while: the page's
+        reported visibility decides, not the socket."""
+        from board.sweep import ClientSession
+        from terminal import routes as troutes
+
+        state = troutes.SessionReportState()
+        state.last_reported = ClientSession("alpha", "$1", 1, "@1", 0, "claude")
+        troutes._client_views.add(state)
+        try:
+            assert state.visible is True
+            assert troutes.is_displayed("alpha:@1") is True
+            state.visible = False
+            assert troutes.displayed_targets() == set()
+            assert troutes.is_displayed("alpha:@1") is False
+            state.visible = True
+            assert troutes.is_displayed("alpha:@1") is True
+        finally:
+            troutes._client_views.discard(state)

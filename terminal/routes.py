@@ -99,21 +99,29 @@ class SessionReportState:
     def __init__(self) -> None:
         self.last_reported: board_sweep.ClientSession | None = None
         self.lock = asyncio.Lock()
+        # Whether the page is on screen, as it reports through the socket. A
+        # backgrounded app keeps its socket open for a while, so the socket
+        # alone says nothing about someone looking. True until told otherwise.
+        self.visible = True
 
 
 # One entry per connected terminal socket: what its tmux client displays, as
-# last reported to the browser. Push suppression reads it (no push for a
-# window someone is looking at). Registered on connect, dropped on disconnect.
+# last reported to the browser, and whether the page is visible. Push
+# suppression reads it (no push for a window someone is looking at).
+# Registered on connect, dropped on disconnect.
 _client_views: set[SessionReportState] = set()
 
 
 def displayed_targets() -> set[str]:
-    """``session:window_id`` for every window a connected client displays."""
+    """``session:window_id`` for every window a visible connected client
+    displays. A hidden page (app in the background, tab not shown) counts as
+    nobody looking, whatever its socket does."""
     out: set[str] = set()
     for state in list(_client_views):
         current = state.last_reported
-        if current is not None and current.window_id:
-            out.add(f"{current.name}:{current.window_id}")
+        if not state.visible or current is None or not current.window_id:
+            continue
+        out.add(f"{current.name}:{current.window_id}")
     return out
 
 
@@ -615,6 +623,11 @@ async def terminal_ws(websocket: WebSocket):
                                 client_tty,
                                 str(parsed.get("target", "")),
                                 session_report_state,
+                            )
+                            continue
+                        if msg_type == "visibility":
+                            session_report_state.visible = bool(
+                                parsed.get("visible", True)
                             )
                             continue
                         if msg_type == "ping":
