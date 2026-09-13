@@ -64,7 +64,9 @@ Sends resize message:
 Installed on a phone (the manifest's `standalone` display), the page runs under the
 home indicator strip and the screen's rounded corners, so `#terminal-status` gains a
 34pt bottom padding under `@media (display-mode: standalone)`. The sessions sheet and
-the notifications popover stack on that bar and follow it. Nothing changes in a
+the notifications popover stack on that bar and follow it. While the software
+keyboard is open the bar sits on the keyboard instead, so `followKeyboard()` marks
+the document with `keyboard-open` and the padding drops. Nothing changes in a
 browser tab.
 
 `viewport-fit=cover` with `env(safe-area-inset-*)` was tried first and reverted: it

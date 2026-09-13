@@ -506,6 +506,7 @@
        indicator, a little more than the iPad's 20pt). Nothing changes in a tab. */
     @media (display-mode: standalone) {
         #terminal-status { padding-bottom: calc(4px + 34px); }
+        .keyboard-open #terminal-status { padding-bottom: 4px; }
     }
 
     #status-dot {
@@ -2151,8 +2152,11 @@ document.addEventListener('DOMContentLoaded', () => {
         function apply() {
             if (Math.abs(vv.scale - 1) > 0.01) return;
             const free = Math.round(vv.height);
-            if (free < window.innerHeight - 1) main.style.height = free + 'px';
-            else main.style.height = '';
+            const open = free < window.innerHeight - 1;
+            main.style.height = open ? free + 'px' : '';
+            // The bottom bar sits on the keyboard now, not on the home
+            // indicator: the standalone padding below it is dead space.
+            document.documentElement.classList.toggle('keyboard-open', open);
             if (window.scrollY || vv.offsetTop) window.scrollTo(0, 0);
         }
         vv.addEventListener('resize', apply);
