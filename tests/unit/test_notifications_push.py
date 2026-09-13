@@ -418,14 +418,17 @@ class TestSender:
 
 
 class TestSuppression:
-    def test_displayed_window_gets_no_push(self, tmp_path):
+    def test_attended_page_gets_no_push(self, tmp_path):
+        """Someone at a visible page with recent input sees the event in-tab,
+        whatever window it is about: no push. Once nobody is there, push."""
         rec = Recorder()
-        sender, store = make_sender(
-            tmp_path, rec, is_displayed=lambda t: t == "alpha:@1"
-        )
+        there = [True]
+        sender, store = make_sender(tmp_path, rec, attended=lambda: there[0])
         store.add(SUB, "a")
-        assert asyncio.run(sender.deliver(event())).skipped == "displayed"
+        assert asyncio.run(sender.deliver(event())).skipped == "attended"
+        assert asyncio.run(sender.deliver(event(wid="@2"))).skipped == "attended"
         assert rec.calls == []
+        there[0] = False
         assert asyncio.run(sender.deliver(event(wid="@2"))).sent == 1
 
     def test_same_sid_within_20_seconds_gets_one_push(self, tmp_path):
@@ -451,10 +454,10 @@ class TestSuppression:
         shown = {"alpha:@1"}
         rec = Recorder()
         sender, store = make_sender(
-            tmp_path, rec, is_displayed=lambda t: t in shown, clock=lambda: 1000.0
+            tmp_path, rec, attended=lambda: bool(shown), clock=lambda: 1000.0
         )
         store.add(SUB, "a")
-        assert asyncio.run(sender.deliver(event())).skipped == "displayed"
+        assert asyncio.run(sender.deliver(event())).skipped == "attended"
         shown.clear()
         assert asyncio.run(sender.deliver(event())).sent == 1
 
@@ -689,8 +692,13 @@ class TestAtomicSuppression:
 
     def test_concurrent_suppressed_event_does_not_arm_the_limit(self, tmp_path):
         rec = Recorder()
+        # The first delivery to check finds someone there, the second does not.
+        answers = [True, False]
         sender, store = make_sender(
-            tmp_path, rec, is_displayed=lambda t: t == "alpha:@9", clock=lambda: 1000.0
+            tmp_path,
+            rec,
+            attended=lambda: answers.pop(0) if answers else False,
+            clock=lambda: 1000.0,
         )
         store.add(SUB, "a")
 
@@ -701,10 +709,10 @@ class TestAtomicSuppression:
 
         results = asyncio.run(both())
         assert sorted((r.sent, r.skipped) for r in results) == [
-            (0, "displayed"),
+            (0, "attended"),
             (1, ""),
         ]
-        # The displayed one reserved nothing: a later event for the sid still sends
+        # The attended one reserved nothing: a later event for the sid still sends
         # only because the sent one reserved it. Check the reservation belongs to
         # the sent event by moving the clock past the window.
         sender._clock = lambda: 1030.0

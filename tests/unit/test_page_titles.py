@@ -95,3 +95,36 @@ def test_failed_hostname_lookup_degrades_to_no_machine():
 )
 def test_dynamic_pages_use_the_shared_title_helper(relative_path, integration):
     assert integration in (ROOT / relative_path).read_text()
+
+
+def test_machine_name_asks_the_portal_when_the_slug_variable_is_absent():
+    env = {"MERLIN_SAAS_TOKEN": "mrl_x"}
+    assert (
+        resolve_machine_name(
+            env, hostname=lambda: "61a3fe90c2d6", portal_slug=lambda: "merlin"
+        )
+        == "merlin"
+    )
+    # The variable wins over the portal, the hostname is the last resort.
+    assert (
+        resolve_machine_name(
+            {"MERLIN_ENVIRONMENT_SLUG": "arts", "MERLIN_SAAS_TOKEN": "mrl_x"},
+            hostname=lambda: "h",
+            portal_slug=lambda: "merlin",
+        )
+        == "arts"
+    )
+    assert (
+        resolve_machine_name(env, hostname=lambda: "h", portal_slug=lambda: None) == "h"
+    )
+    # Outside SaaS mode the portal is never asked.
+    assert (
+        resolve_machine_name({}, hostname=lambda: "h", portal_slug=lambda: "never")
+        == "h"
+    )
+
+    # A lookup that raises falls through.
+    def boom():
+        raise RuntimeError("portal down")
+
+    assert resolve_machine_name(env, hostname=lambda: "h", portal_slug=boom) == "h"

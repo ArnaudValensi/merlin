@@ -24,8 +24,8 @@ file in the destination directory before an atomic rename. Async entry
 points never touch a store on the event loop.
 
 Suppression, push only: no push when a connected terminal client currently
-displays the event's window (the caller says which windows are displayed),
-and no second push for the same sid within 20 seconds.
+at a Merlin page (visible, with input in the last five minutes: the page shows
+the event in-tab), and no second push for the same sid within 20 seconds.
 
 The VAPID subject (RFC 8292, the contact the push service can reach about
 this sender) is the instance's public base URL when it is ``https``, else the
@@ -423,9 +423,9 @@ def _default_send(**kwargs: Any) -> Any:
 
 class PushSender:
     """Send attention events to every subscription, with the two push-only
-    suppression rules. ``is_displayed(target)`` is supplied by the caller (the
-    terminal knows which windows its connected clients show, this module does
-    not). ``subject`` is called once per batch of sends for the VAPID subject
+    suppression rules. ``attended()`` is supplied by the caller (the terminal
+    knows whether a visible client with recent input is connected, this module
+    does not). ``subject`` is called once per batch of sends for the VAPID subject
     claim (the hub passes its own)."""
 
     def __init__(
@@ -433,7 +433,7 @@ class PushSender:
         store: SubscriptionStore,
         keys: VapidKeys,
         *,
-        is_displayed: Callable[[str], bool] = lambda _t: False,
+        attended: Callable[[], bool] = lambda: False,
         clock: Callable[[], float] = time.time,
         min_interval: float = MIN_INTERVAL_SECONDS,
         send: Callable[..., Any] = _default_send,
@@ -441,7 +441,7 @@ class PushSender:
     ) -> None:
         self.store = store
         self.keys = keys
-        self.is_displayed = is_displayed
+        self.attended = attended
         self._clock = clock
         self.min_interval = min_interval
         self._send = send
@@ -453,8 +453,8 @@ class PushSender:
 
     def suppression_reason(self, event: Event) -> str:
         """Why this event gets no push, or an empty string. Read-only."""
-        if self.is_displayed(event.target):
-            return "displayed"
+        if self.attended():
+            return "attended"
         with self._reserve_lock:
             last = self._last_push.get(event.sid)
         if last is not None and self._clock() - last < self.min_interval:
@@ -465,8 +465,8 @@ class PushSender:
         """Check the two rules and, when nothing suppresses the event, reserve
         the sid for the rate limit in the same step. Atomic: two deliveries
         for one sid can never both pass. A suppressed event reserves nothing."""
-        if self.is_displayed(event.target):
-            return "displayed"
+        if self.attended():
+            return "attended"
         with self._reserve_lock:
             last = self._last_push.get(event.sid)
             now = self._clock()
@@ -552,7 +552,7 @@ class PushSender:
         The store is read in a thread. The suppression check and the sid
         reservation run on the event loop with no await between them (and
         under a lock besides), so concurrent deliveries for one sid cannot
-        both send, and ``is_displayed`` reads the terminal's registry on the
+        both send, and ``attended`` reads the terminal's registry on the
         thread that owns it."""
         try:
             if not await asyncio.to_thread(self._has_subscriptions):

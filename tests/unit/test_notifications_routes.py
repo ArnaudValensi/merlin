@@ -293,7 +293,7 @@ class TestGlue:
         assert recorder.calls == []
 
 
-class TestDisplayedTargets:
+class TestAttended:
     def test_registry_reflects_connected_clients(self):
         from board.sweep import ClientSession
         from terminal import routes as troutes
@@ -301,30 +301,43 @@ class TestDisplayedTargets:
         state = troutes.SessionReportState()
         troutes._client_views.add(state)
         try:
-            assert troutes.is_displayed("alpha:@1") is False
+            assert troutes.attended() is True
             state.last_reported = ClientSession("alpha", "$1", 1, "@1", 0, "claude")
             assert troutes.displayed_targets() == {"alpha:@1"}
-            assert troutes.is_displayed("alpha:@1") is True
         finally:
             troutes._client_views.discard(state)
-        assert troutes.is_displayed("alpha:@1") is False
+        assert troutes.attended() is False
 
     def test_hidden_page_counts_as_nobody_looking(self):
         """A backgrounded app keeps its socket open for a while: the page's
         reported visibility decides, not the socket."""
-        from board.sweep import ClientSession
         from terminal import routes as troutes
 
         state = troutes.SessionReportState()
-        state.last_reported = ClientSession("alpha", "$1", 1, "@1", 0, "claude")
         troutes._client_views.add(state)
         try:
             assert state.visible is True
-            assert troutes.is_displayed("alpha:@1") is True
+            assert troutes.attended() is True
             state.visible = False
+            assert troutes.attended() is False
             assert troutes.displayed_targets() == set()
-            assert troutes.is_displayed("alpha:@1") is False
             state.visible = True
-            assert troutes.is_displayed("alpha:@1") is True
+            assert troutes.attended() is True
+        finally:
+            troutes._client_views.discard(state)
+
+    def test_idle_page_counts_as_nobody_looking(self):
+        """A visible tab nobody touched for five minutes (a second monitor)
+        must not silence the phone. Input makes it attended again."""
+        from terminal import routes as troutes
+
+        state = troutes.SessionReportState()
+        state.last_input = 1000.0
+        troutes._client_views.add(state)
+        try:
+            assert troutes.attended(now=1000.0 + troutes.ACTIVE_SECONDS - 1) is True
+            assert troutes.attended(now=1000.0 + troutes.ACTIVE_SECONDS) is False
+            state.last_input = 2000.0
+            assert troutes.attended(now=2001.0) is True
         finally:
             troutes._client_views.discard(state)

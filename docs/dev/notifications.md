@@ -126,9 +126,10 @@ an older cursor neither replays nor regresses the cursor.
 `notifications.js` (`window.MerlinNotifications`) owns:
 
 - **The in-tab rule.** Preference `notify-in-browser` in `localStorage`, plus a granted
-  permission, plus a secure context. An event shows a `Notification` unless the page is
-  visible and the event's window is this client's current window
-  (`MerlinTerminal.currentWindow()`, from the socket's session frame). The event's `title`
+  permission, plus a secure context. An attended page (visible, with input in the last
+  five minutes, the instance's own threshold) shows a `Notification` for every event but
+  the one for this client's current window (`MerlinTerminal.currentWindow()`, from the
+  socket's session frame). A hidden or idle page shows nothing: the push covers it. The event's `title`
   and `body` are shown as they come (see "What a notification says"), tag the sid,
   icon the favicon. Click focuses the tab and switches through
   `MerlinTerminal.switchSession(target)`. Where `new Notification` throws (Android Chrome),
@@ -202,13 +203,18 @@ once per batch of sends, at send time, and never stored: a renamed environment o
 override applies to the next push, and nothing about the key pair or the subscriptions
 changes. `PushSender` takes the rule as a `subject` callable so the hub can pass its own.
 
-**Suppression, push only** (`PushSender.suppression_reason`): no push when a visible
-connected terminal socket displays the event's window (`terminal.routes.is_displayed`,
-fed by a per-connection registry of the last reported session frame and of the page's
-visibility, which the page sends as `{type: "visibility", visible}` on connect and on
-every `visibilitychange`, since a backgrounded app keeps its socket open for tens of
-seconds), and no second push for the same sid within 20 seconds. A suppressed event does not arm the rate limit. In-tab
-notifications keep their own rule.
+**One channel per event.** The instance decides, per event, between the page and the
+push, the way Slack routes between desktop and phone. `terminal.routes.attended()` is
+true when a connected terminal socket is visible and sent input (keys, touch, a switch)
+within `ACTIVE_SECONDS` (five minutes): the page is attended, it shows the event in-tab
+(every window but the one it displays), and there is no push. Otherwise the push goes
+out. The page reports its visibility as `{type: "visibility", visible}` on connect and
+on every `visibilitychange` (a backgrounded app keeps its socket open for tens of
+seconds), and its input arrives on the same socket. The page applies the same five
+minute threshold to itself (`attended()` in `notifications.js`), so an idle page shows
+nothing and leaves the event to the push. Reasons in `PushSender.suppression_reason`:
+`attended`, and `recent` for the second rule, no second push for the same sid within
+20 seconds. A suppressed event does not arm the rate limit.
 
 **Routes** (`mount_module`, under `require_auth`): `GET /api/notifications/status`,
 `GET /public-key`, `POST /subscribe` (`{subscription, label?}`, the label falls back to a

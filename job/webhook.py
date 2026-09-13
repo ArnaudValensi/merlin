@@ -165,6 +165,7 @@ def _notify(job_id: str, job: dict, result) -> None:
 # last good answer survives portal hiccups for the life of the process.
 _WHOAMI_TTL_SECONDS = 300
 _whoami_host: str | None = None
+_whoami_slug: str | None = None
 _whoami_at: float | None = None
 
 
@@ -174,7 +175,7 @@ def _saas_public_host() -> str | None:
     Never raises: on any failure it returns the last known host (stale is
     better than wrong-with-confidence) or None so callers fall through.
     """
-    global _whoami_host, _whoami_at
+    global _whoami_host, _whoami_slug, _whoami_at
 
     token = os.getenv("MERLIN_SAAS_TOKEN", "").strip()
     if not token:
@@ -195,7 +196,9 @@ def _saas_public_host() -> str | None:
     )
     try:
         with urllib.request.urlopen(req, timeout=3) as resp:
-            host = json.loads(resp.read().decode()).get("public_host")
+            answer = json.loads(resp.read().decode())
+            host = answer.get("public_host")
+            slug = answer.get("slug")
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
         logger.debug("whoami lookup failed, keeping last known host: %s", e)
         # Memoize the failure too, so a down portal costs one 3s timeout
@@ -204,8 +207,21 @@ def _saas_public_host() -> str | None:
         return _whoami_host
 
     _whoami_host = host or None
+    _whoami_slug = str(slug).strip() if slug else None
     _whoami_at = now
     return _whoami_host
+
+
+def saas_slug() -> str | None:
+    """The environment's slug per the portal, or None outside SaaS mode or
+    when the portal never answered. Shares the whoami memo of the public host,
+    so the name follows a rename within one TTL. Never raises."""
+    import paths
+
+    paths.load_config_env()
+    if _saas_public_host() is None:
+        return None
+    return _whoami_slug
 
 
 def resolve_public_base() -> tuple[str, str]:

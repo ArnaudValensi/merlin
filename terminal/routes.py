@@ -103,19 +103,41 @@ class SessionReportState:
         # backgrounded app keeps its socket open for a while, so the socket
         # alone says nothing about someone looking. True until told otherwise.
         self.visible = True
+        # When this client last sent input (keys, touch, a switch), monotonic.
+        # A visible page nobody has touched for a while is not attended: the
+        # tab left open on a second monitor must not silence the phone.
+        self.last_input = time.monotonic()
 
 
 # One entry per connected terminal socket: what its tmux client displays, as
-# last reported to the browser, and whether the page is visible. Push
-# suppression reads it (no push for a window someone is looking at).
-# Registered on connect, dropped on disconnect.
+# last reported to the browser, whether the page is visible, and when it last
+# sent input. Push suppression reads it. Registered on connect, dropped on
+# disconnect.
 _client_views: set[SessionReportState] = set()
+
+# A visible page with input in the last five minutes is attended: the person
+# is at that screen, and the page shows the notification in-tab. Beyond that
+# the page may be open but nobody is there, and the push goes out.
+ACTIVE_SECONDS = 300.0
+
+
+def attended(now: float | None = None) -> bool:
+    """Whether someone is at a Merlin page right now: a connected client that
+    is visible and sent input within ``ACTIVE_SECONDS``. One answer for the
+    whole instance, whatever window the event is about: an attended page shows
+    every event in-tab (except the window it displays), so a push on top of it
+    would be the same notification twice. A hidden page (app in the
+    background, tab not shown) never counts, whatever its socket does."""
+    t = time.monotonic() if now is None else now
+    for state in list(_client_views):
+        if state.visible and t - state.last_input < ACTIVE_SECONDS:
+            return True
+    return False
 
 
 def displayed_targets() -> set[str]:
     """``session:window_id`` for every window a visible connected client
-    displays. A hidden page (app in the background, tab not shown) counts as
-    nobody looking, whatever its socket does."""
+    displays. Informational, the push rule is ``attended``."""
     out: set[str] = set()
     for state in list(_client_views):
         current = state.last_reported
@@ -123,10 +145,6 @@ def displayed_targets() -> set[str]:
             continue
         out.add(f"{current.name}:{current.window_id}")
     return out
-
-
-def is_displayed(target: str) -> bool:
-    return target in displayed_targets()
 
 
 async def _send_session_if_changed(
@@ -618,6 +636,7 @@ async def terminal_ws(websocket: WebSocket):
                             _sync_clipboard(parsed.get("text", ""))
                             continue
                         if msg_type == "switch":
+                            session_report_state.last_input = time.monotonic()
                             await _switch_session(
                                 websocket,
                                 client_tty,
@@ -641,6 +660,7 @@ async def terminal_ws(websocket: WebSocket):
                     except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                         pass
                 # Regular input — write to PTY
+                session_report_state.last_input = time.monotonic()
                 if not await bridge.write(msg.encode("utf-8")):
                     logger.warning("ws_to_pty: PTY gone or stalled, closing")
                     break

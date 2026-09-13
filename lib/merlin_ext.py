@@ -42,20 +42,40 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(f"merlin.ext.{safe}")
 
 
+def _portal_slug() -> str | None:
+    # Lazy: job.webhook pulls the job package in, which this module must not
+    # import at load time.
+    from job.webhook import saas_slug
+
+    return saas_slug()
+
+
 def resolve_machine_name(
     environ: Mapping[str, str] | None = None,
     hostname: Callable[[], str] | None = None,
+    portal_slug: Callable[[], str | None] | None = None,
 ) -> str:
-    """Return the stable, user-facing machine label for browser titles.
+    """Return the stable, user-facing machine label for browser titles, the
+    manifest and the notifications.
 
     Managed containers inherit their environment slug, which is more useful
-    than Podman's generated hostname. Self-hosted instances use the OS hostname.
-    A failed hostname lookup must not prevent template rendering.
+    than Podman's generated hostname. An instance connected to the portal
+    without that variable (the founder's sandbox) asks the portal for its slug,
+    memoized with the public host. Self-hosted instances use the OS hostname.
+    A failed lookup must not prevent template rendering.
     """
     env = os.environ if environ is None else environ
     environment_slug = env.get("MERLIN_ENVIRONMENT_SLUG", "").strip()
     if environment_slug:
         return environment_slug
+
+    if env.get("MERLIN_SAAS_TOKEN", "").strip():
+        try:
+            slug = (portal_slug or _portal_slug)()
+        except Exception:
+            slug = None
+        if slug:
+            return slug
 
     try:
         return ((hostname or socket.gethostname)() or "").strip()

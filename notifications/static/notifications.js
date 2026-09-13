@@ -45,6 +45,19 @@ window.MerlinNotifications = (function () {
   function enabled() { return prefOn() && secure() && permission() === 'granted'; }
 
   // --- the in-tab rule (decision 5) --------------------------------------
+  // The instance pushes only when no visible page had input in the last five
+  // minutes, and an attended page shows the event itself. The same threshold
+  // here, so an idle page (open, untouched) leaves the event to the push.
+  var ACTIVE_MS = 5 * 60 * 1000;
+  var lastInput = Date.now();
+  function markInput() { lastInput = Date.now(); }
+  ['keydown', 'pointerdown', 'touchstart'].forEach(function (type) {
+    document.addEventListener(type, markInput, { capture: true, passive: true });
+  });
+  function attended() {
+    return document.visibilityState === 'visible' && Date.now() - lastInput < ACTIVE_MS;
+  }
+
   function currentTarget() {
     var t = window.MerlinTerminal;
     if (!t || !t.currentSession || !t.currentWindow) return '';
@@ -89,15 +102,16 @@ window.MerlinNotifications = (function () {
     }).catch(function () { /* no worker, no notification */ });
   }
 
-  // Called by board.js with the events of one poll. Skips an event for the
-  // window this client is looking at while the page is visible.
+  // Called by board.js with the events of one poll. An attended page shows
+  // every event but the window it displays. A hidden page shows nothing
+  // (the push reaches the device), and so does an idle one.
   function handleEvents(events) {
     if (!enabled()) return;
-    var visible = document.visibilityState === 'visible';
+    if (!attended()) return;
     var here = currentTarget();
     (events || []).forEach(function (ev) {
       if (!ev || !ev.target) return;
-      if (visible && here && ev.target === here) return;
+      if (here && ev.target === here) return;
       show(ev);
     });
   }

@@ -46,12 +46,12 @@ def notifications_dir() -> Path:
     return paths.merlin_home() / "notifications"
 
 
-def _is_displayed(target: str) -> bool:
+def _attended() -> bool:
     # Imported here: terminal.routes imports the board package, which is also
     # where the watcher's sweep lives. Keeping it lazy avoids an import cycle.
-    from terminal.routes import is_displayed
+    from terminal.routes import attended
 
-    return is_displayed(target)
+    return attended()
 
 
 def get_sender() -> PushSender:
@@ -63,7 +63,7 @@ def get_sender() -> PushSender:
             _sender = PushSender(
                 SubscriptionStore(home / "subscriptions.json"),
                 VapidKeys(home / "vapid.json"),
-                is_displayed=_is_displayed,
+                attended=_attended,
             )
             _sender_home = home
         return _sender

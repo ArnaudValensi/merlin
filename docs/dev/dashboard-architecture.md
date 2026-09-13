@@ -589,8 +589,11 @@ right side of narrow tabs:
 ```
 
 `lib/merlin_ext.py` publishes `machine_name` to every template. Managed
-instances use `MERLIN_ENVIRONMENT_SLUG`; self-hosted instances use the OS
-hostname. `templates/base.html` owns the machine prefix and each page's `title`
+instances use `MERLIN_ENVIRONMENT_SLUG`. An instance connected to the portal
+without that variable (the founder's sandbox) uses the slug the portal's
+whoami returns, memoized with the public host in `job/webhook.py`. Self-hosted
+instances use the OS hostname. The same name goes into the web app manifest and
+the notification titles. `templates/base.html` owns the machine prefix and each page's `title`
 block supplies only its lowercase app label and any server-rendered context.
 Do not add `Merlin` or `Dashboard` as a suffix; the favicon carries product
 identity. The generic no-metadata fallback remains `Merlin`.

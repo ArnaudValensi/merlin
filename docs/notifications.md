@@ -9,7 +9,10 @@ tapping the notification lands you in that window. Nothing is on until you turn 
 - **A count in the tab title and on the app icon.** `(2) worker-1 · term` means two windows
   want you. No permission needed, it is on everywhere.
 - **Browser notifications while a tab is open.** One per transition, replaced (not stacked)
-  when the same window flips again. Not shown for the window you are looking at.
+  when the same window flips again. Not shown for the window you are looking at. When
+  push is on as well, each event reaches you once: on the screen you are using when
+  you are at a Merlin page, on your devices as a push when you are not, or when the
+  page has been idle for five minutes.
 - **Push to your devices with the tab closed.** The instance sends a Web Push to every
   device you subscribed. Clicking it opens Merlin on that window.
 
