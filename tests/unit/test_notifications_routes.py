@@ -106,6 +106,7 @@ class TestStatusRoute:
             "swept": False,
             "cursor": fresh_watcher.cursor,
             "devices": 0,
+            "attended": [],
         }
         fresh_watcher.observe(None)
         assert client.get("/api/notifications/status").json()["tmux"] is False
@@ -325,6 +326,45 @@ class TestAttended:
             assert troutes.attended() is True
         finally:
             troutes._client_views.discard(state)
+
+    def test_attended_clients_name_the_page_and_its_window(self):
+        from board.sweep import ClientSession
+        from terminal import routes as troutes
+
+        looking = troutes.SessionReportState()
+        looking.agent = "Mac · Brave"
+        looking.last_input = 1000.0
+        looking.last_reported = ClientSession("alpha", "$1", 1, "@1", 0, "claude")
+        idle = troutes.SessionReportState()
+        idle.agent = "iPhone · Safari"
+        idle.last_input = 0.0
+        hidden = troutes.SessionReportState()
+        hidden.visible = False
+        hidden.last_input = 1000.0
+        for st in (looking, idle, hidden):
+            troutes._client_views.add(st)
+        try:
+            assert troutes.attended_clients(now=1030.0) == [
+                {"agent": "Mac · Brave", "window": "alpha:@1", "idle_seconds": 30}
+            ]
+        finally:
+            for st in (looking, idle, hidden):
+                troutes._client_views.discard(st)
+
+    def test_short_agent_names_the_browser_and_the_os(self):
+        from terminal.routes import short_agent
+
+        brave = (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Brave/128"
+        )
+        iphone = (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        )
+        assert short_agent(brave) == "Mac · Brave"
+        assert short_agent(iphone) == "iPhone · Safari"
+        assert short_agent("") == ""
 
     def test_idle_page_counts_as_nobody_looking(self):
         """A visible tab nobody touched for five minutes (a second monitor)

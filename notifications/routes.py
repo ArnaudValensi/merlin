@@ -69,14 +69,43 @@ def get_sender() -> PushSender:
         return _sender
 
 
+def _attended_clients() -> list[dict]:
+    from terminal.routes import attended_clients
+
+    return attended_clients()
+
+
+async def _route(event: _watcher.Event) -> None:
+    """Deliver, then record where the event went and why: pushed, or left to
+    the attended pages (named), or rate-limited. The record is what explains
+    a notification that did not arrive. Never raises."""
+    attended = _attended_clients()
+    result = await get_sender().deliver(event)
+    try:
+        from structured_log import log_event
+
+        log_event(
+            "attention_routed",
+            seq=event.seq,
+            target=event.target,
+            window=event.window_name,
+            state=event.state,
+            pushed=result.sent,
+            skipped=result.skipped,
+            attended=attended,
+        )
+    except Exception:
+        logger.exception("Routing record failed")
+
+
 def _on_event(event: _watcher.Event) -> None:
-    """Watcher listener: schedule the push on the running loop. Called from
-    the watcher's tick, which runs on the event loop."""
+    """Watcher listener: schedule the delivery on the running loop. Called
+    from the watcher's tick, which runs on the event loop."""
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    loop.create_task(get_sender().deliver(event))
+    loop.create_task(_route(event))
 
 
 def wire_push() -> None:
@@ -100,6 +129,9 @@ def api_status():
         "swept": w.swept_once,
         "cursor": w.cursor,
         "devices": len(get_sender().store.all()),
+        # The pages judged to be looking right now: why the next event would
+        # not be pushed.
+        "attended": _attended_clients(),
     }
 
 

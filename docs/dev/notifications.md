@@ -226,6 +226,14 @@ showing it. Reasons in `PushSender.suppression_reason`:
 `attended`, and `recent` for the second rule, no second push for the same sid within
 20 seconds. A suppressed event does not arm the rate limit.
 
+Every decision is recorded: the watcher listener writes an `attention_routed` event to
+the engine log (`log_event`) with the event's target and window, `pushed` (devices
+reached) or `skipped` (the reason), and `attended`, the pages judged to be looking at
+that moment (`terminal.routes.attended_clients`: browser label from the user agent,
+displayed window, seconds since input). `GET /api/notifications/status` returns the
+same `attended` list for the present moment. A notification that did not arrive is
+explained there: grep the engine log for `attention_routed`.
+
 **Routes** (`mount_module`, under `require_auth`): `GET /api/notifications/status`,
 `GET /public-key`, `POST /subscribe` (`{subscription, label?}`, the label falls back to a
 short one derived from the user agent), `DELETE /subscribe` (`{endpoint}`),

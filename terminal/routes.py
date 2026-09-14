@@ -107,6 +107,9 @@ class SessionReportState:
         # A visible page nobody has touched for a while is not attended: the
         # tab left open on a second monitor must not silence the phone.
         self.last_input = time.monotonic()
+        # A short name for the browser, from its user agent, so a routing
+        # record can say which page was attended.
+        self.agent = ""
 
 
 # One entry per connected terminal socket: what its tmux client displays, as
@@ -133,6 +136,61 @@ def attended(now: float | None = None) -> bool:
         if state.visible and t - state.last_input < ACTIVE_SECONDS:
             return True
     return False
+
+
+def attended_clients(now: float | None = None) -> list[dict]:
+    """One record per attended client (visible, input within ``ACTIVE_SECONDS``):
+    the browser, the window it displays and how long ago its last input was.
+    What a routing record and the status route show, so a silent event can
+    be explained: which page was judged to be looking."""
+    t = time.monotonic() if now is None else now
+    out: list[dict] = []
+    for state in list(_client_views):
+        idle = t - state.last_input
+        if not state.visible or idle >= ACTIVE_SECONDS:
+            continue
+        current = state.last_reported
+        out.append(
+            {
+                "agent": state.agent,
+                "window": f"{current.name}:{current.window_id}"
+                if current and current.window_id
+                else "",
+                "idle_seconds": int(idle),
+            }
+        )
+    return out
+
+
+def short_agent(user_agent: str) -> str:
+    """``Brave``, ``Safari``, ``Chrome``, ``Firefox`` with the OS when it is
+    obvious, from a user agent string. Best effort, for humans."""
+    ua = user_agent or ""
+    os_name = ""
+    for needle, name in (
+        ("iPhone", "iPhone"),
+        ("iPad", "iPad"),
+        ("Android", "Android"),
+        ("Mac OS X", "Mac"),
+        ("Windows", "Windows"),
+        ("Linux", "Linux"),
+    ):
+        if needle in ua:
+            os_name = name
+            break
+    browser = ""
+    for needle, name in (
+        ("Brave", "Brave"),
+        ("Edg/", "Edge"),
+        ("Firefox/", "Firefox"),
+        ("CriOS/", "Chrome"),
+        ("Chrome/", "Chrome"),
+        ("Safari/", "Safari"),
+    ):
+        if needle in ua:
+            browser = name
+            break
+    return " · ".join(p for p in (os_name, browser) if p)
 
 
 def displayed_targets() -> set[str]:
@@ -585,6 +643,7 @@ async def terminal_ws(websocket: WebSocket):
         return
     register_pty("terminal", bridge, client_tty)
     session_report_state = SessionReportState()
+    session_report_state.agent = short_agent(websocket.headers.get("user-agent", ""))
     _client_views.add(session_report_state)
 
     # Check if child is still alive
