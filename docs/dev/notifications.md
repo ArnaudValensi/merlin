@@ -127,9 +127,10 @@ an older cursor neither replays nor regresses the cursor.
 
 - **The in-tab rule.** Preference `notify-in-browser` in `localStorage`, plus a granted
   permission, plus a secure context. An attended page (visible, with input in the last
-  five minutes, the instance's own threshold) shows a `Notification` for every event but
-  the one for this client's current window (`MerlinTerminal.currentWindow()`, from the
-  socket's session frame). A hidden or idle page stands down only when this browser holds
+  five minutes, the instance's own threshold) shows a `Notification` for every event,
+  including the one for this client's current window (`MerlinTerminal.currentWindow()`,
+  from the socket's session frame) unless the page is also focused (`document.hasFocus()`):
+  a tab visible on another workspace is not being read. A hidden or idle page stands down only when this browser holds
   a push subscription, since the push then covers it. Without one the open tab is the
   only channel and keeps notifying from the background. The event's `title`
   and `body` are shown as they come (see "What a notification says"), tag the sid,

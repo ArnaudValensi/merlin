@@ -107,14 +107,18 @@ window.MerlinNotifications = (function () {
   // down only when this browser holds a push subscription, since the push
   // then reaches the device. Without one the open tab is the only channel
   // and keeps notifying from the background.
+  // The window this client displays is exempt only while the page is looked
+  // at: visible and focused. A tab that is visible on another workspace or
+  // behind another window is not being read, and its notification lands in
+  // the system tray like any other.
   function handleEvents(events) {
     if (!enabled()) return;
     if (!attended() && S.pushSubscribed) return;
-    var visible = document.visibilityState === 'visible';
+    var looking = document.visibilityState === 'visible' && document.hasFocus();
     var here = currentTarget();
     (events || []).forEach(function (ev) {
       if (!ev || !ev.target) return;
-      if (visible && here && ev.target === here) return;
+      if (looking && here && ev.target === here) return;
       show(ev);
     });
   }
