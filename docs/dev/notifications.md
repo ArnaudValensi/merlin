@@ -242,7 +242,7 @@ focused at that moment (`terminal.routes.looking_clients`: browser label from th
 agent and the displayed window). `GET /api/notifications/status` returns the same
 `looking` list for the present moment. A notification that did not arrive is explained
 there: grep the engine log for `attention_routed`.
-The manual cases to run on real devices after a change are in
+What only a person can verify, on real devices, is in
 [`notifications-acceptance.md`](notifications-acceptance.md).
 
 **Routes** (`mount_module`, under `require_auth`): `GET /api/notifications/status`,
