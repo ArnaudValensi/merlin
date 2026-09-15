@@ -59,3 +59,37 @@ grep attention_routed ~/.merlin/logs/engine-log.jsonl | tail -3
 | A3 | Installed app, suspended for over a minute. | Come back | Terminal reconnects without a keystroke. |
 | A4 | Popover on the phone. | Look | Readable sheet above the bottom bar, the sentence never empty. |
 | A5 | App installed before an environment rename. | Reinstall | Name and icon carry the environment. |
+
+## Runs
+
+### 2026-09-13 to 2026-09-15, founder, iPhone (installed app) and Arch Linux with Brave
+
+Run while the routing was being reshaped, so early results were against earlier rules.
+The results below are those obtained against the code as it stands (merlin `06d9f1e`
+or later), unless marked otherwise.
+
+| # | Result | Notes |
+|---|---|---|
+| P1 | passed | Pushes received with the app in the background and the screen locked. Body with duration and the agent's last line read on the lock screen. Title order read on the 13th, before the environment name was taken from the portal: the new name not yet read on a push. |
+| P2 | not run | Brave has no push (B1). |
+| P3, P4 | not run | Taps on a push not reported. |
+| P5 | passed | Phone kept the notification with the app closed, cleared it on reopening. |
+| F1 | passed | Desktop focused on the window: nothing anywhere, the pill only. |
+| F2 | passed | Another workspace: desktop tray and phone push. |
+| F3 | not run against the final code | The case that showed the tab deciding alone. Fixed by the quiet stamp (`06d9f1e`), to be redone. |
+| S1, S2, S3 | not run | |
+| B1 | partial | Brave refused the subscription with the setting off, seen under the two-toggle popover. The single toggle's sentence naming the setting not yet read. |
+| B2 | not run | |
+| B3 | passed | Fresh install, permission asked once, subscribed, test push received. |
+| B4 | not run | |
+| A1 | passed | |
+| A2 | passed | Keyboard following and the padding drop. |
+| A3 | not run | |
+| A4 | partial | One report of an empty sentence with the toggle on, on the phone, not reproduced. Re-check after a fresh open. |
+| A5 | not run | The app was reinstalled before the environment name came from the portal. |
+
+Also verified in that run, though covered by the automated tests: the tab hidden behind
+another tab notifies from the background, a focused tab on another window notifies, a
+notification handled on one device disappears from the other while both are open, a
+device removed from another device reads off on its next open, and a browser gets one
+notification per event, never two.
