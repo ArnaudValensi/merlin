@@ -17,7 +17,7 @@ window.MerlinNotifications = (function () {
             status: null, notice: null, pushSlot: null, pushRow: null, pushToggle: null,
             devices: null, testBtn: null,
             pushSubscribed: false, subscription: null, open: false, attention: 0,
-            busy: false, deviceList: [], pushError: '',
+            busy: false, deviceList: [], pushError: '', removedElsewhere: false,
             tmux: null };   // null: unknown, false: no tmux server at the last sweep
 
   function api(path, method, body) {
@@ -186,6 +186,25 @@ window.MerlinNotifications = (function () {
     var sub = S.subscription;
     S.pushSubscribed = !!sub && S.deviceList.some(function (d) { return d.endpoint === sub.endpoint; });
   }
+  // A subscription this browser holds that the instance no longer lists was
+  // removed from another device (or dropped by the instance after the push
+  // service declared it dead). Either way this device is no longer told when
+  // Merlin is closed, and "remove the device" means "turn it off there": the
+  // page drops its preference and the browser's subscription and reads off,
+  // saying so once. Turning it on again is one tap. Only checked between
+  // flows, never while one is running.
+  function applyRemoteRemoval() {
+    var sub = S.subscription;
+    if (S.busy || !sub || S.pushSubscribed) return Promise.resolve();
+    if (!S.deviceList.some(function (d) { return d.endpoint === sub.endpoint; })) {
+      setPref(false);
+      S.subscription = null;
+      S.removedElsewhere = true;   // shown until the toggle is used again
+      return sub.unsubscribe().catch(function () {}).then(function () { reconcile(); render(); });
+    }
+    return Promise.resolve();
+  }
+
   function labelForThisDevice() {
     var d = navigator.userAgentData;
     if (d && d.platform) {
@@ -335,6 +354,7 @@ window.MerlinNotifications = (function () {
     else if (!r.ok) text = r.text;
     else if (on && S.pushSubscribed) text = 'On. You will be told here, and on this device even when Merlin is closed.';
     else if (on) text = 'On while Merlin is open in this browser. ' + pushWhy();
+    else if (S.removedElsewhere) text = 'Turned off from another device. Turn on to be told here again.';
     else if (permission() === 'granted') text = 'Off. Turn on to be told when an agent finishes or needs an answer.';
     else text = 'Turn on to be told when an agent finishes or needs an answer. The browser will ask once.';
     S.status.textContent = text;
@@ -392,7 +412,7 @@ window.MerlinNotifications = (function () {
   // allows it. A push that cannot be set up leaves the toggle on: the open
   // tab still notifies, and the sentence says what is missing.
   function onToggle() {
-    S.lastError = ''; S.lastInfo = '';
+    S.lastError = ''; S.lastInfo = ''; S.removedElsewhere = false;
     if (!S.toggle.checked) {
       setPref(false);
       if (S.pushSubscribed) { S.pending = false; unsubscribePush(); } else render();
@@ -498,7 +518,7 @@ window.MerlinNotifications = (function () {
     S.lastError = ''; S.lastInfo = '';
     render();
     refreshStatus();
-    Promise.all([refreshSubscription(), refreshDevices()]).then(render);
+    Promise.all([refreshSubscription(), refreshDevices()]).then(applyRemoteRemoval).then(render);
     S.pop.hidden = false;
     S.pop.classList.add('open');
     place();
@@ -536,7 +556,7 @@ window.MerlinNotifications = (function () {
     render();
     // Both sides before the first real render: push is on only when the
     // browser subscription is also on file, so the bell's hint needs the list.
-    Promise.all([refreshSubscription(), refreshDevices()]).then(render);
+    Promise.all([refreshSubscription(), refreshDevices()]).then(applyRemoteRemoval).then(render);
     // A permission can change under us (site settings): reflect it on return.
     document.addEventListener('visibilitychange', function () { if (!document.hidden) render(); });
   }

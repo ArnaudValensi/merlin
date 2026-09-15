@@ -154,8 +154,11 @@ an older cursor neither replays nor regresses the cursor.
   be set up leaves the toggle on (the tab notifies) and `pushError` names why (Brave's
   setting, a refusal). Off: the preference and, when subscribed, the browser subscription
   and `DELETE /subscribe`. The toggle reads as on when the preference is on with a granted
-  permission, or when the device is subscribed. One sentence, `#notif-status`, says what
-  the device gets. The devices list and the remove action call the routes below.
+  permission, or when the device is subscribed. A browser subscription the instance no
+  longer lists (the device was removed from another device, or dropped after a 404 or
+  410) turns this device off on the next open: preference and browser subscription
+  dropped, "Turned off from another device" shown once (`applyRemoteRemoval`). One
+  sentence, `#notif-status`, says what the device gets. The devices list and the remove action call the routes below.
   **Test it** pushes to this device when subscribed and otherwise shows the tab's own
   notification. `/api/notifications/status` is read when the popover opens: `swept` and
   `tmux === false` replace the whole body with the tmux sentence. An iPhone browser that

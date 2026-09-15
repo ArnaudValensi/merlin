@@ -901,15 +901,26 @@ def test_browser_refusing_to_unsubscribe_keeps_both_sides_on(
         pg.reload()
         _open_bell(pg, server)
         assert pg.locator("#notif-toggle").is_checked()
-        # And a browser-only subscription (server record gone) reads as off,
-        # the preference having been dropped by the tap that turned it off.
+        # A subscription the instance no longer lists (removed from another
+        # device, or dropped after the push service declared it dead) turns
+        # this device off: preference and browser subscription both dropped,
+        # and the sentence says so once.
         pg.request.delete(
             f"{server}/api/notifications/subscribe", data={"endpoint": endpoint}
         )
+        # On the page that finds the removal (the reload), not on a fresh
+        # navigation: the notice is that page's state.
         pg.reload()
-        _open_bell(pg, server)
+        pg.wait_for_selector(".xterm-screen", timeout=30000)
+        pg.evaluate("navigator.serviceWorker.ready")
+        pg.click("#notif-btn")
+        pg.wait_for_selector("#notif-toggle", timeout=15000)
+        pg.wait_for_function(
+            "document.getElementById('notif-status').textContent.includes('Turned off from another device')",
+            timeout=10000,
+        )
         assert not pg.locator("#notif-toggle").is_checked()
-        assert pg.evaluate("sessionStorage.getItem('fake-push-sub')") == "1"
+        assert pg.evaluate("sessionStorage.getItem('fake-push-sub')") is None
     finally:
         ctx.close()
 
