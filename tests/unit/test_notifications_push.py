@@ -23,9 +23,15 @@ from notifications.watcher import Watcher
 
 
 def event(
-    sid="s1", state="done", wid="@1", session="alpha", cwd="/h/u/proj", name="claude"
+    sid="s1",
+    state="done",
+    wid="@1",
+    session="alpha",
+    cwd="/h/u/proj",
+    name="claude",
+    quiet=False,
 ):
-    w = Watcher(lambda: [], machine="box")
+    w = Watcher(lambda: [], machine="box", looking_at=lambda _t: quiet)
     (ev,) = w.observe(
         [
             Window(
@@ -418,18 +424,16 @@ class TestSender:
 
 
 class TestSuppression:
-    def test_a_window_someone_is_looking_at_gets_no_push(self, tmp_path):
-        """The one rule: nothing for the window a visible, focused page
-        displays. Every other window is pushed, and so is this one once
-        nobody looks at it."""
+    def test_a_quiet_event_gets_no_push(self, tmp_path):
+        """The one rule, decided by the watcher and stamped on the event:
+        nothing for the window a visible, focused page displays. Every
+        other event is pushed."""
         rec = Recorder()
-        looked = {"alpha:@1"}
-        sender, store = make_sender(tmp_path, rec, looking_at=lambda t: t in looked)
+        sender, store = make_sender(tmp_path, rec)
         store.add(SUB, "a")
-        assert asyncio.run(sender.deliver(event())).skipped == "looking"
+        assert asyncio.run(sender.deliver(event(quiet=True))).skipped == "looking"
         assert rec.calls == []
         assert asyncio.run(sender.deliver(event(wid="@2"))).sent == 1
-        looked.clear()
         assert asyncio.run(sender.deliver(event())).sent == 1
         assert len(rec.calls) == 2
 

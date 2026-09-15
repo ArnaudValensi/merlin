@@ -783,3 +783,65 @@ class TestTickCapture:
             assert w._captures == set() and list(w._reserved) == []
         finally:
             gate.set()
+
+
+class TestQuiet:
+    def test_the_watcher_stamps_quiet_when_someone_looks_at_the_window(self):
+        """The one routing decision, made once at the source: ``looking_at``
+        is the terminal's answer for that window at that moment, and every
+        channel obeys the stamp."""
+        from board.sweep import Window
+
+        looked = {"alpha:@1"}
+        w = Watcher(lambda: [], machine="m", looking_at=lambda t: t in looked)
+
+        def win(wid, state):
+            return Window(
+                sid="sid-" + wid,
+                state=state,
+                cwd="/p",
+                parent="",
+                relation="",
+                session="alpha",
+                window_id=wid,
+                index=1,
+                active=False,
+                activity=0,
+                name="claude",
+            )
+
+        a, b = w.observe([win("@1", "done"), win("@2", "ask")])
+        assert (a.target, a.quiet) == ("alpha:@1", True)
+        assert (b.target, b.quiet) == ("alpha:@2", False)
+        assert a.to_dict()["quiet"] is True
+        # A later transition of the same window, nobody looking: not quiet.
+        looked.clear()
+        w.observe([win("@1", "busy"), win("@2", "ask")])
+        (c,) = w.observe([win("@1", "done"), win("@2", "ask")])
+        assert c.quiet is False
+
+    def test_a_failing_looking_at_never_silences_or_drops(self):
+        from board.sweep import Window
+
+        def boom(_t):
+            raise RuntimeError("registry gone")
+
+        w = Watcher(lambda: [], machine="m", looking_at=boom)
+        (ev,) = w.observe(
+            [
+                Window(
+                    sid="s",
+                    state="done",
+                    cwd="/p",
+                    parent="",
+                    relation="",
+                    session="alpha",
+                    window_id="@1",
+                    index=1,
+                    active=False,
+                    activity=0,
+                    name="claude",
+                )
+            ]
+        )
+        assert ev.quiet is False

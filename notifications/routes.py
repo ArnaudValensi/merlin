@@ -63,7 +63,6 @@ def get_sender() -> PushSender:
             _sender = PushSender(
                 SubscriptionStore(home / "subscriptions.json"),
                 VapidKeys(home / "vapid.json"),
-                looking_at=_looking_at,
             )
             _sender_home = home
         return _sender
@@ -109,7 +108,10 @@ def _on_event(event: _watcher.Event) -> None:
 
 
 def wire_push() -> None:
-    """Subscribe the sender to the watcher (once, at startup)."""
+    """Subscribe the sender to the watcher (once, at startup), and give the
+    watcher the terminal's answer to "is someone looking at this window", so
+    it stamps ``quiet`` on the event for every channel."""
+    _watcher.watcher.looking_at = _looking_at
     if _on_event not in _watcher.watcher._listeners:
         _watcher.watcher.add_listener(_on_event)
 

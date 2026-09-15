@@ -128,9 +128,9 @@ an older cursor neither replays nor regresses the cursor.
 - **The in-tab rule.** Preference `notify-in-browser` in `localStorage`, plus a granted
   permission, plus a secure context. Every event shows a `Notification`, with two
   exceptions: a browser that holds a push subscription shows nothing itself (the push
-  reaches it, tab open or not, so one notification per browser), and the window this
-  page is looking at, visible and focused and displaying it
-  (`MerlinTerminal.currentWindow()`, from the socket's session frame), is being read. The
+  reaches it, tab open or not, so one notification per browser), and a `quiet` event,
+  produced while a page (this one or another) was looking at its window, is shown
+  nowhere. The
   event's `title` and `body` are shown as they come (see "What a notification says"),
   tag the sid, icon the favicon. Click focuses the tab and switches through
   `MerlinTerminal.switchSession(target)`. Where `new Notification` throws (Android Chrome),
@@ -222,15 +222,18 @@ once per batch of sends, at send time, and never stored: a renamed environment o
 override applies to the next push, and nothing about the key pair or the subscriptions
 changes. `PushSender` takes the rule as a `subject` callable so the hub can pass its own.
 
-**One rule, on every channel.** Every event goes to every subscribed device and to every
-open tab without push, except the window someone is looking at:
-`terminal.routes.looking_at(target)` is true when a connected terminal socket is visible,
-focused and displays that window. The page reports `{type: "visibility", visible,
+**One rule, decided once, on every channel.** Every event goes to every subscribed device
+and to every open tab without push, except the window someone is looking at. The watcher
+decides it when it produces the event: `terminal.routes.looking_at(target)`, handed to it
+by `wire_push`, is true when a connected terminal socket is visible, focused and displays
+that window, and the answer is stamped on the event as `quiet`. The push sender skips a
+quiet event (`PushSender.suppression_reason` returns `looking`) and every page skips it in
+`handleEvents`: the page keeps no judgement of its own, so a window being read on the
+phone is silent on the desktop too. The page reports `{type: "visibility", visible,
 focused}` on connect, on `visibilitychange`, `focus` and `blur` (a backgrounded app keeps
-its socket open for tens of seconds, a tab on another workspace stays visible). The page
-applies the same test to itself for its own notifications. No activity tracking and no
-rate limit: a window bounces between busy and ask only under someone's hands, where the
-rule already silences it. `PushSender.suppression_reason` returns `looking` or nothing.
+its socket open for tens of seconds, a tab on another workspace stays visible). No
+activity tracking and no rate limit: a window bounces between busy and ask only under
+someone's hands, where the rule already silences it.
 
 Every decision is recorded: the watcher listener writes an `attention_routed` event to
 the engine log (`log_event`) with the event's target and window, `pushed` (devices

@@ -99,6 +99,10 @@ class Event:
     snippet: str = ""
     title: str = ""
     body: str = ""
+    # Someone was looking at the window (a visible, focused page displaying
+    # it) when the event was produced: no channel shows it. Decided here,
+    # once, so the push sender and every page obey the same answer.
+    quiet: bool = False
 
     @property
     def target(self) -> str:
@@ -154,6 +158,7 @@ class Watcher:
         interval: float = SWEEP_INTERVAL,
         ring_size: int = RING_SIZE,
         clock: Callable[[], float] = time.time,
+        looking_at: Callable[[str], bool] | None = None,
     ) -> None:
         if sweep is None:
             from board.sweep import run_sweep_checked
@@ -163,6 +168,9 @@ class Watcher:
         self._sweep = sweep
         self._capture = capture or _no_capture
         self._machine = machine
+        # Whether a page is looking at a window right now, supplied by the
+        # terminal (it knows its clients). Stamps ``Event.quiet``.
+        self.looking_at: Callable[[str], bool] = looking_at or (lambda _t: False)
         self.interval = interval
         self.capture_settle = CAPTURE_SETTLE
         self._clock = clock
@@ -284,6 +292,11 @@ class Watcher:
             busy_seconds=busy_seconds,
             snippet=snippet,
         )
+        try:
+            quiet = bool(self.looking_at(f"{w.session}:{w.window_id}"))
+        except Exception:
+            logger.exception("looking_at failed, event not quiet")
+            quiet = False
         # Seq and ring move together under the lock, so a concurrent read
         # never sees a cursor ahead of the events it can return.
         with self._lock:
@@ -302,6 +315,7 @@ class Watcher:
                 snippet=snippet,
                 title=title,
                 body=body,
+                quiet=quiet,
             )
             self._ring.append(ev)
         for fn in list(self._listeners):

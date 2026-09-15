@@ -24,7 +24,8 @@ file in the destination directory before an atomic rename. Async entry
 points never touch a store on the event loop.
 
 Suppression, push only: no push when a connected terminal client currently
-looking at the event's window (a visible, focused page displaying it).
+looking at the event's window (a visible, focused page displaying it),
+which the watcher decided when it produced the event.
 
 The VAPID subject (RFC 8292, the contact the push service can reach about
 this sender) is the instance's public base URL when it is ``https``, else the
@@ -421,25 +422,22 @@ def _default_send(**kwargs: Any) -> Any:
 
 class PushSender:
     """Send attention events to every subscription, with the one suppression
-    rule: nothing for a window someone is looking at. ``looking_at(target)``
-    is supplied by the caller (the terminal knows which windows its focused,
-    visible clients display, this module does not). ``subject`` is called
-    once per batch of sends for the VAPID subject claim (the hub passes its
-    own)."""
+    rule: nothing for a window someone is looking at, which the watcher has
+    already decided and stamped on the event (``Event.quiet``), the same
+    answer every page obeys. ``subject`` is called once per batch of sends
+    for the VAPID subject claim (the hub passes its own)."""
 
     def __init__(
         self,
         store: SubscriptionStore,
         keys: VapidKeys,
         *,
-        looking_at: Callable[[str], bool] = lambda _t: False,
         clock: Callable[[], float] = time.time,
         send: Callable[..., Any] = _default_send,
         subject: Callable[[], str] = vapid_subject,
     ) -> None:
         self.store = store
         self.keys = keys
-        self.looking_at = looking_at
         self._clock = clock
         self._send = send
         self.subject = subject
@@ -448,7 +446,7 @@ class PushSender:
 
     def suppression_reason(self, event: Event) -> str:
         """Why this event gets no push, or an empty string."""
-        if self.looking_at(event.target):
+        if event.quiet:
             return "looking"
         return ""
 
@@ -526,9 +524,7 @@ class PushSender:
         """Push one attention event, unless someone is looking at its window.
         The entry point the watcher's listener uses. Never raises.
 
-        The store is read in a thread. The suppression check runs on the
-        event loop, where ``looking_at`` reads the terminal's registry on the
-        thread that owns it."""
+        The store is read in a thread."""
         try:
             if not await asyncio.to_thread(self._has_subscriptions):
                 return SendResult(skipped="no subscriptions")

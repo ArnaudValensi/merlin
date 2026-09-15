@@ -97,16 +97,15 @@ window.MerlinNotifications = (function () {
   // Called by board.js with the events of one poll. Every event is shown,
   // with two exceptions. A browser that holds a push subscription gets the
   // event as a push, which reaches it even with the tab closed, so the page
-  // shows nothing itself: one notification per browser. And the window this
-  // page is looking at (visible, focused, displaying it) is being read.
+  // shows nothing itself: one notification per browser. And a quiet event,
+  // one the instance produced while a page (this one or any other) was
+  // looking at its window, is shown nowhere: the decision is the instance's,
+  // made once, the same for the push and for every page.
   function handleEvents(events) {
     if (!enabled()) return;
     if (S.pushSubscribed) return;
-    var looking = document.visibilityState === 'visible' && document.hasFocus();
-    var here = currentTarget();
     (events || []).forEach(function (ev) {
-      if (!ev || !ev.target) return;
-      if (looking && here && ev.target === here) return;
+      if (!ev || !ev.target || ev.quiet) return;
       show(ev);
     });
   }
