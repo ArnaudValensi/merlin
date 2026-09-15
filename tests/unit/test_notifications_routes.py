@@ -106,7 +106,7 @@ class TestStatusRoute:
             "swept": False,
             "cursor": fresh_watcher.cursor,
             "devices": 0,
-            "attended": [],
+            "looking": [],
         }
         fresh_watcher.observe(None)
         assert client.get("/api/notifications/status").json()["tmux"] is False
@@ -294,62 +294,49 @@ class TestGlue:
         assert recorder.calls == []
 
 
-class TestAttended:
-    def test_registry_reflects_connected_clients(self):
+class TestLooking:
+    def test_looking_at_is_visible_focused_and_on_that_window(self):
         from board.sweep import ClientSession
         from terminal import routes as troutes
 
         state = troutes.SessionReportState()
+        state.agent = "Mac · Brave"
         troutes._client_views.add(state)
         try:
-            assert troutes.attended() is True
+            assert troutes.looking_at("alpha:@1") is False  # displays nothing yet
             state.last_reported = ClientSession("alpha", "$1", 1, "@1", 0, "claude")
+            assert troutes.looking_at("alpha:@1") is True
+            assert troutes.looking_at("alpha:@2") is False
             assert troutes.displayed_targets() == {"alpha:@1"}
-        finally:
-            troutes._client_views.discard(state)
-        assert troutes.attended() is False
-
-    def test_hidden_page_counts_as_nobody_looking(self):
-        """A backgrounded app keeps its socket open for a while: the page's
-        reported visibility decides, not the socket."""
-        from terminal import routes as troutes
-
-        state = troutes.SessionReportState()
-        troutes._client_views.add(state)
-        try:
-            assert state.visible is True
-            assert troutes.attended() is True
-            state.visible = False
-            assert troutes.attended() is False
-            assert troutes.displayed_targets() == set()
-            state.visible = True
-            assert troutes.attended() is True
-        finally:
-            troutes._client_views.discard(state)
-
-    def test_attended_clients_name_the_page_and_its_window(self):
-        from board.sweep import ClientSession
-        from terminal import routes as troutes
-
-        looking = troutes.SessionReportState()
-        looking.agent = "Mac · Brave"
-        looking.last_input = 1000.0
-        looking.last_reported = ClientSession("alpha", "$1", 1, "@1", 0, "claude")
-        idle = troutes.SessionReportState()
-        idle.agent = "iPhone · Safari"
-        idle.last_input = 0.0
-        hidden = troutes.SessionReportState()
-        hidden.visible = False
-        hidden.last_input = 1000.0
-        for st in (looking, idle, hidden):
-            troutes._client_views.add(st)
-        try:
-            assert troutes.attended_clients(now=1030.0) == [
-                {"agent": "Mac · Brave", "window": "alpha:@1", "idle_seconds": 30}
+            assert troutes.looking_clients() == [
+                {"agent": "Mac · Brave", "window": "alpha:@1"}
             ]
         finally:
-            for st in (looking, idle, hidden):
-                troutes._client_views.discard(st)
+            troutes._client_views.discard(state)
+        assert troutes.looking_at("alpha:@1") is False
+
+    def test_hidden_or_unfocused_page_is_not_looking(self):
+        """A backgrounded app keeps its socket open for a while, and a tab on
+        another workspace stays visible: the page's reported visibility and
+        focus decide, not the socket."""
+        from board.sweep import ClientSession
+        from terminal import routes as troutes
+
+        state = troutes.SessionReportState()
+        state.last_reported = ClientSession("alpha", "$1", 1, "@1", 0, "claude")
+        troutes._client_views.add(state)
+        try:
+            assert troutes.looking_at("alpha:@1") is True
+            state.visible = False
+            assert troutes.looking_at("alpha:@1") is False
+            assert troutes.looking_clients() == []
+            state.visible = True
+            state.focused = False
+            assert troutes.looking_at("alpha:@1") is False
+            state.focused = True
+            assert troutes.looking_at("alpha:@1") is True
+        finally:
+            troutes._client_views.discard(state)
 
     def test_short_agent_names_the_browser_and_the_os(self):
         from terminal.routes import short_agent
@@ -365,19 +352,3 @@ class TestAttended:
         assert short_agent(brave) == "Mac · Brave"
         assert short_agent(iphone) == "iPhone · Safari"
         assert short_agent("") == ""
-
-    def test_idle_page_counts_as_nobody_looking(self):
-        """A visible tab nobody touched for five minutes (a second monitor)
-        must not silence the phone. Input makes it attended again."""
-        from terminal import routes as troutes
-
-        state = troutes.SessionReportState()
-        state.last_input = 1000.0
-        troutes._client_views.add(state)
-        try:
-            assert troutes.attended(now=1000.0 + troutes.ACTIVE_SECONDS - 1) is True
-            assert troutes.attended(now=1000.0 + troutes.ACTIVE_SECONDS) is False
-            state.last_input = 2000.0
-            assert troutes.attended(now=2001.0) is True
-        finally:
-            troutes._client_views.discard(state)

@@ -126,17 +126,23 @@ an older cursor neither replays nor regresses the cursor.
 `notifications.js` (`window.MerlinNotifications`) owns:
 
 - **The in-tab rule.** Preference `notify-in-browser` in `localStorage`, plus a granted
-  permission, plus a secure context. An attended page (visible, with input in the last
-  five minutes, the instance's own threshold) shows a `Notification` for every event,
-  including the one for this client's current window (`MerlinTerminal.currentWindow()`,
-  from the socket's session frame) unless the page is also focused (`document.hasFocus()`):
-  a tab visible on another workspace is not being read. A hidden or idle page stands down only when this browser holds
-  a push subscription, since the push then covers it. Without one the open tab is the
-  only channel and keeps notifying from the background. The event's `title`
-  and `body` are shown as they come (see "What a notification says"), tag the sid,
-  icon the favicon. Click focuses the tab and switches through
+  permission, plus a secure context. Every event shows a `Notification`, with two
+  exceptions: a browser that holds a push subscription shows nothing itself (the push
+  reaches it, tab open or not, so one notification per browser), and the window this
+  page is looking at, visible and focused and displaying it
+  (`MerlinTerminal.currentWindow()`, from the socket's session frame), is being read. The
+  event's `title` and `body` are shown as they come (see "What a notification says"),
+  tag the sid, icon the favicon. Click focuses the tab and switches through
   `MerlinTerminal.switchSession(target)`. Where `new Notification` throws (Android Chrome),
-  the worker's `showNotification` is used with the deep link.
+  the worker's `showNotification` is used instead.
+- **Retraction.** `board.js` hands `syncWaiting(sids)` the sids of the windows still in
+  done or ask on every successful poll, from the tree. The page closes its own
+  notifications and, through the registration, the pushed ones whose tag is not in that
+  set. The state is the one the green pill uses: visiting or leaving a done window, or
+  answering an ask, clears it, so a window handled on one device disappears from the
+  others on their next poll. A phone in a pocket clears on the next open, since a push
+  that shows nothing is not allowed (Apple drops silent pushes and revokes after a few,
+  Chrome shows a generic notice).
 - **Badge and title.** `setAttention(n)` from the panel's `onAttention` drives
   `navigator.setAppBadge` / `clearAppBadge` when present, and `MerlinPageTitle.setCount(n)`,
   which prefixes `(n) ` and survives later `set()` calls. No page writes `document.title`.
@@ -213,27 +219,23 @@ once per batch of sends, at send time, and never stored: a renamed environment o
 override applies to the next push, and nothing about the key pair or the subscriptions
 changes. `PushSender` takes the rule as a `subject` callable so the hub can pass its own.
 
-**One channel per event.** The instance decides, per event, between the page and the
-push, the way Slack routes between desktop and phone. `terminal.routes.attended()` is
-true when a connected terminal socket is visible and sent input (keys, touch, a switch)
-within `ACTIVE_SECONDS` (five minutes): the page is attended, it shows the event in-tab
-(every window but the one it displays), and there is no push. Otherwise the push goes
-out. The page reports its visibility as `{type: "visibility", visible}` on connect and
-on every `visibilitychange` (a backgrounded app keeps its socket open for tens of
-seconds), and its input arrives on the same socket. The page applies the same five
-minute threshold to itself (`attended()` in `notifications.js`), so an idle or hidden
-page with a push subscription leaves the event to the push, and one without keeps
-showing it. Reasons in `PushSender.suppression_reason`:
-`attended`, and `recent` for the second rule, no second push for the same sid within
-20 seconds. A suppressed event does not arm the rate limit.
+**One rule, on every channel.** Every event goes to every subscribed device and to every
+open tab without push, except the window someone is looking at:
+`terminal.routes.looking_at(target)` is true when a connected terminal socket is visible,
+focused and displays that window. The page reports `{type: "visibility", visible,
+focused}` on connect, on `visibilitychange`, `focus` and `blur` (a backgrounded app keeps
+its socket open for tens of seconds, a tab on another workspace stays visible). The page
+applies the same test to itself for its own notifications. No activity tracking and no
+rate limit: a window bounces between busy and ask only under someone's hands, where the
+rule already silences it. `PushSender.suppression_reason` returns `looking` or nothing.
 
 Every decision is recorded: the watcher listener writes an `attention_routed` event to
 the engine log (`log_event`) with the event's target and window, `pushed` (devices
-reached) or `skipped` (the reason), and `attended`, the pages judged to be looking at
-that moment (`terminal.routes.attended_clients`: browser label from the user agent,
-displayed window, seconds since input). `GET /api/notifications/status` returns the
-same `attended` list for the present moment. A notification that did not arrive is
-explained there: grep the engine log for `attention_routed`.
+reached) or `skipped` (the reason), and `looking`, the pages that were visible and
+focused at that moment (`terminal.routes.looking_clients`: browser label from the user
+agent and the displayed window). `GET /api/notifications/status` returns the same
+`looking` list for the present moment. A notification that did not arrive is explained
+there: grep the engine log for `attention_routed`.
 
 **Routes** (`mount_module`, under `require_auth`): `GET /api/notifications/status`,
 `GET /public-key`, `POST /subscribe` (`{subscription, label?}`, the label falls back to a

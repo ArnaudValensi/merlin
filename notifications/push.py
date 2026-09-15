@@ -24,8 +24,7 @@ file in the destination directory before an atomic rename. Async entry
 points never touch a store on the event loop.
 
 Suppression, push only: no push when a connected terminal client currently
-at a Merlin page (visible, with input in the last five minutes: the page shows
-the event in-tab), and no second push for the same sid within 20 seconds.
+looking at the event's window (a visible, focused page displaying it).
 
 The VAPID subject (RFC 8292, the contact the push service can reach about
 this sender) is the instance's public base URL when it is ``https``, else the
@@ -60,7 +59,6 @@ logger = logging.getLogger("merlin.notifications")
 
 TTL_SECONDS = 300
 URGENCY = "high"
-MIN_INTERVAL_SECONDS = 20.0
 PAYLOAD_LIMIT = 3 * 1024
 FALLBACK_SUBJECT = "https://merlincloud.dev"
 
@@ -422,58 +420,37 @@ def _default_send(**kwargs: Any) -> Any:
 
 
 class PushSender:
-    """Send attention events to every subscription, with the two push-only
-    suppression rules. ``attended()`` is supplied by the caller (the terminal
-    knows whether a visible client with recent input is connected, this module
-    does not). ``subject`` is called once per batch of sends for the VAPID subject
-    claim (the hub passes its own)."""
+    """Send attention events to every subscription, with the one suppression
+    rule: nothing for a window someone is looking at. ``looking_at(target)``
+    is supplied by the caller (the terminal knows which windows its focused,
+    visible clients display, this module does not). ``subject`` is called
+    once per batch of sends for the VAPID subject claim (the hub passes its
+    own)."""
 
     def __init__(
         self,
         store: SubscriptionStore,
         keys: VapidKeys,
         *,
-        attended: Callable[[], bool] = lambda: False,
+        looking_at: Callable[[str], bool] = lambda _t: False,
         clock: Callable[[], float] = time.time,
-        min_interval: float = MIN_INTERVAL_SECONDS,
         send: Callable[..., Any] = _default_send,
         subject: Callable[[], str] = vapid_subject,
     ) -> None:
         self.store = store
         self.keys = keys
-        self.attended = attended
+        self.looking_at = looking_at
         self._clock = clock
-        self.min_interval = min_interval
         self._send = send
         self.subject = subject
-        self._last_push: dict[str, float] = {}
-        self._reserve_lock = threading.Lock()
 
     # -- suppression --------------------------------------------------------
 
     def suppression_reason(self, event: Event) -> str:
-        """Why this event gets no push, or an empty string. Read-only."""
-        if self.attended():
-            return "attended"
-        with self._reserve_lock:
-            last = self._last_push.get(event.sid)
-        if last is not None and self._clock() - last < self.min_interval:
-            return "recent"
+        """Why this event gets no push, or an empty string."""
+        if self.looking_at(event.target):
+            return "looking"
         return ""
-
-    def reserve(self, event: Event) -> str:
-        """Check the two rules and, when nothing suppresses the event, reserve
-        the sid for the rate limit in the same step. Atomic: two deliveries
-        for one sid can never both pass. A suppressed event reserves nothing."""
-        if self.attended():
-            return "attended"
-        with self._reserve_lock:
-            last = self._last_push.get(event.sid)
-            now = self._clock()
-            if last is not None and now - last < self.min_interval:
-                return "recent"
-            self._last_push[event.sid] = now
-            return ""
 
     # -- sending ------------------------------------------------------------
 
@@ -546,18 +523,16 @@ class PushSender:
         return bool(self.store.all())
 
     async def deliver(self, event: Event) -> SendResult:
-        """Push one attention event, unless a suppression rule applies. The
-        entry point the watcher's listener uses. Never raises.
+        """Push one attention event, unless someone is looking at its window.
+        The entry point the watcher's listener uses. Never raises.
 
-        The store is read in a thread. The suppression check and the sid
-        reservation run on the event loop with no await between them (and
-        under a lock besides), so concurrent deliveries for one sid cannot
-        both send, and ``attended`` reads the terminal's registry on the
+        The store is read in a thread. The suppression check runs on the
+        event loop, where ``looking_at`` reads the terminal's registry on the
         thread that owns it."""
         try:
             if not await asyncio.to_thread(self._has_subscriptions):
                 return SendResult(skipped="no subscriptions")
-            reason = self.reserve(event)
+            reason = self.suppression_reason(event)
             if reason:
                 return SendResult(skipped=reason)
             return await self.send_all(build_payload(event))

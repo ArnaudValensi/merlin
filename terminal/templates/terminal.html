@@ -319,6 +319,7 @@
             if (notif) notif.setAttention(n);
         },
         onEvents: function (events) { if (notif) notif.handleEvents(events); },
+        onWaiting: function (sids) { if (notif) notif.syncWaiting(sids); },
     });
 })();
 </script>
@@ -2099,13 +2100,19 @@ document.addEventListener('DOMContentLoaded', () => {
         probeStats.pongs++;
         cancelProbe();
     }
-    // The server suppresses a push for a window a visible client shows. The
-    // socket alone cannot tell: a backgrounded app keeps it open for a while.
+    // The server silences every channel for the window a page is looking at:
+    // visible, focused and displaying it. The socket alone cannot tell (a
+    // backgrounded app keeps it open for a while, a tab on another workspace
+    // stays visible), so the page reports both.
     function sendVisibility(socket) {
         if (!socket || socket.readyState !== WebSocket.OPEN) return;
-        socket.send(JSON.stringify({ type: 'visibility', visible: !document.hidden }));
+        socket.send(JSON.stringify({
+            type: 'visibility', visible: !document.hidden, focused: document.hasFocus(),
+        }));
     }
     document.addEventListener('visibilitychange', () => sendVisibility(ws));
+    window.addEventListener('focus', () => sendVisibility(ws));
+    window.addEventListener('blur', () => sendVisibility(ws));
     document.addEventListener('visibilitychange', () => {
         if (document.hidden) { hiddenAt = Date.now(); return; }
         if (!hiddenAt) return;

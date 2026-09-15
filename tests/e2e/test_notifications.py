@@ -108,6 +108,7 @@ def tmux(env, *args):
 STUBS = """
 localStorage.setItem('notify-in-browser', '1');
 window.__notifs = [];
+window.__closed = [];
 window.__badges = [];
 class FakeNotification {
   constructor(title, options) {
@@ -115,7 +116,7 @@ class FakeNotification {
     this.options = options || {};
     window.__notifs.push({ title: title, options: this.options });
   }
-  close() {}
+  close() { window.__closed.push(this.options.tag || ''); }
   static requestPermission() { return Promise.resolve('granted'); }
 }
 FakeNotification.permission = 'granted';
@@ -310,6 +311,26 @@ def test_current_window_is_not_notified_while_visible(
     page.wait_for_function("document.title.startsWith('(1) ')", timeout=10000)
     page.wait_for_timeout(3000)
     assert page.evaluate("window.__notifs.length") == 0
+
+
+def test_notification_closes_when_the_window_stops_waiting(
+    page, server, tmux_env, agent_window
+):
+    """The retraction rides the same state as the green pill: when the window
+    leaves done (visited, left, or answered, wherever that happened), the
+    page closes its notification on the next poll."""
+    wid = agent_window
+    tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_state", "done")
+    page.wait_for_function("window.__notifs.length === 1", timeout=15000)
+    assert page.evaluate("window.__closed") == []
+    tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_state", "idle")
+    page.wait_for_function(
+        "window.__closed.length === 1 && window.__closed[0] === %s"
+        % repr(sid_of(wid)).replace("'", '"'),
+        timeout=15000,
+    )
+    # Nothing else was shown or closed in the process.
+    assert page.evaluate("window.__notifs.length") == 1
 
 
 def test_deep_link_switches_the_client_and_drops_the_parameter(

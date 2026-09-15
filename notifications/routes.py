@@ -46,12 +46,12 @@ def notifications_dir() -> Path:
     return paths.merlin_home() / "notifications"
 
 
-def _attended() -> bool:
+def _looking_at(target: str) -> bool:
     # Imported here: terminal.routes imports the board package, which is also
     # where the watcher's sweep lives. Keeping it lazy avoids an import cycle.
-    from terminal.routes import attended
+    from terminal.routes import looking_at
 
-    return attended()
+    return looking_at(target)
 
 
 def get_sender() -> PushSender:
@@ -63,23 +63,23 @@ def get_sender() -> PushSender:
             _sender = PushSender(
                 SubscriptionStore(home / "subscriptions.json"),
                 VapidKeys(home / "vapid.json"),
-                attended=_attended,
+                looking_at=_looking_at,
             )
             _sender_home = home
         return _sender
 
 
-def _attended_clients() -> list[dict]:
-    from terminal.routes import attended_clients
+def _looking_clients() -> list[dict]:
+    from terminal.routes import looking_clients
 
-    return attended_clients()
+    return looking_clients()
 
 
 async def _route(event: _watcher.Event) -> None:
-    """Deliver, then record where the event went and why: pushed, or left to
-    the attended pages (named), or rate-limited. The record is what explains
-    a notification that did not arrive. Never raises."""
-    attended = _attended_clients()
+    """Deliver, then record where the event went and why: pushed, or silenced
+    because a page (named) was looking at the window. The record is what
+    explains a notification that did not arrive. Never raises."""
+    looking = _looking_clients()
     result = await get_sender().deliver(event)
     try:
         from structured_log import log_event
@@ -92,7 +92,7 @@ async def _route(event: _watcher.Event) -> None:
             state=event.state,
             pushed=result.sent,
             skipped=result.skipped,
-            attended=attended,
+            looking=looking,
         )
     except Exception:
         logger.exception("Routing record failed")
@@ -129,9 +129,9 @@ def api_status():
         "swept": w.swept_once,
         "cursor": w.cursor,
         "devices": len(get_sender().store.all()),
-        # The pages judged to be looking right now: why the next event would
-        # not be pushed.
-        "attended": _attended_clients(),
+        # The pages looking right now (visible and focused) and the window
+        # each displays: why an event for that window would not be pushed.
+        "looking": _looking_clients(),
     }
 
 

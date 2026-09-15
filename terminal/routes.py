@@ -99,66 +99,50 @@ class SessionReportState:
     def __init__(self) -> None:
         self.last_reported: board_sweep.ClientSession | None = None
         self.lock = asyncio.Lock()
-        # Whether the page is on screen, as it reports through the socket. A
-        # backgrounded app keeps its socket open for a while, so the socket
-        # alone says nothing about someone looking. True until told otherwise.
+        # Whether the page is on screen and focused, as it reports through the
+        # socket. A backgrounded app keeps its socket open for a while, so the
+        # socket alone says nothing about someone looking. True until told
+        # otherwise.
         self.visible = True
-        # When this client last sent input (keys, touch, a switch), monotonic.
-        # A visible page nobody has touched for a while is not attended: the
-        # tab left open on a second monitor must not silence the phone.
-        self.last_input = time.monotonic()
+        self.focused = True
         # A short name for the browser, from its user agent, so a routing
-        # record can say which page was attended.
+        # record can say which page was looking.
         self.agent = ""
 
 
 # One entry per connected terminal socket: what its tmux client displays, as
-# last reported to the browser, whether the page is visible, and when it last
-# sent input. Push suppression reads it. Registered on connect, dropped on
-# disconnect.
+# last reported to the browser, and whether the page is visible and focused.
+# Push suppression reads it. Registered on connect, dropped on disconnect.
 _client_views: set[SessionReportState] = set()
 
-# A visible page with input in the last five minutes is attended: the person
-# is at that screen, and the page shows the notification in-tab. Beyond that
-# the page may be open but nobody is there, and the push goes out.
-ACTIVE_SECONDS = 300.0
+
+def _target_of(state: SessionReportState) -> str:
+    current = state.last_reported
+    return (
+        f"{current.name}:{current.window_id}" if current and current.window_id else ""
+    )
 
 
-def attended(now: float | None = None) -> bool:
-    """Whether someone is at a Merlin page right now: a connected client that
-    is visible and sent input within ``ACTIVE_SECONDS``. One answer for the
-    whole instance, whatever window the event is about: an attended page shows
-    every event in-tab (except the window it displays), so a push on top of it
-    would be the same notification twice. A hidden page (app in the
-    background, tab not shown) never counts, whatever its socket does."""
-    t = time.monotonic() if now is None else now
+def looking_at(target: str) -> bool:
+    """Whether a connected page is looking at this window right now: visible,
+    focused and displaying it. The one thing that silences a notification for
+    that window, on every channel: the person is reading it. A hidden page,
+    an unfocused one (another workspace, another window in front) or one on
+    another tmux window is not looking."""
     for state in list(_client_views):
-        if state.visible and t - state.last_input < ACTIVE_SECONDS:
+        if state.visible and state.focused and _target_of(state) == target:
             return True
     return False
 
 
-def attended_clients(now: float | None = None) -> list[dict]:
-    """One record per attended client (visible, input within ``ACTIVE_SECONDS``):
-    the browser, the window it displays and how long ago its last input was.
-    What a routing record and the status route show, so a silent event can
-    be explained: which page was judged to be looking."""
-    t = time.monotonic() if now is None else now
+def looking_clients() -> list[dict]:
+    """One record per page that is visible and focused: the browser and the
+    window it displays. What the routing record and the status route show,
+    so a silent event can be explained."""
     out: list[dict] = []
     for state in list(_client_views):
-        idle = t - state.last_input
-        if not state.visible or idle >= ACTIVE_SECONDS:
-            continue
-        current = state.last_reported
-        out.append(
-            {
-                "agent": state.agent,
-                "window": f"{current.name}:{current.window_id}"
-                if current and current.window_id
-                else "",
-                "idle_seconds": int(idle),
-            }
-        )
+        if state.visible and state.focused:
+            out.append({"agent": state.agent, "window": _target_of(state)})
     return out
 
 
@@ -195,7 +179,7 @@ def short_agent(user_agent: str) -> str:
 
 def displayed_targets() -> set[str]:
     """``session:window_id`` for every window a visible connected client
-    displays. Informational, the push rule is ``attended``."""
+    displays. Informational."""
     out: set[str] = set()
     for state in list(_client_views):
         current = state.last_reported
@@ -695,7 +679,6 @@ async def terminal_ws(websocket: WebSocket):
                             _sync_clipboard(parsed.get("text", ""))
                             continue
                         if msg_type == "switch":
-                            session_report_state.last_input = time.monotonic()
                             await _switch_session(
                                 websocket,
                                 client_tty,
@@ -706,6 +689,9 @@ async def terminal_ws(websocket: WebSocket):
                         if msg_type == "visibility":
                             session_report_state.visible = bool(
                                 parsed.get("visible", True)
+                            )
+                            session_report_state.focused = bool(
+                                parsed.get("focused", True)
                             )
                             continue
                         if msg_type == "ping":
@@ -719,7 +705,6 @@ async def terminal_ws(websocket: WebSocket):
                     except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                         pass
                 # Regular input — write to PTY
-                session_report_state.last_input = time.monotonic()
                 if not await bridge.write(msg.encode("utf-8")):
                     logger.warning("ws_to_pty: PTY gone or stalled, closing")
                     break

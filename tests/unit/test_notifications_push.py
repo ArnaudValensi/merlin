@@ -418,48 +418,31 @@ class TestSender:
 
 
 class TestSuppression:
-    def test_attended_page_gets_no_push(self, tmp_path):
-        """Someone at a visible page with recent input sees the event in-tab,
-        whatever window it is about: no push. Once nobody is there, push."""
+    def test_a_window_someone_is_looking_at_gets_no_push(self, tmp_path):
+        """The one rule: nothing for the window a visible, focused page
+        displays. Every other window is pushed, and so is this one once
+        nobody looks at it."""
         rec = Recorder()
-        there = [True]
-        sender, store = make_sender(tmp_path, rec, attended=lambda: there[0])
+        looked = {"alpha:@1"}
+        sender, store = make_sender(tmp_path, rec, looking_at=lambda t: t in looked)
         store.add(SUB, "a")
-        assert asyncio.run(sender.deliver(event())).skipped == "attended"
-        assert asyncio.run(sender.deliver(event(wid="@2"))).skipped == "attended"
+        assert asyncio.run(sender.deliver(event())).skipped == "looking"
         assert rec.calls == []
-        there[0] = False
         assert asyncio.run(sender.deliver(event(wid="@2"))).sent == 1
-
-    def test_same_sid_within_20_seconds_gets_one_push(self, tmp_path):
-        now = [1000.0]
-        rec = Recorder()
-        sender, store = make_sender(tmp_path, rec, clock=lambda: now[0])
-        store.add(SUB, "a")
-        assert asyncio.run(sender.deliver(event())).sent == 1
-        now[0] += 5
-        assert asyncio.run(sender.deliver(event(state="ask"))).skipped == "recent"
-        now[0] += 15  # 20 seconds after the first push
+        looked.clear()
         assert asyncio.run(sender.deliver(event())).sent == 1
         assert len(rec.calls) == 2
 
-    def test_rate_limit_is_per_sid(self, tmp_path):
+    def test_repeated_transitions_all_push(self, tmp_path):
+        """No rate limit: a window that goes done, is answered and goes done
+        again is two events and two pushes. If practice shows a flurry, the
+        routing record will say so."""
         rec = Recorder()
         sender, store = make_sender(tmp_path, rec, clock=lambda: 1000.0)
         store.add(SUB, "a")
-        assert asyncio.run(sender.deliver(event(sid="a"))).sent == 1
-        assert asyncio.run(sender.deliver(event(sid="b", wid="@2"))).sent == 1
-
-    def test_a_suppressed_event_does_not_arm_the_rate_limit(self, tmp_path):
-        shown = {"alpha:@1"}
-        rec = Recorder()
-        sender, store = make_sender(
-            tmp_path, rec, attended=lambda: bool(shown), clock=lambda: 1000.0
-        )
-        store.add(SUB, "a")
-        assert asyncio.run(sender.deliver(event())).skipped == "attended"
-        shown.clear()
         assert asyncio.run(sender.deliver(event())).sent == 1
+        assert asyncio.run(sender.deliver(event(state="ask"))).sent == 1
+        assert len(rec.calls) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -658,69 +641,3 @@ class TestAsyncEntryPoints:
         )
         result = sender.test_sync({"title": "t"}, SUB["endpoint"])
         assert not isinstance(result, str) and result.sent == 1
-
-
-class TestAtomicSuppression:
-    def test_concurrent_deliveries_for_one_sid_send_once(self, tmp_path, monkeypatch):
-        rec = Recorder()
-        sender, store = make_sender(tmp_path, rec, clock=lambda: 1000.0)
-        store.add(SUB, "a")
-        # Both preflights leave their threads together, so both reach the
-        # suppression step believing nothing was pushed yet.
-        gate = threading.Barrier(2)
-        original = sender.store.all
-        preflights = [0]
-
-        def all_with_gate():
-            # Only the two preflight reads meet at the gate. The later read
-            # inside the send itself passes straight through.
-            preflights[0] += 1
-            if preflights[0] <= 2:
-                gate.wait(5)
-            return original()
-
-        monkeypatch.setattr(sender.store, "all", all_with_gate)
-
-        async def both():
-            return await asyncio.gather(
-                sender.deliver(event()), sender.deliver(event(state="ask"))
-            )
-
-        results = asyncio.run(both())
-        assert sorted((r.sent, r.skipped) for r in results) == [(0, "recent"), (1, "")]
-        assert len(rec.calls) == 1
-
-    def test_concurrent_suppressed_event_does_not_arm_the_limit(self, tmp_path):
-        rec = Recorder()
-        # The first delivery to check finds someone there, the second does not.
-        answers = [True, False]
-        sender, store = make_sender(
-            tmp_path,
-            rec,
-            attended=lambda: answers.pop(0) if answers else False,
-            clock=lambda: 1000.0,
-        )
-        store.add(SUB, "a")
-
-        async def both():
-            return await asyncio.gather(
-                sender.deliver(event(wid="@9")), sender.deliver(event(wid="@1"))
-            )
-
-        results = asyncio.run(both())
-        assert sorted((r.sent, r.skipped) for r in results) == [
-            (0, "attended"),
-            (1, ""),
-        ]
-        # The attended one reserved nothing: a later event for the sid still sends
-        # only because the sent one reserved it. Check the reservation belongs to
-        # the sent event by moving the clock past the window.
-        sender._clock = lambda: 1030.0
-        assert asyncio.run(sender.deliver(event(wid="@1"))).sent == 1
-
-    def test_reserve_is_atomic_across_threads(self, tmp_path):
-        rec = Recorder()
-        sender, _ = make_sender(tmp_path, rec, clock=lambda: 5.0)
-        results, errors = run_threads(16, lambda _i: sender.reserve(event()))
-        assert errors == []
-        assert results.count("") == 1 and results.count("recent") == 15

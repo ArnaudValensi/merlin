@@ -45,19 +45,6 @@ window.MerlinNotifications = (function () {
   function enabled() { return prefOn() && secure() && permission() === 'granted'; }
 
   // --- the in-tab rule (decision 5) --------------------------------------
-  // The instance pushes only when no visible page had input in the last five
-  // minutes, and an attended page shows the event itself. The same threshold
-  // here, so an idle page (open, untouched) leaves the event to the push.
-  var ACTIVE_MS = 5 * 60 * 1000;
-  var lastInput = Date.now();
-  function markInput() { lastInput = Date.now(); }
-  ['keydown', 'pointerdown', 'touchstart'].forEach(function (type) {
-    document.addEventListener(type, markInput, { capture: true, passive: true });
-  });
-  function attended() {
-    return document.visibilityState === 'visible' && Date.now() - lastInput < ACTIVE_MS;
-  }
-
   function currentTarget() {
     var t = window.MerlinTerminal;
     if (!t || !t.currentSession || !t.currentWindow) return '';
@@ -70,12 +57,17 @@ window.MerlinNotifications = (function () {
   // composed here.
   function deepLink(ev) { return '/terminal?target=' + encodeURIComponent(ev.target); }
 
+  // The page's own notifications, by tag (the sid), so a window that stops
+  // waiting can have its notification closed here.
+  var shown = {};
+
   function show(ev) {
     var n;
     try {
       n = new Notification(ev.title || 'Merlin', {
         body: ev.body || '', tag: ev.sid || ev.target, icon: ICON, data: { target: ev.target },
       });
+      shown[ev.sid || ev.target] = n;
     } catch (e) {
       // Some browsers only show notifications from a service worker (Android
       // Chrome). The worker's click handler then lands on the deep link.
@@ -102,18 +94,14 @@ window.MerlinNotifications = (function () {
     }).catch(function () { /* no worker, no notification */ });
   }
 
-  // Called by board.js with the events of one poll. An attended page shows
-  // every event but the window it displays. A hidden or idle page stands
-  // down only when this browser holds a push subscription, since the push
-  // then reaches the device. Without one the open tab is the only channel
-  // and keeps notifying from the background.
-  // The window this client displays is exempt only while the page is looked
-  // at: visible and focused. A tab that is visible on another workspace or
-  // behind another window is not being read, and its notification lands in
-  // the system tray like any other.
+  // Called by board.js with the events of one poll. Every event is shown,
+  // with two exceptions. A browser that holds a push subscription gets the
+  // event as a push, which reaches it even with the tab closed, so the page
+  // shows nothing itself: one notification per browser. And the window this
+  // page is looking at (visible, focused, displaying it) is being read.
   function handleEvents(events) {
     if (!enabled()) return;
-    if (!attended() && S.pushSubscribed) return;
+    if (S.pushSubscribed) return;
     var looking = document.visibilityState === 'visible' && document.hasFocus();
     var here = currentTarget();
     (events || []).forEach(function (ev) {
@@ -121,6 +109,31 @@ window.MerlinNotifications = (function () {
       if (looking && here && ev.target === here) return;
       show(ev);
     });
+  }
+
+  // Called by board.js on every successful poll with the sids of the windows
+  // still waiting (done or ask). A notification whose window is no longer
+  // waiting is closed: the same state that clears the green pill when the
+  // window is visited or left, or answered, clears the notification here,
+  // and the worker's pushed ones too. So a window handled on one device
+  // disappears from the others the next time they poll.
+  function syncWaiting(sids) {
+    var keep = {};
+    (sids || []).forEach(function (s) { keep[s] = true; });
+    Object.keys(shown).forEach(function (tag) {
+      if (keep[tag]) return;
+      try { shown[tag].close(); } catch (e) { /* already gone */ }
+      delete shown[tag];
+    });
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.getRegistration('/').then(function (reg) {
+      if (!reg || !reg.getNotifications) return;
+      return reg.getNotifications().then(function (list) {
+        list.forEach(function (n) {
+          if (n.tag && n.tag !== 'test' && !keep[n.tag]) n.close();
+        });
+      });
+    }).catch(function () { /* no worker, nothing pushed to close */ });
   }
 
   // --- badge and title (decision 6) ---------------------------------------
@@ -531,6 +544,7 @@ window.MerlinNotifications = (function () {
   return {
     init: init,
     handleEvents: handleEvents,
+    syncWaiting: syncWaiting,
     setAttention: setAttention,
     render: render,
     enabled: enabled,

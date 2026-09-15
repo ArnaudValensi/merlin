@@ -26,7 +26,7 @@ window.SessionsBoard = (function () {
             current: '', query: '', lastSig: null, paused: false,
             folded: loadFolded(),
             cursor: '',   // attention cursor: '' on a fresh page, so nothing replays
-            onAttention: function () {}, onEvents: function () {}, onJump: function () {}, onClose: null };
+            onAttention: function () {}, onEvents: function () {}, onWaiting: function () {}, onJump: function () {}, onClose: null };
 
   function loadFolded() {
     try { return new Set(JSON.parse(localStorage.getItem(FOLD_KEY) || '[]')); }
@@ -513,6 +513,19 @@ window.SessionsBoard = (function () {
     }
   }
 
+  // The sids of the windows still waiting (done or ask), from the tree, on
+  // every successful poll: the notifications module closes what is no longer
+  // waiting, wherever it was handled.
+  function waitingSids(v) {
+    var out = [];
+    (v.sessions || []).forEach(function (s) {
+      (s.windows || []).forEach(function (w) {
+        if (w.sid && (w.waiting || w.asking)) out.push(w.sid);
+      });
+    });
+    return out;
+  }
+
   // One poll in flight at a time. load() is called from many places (the
   // interval, focus, visibility, the first session frame, switch timers), and
   // two overlapping requests would leave with the same cursor and deliver the
@@ -533,6 +546,7 @@ window.SessionsBoard = (function () {
           // response to an older cursor (defensive, serialization already
           // prevents it) must neither replay nor regress the cursor.
           if (sent === S.cursor) consumeEvents(v);
+          try { S.onWaiting(waitingSids(v)); } catch (e) { console.warn('[merlin] onWaiting failed', e); }
           if (sigOf(v) !== S.lastSig) render(v);
         }
       } finally {
@@ -651,6 +665,7 @@ window.SessionsBoard = (function () {
   function init(opts) {
     S.root = opts.container;
     S.onAttention = opts.onAttention || function () {};
+    S.onWaiting = opts.onWaiting || function () {};
     S.onEvents = opts.onEvents || function () {};
     S.onJump = opts.onJump || function () {};
     S.onClose = opts.onClose || null;

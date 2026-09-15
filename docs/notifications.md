@@ -10,13 +10,11 @@ tapping the notification lands you in that window. Nothing is on until you turn 
   want you. No permission needed, it is on everywhere.
 - **Browser notifications while a tab is open.** One per transition, replaced (not stacked)
   when the same window flips again. Not shown for the window you are looking at, in the
-  focused tab. The tab
-  keeps notifying from the background, with the delay browsers impose on hidden tabs.
+  focused tab. The tab keeps notifying from the background, with the delay browsers
+  impose on hidden tabs. A browser with push on gets the push instead, never both.
 - **Push to your devices with the browser closed.** The instance sends a Web Push to every
   device you subscribed. Clicking it opens Merlin on that window. This is what push buys
-  over the open tab: no tab needed, no background delay, and it survives sleep. Each
-  event reaches you once: on the screen you are using when you are at a Merlin page, as
-  a push when you are not, or when the page has been idle for five minutes.
+  over the open tab: no tab needed, no background delay, and it survives sleep.
 
 **What a notification shows.** The title is the window, the session and the environment,
 most specific first: `claude · merlin-saas · sandbox`. The body says what happened:
@@ -48,10 +46,11 @@ Each device you turned on is listed, with a remove button, and **Test it** sends
 notification to this device through whatever it has: a push when it is subscribed, the
 tab's own notification otherwise.
 
-Push is quiet on purpose in two cases: no push while you are at a Merlin page (visible,
-with input in the last five minutes), where the page tells you itself, and no second push
-for the same window within 20 seconds (an agent bouncing between busy and done at every
-prompt does not spam you).
+Every event reaches every device you turned on, with one exception: the window you are
+looking at, in a focused tab. And a notification goes away everywhere once the window
+stops waiting, which is the same rule as the green pill: visit the window or leave it,
+or answer the question, on any device. A phone in your pocket catches up when you next
+open Merlin on it.
 
 ## Install Merlin on a phone
 
