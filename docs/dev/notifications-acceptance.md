@@ -77,4 +77,5 @@ that, and everything else is to be redone.
 | 15 | passed 2026-09-16 | Brave setting on, off then on: subscribed, listed as this device. |
 | 16 | delivery passed 2026-09-16, click pending | Brave running with no Merlin tab: push in the tray. First attempt with Brave quit received nothing, a desktop browser must be running. The click did not open Merlin: on Linux the click must reach Brave as the notification's default action, which depends on the notification daemon (dunst closes on left click by default, middle click invokes the action). To close once the daemon is configured. |
 | 17 | passed 2026-09-16 | Fresh install: permission once, subscribed, listed as this device, test push received. Finding: the previous install's subscription stays listed, iOS tells nobody about an uninstall and Apple keeps accepting sends on it. Removed by hand with the cross. A rule dropping an older subscription with the same label and push service on subscribe would fix it, at the price of two iPhones of one person chasing each other: left as a finding. |
-| 18 to 20 | to run | |
+| 18 | passed 2026-09-16 | Icon and app switcher read `merlin`, badge count shown. |
+| 19, 20 | to run | |
