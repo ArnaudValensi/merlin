@@ -75,5 +75,5 @@ that, and everything else is to be redone.
 | 13 | passed 2026-09-16 | `claude --permission-mode default` in a tmux window. Body `Needs an answer: Create perm-ask.txt containing hello and print it Do you want to proceed?`, read on the desktop tray. Note: the founder's default is auto mode, whose classifier approves without a dialog. |
 | 14 | passed 2026-09-16 | Silence during the approvals. Record: the done after an approval is `looking`. An ask answered within one sweep (two seconds) never becomes an event at all, by construction. |
 | 15 | passed 2026-09-16 | Brave setting on, off then on: subscribed, listed as this device. |
-| 16 | to redo | First attempt with Brave quit: the instance sent to both devices, Brave received nothing, as a desktop browser must be running. Case reworded. |
+| 16 | delivery passed 2026-09-16, click pending | Brave running with no Merlin tab: push in the tray. First attempt with Brave quit received nothing, a desktop browser must be running. The click did not open Merlin: on Linux the click must reach Brave as the notification's default action, which depends on the notification daemon (dunst closes on left click by default, middle click invokes the action). To close once the daemon is configured. |
 | 17 to 20 | to run | 17 passed before the move (fresh install, test push received). |
