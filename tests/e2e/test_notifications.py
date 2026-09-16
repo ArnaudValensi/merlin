@@ -809,7 +809,7 @@ def test_push_toggle_subscribes_tests_and_unsubscribes(browser, server, push_ser
         pg.wait_for_selector("#notif-devices .notif-device-me", timeout=10000)
         assert pg.evaluate("localStorage.getItem('notify-in-browser')") == "1"
         pg.wait_for_function(
-            "document.getElementById('notif-status').textContent.startsWith('On. You will be told here')",
+            "document.getElementById('notif-status').textContent.startsWith('On. You will be notified here')",
             timeout=10000,
         )
         opts = pg.evaluate("window.__subscribeOpts")
@@ -919,7 +919,7 @@ def test_browser_refusing_to_unsubscribe_keeps_both_sides_on(
         pg.evaluate("window.__unsubscribeFails = true")
         pg.locator("#notif-toggle").click()  # not uncheck(): the box must stay on
         pg.wait_for_function(
-            "document.getElementById('notif-status').textContent.includes('kept the subscription')",
+            "document.getElementById('notif-status').textContent.includes('kept this device on')",
             timeout=10000,
         )
         assert pg.locator("#notif-toggle").is_checked()

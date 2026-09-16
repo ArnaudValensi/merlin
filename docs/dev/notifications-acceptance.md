@@ -69,7 +69,7 @@ that, and everything else is to be redone.
 | 6 | passed 2026-09-16 | App came to front, switched to the window. |
 | 7 | passed 2026-09-16 | Phone kept it with the app closed, cleared it on opening. |
 | 8 | passed 2026-09-16 | Toggle stays on, the sentence names Brave's setting. |
-| 9 | passed 2026-09-16 | Sheet read on a screenshot: one toggle, devices, Test it, the sentence present. The earlier empty sentence was the popover before the single toggle. |
+| 9 | passed 2026-09-16 | Sheet read on a screenshot: one toggle, devices, the test button, the sentence present. The earlier empty sentence was the popover before the single toggle. |
 | 10, 11 | passed | Unaffected by the move. |
 | 12 | passed 2026-09-16 | Body `Needs an answer: ☐ Test ask Quelle couleur...`, the dialog's header chip precedes the question. Gone everywhere once answered. |
 | 13 | passed 2026-09-16 | `claude --permission-mode default` in a tmux window. Body `Needs an answer: Create perm-ask.txt containing hello and print it Do you want to proceed?`, read on the desktop tray. Note: the founder's default is auto mode, whose classifier approves without a dialog. |

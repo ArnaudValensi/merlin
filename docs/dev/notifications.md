@@ -159,7 +159,7 @@ an older cursor neither replays nor regresses the cursor.
   410) turns this device off on the next open: preference and browser subscription
   dropped, "Turned off from another device" shown once (`applyRemoteRemoval`). One
   sentence, `#notif-status`, says what the device gets. The devices list and the remove action call the routes below.
-  **Test it** pushes to this device when subscribed and otherwise shows the tab's own
+  **Send a test** pushes to this device when subscribed and otherwise shows the tab's own
   notification. `/api/notifications/status` is read when the popover opens: `swept` and
   `tmux === false` replace the whole body with the tmux sentence. An iPhone browser that
   is not the installed app gets the install sentence under the toggle, over HTTPS only:

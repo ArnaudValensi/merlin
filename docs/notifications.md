@@ -39,13 +39,13 @@ Open the terminal page and tap the **bell** in the bottom bar, left of the Sessi
 One toggle, **Notify me on this device**. Turning it on asks the browser for permission
 once, then does what the device allows:
 
-- On a desktop browser or an installed phone app, you are told while Merlin is open, and
+- On a desktop browser or an installed phone app, you are notified while Merlin is open, and
   pushed to the device when it is not, even with the browser closed.
 - Where push is not possible (an iPhone browser tab, Brave with its push setting off, plain
-  HTTP), you are told while a Merlin tab is open, and the sentence under the toggle says
+  HTTP), you are notified while a Merlin tab is open, and the sentence under the toggle says
   what would lift that.
 
-Each device you turned on is listed, with a remove button, and **Test it** sends one
+Each device you turned on is listed, with a remove button, and **Send a test** sends one
 notification to this device through whatever it has: a push when it is subscribed, the
 tab's own notification otherwise.
 

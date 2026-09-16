@@ -189,7 +189,7 @@ window.MerlinNotifications = (function () {
   }
   // A subscription this browser holds that the instance no longer lists was
   // removed from another device (or dropped by the instance after the push
-  // service declared it dead). Either way this device is no longer told when
+  // service declared it dead). Either way this device is no longer notified when
   // Merlin is closed, and "remove the device" means "turn it off there": the
   // page drops its preference and the browser's subscription and reads off,
   // saying so once. Turning it on again is one tap. Only checked between
@@ -238,9 +238,9 @@ window.MerlinNotifications = (function () {
           });
         });
     }).then(function () { S.pushError = ''; }, function (e) {
-      if (e && e.name === 'NotAllowedError') S.pushError = 'The browser did not allow push.';
+      if (e && e.name === 'NotAllowedError') S.pushError = 'The browser refused notifications with Merlin closed.';
       else if (navigator.brave) S.pushError = 'Brave blocks push until "Use Google services for push messaging" is on, in brave://settings/privacy.';
-      else S.pushError = 'Push could not be set up. Turn off and on to retry.';
+      else S.pushError = 'Notifications with Merlin closed could not be set up. Turn it off and on to retry.';
       reconcile();
     }).then(function () { S.busy = false; render(); });
   }
@@ -254,12 +254,12 @@ window.MerlinNotifications = (function () {
     return sub.unsubscribe().then(function () {
       S.subscription = null; S.pushError = '';
       return api('/subscribe', 'DELETE', { endpoint: endpoint }).then(function (r) {
-        if (!r.ok) S.lastError = 'The browser dropped the subscription but the instance still lists this device. Remove it from the list.';
+        if (!r.ok) S.lastError = 'This device is off in the browser but Merlin still lists it. Remove it from the list.';
       }, function () {
-        S.lastError = 'The browser dropped the subscription but the instance still lists this device. Remove it from the list.';
+        S.lastError = 'This device is off in the browser but Merlin still lists it. Remove it from the list.';
       });
     }, function () {
-      S.lastError = 'The browser kept the subscription, so push stays on. Try again.';
+      S.lastError = 'The browser kept this device on. Try again.';
     }).then(refreshDevices).then(function () { S.busy = false; render(); });
   }
   function removeDevice(endpoint) {
@@ -272,7 +272,7 @@ window.MerlinNotifications = (function () {
     S.busy = true; S.lastError = ''; S.lastInfo = ''; render();
     if (!S.pushSubscribed) {
       if (enabled()) {
-        show({ title: 'Merlin', body: 'This is a test. You are told here while Merlin is open.', sid: 'test', target: '' });
+        show({ title: 'Merlin', body: 'This is a test. You are notified here while Merlin is open.', sid: 'test', target: '' });
         S.lastInfo = 'Test shown.';
       }
       S.busy = false; render();
@@ -318,14 +318,14 @@ window.MerlinNotifications = (function () {
   // browser tab (iOS delivers push to the installed app only).
   function pushPossible() { return pushSupported() && !(isIos() && !isStandalone()); }
 
-  // Why this device is not told when Merlin is closed, in one sentence, with
+  // Why this device is not notified when Merlin is closed, in one sentence, with
   // a link to the doc where one helps.
   function pushWhy() {
-    if (isIos() && !isStandalone()) return { text: 'Add Merlin to the Home Screen to be told when it is closed.' };
-    if (!secure()) return { text: 'Push needs HTTPS to reach this device when Merlin is closed. ', link: DOC_URL };
+    if (isIos() && !isStandalone()) return { text: 'Add Merlin to the Home Screen to be notified when it is closed.' };
+    if (!secure()) return { text: 'Notifications with Merlin closed need HTTPS. ', link: DOC_URL };
     if (!pushSupported()) return { text: 'This browser has no Web Push, so nothing reaches it when Merlin is closed.' };
     if (S.pushError) return { text: S.pushError };
-    return { text: 'Turn off and on again to also be told when Merlin is closed.' };
+    return { text: 'Turn it off and on again to also be notified when Merlin is closed.' };
   }
 
   function isOn() { return enabled() || S.pushSubscribed; }
@@ -356,11 +356,11 @@ window.MerlinNotifications = (function () {
     if (S.lastError) text = S.lastError;
     else if (S.lastInfo) text = S.lastInfo;
     else if (!r.ok) { text = r.text; link = r.link || ''; }
-    else if (on && S.pushSubscribed) text = 'On. You will be told here, and on this device even when Merlin is closed.';
+    else if (on && S.pushSubscribed) text = 'On. You will be notified here, and on this device even when Merlin is closed.';
     else if (on) { var why = pushWhy(); text = 'On while Merlin is open in this browser. ' + why.text; link = why.link || ''; }
-    else if (S.removedElsewhere) text = 'Turned off from another device. Turn on to be told here again.';
-    else if (permission() === 'granted') text = 'Off. Turn on to be told when an agent finishes or needs an answer.';
-    else text = 'Turn on to be told when an agent finishes or needs an answer. The browser will ask once.';
+    else if (S.removedElsewhere) text = 'Turned off from another device. Turn it on to be notified here again.';
+    else if (permission() === 'granted') text = 'Off. Turn it on to be notified when an agent finishes or needs an answer.';
+    else text = 'Turn it on to be notified when an agent finishes or needs an answer. The browser will ask your permission once.';
     S.status.textContent = text;
     if (link) {
       var a = el('a', 'notif-link', 'See the notifications doc.');
@@ -380,14 +380,14 @@ window.MerlinNotifications = (function () {
     // The Home Screen sentence only where installing would help: over plain
     // HTTP an installed app gets no push either.
     if (isIos() && !isStandalone() && secure()) {
-      S.pushSlot.appendChild(el('div', 'notif-sentence', 'On iPhone, add Merlin to the Home Screen to be told when Merlin is closed.'));
+      S.pushSlot.appendChild(el('div', 'notif-sentence', 'On iPhone, add Merlin to the Home Screen to be notified when Merlin is closed.'));
     }
     // Devices: every subscription the instance holds, this one marked.
     var mine = S.subscription ? S.subscription.endpoint : '';
     if (S.deviceList.length) {
       var list = el('div', 'notif-devices');
       list.id = 'notif-devices';
-      list.appendChild(el('div', 'notif-devices-title', 'Devices told when Merlin is closed'));
+      list.appendChild(el('div', 'notif-devices-title', 'Devices notified when Merlin is closed'));
       S.deviceList.forEach(function (d) {
         var row = el('div', 'notif-device');
         row.appendChild(el('span', 'notif-device-name', d.label || 'Device'));
@@ -477,7 +477,7 @@ window.MerlinNotifications = (function () {
     S.pushSlot = el('div', 'notif-push-slot');
     S.pushSlot.id = 'notif-push-slot';
     body.appendChild(S.pushSlot);
-    S.testBtn = el('button', 'notif-test', 'Test it');
+    S.testBtn = el('button', 'notif-test', 'Send a test');
     S.testBtn.type = 'button';
     S.testBtn.id = 'notif-test-btn';
     S.testBtn.addEventListener('click', function (e) { e.preventDefault(); sendTest(); });
