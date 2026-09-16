@@ -33,6 +33,9 @@ Merlin sweeps it every two seconds, so a notification arrives within a couple of
 ## Turn it on
 
 Open the terminal page and tap the **bell** in the bottom bar, left of the Sessions button.
+
+![The bell in the terminal's bottom bar](notifications/phone-bell.jpg)
+
 One toggle, **Notify me on this device**. Turning it on asks the browser for permission
 once, then does what the device allows:
 
