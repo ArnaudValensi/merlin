@@ -72,4 +72,5 @@ that, and everything else is to be redone.
 | 9 | passed 2026-09-16 | Sheet read on a screenshot: one toggle, devices, Test it, the sentence present. The earlier empty sentence was the popover before the single toggle. |
 | 10, 11 | passed | Unaffected by the move. |
 | 12 | passed 2026-09-16 | Body `Needs an answer: ☐ Test ask Quelle couleur...`, the dialog's header chip precedes the question. Gone everywhere once answered. |
-| 13 to 20 | to run | 17 passed before the move (fresh install, test push received). 13 and 14 need a session without permission bypass. |
+| 13 | passed 2026-09-16 | `claude --permission-mode default` in a tmux window. Body `Needs an answer: Create perm-ask.txt containing hello and print it Do you want to proceed?`, read on the desktop tray. Note: the founder's default is auto mode, whose classifier approves without a dialog. |
+| 14 to 20 | to run | 17 passed before the move (fresh install, test push received). |
