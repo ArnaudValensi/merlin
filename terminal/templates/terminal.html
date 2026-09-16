@@ -2011,9 +2011,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (pendingTarget) {
                             const target = pendingTarget;
                             pendingTarget = '';
-                            if (target !== currentSession + ':' + currentWindowId) {
-                                window.MerlinTerminal.switchSession(target);
-                            }
+                            // Always, even when the target is already the
+                            // current window: a deep link is a visit (a tapped
+                            // notification), and the switch runs tmux's
+                            // select-window, whose hook clears the done pill
+                            // on arrival. A plain reopen carries no target and
+                            // leaves the pill, since nobody came to read it.
+                            window.MerlinTerminal.switchSession(target);
                             dropTargetParam();
                         }
                         MerlinPageTitle.set(

@@ -177,6 +177,18 @@ def test_switch_client_and_current_session(tmux_server):
         assert beta.name == "beta"
         assert beta.session_id != alpha.session_id
         assert beta.created > 0
+        # A switch to the window the client already displays still fires the
+        # window hook (select-window does, switch-client alone would not): the
+        # arrive-clear of the done pill runs for a tapped notification that
+        # lands where one already is.
+        wid = _tmux(
+            "display-message", "-p", "-t", "beta", "#{window_id}"
+        ).stdout.strip()
+        _tmux("set-hook", "-g", "after-select-window", "set-option -w @probe fired")
+        assert sweep.switch_client(tty, f"beta:{wid}") is True
+        time.sleep(0.3)
+        probe = _tmux("show-option", "-wv", "-t", wid, "@probe").stdout.strip()
+        assert probe == "fired"
     finally:
         os.close(fd)
 

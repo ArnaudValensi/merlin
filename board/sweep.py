@@ -337,7 +337,15 @@ def switch_client(tty: str, target: str) -> bool:
     """
     if not shutil.which("tmux") or not tty or not target:
         return False
-    return _run_ok(["switch-client", "-c", tty, "-t", target])
+    if not _run_ok(["switch-client", "-c", tty, "-t", target]):
+        return False
+    # switch-client fires no window hook when the window is already current.
+    # select-window does, even then: the arrive-clear of the done pill
+    # (agent-state-switch.sh, after-select-window) runs for a jump to the
+    # window one is already on, which is what a tapped notification is.
+    if ":" in target:
+        _run_ok(["select-window", "-t", target])
+    return True
 
 
 def exit_copy_mode(tty: str) -> bool:

@@ -344,6 +344,36 @@ def test_deep_link_switches_the_client_and_drops_the_parameter(
     assert "target=" not in page.url
 
 
+def test_deep_link_to_the_current_window_clears_its_done_pill(page, server, tmux_env):
+    """A tapped notification that lands on the window the client already
+    displays is a visit: the switch runs select-window, whose hook clears the
+    done pill on arrival. A plain reopen (no target) leaves it."""
+    open_terminal(page, server)
+    wid = page.evaluate("window.MerlinTerminal.currentWindow()")
+    assert wid
+    tmux(
+        tmux_env,
+        "set-option",
+        "-w",
+        "-t",
+        wid,
+        "@agent_sid",
+        "sid-current-" + wid.lstrip("@"),
+    )
+    tmux(tmux_env, "set-option", "-w", "-t", wid, "@agent_state", "done")
+    # A reload without a target changes nothing: still done.
+    open_terminal(page, server)
+    assert tmux(tmux_env, "show-option", "-wv", "-t", wid, "@agent_state") == "done"
+    # The deep link to that same window clears it.
+    open_terminal(page, server, f"?target={SESSION}:{wid}")
+    for _ in range(50):
+        if tmux(tmux_env, "show-option", "-wv", "-t", wid, "@agent_state") == "idle":
+            break
+        time.sleep(0.1)
+    assert tmux(tmux_env, "show-option", "-wv", "-t", wid, "@agent_state") == "idle"
+    assert "target=" not in page.url
+
+
 # Holds the first session control frame (NUL-prefixed) until the test releases
 # it, so the ordering between the deep link and the socket can be observed.
 HOLD_FIRST_FRAME = """

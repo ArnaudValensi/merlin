@@ -65,7 +65,7 @@ that, and everything else is to be redone.
 | 2 | passed 2026-09-16 | Phone in front on the window, desktop unfocused: nothing anywhere. |
 | 3 | passed 2026-09-16 | Desktop tray and phone push. |
 | 4 | passed 2026-09-16 | Lock screen read: `handoff · merl · merlin`, `Finished after 2 s:` and the last lines. |
-| 5 | passed 2026-09-16 | App opened on the window. Finding: it reopened on the window it already displayed, so no tmux window change fired and the green pill stayed until the window was left. A tap landing on the current window should count as a visit: send the switch even when the target is current, so the visit-clear hook runs. |
+| 5 | passed 2026-09-16 | App opened on the window. Finding, fixed the same day: it reopened on the window it already displayed, no tmux window change fired and the green pill stayed. A deep link now always switches, and the switch runs select-window, whose hook clears the pill on arrival. A plain reopen still leaves it. |
 | 6 | passed 2026-09-16 | App came to front, switched to the window. |
 | 7 | passed 2026-09-16 | Phone kept it with the app closed, cleared it on opening. |
 | 8 | passed 2026-09-16 | Toggle stays on, the sentence names Brave's setting. |
