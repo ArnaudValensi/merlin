@@ -45,7 +45,7 @@ grep attention_routed ~/.merlin/logs/engine-log.jsonl | tail -3
 | # | Setup | Action | Expected |
 |---|---|---|---|
 | 15 | Brave, the push setting turned on. | Toggle off, then on | Subscribed, listed as "this device". |
-| 16 | Desktop browser with push, browser closed. | Event | Push in the system tray. Clicking it opens Merlin on that window. |
+| 16 | Desktop browser with push, running, every Merlin tab closed. | Event | Push in the system tray. Clicking it opens a Merlin tab on that window. With the browser fully quit nothing arrives, unless its background mode is on: a desktop push is received by the browser process, not by the OS, and ours expires after five minutes. |
 | 17 | Phone app, fresh install. | Turn on | Permission asked once, subscribed, listed, a test push received. |
 | 18 | App installed before an environment rename. | Reinstall | Name and icon carry the environment. |
 | 19 | Installed app, suspended for over a minute. | Come back | Terminal reconnects without a keystroke. |
@@ -75,4 +75,5 @@ that, and everything else is to be redone.
 | 13 | passed 2026-09-16 | `claude --permission-mode default` in a tmux window. Body `Needs an answer: Create perm-ask.txt containing hello and print it Do you want to proceed?`, read on the desktop tray. Note: the founder's default is auto mode, whose classifier approves without a dialog. |
 | 14 | passed 2026-09-16 | Silence during the approvals. Record: the done after an approval is `looking`. An ask answered within one sweep (two seconds) never becomes an event at all, by construction. |
 | 15 | passed 2026-09-16 | Brave setting on, off then on: subscribed, listed as this device. |
-| 16 to 20 | to run | 17 passed before the move (fresh install, test push received). |
+| 16 | to redo | First attempt with Brave quit: the instance sent to both devices, Brave received nothing, as a desktop browser must be running. Case reworded. |
+| 17 to 20 | to run | 17 passed before the move (fresh install, test push received). |
