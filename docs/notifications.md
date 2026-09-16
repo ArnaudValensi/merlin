@@ -75,7 +75,8 @@ or `http://localhost`. On Merlin Cloud every environment is served over HTTPS al
 self-hosted Merlin on a LAN address over plain HTTP you still get the title count and the
 pills, and the bell says why the rest is off.
 
-The simplest way to put TLS in front of a self-hosted Merlin is one Caddy block. Caddy gets
+The simplest way to put TLS in front of a self-hosted Merlin is a few lines of Caddy
+configuration. Caddy gets
 and renews the certificate on its own:
 
 ```

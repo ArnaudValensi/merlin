@@ -295,7 +295,7 @@ window.MerlinNotifications = (function () {
   function reason() {
     // HTTPS first: without a secure context nothing works, whatever the
     // browser, and on an iPhone the missing API is that same cause.
-    if (!secure()) return { ok: false, text: 'Notifications need HTTPS, or http://localhost. This page is on plain HTTP, so only the title count and the pills work here. See the notifications doc for the one Caddy block that adds it.' };
+    if (!secure()) return { ok: false, text: 'Notifications need HTTPS, or http://localhost. This page is on plain HTTP, so only the title count and the pills work here. The notifications doc shows how to put HTTPS in front of Merlin with Caddy, a few lines.' };
     if (!hasApi()) return { ok: false, text: 'This browser has no notification support.' };
     if (permission() === 'denied') return { ok: false, text: 'Notifications are blocked for this site. Allow them in the browser’s site settings, then reload.' };
     return { ok: true, text: '' };
