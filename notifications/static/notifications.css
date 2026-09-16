@@ -176,4 +176,6 @@
 .notif-test:hover:not(:disabled) { color: var(--text-primary); border-color: var(--text-muted); }
 .notif-test:disabled { opacity: 0.5; cursor: not-allowed; }
 .notif-status.error { color: var(--accent-red); }
+.notif-link { color: var(--accent-blue); text-decoration: none; }
+.notif-link:hover { text-decoration: underline; }
 .notif-push-slot { display: flex; flex-direction: column; gap: 6px; }

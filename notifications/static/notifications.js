@@ -12,6 +12,8 @@ window.MerlinNotifications = (function () {
 
   var PREF_KEY = 'notify-in-browser';   // per-browser preference, decision 13
   var ICON = '/static/favicon.svg';
+  // The user doc, linked from the sentences that send people to it.
+  var DOC_URL = 'https://github.com/ArnaudValensi/merlin/blob/master/docs/notifications.md';
 
   var S = { bell: null, dot: null, pop: null, body: null, toggle: null, toggleRow: null,
             status: null, notice: null, pushSlot: null, pushRow: null, pushToggle: null,
@@ -295,7 +297,7 @@ window.MerlinNotifications = (function () {
   function reason() {
     // HTTPS first: without a secure context nothing works, whatever the
     // browser, and on an iPhone the missing API is that same cause.
-    if (!secure()) return { ok: false, text: 'Notifications need HTTPS, or http://localhost. This page is on plain HTTP, so only the title count and the pills work here. The notifications doc shows how to put HTTPS in front of Merlin with Caddy, a few lines.' };
+    if (!secure()) return { ok: false, text: 'Notifications need HTTPS, or http://localhost. This page is on plain HTTP, so only the title count and the pills work here. ', link: DOC_URL };
     if (!hasApi()) return { ok: false, text: 'This browser has no notification support.' };
     if (permission() === 'denied') return { ok: false, text: 'Notifications are blocked for this site. Allow them in the browser’s site settings, then reload.' };
     return { ok: true, text: '' };
@@ -316,13 +318,14 @@ window.MerlinNotifications = (function () {
   // browser tab (iOS delivers push to the installed app only).
   function pushPossible() { return pushSupported() && !(isIos() && !isStandalone()); }
 
-  // Why this device is not told when Merlin is closed, in one sentence.
+  // Why this device is not told when Merlin is closed, in one sentence, with
+  // a link to the doc where one helps.
   function pushWhy() {
-    if (isIos() && !isStandalone()) return 'Add Merlin to the Home Screen to be told when it is closed.';
-    if (!secure()) return 'Push needs HTTPS to reach this device when Merlin is closed. See the notifications doc.';
-    if (!pushSupported()) return 'This browser has no Web Push, so nothing reaches it when Merlin is closed.';
-    if (S.pushError) return S.pushError;
-    return 'Turn off and on again to also be told when Merlin is closed.';
+    if (isIos() && !isStandalone()) return { text: 'Add Merlin to the Home Screen to be told when it is closed.' };
+    if (!secure()) return { text: 'Push needs HTTPS to reach this device when Merlin is closed. ', link: DOC_URL };
+    if (!pushSupported()) return { text: 'This browser has no Web Push, so nothing reaches it when Merlin is closed.' };
+    if (S.pushError) return { text: S.pushError };
+    return { text: 'Turn off and on again to also be told when Merlin is closed.' };
   }
 
   function isOn() { return enabled() || S.pushSubscribed; }
@@ -349,16 +352,21 @@ window.MerlinNotifications = (function () {
     S.toggleRow.classList.toggle('disabled', !r.ok);
     S.toggleRow.classList.toggle('on', on);
     S.testBtn.disabled = S.busy || !on;
-    var text;
+    var text, link = '';
     if (S.lastError) text = S.lastError;
     else if (S.lastInfo) text = S.lastInfo;
-    else if (!r.ok) text = r.text;
+    else if (!r.ok) { text = r.text; link = r.link || ''; }
     else if (on && S.pushSubscribed) text = 'On. You will be told here, and on this device even when Merlin is closed.';
-    else if (on) text = 'On while Merlin is open in this browser. ' + pushWhy();
+    else if (on) { var why = pushWhy(); text = 'On while Merlin is open in this browser. ' + why.text; link = why.link || ''; }
     else if (S.removedElsewhere) text = 'Turned off from another device. Turn on to be told here again.';
     else if (permission() === 'granted') text = 'Off. Turn on to be told when an agent finishes or needs an answer.';
     else text = 'Turn on to be told when an agent finishes or needs an answer. The browser will ask once.';
     S.status.textContent = text;
+    if (link) {
+      var a = el('a', 'notif-link', 'See the notifications doc.');
+      a.href = link; a.target = '_blank'; a.rel = 'noopener';
+      S.status.appendChild(a);
+    }
     S.status.classList.toggle('error', !!S.lastError);
     // The dot is a hint, never an alert: on here, but nothing reaches this
     // device when Merlin is closed.
