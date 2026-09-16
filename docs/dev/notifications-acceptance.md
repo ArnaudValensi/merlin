@@ -68,7 +68,7 @@ that, and everything else is to be redone.
 | 5 | passed 2026-09-16 | App opened on the window. Finding: it reopened on the window it already displayed, so no tmux window change fired and the green pill stayed until the window was left. A tap landing on the current window should count as a visit: send the switch even when the target is current, so the visit-clear hook runs. |
 | 6 | passed 2026-09-16 | App came to front, switched to the window. |
 | 7 | passed 2026-09-16 | Phone kept it with the app closed, cleared it on opening. |
-| 8 | to run | Under the two-toggle popover Brave refused the subscription. The sentence not yet read. |
+| 8 | passed 2026-09-16 | Toggle stays on, the sentence names Brave's setting. |
 | 9 | to run | One report of an empty sentence with the toggle on, not reproduced. |
 | 10, 11 | passed | Unaffected by the move. |
 | 12 to 20 | to run | 17 passed before the move (fresh install, test push received). |
