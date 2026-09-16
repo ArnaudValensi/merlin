@@ -49,6 +49,8 @@ Each device you turned on is listed, with a remove button, and **Test it** sends
 notification to this device through whatever it has: a push when it is subscribed, the
 tab's own notification otherwise.
 
+![The notifications popover on a phone](notifications/phone-popover.jpg)
+
 Every event reaches every device you turned on, with one exception: the window you are
 looking at, in a focused tab. And a notification goes away everywhere once the window
 stops waiting, which is the same rule as the green pill: visit the window or leave it,
