@@ -162,7 +162,9 @@ an older cursor neither replays nor regresses the cursor.
   **Test it** pushes to this device when subscribed and otherwise shows the tab's own
   notification. `/api/notifications/status` is read when the popover opens: `swept` and
   `tmux === false` replace the whole body with the tmux sentence. An iPhone browser that
-  is not the installed app gets the install sentence under the toggle.
+  is not the installed app gets the install sentence under the toggle, over HTTPS only:
+  without a secure context the HTTPS sentence comes first and alone, since an installed
+  app over plain HTTP gets no push either.
 - **The deep link.** `/terminal?target=<session>:<window_id>` is applied by `terminal.html`
   on the first confirmed session frame and only then stripped from the URL.
 
