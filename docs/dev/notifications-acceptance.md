@@ -74,4 +74,5 @@ that, and everything else is to be redone.
 | 12 | passed 2026-09-16 | Body `Needs an answer: ☐ Test ask Quelle couleur...`, the dialog's header chip precedes the question. Gone everywhere once answered. |
 | 13 | passed 2026-09-16 | `claude --permission-mode default` in a tmux window. Body `Needs an answer: Create perm-ask.txt containing hello and print it Do you want to proceed?`, read on the desktop tray. Note: the founder's default is auto mode, whose classifier approves without a dialog. |
 | 14 | passed 2026-09-16 | Silence during the approvals. Record: the done after an approval is `looking`. An ask answered within one sweep (two seconds) never becomes an event at all, by construction. |
-| 15 to 20 | to run | 17 passed before the move (fresh install, test push received). |
+| 15 | passed 2026-09-17 | Brave setting on, off then on: subscribed, listed as this device. |
+| 16 to 20 | to run | 17 passed before the move (fresh install, test push received). |
