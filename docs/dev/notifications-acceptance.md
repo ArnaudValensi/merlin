@@ -71,4 +71,5 @@ that, and everything else is to be redone.
 | 8 | passed 2026-09-16 | Toggle stays on, the sentence names Brave's setting. |
 | 9 | passed 2026-09-16 | Sheet read on a screenshot: one toggle, devices, Test it, the sentence present. The earlier empty sentence was the popover before the single toggle. |
 | 10, 11 | passed | Unaffected by the move. |
-| 12 to 20 | to run | 17 passed before the move (fresh install, test push received). |
+| 12 | passed 2026-09-16 | Body `Needs an answer: ☐ Test ask Quelle couleur...`, the dialog's header chip precedes the question. Gone everywhere once answered. |
+| 13 to 20 | to run | 17 passed before the move (fresh install, test push received). 13 and 14 need a session without permission bypass. |
