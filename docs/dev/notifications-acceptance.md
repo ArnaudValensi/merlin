@@ -69,6 +69,6 @@ that, and everything else is to be redone.
 | 6 | passed 2026-09-16 | App came to front, switched to the window. |
 | 7 | passed 2026-09-16 | Phone kept it with the app closed, cleared it on opening. |
 | 8 | passed 2026-09-16 | Toggle stays on, the sentence names Brave's setting. |
-| 9 | to run | One report of an empty sentence with the toggle on, not reproduced. |
+| 9 | passed 2026-09-16 | Sheet read on a screenshot: one toggle, devices, Test it, the sentence present. The earlier empty sentence was the popover before the single toggle. |
 | 10, 11 | passed | Unaffected by the move. |
 | 12 to 20 | to run | 17 passed before the move (fresh install, test push received). |
