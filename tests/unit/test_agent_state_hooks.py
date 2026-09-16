@@ -364,3 +364,76 @@ class TestSetHookIntegration:
         t("kill-server")
         assert state == "idle", f"set-hook did not clear the done pill: {state!r}"
         assert prev == b  # switch-clear tracked the previous window
+
+
+class TestWindowFallback:
+    """agent-window.sh: a hook whose environment lost TMUX_PANE and TMUX (Claude
+    Code 2.1.273 runs hooks through a helper daemon with a trimmed
+    environment) still finds its window, by walking up its ancestors to the
+    pane's shell. Only inside a Merlin terminal (MERLIN_TERMINAL_HOOKS set)."""
+
+    @pytest.fixture
+    def default_server(self, tmp_path):
+        """A throwaway server on the DEFAULT socket of a private TMUX_TMPDIR,
+        so a bare `tmux` with no $TMUX at all reaches it."""
+        # Unix socket paths cap at about 108 characters: a short dir in /tmp,
+        # not pytest's long tmp_path.
+        import tempfile
+
+        tmpdir = Path(tempfile.mkdtemp(prefix="mhk-"))
+        sock_dir = tmpdir / f"tmux-{os.getuid()}"
+        sock_dir.mkdir(mode=0o700)
+        s = Server(sock_dir / "default", tmp_path / "home")
+        (tmp_path / "home").mkdir()
+        s.tmpdir = str(tmpdir)
+        s.tmux("new-session", "-d", "-s", "t", "-n", "a", "sleep 300")
+        s.tmux("new-window", "-d", "-t", "t", "-n", "b", "sleep 300")
+        # A shell in window c to run the hook from, as a pane descendant. Bash
+        # without init files: a fresh home's zsh wizard would eat keystrokes.
+        s.tmux("new-window", "-d", "-t", "t", "-n", "c", "bash --norc --noprofile")
+        for _ in range(50):
+            if s.tmux("display-message", "-p", "-t", "t:c", "#{pane_current_command}"):
+                break
+            time.sleep(0.1)
+        yield s
+        s.kill()
+
+    def _run_in_pane(self, s, window, command):
+        # Typed into the pane's shell: the hook is then a descendant of the
+        # pane process, which is what the fallback walks up to.
+        s.tmux("send-keys", "-t", f"t:{window}", command, "Enter")
+
+    def _wait_state(self, s, window, expected, timeout=8.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if (
+                s.tmux("show-option", "-wv", "-t", f"t:{window}", "@agent_state")
+                == expected
+            ):
+                return True
+            time.sleep(0.1)
+        return False
+
+    def test_stamps_the_panes_window_without_tmux_variables(self, default_server):
+        s = default_server
+        cmd = (
+            f"env -u TMUX -u TMUX_PANE TMUX_TMPDIR={s.tmpdir} MERLIN_TERMINAL_HOOKS=1 "
+            f"bash {STATE_SH} busy < /dev/null"
+        )
+        self._run_in_pane(s, "c", cmd)
+        assert self._wait_state(s, "c", "busy"), s.tmux("list-windows")
+        assert s.tmux("show-option", "-wv", "-t", "t:a", "@agent_state") == ""
+
+    def test_stays_a_noop_outside_a_merlin_terminal(self, default_server):
+        s = default_server
+        cmd = (
+            f"env -u TMUX -u TMUX_PANE -u MERLIN_TERMINAL_HOOKS TMUX_TMPDIR={s.tmpdir} "
+            f"bash {STATE_SH} busy < /dev/null; tmux set-option -w @probe ran"
+        )
+        self._run_in_pane(s, "c", cmd)
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            if s.tmux("show-option", "-wv", "-t", "t:c", "@probe") == "ran":
+                break
+            time.sleep(0.1)
+        assert s.tmux("show-option", "-wv", "-t", "t:c", "@agent_state") == ""

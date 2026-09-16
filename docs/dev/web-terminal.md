@@ -252,6 +252,14 @@ options or the state pill; when identity is not ready, it uses a private actor
 key without claiming liveness. It no-ops outside tmux. Historical capture is
 therefore independent of both the PTY bridge and `AgentEngine`.
 
+The state hooks find their window through `$TMUX_PANE`, with a fallback in
+`terminal/hooks/agent-window.sh`: Claude Code 2.1.273 runs hooks through a
+helper daemon whose children get a trimmed environment, without `TMUX_PANE` or
+`TMUX`, and the hooks stamped nothing until the fallback walked up the
+process ancestors to the pane's shell, which the daemon still descends from.
+The fallback runs only when `MERLIN_TERMINAL_HOOKS` is set, so a hook outside a
+Merlin terminal stays a no-op.
+
 The same `@agent_state` feeds the notifications feature: a server-side watcher
 sweeps it every two seconds and turns transitions into browser notifications
 and Web Push, with events riding the Sessions panel's poll. The bell in the

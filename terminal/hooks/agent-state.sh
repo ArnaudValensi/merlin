@@ -17,10 +17,12 @@
 cat >/dev/null 2>&1 || true
 
 state="${1:-idle}"
-[ -n "$TMUX_PANE" ] || exit 0
 command -v tmux >/dev/null 2>&1 || exit 0
 
-win=$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null) || exit 0
+# The window of this pane: $TMUX_PANE, or the ancestor walk when a helper
+# process stripped the environment (see agent-window.sh).
+. "$(dirname "$0")/agent-window.sh"
+win=$(agent_window)
 [ -n "$win" ] || exit 0
 
 tmux set-option -w -t "$win" @agent_state "$state" 2>/dev/null
