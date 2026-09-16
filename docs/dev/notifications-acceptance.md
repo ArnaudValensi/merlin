@@ -63,7 +63,7 @@ that, and everything else is to be redone.
 |---|---|---|
 | 1 | passed 2026-09-16 | Record: skipped `looking`, `looking` named the desktop on the window. |
 | 2 | passed 2026-09-16 | Phone in front on the window, desktop unfocused: nothing anywhere. |
-| 3 | to redo | Passed before the move. |
+| 3 | passed 2026-09-16 | Desktop tray and phone push. |
 | 4 | to redo | Pushes received before the move. The environment's real name not yet read on a push. |
 | 5, 6 | to run | |
 | 7 | to redo | Passed before the move. |
