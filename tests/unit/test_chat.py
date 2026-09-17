@@ -109,9 +109,14 @@ class TestChatCli:
         assert exc_info.value.code == 0
         assert "merlin chat" in capsys.readouterr().out
 
-    def test_leaf_missing_required_shows_help(self, transport, capsys):
+    def test_leaf_missing_required_shows_help(self, transport, capsys, monkeypatch):
         # `merlin chat reply` with no args prints the leaf's full help (all
         # options) plus the error, not just a one-line usage.
+        # Python 3.14's argparse colours the usage when FORCE_COLOR is in the
+        # environment (some tool shells export it), which would break the
+        # substring checks: pin plain output.
+        monkeypatch.setenv("PYTHON_COLORS", "0")
+        monkeypatch.delenv("FORCE_COLOR", raising=False)
         with pytest.raises(SystemExit) as exc_info:
             chat.main(["reply"])
         assert exc_info.value.code == 2

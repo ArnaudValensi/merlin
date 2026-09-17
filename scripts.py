@@ -5,6 +5,7 @@ Usage: uv run scripts.py <command>
 
 import argparse
 import shutil
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -21,7 +22,12 @@ TY = "ty@0.0.69"
 
 def run(cmd: list[str]) -> subprocess.CompletedProcess:
     print(f"  → {' '.join(cmd)}")
-    return subprocess.run(cmd, cwd=ROOT)
+    # Plain output whatever shell runs this: Python 3.14's argparse colours its
+    # usage when FORCE_COLOR is set (some tool shells export it), and tests
+    # that read that text would then differ between two terminals.
+    env = {k: v for k, v in os.environ.items() if k != "FORCE_COLOR"}
+    env["PYTHON_COLORS"] = "0"
+    return subprocess.run(cmd, cwd=ROOT, env=env)
 
 
 def run_js_tests() -> int:
