@@ -553,3 +553,207 @@ class TestComparePageRoutes:
     def test_compare_file_page_bad_path(self, client):
         resp = client.get("/commits/compare/file/src/%2e%2e/x")
         assert resp.status_code in (400, 404)
+
+
+# ---------------------------------------------------------------------------
+# /api/commits/reviews: the store behind real git on a temporary repository
+# ---------------------------------------------------------------------------
+
+
+def _make_repo(root):
+    import os
+    import subprocess
+
+    env = dict(os.environ, GIT_AUTHOR_DATE="2026-01-01T00:00:00+00:00")
+    env["GIT_COMMITTER_DATE"] = env["GIT_AUTHOR_DATE"]
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
+        ).stdout.strip()
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "Tester")
+    (root / "a.txt").write_text("alpha\n")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "Root commit")
+    git("checkout", "-q", "-b", "feature")
+    (root / "f.txt").write_text("f1\n")
+    git("add", "f.txt")
+    git("commit", "-q", "-m", "Feature one")
+    return git
+
+
+@pytest.fixture
+def real_repo(tmp_path, monkeypatch):
+    """A real repository, with _find_repo_root answering it for any query."""
+    from pathlib import Path
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    git = _make_repo(root)
+    real = lambda search_dir: Path(root)
+    monkeypatch.setattr("commits.git_parser._find_repo_root", real)
+    monkeypatch.setattr("commits.routes._find_repo_root", real)
+    return root, git
+
+
+class TestApiReviews:
+    def _create(self, client, root, **body):
+        payload = {
+            "repo": str(root),
+            "base": "main",
+            "head": "feature",
+            "mergebase": True,
+        }
+        payload.update(body)
+        resp = client.post("/api/commits/reviews", json=payload)
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_create_and_get(self, client, real_repo):
+        root, git = real_repo
+        review = self._create(client, root)
+        assert review["title"] == "feature vs main"
+        assert review["kind"] == "branch"
+        assert review["status"] == "open"
+        resp = client.get(f"/api/commits/reviews/{review['id']}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["review"]["id"] == review["id"]
+        assert data["comparison"]["kind"] == "branch"
+        assert [f["path"] for f in data["comparison"]["files"]] == ["f.txt"]
+        assert data["changed_since_viewed"] == []
+        assert data["new_commits"] == 0
+        assert data["error"] is None
+
+    def test_create_bad_ref_is_400(self, client, real_repo):
+        root, git = real_repo
+        resp = client.post(
+            "/api/commits/reviews",
+            json={"repo": str(root), "base": "-p", "head": "feature"},
+        )
+        assert resp.status_code == 400
+        resp = client.post(
+            "/api/commits/reviews",
+            json={"repo": str(root), "base": "main", "head": "nope"},
+        )
+        assert resp.status_code == 400
+
+    def test_unknown_and_invalid_ids(self, client, real_repo):
+        assert client.get("/api/commits/reviews/00000000").status_code == 404
+        assert client.get("/api/commits/reviews/not-an-id").status_code == 400
+        assert (
+            client.patch(
+                "/api/commits/reviews/00000000", json={"title": "x"}
+            ).status_code
+            == 404
+        )
+        assert (
+            client.put(
+                "/api/commits/reviews/00000000/viewed/f.txt", json={"viewed": True}
+            ).status_code
+            == 404
+        )
+        assert client.get("/commits/reviews/not-an-id").status_code == 400
+
+    def test_list_groups_by_repo(self, client, real_repo):
+        root, git = real_repo
+        a = self._create(client, root)
+        b = self._create(client, root, worktree=True, base="", head="", mergebase=False)
+        resp = client.get(f"/api/commits/reviews?repo={root}")
+        assert resp.status_code == 200
+        ids = [r["id"] for r in resp.json()]
+        assert set(ids) == {a["id"], b["id"]}
+        assert resp.json()[0]["id"] == b["id"]
+
+    def test_patch_title_and_status(self, client, real_repo):
+        root, git = real_repo
+        review = self._create(client, root)
+        resp = client.patch(
+            f"/api/commits/reviews/{review['id']}", json={"title": "Renamed"}
+        )
+        assert resp.status_code == 200 and resp.json()["title"] == "Renamed"
+        resp = client.patch(
+            f"/api/commits/reviews/{review['id']}", json={"status": "closed"}
+        )
+        assert resp.status_code == 200 and resp.json()["status"] == "closed"
+        resp = client.patch(
+            f"/api/commits/reviews/{review['id']}", json={"status": "x"}
+        )
+        assert resp.status_code == 400
+        resp = client.patch(f"/api/commits/reviews/{review['id']}", json={"title": " "})
+        assert resp.status_code == 400
+
+    def test_viewed_tick_and_reset_on_change(self, client, real_repo):
+        root, git = real_repo
+        review = self._create(client, root)
+        resp = client.put(
+            f"/api/commits/reviews/{review['id']}/viewed/f.txt", json={"viewed": True}
+        )
+        assert resp.status_code == 200
+        assert "f.txt" in resp.json()["files"]
+        data = client.get(f"/api/commits/reviews/{review['id']}").json()
+        assert "f.txt" in data["review"]["files"]
+        # Amend the file on the branch
+        (root / "f.txt").write_text("f1\nf2\n")
+        git("commit", "-q", "-am", "Feature two")
+        data = client.get(f"/api/commits/reviews/{review['id']}").json()
+        assert data["changed_since_viewed"] == ["f.txt"]
+        assert data["review"]["files"] == {}
+        assert data["new_commits"] == 1
+        data = client.get(f"/api/commits/reviews/{review['id']}").json()
+        assert data["new_commits"] == 0
+        resp = client.put(
+            f"/api/commits/reviews/{review['id']}/viewed/%2e%2e/x",
+            json={"viewed": True},
+        )
+        assert resp.status_code in (400, 404)
+
+    def test_poll_returns_the_newer_record(self, client, real_repo):
+        root, git = real_repo
+        review = self._create(client, root)
+        from urllib.parse import quote
+
+        stamp = review["updated"]
+        resp = client.get(f"/api/commits/reviews/{review['id']}?since={quote(stamp)}")
+        assert resp.status_code == 200 and resp.json() == {"changed": False}
+        # The raw stamp (its "+" read as a space) is tolerated too
+        resp = client.get(f"/api/commits/reviews/{review['id']}?since={stamp}")
+        assert resp.json() == {"changed": False}
+        client.patch(f"/api/commits/reviews/{review['id']}", json={"title": "Moved on"})
+        resp = client.get(f"/api/commits/reviews/{review['id']}?since={quote(stamp)}")
+        data = resp.json()
+        assert data["changed"] is True
+        assert data["review"]["title"] == "Moved on"
+        assert data["review"]["updated"] != stamp
+
+    def test_review_of_a_missing_repo(self, client, real_repo, tmp_path):
+        root, git = real_repo
+        review = self._create(client, root)
+        import shutil
+
+        shutil.rmtree(root)
+        resp = client.get(f"/api/commits/reviews/{review['id']}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["comparison"] is None
+        assert "Repository not found" in data["error"]
+        assert data["review"]["id"] == review["id"]
+
+    def test_reviews_not_shadowed_by_commit_hash_route(self, client, real_repo):
+        root, git = real_repo
+        resp = client.get(f"/api/commits/reviews?repo={root}")
+        assert resp.status_code == 200 and resp.json() == []
+        assert client.get("/commits/reviews").status_code == 200
+        review = self._create(client, root)
+        assert client.get(f"/commits/reviews/{review['id']}").status_code == 200
+        assert (
+            client.get(f"/commits/reviews/{review['id']}/file/f.txt").status_code == 200
+        )

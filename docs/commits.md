@@ -62,6 +62,38 @@ each tappable to open on its own.
 A comparison is just a URL (`/commits/compare?base=...&head=...`), so it
 reloads, bookmarks and pastes like a commit link.
 
+## Reviews
+
+A review is a saved comparison with your progress on it. Nothing leaves
+this Merlin: reviews live as plain JSON files under `~/.merlin/reviews/`,
+one per review, where your agent can read them too.
+
+- **Creating one.** On any comparison (or a single commit), the first file
+  you tick as viewed saves it as a review and the URL becomes
+  `/commits/reviews/<id>`, quietly, with back still returning to the list.
+  **Save as review** does the same with nothing ticked yet. The title
+  defaults to `head vs base` for a branch, the commit's subject for a
+  commit, `oldest..newest (N commits)` for a range and `Working tree` for
+  the tree. Tap the title to rename it.
+- **Viewed files.** Every file, in the files panel and in its own diff
+  header, has a checkbox. A viewed file collapses to its header (tap the
+  header to open it again), and the panel's toggle reads `k of n viewed`.
+  The tick belongs to the file's diff as it is now: when a later commit
+  or an edit changes that file's diff, the tick clears on the next load and
+  the file shows a small **changed** marker. Files whose diff did not
+  change keep their tick, even in a branch review whose base moved on.
+- **A moving head.** A branch or range review follows its branch. When
+  commits landed since you last looked, the page says `N new commits since
+  you last looked`, once.
+- **Open and closed.** A review is open or closed, nothing more. The list
+  page shows the repository's open reviews above the commits, with a
+  collapsed **Closed** group. A closed review stays readable and can be
+  reopened.
+- **Copy for agent** copies `merlin review show <id>` so you can paste it
+  in the terminal. The page refreshes its review chrome every 5 seconds
+  while it is visible, so what the agent does from the CLI shows up on the
+  phone without a reload.
+
 ## Read a diff
 
 ![Diff viewer](commits/phone-diff.jpg)
@@ -130,8 +162,9 @@ working in.
 URLs are real routes: `/commits?repo=...`, `/commits/<hash>?repo=...`,
 `/commits/<hash>/file/<path>?repo=...`, and for comparisons
 `/commits/compare?repo=...&base=...&head=...[&mergebase=1]`,
-`/commits/compare?repo=...&worktree=1` and
-`/commits/compare/file/<path>?...`. Bookmark them, or paste one
+`/commits/compare?repo=...&worktree=1`,
+`/commits/compare/file/<path>?...`, and for reviews
+`/commits/reviews/<id>` and `/commits/reviews/<id>/file/<path>`. Bookmark them, or paste one
 in chat to point your agent (or a friend) at a specific commit or
 comparison.
 
@@ -176,3 +209,7 @@ comparison.
   the spelling.
 - **"Nothing to compare"**: the two points have the same tree, for
   example a branch compared to itself or a clean working tree.
+- **A review shows "Unknown ref" or "Repository not found"**: its branch
+  was deleted, or the repository moved. The review and its ticks are kept
+  in `~/.merlin/reviews/<id>.json`, and the page shows the error instead
+  of the diff.

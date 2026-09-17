@@ -81,6 +81,22 @@ var CompareModel = (function() {
         return m ? m[1].slice(0, 7) + m[2] : (ref || '');
     }
 
+    // The comparison a saved review points at, from its record.
+    function targetOfReview(review) {
+        return {
+            kind: 'compare',
+            base: review.kind === 'worktree' ? (review.base || '') : (review.base || ''),
+            head: review.kind === 'worktree' ? '' : (review.head || ''),
+            mergebase: !!review.mergebase,
+            worktree: review.kind === 'worktree',
+        };
+    }
+
+    // "k of n viewed" for the files panel toggle.
+    function viewedProgress(k, n) {
+        return k + ' of ' + n + ' viewed';
+    }
+
     function kindLabel(kind) {
         return { commit: 'Commit', range: 'Range', branch: 'Branch', worktree: 'Working tree' }[kind] || kind;
     }
@@ -102,6 +118,8 @@ var CompareModel = (function() {
         summaryText: summaryText,
         title: title,
         refLabel: refLabel,
+        targetOfReview: targetOfReview,
+        viewedProgress: viewedProgress,
         kindLabel: kindLabel,
         commitsText: commitsText,
         filesText: filesText,

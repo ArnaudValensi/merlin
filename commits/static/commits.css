@@ -898,6 +898,230 @@
     font-size: 13px;
 }
 
+/* Reviews list on the list page */
+.reviews-section {
+    margin-bottom: 12px;
+}
+.reviews-heading {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 4px 0 6px;
+}
+.review-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    min-height: 44px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+    cursor: pointer;
+    margin-bottom: 6px;
+}
+.review-item:hover {
+    background: var(--bg-hover);
+}
+.review-item-icon {
+    color: var(--accent-purple);
+    display: flex;
+    flex-shrink: 0;
+}
+.review-item.closed .review-item-icon {
+    color: var(--text-muted);
+}
+.review-item-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+    color: var(--text-primary);
+}
+.review-item-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.reviews-closed-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    min-height: 36px;
+    padding: 6px 12px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+}
+.reviews-closed-btn svg {
+    transition: transform 0.2s;
+}
+.reviews-closed-btn.open svg {
+    transform: rotate(180deg);
+}
+.reviews-closed-btn:hover {
+    color: var(--text-secondary);
+}
+
+/* Review chrome on the diff view */
+.review-chrome {
+    margin: -4px 0 16px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+}
+.review-title-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.review-title {
+    flex: 1;
+    min-width: 0;
+    min-height: 40px;
+    padding: 6px 10px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 16px;
+    font-weight: 600;
+    font-family: inherit;
+    outline: none;
+}
+.review-title:hover {
+    border-color: var(--border);
+}
+.review-title:focus {
+    border-color: var(--accent-blue);
+    background: var(--bg-card);
+}
+.review-status {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    color: var(--accent-green);
+}
+.review-status.closed {
+    color: var(--text-muted);
+}
+.review-refs {
+    padding: 4px 10px 0;
+}
+.review-refs .commit-meta-hash {
+    font-family: 'Geist Mono', monospace;
+    font-size: 12px;
+    color: var(--accent-blue);
+}
+.review-new-commits {
+    margin: 8px 10px 0;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: rgba(74, 158, 255, 0.1);
+    color: var(--accent-blue);
+    font-size: 13px;
+}
+.review-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 0 10px;
+}
+.review-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 0 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+}
+.review-action-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+.review-action-btn.done {
+    color: var(--accent-green);
+    border-color: var(--accent-green);
+}
+.save-review-row {
+    margin: -4px 0 16px;
+}
+.save-review-btn {
+    color: var(--accent-blue);
+}
+
+/* Viewed files */
+.file-list-item .viewed-check,
+.diff-file-header .viewed-check {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    margin: -6px 0;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+.viewed-check input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent-green);
+    cursor: pointer;
+}
+.file-list-item.viewed .file-list-path {
+    color: var(--text-muted);
+    text-decoration: line-through;
+}
+.file-changed-marker {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--accent-yellow);
+    border: 1px solid var(--accent-yellow);
+    border-radius: 8px;
+    padding: 1px 6px;
+    flex-shrink: 0;
+}
+.diff-file-section.viewed .diff-file-header {
+    cursor: pointer;
+}
+.diff-file-section.viewed .diff-file-path {
+    color: var(--text-muted);
+}
+.diff-file-section.viewed:not(.expanded) .diff-table-scroll,
+.diff-file-section.viewed:not(.expanded) .diff-binary-notice {
+    display: none;
+}
+.diff-file-section.viewed:not(.expanded) .diff-file-header {
+    border-bottom: none;
+    border-radius: 6px;
+}
+.diff-file-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
 /* Mobile adjustments */
 @media (max-width: 768px) {
     /* Zero out .main padding for the commits page */
@@ -959,6 +1183,23 @@
     .compare-commit-item {
         min-height: 44px;
         align-items: center;
+    }
+    .review-action-btn {
+        min-height: 44px;
+    }
+    .review-chrome,
+    .save-review-row {
+        margin-left: 8px;
+        margin-right: 8px;
+    }
+    .file-list-item .viewed-check,
+    .diff-file-header .viewed-check {
+        width: 44px;
+        height: 44px;
+        margin: -8px -4px;
+    }
+    .diff-file-section.viewed:not(.expanded) .diff-file-header {
+        border-radius: 0;
     }
     .worktree-row {
         margin: 0 0 8px;

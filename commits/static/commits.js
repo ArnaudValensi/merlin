@@ -1,7 +1,9 @@
 /* Commit browser: view management, diff rendering, gutter logic.
    Every diff view is a comparison "target": {kind: 'commit', hash} for a
-   single commit, or {kind: 'compare', base, head, mergebase, worktree} for
-   a base..head comparison (range, branch, working tree). */
+   single commit, {kind: 'compare', base, head, mergebase, worktree} for a
+   base..head comparison (range, branch, working tree), or
+   {kind: 'review', id} for a saved review, which is a comparison plus its
+   review chrome (title, status, viewed files, comments). */
 
 (function() {
     'use strict';
@@ -19,6 +21,12 @@
     let selection = CompareModel.emptySelection();
     let refsCache = null;       // /api/commits/refs for the compare sheet
     let sheetActiveField = 'head';
+    let currentReview = null;   // the loaded review record on a review page
+    let reviewMeta = null;      // its comparison detail (files, commits)
+    let reviewChanged = new Set();  // paths whose tick was cleared on this load
+    let reviewNewCommits = 0;   // commits since the last look, reported once
+    let reviewPollTimer = null;
+    const REVIEW_POLL_MS = 5000;
     let gutterLines = [];   // indices into file lines that have gutters
     let gutterIndex = -1;
     let lineHunkMap = [];   // per-line-index: hunk id or null
@@ -37,6 +45,9 @@
     let selectBar, selectSummary, selectClearBtn, selectCompareBtn;
     let compareCommits, compareCommitsBtn, compareCommitsLabel, compareCommitsPanel;
     let sheet, sheetHead, sheetBase, sheetMergebase, sheetError, sheetRefHint, sheetRefList, sheetGoBtn;
+    let fileListLabel, reviewChrome, reviewTitle, reviewStatus, reviewRefs, reviewNewCommitsEl, reviewError;
+    let reviewCopyBtn, reviewStatusBtn, saveReviewRow, saveReviewBtn;
+    let reviewsSection, reviewsOpen, reviewsClosedBtn, reviewsClosedLabel, reviewsClosed;
 
     // ---------------------------------------------------------------------------
     // Init
@@ -97,6 +108,22 @@
         sheetRefHint = document.getElementById('compare-ref-hint');
         sheetRefList = document.getElementById('compare-ref-list');
         sheetGoBtn = document.getElementById('compare-go-btn');
+        fileListLabel = document.getElementById('file-list-label');
+        reviewChrome = document.getElementById('review-chrome');
+        reviewTitle = document.getElementById('review-title');
+        reviewStatus = document.getElementById('review-status');
+        reviewRefs = document.getElementById('review-refs');
+        reviewNewCommitsEl = document.getElementById('review-new-commits');
+        reviewError = document.getElementById('review-error');
+        reviewCopyBtn = document.getElementById('review-copy-btn');
+        reviewStatusBtn = document.getElementById('review-status-btn');
+        saveReviewRow = document.getElementById('save-review-row');
+        saveReviewBtn = document.getElementById('save-review-btn');
+        reviewsSection = document.getElementById('reviews-section');
+        reviewsOpen = document.getElementById('reviews-open');
+        reviewsClosedBtn = document.getElementById('reviews-closed-btn');
+        reviewsClosedLabel = document.getElementById('reviews-closed-label');
+        reviewsClosed = document.getElementById('reviews-closed');
 
         // Event listeners
         searchInput.addEventListener('input', debounceSearch);
@@ -134,6 +161,20 @@
                 e.stopPropagation();
                 closeCompareSheet();
             }
+        });
+        saveReviewBtn.addEventListener('click', () => ensureReview());
+        reviewCopyBtn.addEventListener('click', copyForAgent);
+        reviewStatusBtn.addEventListener('click', toggleReviewStatus);
+        reviewTitle.addEventListener('change', saveReviewTitle);
+        reviewTitle.addEventListener('keydown', (e) => { if (e.key === 'Enter') reviewTitle.blur(); });
+        reviewsClosedBtn.addEventListener('click', () => {
+            const open = reviewsClosed.style.display === 'none';
+            reviewsClosed.style.display = open ? '' : 'none';
+            reviewsClosedBtn.classList.toggle('open', open);
+            reviewsClosedBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) pollReview();
         });
         fileListToggleBtn.addEventListener('click', toggleFileList);
         diffToggle.addEventListener('click', toggleDiffMode);
@@ -307,12 +348,29 @@
 
     function pageUrl(view, target, filePath) {
         if (view === 'list') return withQuery('/commits', targetParams(null));
-        const base = target.kind === 'commit' ? '/commits/' + target.hash : '/commits/compare';
+        let base;
+        if (target.kind === 'commit') base = '/commits/' + target.hash;
+        else if (target.kind === 'review') base = '/commits/reviews/' + target.id;
+        else base = '/commits/compare';
         const path = view === 'file' ? base + '/file/' + filePath : base;
         return withQuery(path, targetParams(target));
     }
 
+    // The comparison behind a target: a commit is commit^..commit, a review
+    // is the comparison its record names (loaded first).
+    function compareTargetOf(target) {
+        if (target.kind === 'compare') return target;
+        if (target.kind === 'commit') {
+            return { kind: 'compare', base: target.hash + '^', head: target.hash, mergebase: false, worktree: false };
+        }
+        if (target.kind === 'review' && currentReview && currentReview.id === target.id) {
+            return CompareModel.targetOfReview(currentReview);
+        }
+        return null;
+    }
+
     function apiUrl(what, target, filePath) {
+        if (target.kind === 'review') target = compareTargetOf(target);
         const base = target.kind === 'commit' ? '/api/commits/' + target.hash : '/api/commits/compare';
         let path = base;
         if (what === 'diff') path = base + '/diff';
@@ -343,6 +401,8 @@
     function routeFromUrl() {
         const path = window.location.pathname;
         const search = window.location.search;
+        const m_rev_file = path.match(/^\/commits\/reviews\/([0-9a-f]{8})\/file\/(.+)$/);
+        const m_rev = path.match(/^\/commits\/reviews\/([0-9a-f]{8})$/);
         const m_cmp_file = path.match(/^\/commits\/compare\/file\/(.+)$/);
         const m_cmp = path.match(/^\/commits\/compare$/);
         const m_file = path.match(/^\/commits\/([0-9a-f]+)\/file\/(.+)$/);
@@ -355,7 +415,12 @@
             if (r) currentRepo = r;
         }
 
-        if (m_cmp_file) {
+        if (m_rev_file) {
+            const target = { kind: 'review', id: m_rev_file[1] };
+            showFileView(target, decodeURIComponent(m_rev_file[2]), false);
+        } else if (m_rev) {
+            showDiffView({ kind: 'review', id: m_rev[1] }, false);
+        } else if (m_cmp_file) {
             const target = targetFromSearch(search);
             showDiffView(target, false);
             showFileView(target, decodeURIComponent(m_cmp_file[1]), false);
@@ -397,6 +462,7 @@
 
     function showListView(pushState) {
         currentView = 'list';
+        stopReviewPoll();
         listView.style.display = '';
         diffView.style.display = 'none';
         fileView.style.display = 'none';
@@ -418,6 +484,7 @@
 
     function showFileView(target, filePath, pushState) {
         currentView = 'file';
+        stopReviewPoll();
         currentTarget = target;
         currentFilePath = filePath;
         listView.style.display = 'none';
@@ -443,7 +510,10 @@
         listLoading.style.display = '';
         loadMoreBtn.style.display = 'none';
         listEmpty.style.display = 'none';
-        if (!append) loadWorktreeRow();
+        if (!append) {
+            loadWorktreeRow();
+            loadReviewsList();
+        }
 
         const params = new URLSearchParams();
         params.set('skip', loadedCount);
@@ -538,6 +608,57 @@
             (ins ? ` · <span class="stat-add">+${ins}</span>` : '') +
             (del ? ` <span class="stat-del">-${del}</span>` : '');
         worktreeRow.style.display = '';
+    }
+
+    // ---------------------------------------------------------------------------
+    // Reviews list (open reviews, closed ones collapsed)
+    // ---------------------------------------------------------------------------
+
+    async function apiJson(method, url, body) {
+        const resp = await fetch(url, {
+            method: method,
+            headers: { 'Content-Type': 'application/json' },
+            body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        if (resp.status === 401) {
+            window.location.reload();
+            return null;
+        }
+        try { return await resp.json(); } catch (_) { return null; }
+    }
+
+    async function loadReviewsList() {
+        if (!currentRepo) return;
+        let data = null;
+        try { data = await API.get('/api/commits/reviews' + repoParamFirst()); } catch (_) {}
+        if (!data || data.detail || !Array.isArray(data) || data.length === 0) {
+            reviewsSection.style.display = 'none';
+            return;
+        }
+        const open = data.filter(r => !r.error && r.status !== 'closed');
+        const closed = data.filter(r => !r.error && r.status === 'closed');
+        reviewsOpen.innerHTML = '';
+        reviewsClosed.innerHTML = '';
+        for (const r of open) reviewsOpen.appendChild(renderReviewItem(r));
+        for (const r of closed) reviewsClosed.appendChild(renderReviewItem(r));
+        reviewsClosedBtn.style.display = closed.length ? '' : 'none';
+        reviewsClosedLabel.textContent = 'Closed (' + closed.length + ')';
+        reviewsSection.style.display = (open.length || closed.length) ? '' : 'none';
+    }
+
+    function renderReviewItem(r) {
+        const el = document.createElement('div');
+        el.className = 'review-item' + (r.status === 'closed' ? ' closed' : '');
+        el.dataset.id = r.id;
+        const meta = [CompareModel.kindLabel(r.kind)];
+        if (r.open_comments) meta.push(r.open_comments + ' open');
+        meta.push(timeAgo(r.updated));
+        el.innerHTML =
+            `<span class="review-item-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/></svg></span>` +
+            `<span class="review-item-title">${esc(r.title)}</span>` +
+            `<span class="review-item-meta">${esc(meta.join(' · '))}</span>`;
+        el.addEventListener('click', () => navigateTo('diff', { kind: 'review', id: r.id }));
+        return el;
     }
 
     // ---------------------------------------------------------------------------
@@ -674,12 +795,29 @@
     // Commit Diff (View 2)
     // ---------------------------------------------------------------------------
 
-    async function loadDiff(target) {
+    function resetDiffView() {
         diffContent.innerHTML = '';
         diffLoading.style.display = '';
         fileListToggle.style.display = 'none';
         compareCommits.style.display = 'none';
+        reviewChrome.style.display = 'none';
+        saveReviewRow.style.display = 'none';
         diffMeta.innerHTML = '';
+        stopReviewPoll();
+        if (!currentTarget || currentTarget.kind !== 'review') {
+            currentReview = null;
+            reviewMeta = null;
+            reviewChanged = new Set();
+            reviewNewCommits = 0;
+        }
+    }
+
+    async function loadDiff(target) {
+        resetDiffView();
+        if (target.kind === 'review') {
+            await loadReview(target.id);
+            return;
+        }
 
         // Load metadata and diff in parallel
         const [meta, diff] = await Promise.all([
@@ -708,35 +846,73 @@
         }
 
         // File list
-        if (meta.files && meta.files.length > 0) {
-            fileListToggle.style.display = '';
-            fileListCount.textContent = meta.files.length;
-            fileListPanel.innerHTML = '';
-            for (const f of meta.files) {
-                const item = document.createElement('div');
-                item.className = 'file-list-item';
-                item.innerHTML =
-                    `<span class="file-status file-status-${esc(f.status)}">${esc(f.status)}</span>` +
-                    `<span class="file-list-path">${esc(f.path)}</span>` +
-                    `<span class="file-list-stats">` +
-                        (f.insertions ? `<span class="stat-add">+${f.insertions}</span>` : '') +
-                        (f.deletions ? `<span class="stat-del">-${f.deletions}</span>` : '') +
-                    `</span>`;
-                const path = f.path;
-                item.addEventListener('click', () => {
-                    // Scroll to the file section in the diff
-                    const section = document.getElementById('diff-file-' + CSS.escape(path));
-                    if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                });
-                fileListPanel.appendChild(item);
-            }
-        } else if (target.kind === 'compare') {
+        renderFilesPanel(meta.files || []);
+        if (!(meta.files && meta.files.length) && target.kind === 'compare') {
             diffContent.innerHTML = '<div class="empty-state"><p>Nothing to compare: no changes between these points</p></div>';
         }
 
         // Render diff sections
         for (const file of diff.files) {
             diffContent.appendChild(renderDiffFile(file, target));
+        }
+        reviewMeta = target.kind === 'compare' ? meta : null;
+        saveReviewRow.style.display = '';
+        applyViewedState();
+    }
+
+    // The files panel: one row per file with its viewed checkbox, status,
+    // path, a "changed" marker when its tick was cleared, and stats.
+    function renderFilesPanel(files) {
+        fileListPanel.innerHTML = '';
+        if (!files || files.length === 0) {
+            fileListToggle.style.display = 'none';
+            return;
+        }
+        fileListToggle.style.display = '';
+        for (const f of files) {
+            const item = document.createElement('div');
+            item.className = 'file-list-item';
+            item.dataset.path = f.path;
+            item.innerHTML =
+                viewedCheckHtml(f.path) +
+                `<span class="file-status file-status-${esc(f.status)}">${esc(f.status)}</span>` +
+                `<span class="file-list-path">${esc(f.path)}</span>` +
+                `<span class="file-changed-marker" style="display:none">changed</span>` +
+                `<span class="file-list-stats">` +
+                    (f.insertions ? `<span class="stat-add">+${f.insertions}</span>` : '') +
+                    (f.deletions ? `<span class="stat-del">-${f.deletions}</span>` : '') +
+                `</span>`;
+            const path = f.path;
+            item.addEventListener('click', (e) => {
+                if (e.target.closest('.viewed-check')) return;
+                // Scroll to the file section in the diff
+                const section = document.getElementById('diff-file-' + CSS.escape(path));
+                if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+            bindViewedCheck(item, path);
+            fileListPanel.appendChild(item);
+        }
+        updateFilesLabel();
+    }
+
+    function viewedCheckHtml(path) {
+        return `<label class="viewed-check" title="Mark as viewed"><input type="checkbox" aria-label="Viewed: ${esc(path)}"></label>`;
+    }
+
+    function bindViewedCheck(container, path) {
+        const input = container.querySelector('.viewed-check input');
+        if (!input) return;
+        input.addEventListener('click', (e) => e.stopPropagation());
+        input.addEventListener('change', () => toggleViewed(path, input.checked));
+    }
+
+    function updateFilesLabel() {
+        const n = fileListPanel.querySelectorAll('.file-list-item').length;
+        if (currentTarget && currentTarget.kind === 'review' && currentReview) {
+            const k = fileListPanel.querySelectorAll('.file-list-item.viewed').length;
+            fileListLabel.textContent = CompareModel.viewedProgress(k, n);
+        } else {
+            fileListLabel.textContent = CompareModel.filesText(n) + ' changed';
         }
     }
 
@@ -757,7 +933,24 @@
         diffMeta.innerHTML =
             `<div class="commit-meta-message">${esc(CompareModel.title(meta))}</div>` +
             `<div class="commit-meta-info">${parts.join(' · ')}</div>`;
+        renderIncludedCommits(meta);
+    }
 
+    function compareRefsHtml(meta) {
+        const parts = [CompareModel.kindLabel(meta.kind)];
+        if (meta.worktree) {
+            parts.push(`against ${esc(meta.base)} <span class="commit-meta-hash">${esc(meta.base_short)}</span>`);
+        } else {
+            parts.push(`${esc(CompareModel.refLabel(meta.base))} <span class="commit-meta-hash">${esc(meta.base_short)}</span>` +
+                ` .. ${esc(CompareModel.refLabel(meta.head))} <span class="commit-meta-hash">${esc(meta.head_short)}</span>`);
+            if (meta.mergebase) parts.push(`merge base <span class="commit-meta-hash">${esc(meta.merge_base_short)}</span>`);
+            parts.push(CompareModel.commitsText(meta.commit_count));
+        }
+        return parts.join(' · ');
+    }
+
+    function renderIncludedCommits(meta) {
+        compareCommits.style.display = 'none';
         if (meta.worktree || !meta.commits || meta.commits.length === 0) return;
         compareCommitsLabel.textContent = CompareModel.commitsText(meta.commit_count) +
             (meta.commit_count > meta.commits.length ? ` (first ${meta.commits.length} shown)` : '');
@@ -787,10 +980,19 @@
         const section = document.createElement('div');
         section.className = 'diff-file-section';
         section.id = 'diff-file-' + file.path;
+        section.dataset.path = file.path;
 
-        // Header
+        // Header: viewed checkbox, path, then the Full file button. Sticky
+        // while the file scrolls (commits.css). A viewed section collapses
+        // to its header, and tapping the header expands it again.
         const header = document.createElement('div');
         header.className = 'diff-file-header';
+        header.innerHTML = viewedCheckHtml(file.path);
+        bindViewedCheck(header, file.path);
+        header.addEventListener('click', (e) => {
+            if (e.target.closest('.viewed-check, .full-file-btn')) return;
+            if (section.classList.contains('viewed')) section.classList.toggle('expanded');
+        });
 
         const pathSpan = document.createElement('span');
         pathSpan.className = 'diff-file-path';
@@ -879,6 +1081,241 @@
         return section;
     }
 
+    // ---------------------------------------------------------------------------
+    // Review page: the comparison plus its chrome, viewed files, the poll
+    // ---------------------------------------------------------------------------
+
+    async function loadReview(id) {
+        const data = await API.get('/api/commits/reviews/' + id);
+        diffLoading.style.display = 'none';
+        if (!data) return;
+        if (data.detail) {
+            diffMeta.innerHTML = `<div class="commit-meta-message">Review not found</div>` +
+                `<div class="commit-meta-info diff-error">${esc(data.detail)}</div>`;
+            return;
+        }
+        if (!currentTarget || currentTarget.kind !== 'review' || currentTarget.id !== id) return;
+        currentReview = data.review;
+        reviewMeta = data.comparison;
+        reviewChanged = new Set(data.changed_since_viewed || []);
+        reviewNewCommits = data.new_commits || 0;
+        diffMeta.innerHTML = `<div class="commit-meta-info">Review · ${esc(CompareModel.kindLabel(currentReview.kind))}</div>`;
+        renderReviewChrome(data.error);
+        if (!data.comparison) return;
+
+        diffLoading.style.display = '';
+        const diff = await API.get(apiUrl('diff', currentTarget));
+        diffLoading.style.display = 'none';
+        if (!diff) return;
+        if (!currentTarget || currentTarget.kind !== 'review' || currentTarget.id !== id) return;
+        if (diff.detail) {
+            reviewError.textContent = diff.detail;
+            reviewError.style.display = '';
+            return;
+        }
+        renderIncludedCommits(data.comparison);
+        renderFilesPanel(data.comparison.files || []);
+        if (!(data.comparison.files && data.comparison.files.length)) {
+            diffContent.innerHTML = '<div class="empty-state"><p>Nothing to compare: no changes between these points</p></div>';
+        }
+        for (const file of diff.files) {
+            diffContent.appendChild(renderDiffFile(file, currentTarget));
+        }
+        applyViewedState();
+        startReviewPoll();
+    }
+
+    function renderReviewChrome(error) {
+        if (!currentReview) return;
+        reviewChrome.style.display = '';
+        saveReviewRow.style.display = 'none';
+        if (document.activeElement !== reviewTitle) reviewTitle.value = currentReview.title || '';
+        const closed = currentReview.status === 'closed';
+        reviewStatus.textContent = closed ? 'Closed' : 'Open';
+        reviewStatus.classList.toggle('closed', closed);
+        reviewStatusBtn.textContent = closed ? 'Reopen' : 'Close review';
+        if (reviewMeta && reviewMeta.kind) {
+            reviewRefs.innerHTML = compareRefsHtml(reviewMeta);
+        } else {
+            const r = currentReview;
+            const parts = [CompareModel.kindLabel(r.kind)];
+            if (r.kind === 'worktree') parts.push('against ' + esc(r.base || 'HEAD'));
+            else parts.push(esc(CompareModel.refLabel(r.base)) + ' .. ' + esc(CompareModel.refLabel(r.head)));
+            if (r.mergebase) parts.push('merge base');
+            reviewRefs.innerHTML = parts.join(' · ');
+        }
+        const movable = currentReview.kind === 'branch' || currentReview.kind === 'range';
+        if (movable && reviewNewCommits > 0) {
+            reviewNewCommitsEl.textContent = CompareModel.commitsText(reviewNewCommits).replace(/ commit/, ' new commit') + ' since you last looked';
+            reviewNewCommitsEl.style.display = '';
+        } else {
+            reviewNewCommitsEl.style.display = 'none';
+        }
+        if (error) {
+            reviewError.textContent = error;
+            reviewError.style.display = '';
+        } else {
+            reviewError.style.display = 'none';
+        }
+    }
+
+    // Viewed state onto the files panel and the diff sections: ticks,
+    // collapsed sections, the "changed" markers, the "k of n viewed" label.
+    function applyViewedState() {
+        const files = (currentReview && currentReview.files) || {};
+        for (const item of fileListPanel.querySelectorAll('.file-list-item')) {
+            const path = item.dataset.path;
+            const viewed = Object.prototype.hasOwnProperty.call(files, path);
+            item.classList.toggle('viewed', viewed);
+            const input = item.querySelector('.viewed-check input');
+            if (input) input.checked = viewed;
+            const marker = item.querySelector('.file-changed-marker');
+            if (marker) marker.style.display = (!viewed && reviewChanged.has(path)) ? '' : 'none';
+        }
+        for (const section of diffContent.querySelectorAll('.diff-file-section')) {
+            const path = section.dataset.path;
+            const viewed = Object.prototype.hasOwnProperty.call(files, path);
+            section.classList.toggle('viewed', viewed);
+            if (!viewed) section.classList.remove('expanded');
+            const input = section.querySelector('.viewed-check input');
+            if (input) input.checked = viewed;
+        }
+        updateFilesLabel();
+    }
+
+    // The review behind the current page, created on first use: the first
+    // viewed tick (or Save as review) on a plain comparison saves it and
+    // swaps the URL in place, so back still returns to the list.
+    async function ensureReview() {
+        if (currentTarget && currentTarget.kind === 'review') return currentTarget.id;
+        const cmp = compareTargetOf(currentTarget);
+        if (!cmp) return null;
+        const body = {
+            repo: currentRepo,
+            base: cmp.base,
+            head: cmp.head,
+            mergebase: !!cmp.mergebase,
+            worktree: !!cmp.worktree,
+        };
+        const review = await apiJson('POST', '/api/commits/reviews', body);
+        if (!review || review.detail) {
+            reviewError.textContent = (review && review.detail) || 'Could not save the review';
+            reviewError.style.display = '';
+            reviewChrome.style.display = '';
+            return null;
+        }
+        currentReview = review;
+        reviewChanged = new Set();
+        reviewNewCommits = 0;
+        currentTarget = { kind: 'review', id: review.id };
+        history.replaceState(null, '', pageUrl('diff', currentTarget));
+        diffMeta.innerHTML = `<div class="commit-meta-info">Review · ${esc(CompareModel.kindLabel(review.kind))}</div>`;
+        renderReviewChrome(null);
+        applyViewedState();
+        startReviewPoll();
+        return review.id;
+    }
+
+    async function toggleViewed(path, viewed) {
+        const id = await ensureReview();
+        if (!id) {
+            applyViewedState();
+            return;
+        }
+        const url = '/api/commits/reviews/' + id + '/viewed/' + encodeURIComponent(path).replace(/%2F/g, '/');
+        const review = await apiJson('PUT', url, { viewed: viewed });
+        if (!review || review.detail) {
+            reviewError.textContent = (review && review.detail) || 'Could not update the review';
+            reviewError.style.display = '';
+            applyViewedState();
+            return;
+        }
+        if (!currentTarget || currentTarget.kind !== 'review' || currentTarget.id !== id) return;
+        currentReview = review;
+        reviewChanged.delete(path);
+        applyViewedState();
+    }
+
+    async function saveReviewTitle() {
+        if (!currentTarget || currentTarget.kind !== 'review') return;
+        const title = reviewTitle.value.trim();
+        if (!title) {
+            reviewTitle.value = currentReview ? currentReview.title : '';
+            return;
+        }
+        const review = await apiJson('PATCH', '/api/commits/reviews/' + currentTarget.id, { title: title });
+        if (review && !review.detail) {
+            currentReview = review;
+            renderReviewChrome(null);
+        }
+    }
+
+    async function toggleReviewStatus() {
+        if (!currentTarget || currentTarget.kind !== 'review' || !currentReview) return;
+        const status = currentReview.status === 'closed' ? 'open' : 'closed';
+        const review = await apiJson('PATCH', '/api/commits/reviews/' + currentTarget.id, { status: status });
+        if (review && !review.detail) {
+            currentReview = review;
+            renderReviewChrome(null);
+        }
+    }
+
+    async function copyForAgent() {
+        if (!currentTarget || currentTarget.kind !== 'review') return;
+        const text = 'merlin review show ' + currentTarget.id;
+        let ok = false;
+        try {
+            await navigator.clipboard.writeText(text);
+            ok = true;
+        } catch (_) {}
+        if (!ok) {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.setAttribute('readonly', '');
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { ok = document.execCommand('copy'); } catch (_) {}
+            ta.remove();
+        }
+        const label = reviewCopyBtn.querySelector('span');
+        label.textContent = ok ? 'Copied' : text;
+        reviewCopyBtn.classList.toggle('done', ok);
+        setTimeout(() => {
+            label.textContent = 'Copy for agent';
+            reviewCopyBtn.classList.remove('done');
+        }, 1500);
+    }
+
+    // The poll: every 5 seconds while the page is visible, with the known
+    // updated stamp. A newer record re-renders the chrome, not the diff, so
+    // a change made elsewhere (the agent's CLI) shows up on the phone.
+    function startReviewPoll() {
+        stopReviewPoll();
+        reviewPollTimer = setInterval(pollReview, REVIEW_POLL_MS);
+    }
+
+    function stopReviewPoll() {
+        if (reviewPollTimer) clearInterval(reviewPollTimer);
+        reviewPollTimer = null;
+    }
+
+    async function pollReview() {
+        if (document.hidden || currentView !== 'diff') return;
+        if (!currentTarget || currentTarget.kind !== 'review' || !currentReview) return;
+        const id = currentTarget.id;
+        let data = null;
+        try {
+            data = await API.get('/api/commits/reviews/' + id + '?since=' + encodeURIComponent(currentReview.updated || ''));
+        } catch (_) {}
+        if (!data || !data.changed || !data.review) return;
+        if (!currentTarget || currentTarget.kind !== 'review' || currentTarget.id !== id) return;
+        currentReview = data.review;
+        renderReviewChrome(null);
+        applyViewedState();
+    }
+
     function toggleFileList() {
         const panel = fileListPanel;
         const btn = fileListToggleBtn;
@@ -904,6 +1341,17 @@
         lineHunkMap = [];
 
         fileMeta.innerHTML = `<div class="file-meta-path">${esc(filePath)}</div>`;
+
+        if (target.kind === 'review' && !(currentReview && currentReview.id === target.id)) {
+            // A deep link into a review's file: the record names the comparison
+            const rv = await API.get('/api/commits/reviews/' + target.id + '?since=');
+            if (!rv || !rv.review) {
+                fileLoading.style.display = 'none';
+                fileContent.innerHTML = `<div class="empty-state"><p>${esc((rv && rv.detail) || 'Review not found')}</p></div>`;
+                return;
+            }
+            currentReview = rv.review;
+        }
 
         const data = await API.get(apiUrl('file', target, filePath));
         fileLoading.style.display = 'none';

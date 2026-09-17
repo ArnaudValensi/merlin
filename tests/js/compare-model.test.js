@@ -107,3 +107,23 @@ test('ref labels shorten full hashes and keep typed refs', () => {
     assert.equal(M.refLabel('HEAD~3'), 'HEAD~3');
     assert.equal(M.refLabel(''), '');
 });
+
+test('viewed progress text', () => {
+    assert.equal(M.viewedProgress(0, 3), '0 of 3 viewed');
+    assert.equal(M.viewedProgress(3, 3), '3 of 3 viewed');
+});
+
+test('a review record maps back to its comparison target', () => {
+    assert.deepEqual(
+        M.targetOfReview({ kind: 'branch', base: 'main', head: 'feature/x', mergebase: true }),
+        { kind: 'compare', base: 'main', head: 'feature/x', mergebase: true, worktree: false },
+    );
+    assert.deepEqual(
+        M.targetOfReview({ kind: 'worktree', base: 'HEAD', head: '', mergebase: false }),
+        { kind: 'compare', base: 'HEAD', head: '', mergebase: false, worktree: true },
+    );
+    assert.deepEqual(
+        M.targetOfReview({ kind: 'range', base: 'abc^', head: 'def' }),
+        { kind: 'compare', base: 'abc^', head: 'def', mergebase: false, worktree: false },
+    );
+});

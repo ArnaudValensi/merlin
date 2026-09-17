@@ -179,8 +179,87 @@ header. The e2e check scrolls a long diff and asserts the header's bounding
 top stays at 0 while its section's top is negative, and walks the ancestors
 for any non-visible overflow.
 
+## Reviews: the store
+
+A review is a saved comparison, one JSON file under `paths.reviews_dir()`
+(`~/.merlin/reviews/<id>.json`, the id is `secrets.token_hex(4)`). The
+module is `commits/reviews.py` and it is the only writer, for the server and
+for the `merlin review` CLI alike (milestone 3), because they run in
+different processes:
+
+- **Locking.** Every read-modify-write runs inside `locked(id)`, an
+  `fcntl.flock` on `<id>.lock`, through `update(id, fn)`. A plain `load()`
+  needs no lock: the write is a temp file (`<id>.json.<pid>.tmp`, fsynced)
+  then one `os.replace`, so a reader sees the previous or the next whole
+  file. `tests/unit/test_reviews.py` has two spawned processes doing 25
+  updates each on one review and asserts all 50 changes survive.
+- **Malformed files.** A file that is not JSON, not an object, or carries
+  another id raises `ReviewCorrupt`: the route answers 500 with the path,
+  the list shows an error entry, and nothing ever overwrites it.
+- **The record** is decision 7's shape: `id`, `repo` (the resolved root),
+  `title`, `kind`, `base`, `head` and `mergebase` as typed (a branch review
+  follows its branch, the merge base is recomputed on every load),
+  `base_resolved` and `head_resolved` at creation, `last_seen_head`,
+  `status` (`open` or `closed`), `created`, `updated`, `files` and
+  `comments`. `updated` is stamped on every write and is what the poll
+  compares.
+
+### Viewed files
+
+`set_viewed(id, path, True)` stores `{viewed_at, viewed_hash}` where
+`viewed_hash` is the SHA-1 of `patch_text(cmp, path)`: the file's own patch
+in the comparison as it is now (`git diff --end-of-options diff_base head --
+path`, the working-tree equivalent, or the `--no-index` diff of an untracked
+file). Not the whole diff, so an unrelated file changing never clears a
+tick. `refresh(id)` (the full load) recomputes the hash of every viewed file
+under the lock, drops the entries whose patch changed and returns them as
+`changed_since_viewed`, and the page shows those files unticked with a
+`changed` marker for that load.
+
+### The moving head
+
+`refresh` also compares the review's `last_seen_head` with the head as it
+resolves now. When they differ it counts `last_seen..head` (`rev-list
+--count`, or everything up to the head when the old sha is gone), returns
+the count as `new_commits`, and only then advances `last_seen_head`. The
+record is written only when something changed.
+
+### Routes
+
+All registered before `/{commit_hash}`.
+
+| Route | Does |
+|-------|------|
+| `GET /api/commits/reviews?repo=` | Summaries of the repository's reviews, newest update first, closed ones included |
+| `POST /api/commits/reviews` `{repo, base, head, mergebase, worktree, title?}` | Resolves the comparison (400 on a bad ref) and creates the review. 201 with the record |
+| `GET /api/commits/reviews/<id>` | The full load: `{review, comparison, changed_since_viewed, new_commits, error}`. A repository that is gone or a branch that was deleted gives `comparison: null` and an `error` string, the record intact |
+| `GET /api/commits/reviews/<id>?since=<updated>` | The poll: `{"changed": false}` when the stamp matches, else `{"changed": true, "review"}`. Never recomputes or writes |
+| `PATCH /api/commits/reviews/<id>` `{title?, status?}` | Rename (whitespace collapsed, 200 chars, never empty) or open and close |
+| `PUT /api/commits/reviews/<id>/viewed/<path>` `{viewed}` | Tick or untick a file |
+
+Pages: `/commits/reviews`, `/commits/reviews/<id>`,
+`/commits/reviews/<id>/file/<path>`.
+
+### The page
+
+A third target kind, `{kind: 'review', id}`. `loadReview` fetches the full
+load, keeps the record in `currentReview`, renders the chrome (title input,
+status pill, refs from the live comparison, the new-commits line, the error
+line, Copy for agent, Close or Reopen), then fetches the diff with the
+comparison the record names (`CompareModel.targetOfReview`) and renders the
+same sections as any comparison. `applyViewedState` projects the record's
+`files` onto the panel and the sections: ticked rows, collapsed sections
+(`.viewed`, expanded again with `.expanded` on a header tap), the `changed`
+markers, the `k of n viewed` label. `ensureReview` is the implicit creation:
+a tick or Save as review on a comparison or a commit page POSTs the review,
+swaps the URL with `history.replaceState` and re-renders in place.
+
+The poll is one `setInterval` of 5 seconds, skipped while the document is
+hidden or the view is not a review, stopped on navigation, and run once more
+when the tab becomes visible. A newer record re-renders the chrome and the
+viewed state, never the diff.
+
 ## Later milestones
 
-Saved reviews (the `~/.merlin/reviews/` store, the viewed-file hash rule and
-the poll), comments (the re-anchoring rule) and the `merlin review` CLI are
-documented here as they land.
+Comments (the re-anchoring rule) and the `merlin review` CLI are documented
+here as they land.

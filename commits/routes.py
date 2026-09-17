@@ -6,9 +6,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
 from merlin_ext import make_templates
 
+from . import reviews as rv
 from .compare import (
     RefError,
     compare_detail,
@@ -54,6 +56,13 @@ def _validate_hash(h: str) -> str:
     if not HASH_RE.match(h):
         raise HTTPException(status_code=400, detail="Invalid commit hash")
     return h
+
+
+def _validate_review_id(review_id: str) -> str:
+    try:
+        return rv.validate_id(review_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 def _validate_path(path: str) -> str:
@@ -115,6 +124,38 @@ def compare_page(request: Request, repo: str = ""):
 
 @page_router.get("/compare/file/{file_path:path}", response_class=HTMLResponse)
 def compare_file_page(request: Request, file_path: str, repo: str = ""):
+    _validate_path(file_path)
+    return templates.TemplateResponse(
+        request,
+        "commits.html",
+        {"file_path": file_path, "startup_cwd": _startup_cwd, "home_dir": _home_dir},
+    )
+
+
+@page_router.get("/reviews", response_class=HTMLResponse)
+def reviews_page(request: Request, repo: str = ""):
+    return templates.TemplateResponse(
+        request,
+        "commits.html",
+        {"startup_cwd": _startup_cwd, "home_dir": _home_dir},
+    )
+
+
+@page_router.get("/reviews/{review_id}", response_class=HTMLResponse)
+def review_page(request: Request, review_id: str, repo: str = ""):
+    _validate_review_id(review_id)
+    return templates.TemplateResponse(
+        request,
+        "commits.html",
+        {"startup_cwd": _startup_cwd, "home_dir": _home_dir},
+    )
+
+
+@page_router.get(
+    "/reviews/{review_id}/file/{file_path:path}", response_class=HTMLResponse
+)
+def review_file_page(request: Request, review_id: str, file_path: str, repo: str = ""):
+    _validate_review_id(review_id)
     _validate_path(file_path)
     return templates.TemplateResponse(
         request,
@@ -330,6 +371,163 @@ def api_refs(repo: str = ""):
         return list_refs(repo_dir)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Reviews: a saved comparison (one JSON file under ~/.merlin/reviews/)
+# ---------------------------------------------------------------------------
+
+
+class ReviewCreate(BaseModel):
+    repo: str = ""
+    base: str = ""
+    head: str = ""
+    mergebase: bool = False
+    worktree: bool = False
+    title: str | None = None
+
+
+class ReviewPatch(BaseModel):
+    title: str | None = None
+    status: str | None = None
+
+
+class ViewedBody(BaseModel):
+    viewed: bool = True
+
+
+def _load_review(review_id: str) -> dict:
+    _validate_review_id(review_id)
+    try:
+        return rv.load(review_id)
+    except rv.ReviewNotFound:
+        raise HTTPException(status_code=404, detail=f"Unknown review: {review_id}")
+    except rv.ReviewCorrupt as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _review_repo(review: dict) -> Path | None:
+    """The review's repository root, or None when it is gone."""
+    repo = review.get("repo") or ""
+    p = Path(repo)
+    if not p.is_dir():
+        return None
+    return _find_repo_root(str(p))
+
+
+@api_router.get("/reviews")
+def api_reviews_list(repo: str = ""):
+    """The repository's reviews, open and closed, newest update first."""
+    repo_dir = _resolve_repo(repo)
+    return rv.list_for_repo(str(repo_dir.resolve()))
+
+
+@api_router.post("/reviews", status_code=201)
+def api_reviews_create(body: ReviewCreate):
+    """Save a comparison as a review. Bad refs are a 400."""
+    repo_dir = _resolve_repo(body.repo)
+    try:
+        cmp = resolve_comparison(
+            repo_dir,
+            base=body.base,
+            head=body.head,
+            mergebase=body.mergebase,
+            worktree=body.worktree,
+        )
+    except RefError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        return rv.create(repo_dir, cmp, body.title)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/reviews/{review_id}")
+def api_review_get(review_id: str, since: str | None = None):
+    """A review with its live comparison.
+
+    A full load (no ``since``) recomputes the viewed state, counts the
+    commits since the last look and advances ``last_seen_head``. With
+    ``since``, the page's known ``updated`` stamp, this is the poll: it
+    answers ``{"changed": false}`` when nothing moved, else the record,
+    without touching the review.
+    """
+    review = _load_review(review_id)
+    if since is not None:
+        # A "+00:00" offset arrives as a space when the client forgot to
+        # encode it, and a stamp never contains a space.
+        if review.get("updated") == since.replace(" ", "+"):
+            return {"changed": False}
+        return {"changed": True, "review": review}
+
+    repo_dir = _review_repo(review)
+    if repo_dir is None:
+        return {
+            "review": review,
+            "comparison": None,
+            "changed_since_viewed": [],
+            "new_commits": 0,
+            "error": f"Repository not found: {review.get('repo')}",
+        }
+    try:
+        review, changed, new_commits, cmp = rv.refresh(review_id, repo_dir)
+    except RefError as e:
+        return {
+            "review": review,
+            "comparison": None,
+            "changed_since_viewed": [],
+            "new_commits": 0,
+            "error": str(e),
+        }
+    except rv.ReviewCorrupt as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    try:
+        comparison = compare_detail(cmp, repo_dir)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "review": review,
+        "comparison": comparison,
+        "changed_since_viewed": changed,
+        "new_commits": new_commits,
+        "error": None,
+    }
+
+
+@api_router.patch("/reviews/{review_id}")
+def api_review_patch(review_id: str, body: ReviewPatch):
+    """Rename a review or open and close it."""
+    review = _load_review(review_id)
+    try:
+        if body.title is not None:
+            review = rv.set_title(review_id, body.title)
+        if body.status is not None:
+            review = rv.set_status(review_id, body.status)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except rv.ReviewNotFound:
+        raise HTTPException(status_code=404, detail=f"Unknown review: {review_id}")
+    return review
+
+
+@api_router.put("/reviews/{review_id}/viewed/{file_path:path}")
+def api_review_viewed(review_id: str, file_path: str, body: ViewedBody):
+    """Tick or untick a file of the review."""
+    _validate_path(file_path)
+    review = _load_review(review_id)
+    repo_dir = _review_repo(review)
+    if repo_dir is None:
+        raise HTTPException(
+            status_code=400, detail=f"Repository not found: {review.get('repo')}"
+        )
+    try:
+        return rv.set_viewed(review_id, file_path, body.viewed, repo_dir)
+    except RefError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except rv.ReviewNotFound:
+        raise HTTPException(status_code=404, detail=f"Unknown review: {review_id}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @api_router.get("/{commit_hash}")

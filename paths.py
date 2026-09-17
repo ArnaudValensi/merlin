@@ -163,6 +163,16 @@ def sessions_dir() -> Path:
     return data_dir() / "sessions"
 
 
+def reviews_dir() -> Path:
+    """Saved code reviews of the Commits page. Always ~/.merlin/reviews/.
+
+    One JSON file per review, written by the server and by ``merlin review``
+    from different processes, so every write goes through the lock and the
+    temp-then-rename in ``commits/reviews.py``.
+    """
+    return data_dir() / "reviews"
+
+
 def extensions_dir() -> Path:
     """User extensions directory. Always ~/.merlin/extensions/."""
     return data_dir() / "extensions"

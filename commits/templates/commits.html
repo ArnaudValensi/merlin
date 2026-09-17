@@ -44,6 +44,15 @@
             <span class="worktree-row-label">Working tree</span>
             <span class="worktree-row-meta" id="worktree-row-meta"></span>
         </div>
+        <div id="reviews-section" class="reviews-section" style="display:none">
+            <div class="reviews-heading">Reviews</div>
+            <div id="reviews-open" class="reviews-list"></div>
+            <button id="reviews-closed-btn" class="reviews-closed-btn" style="display:none" aria-expanded="false">
+                <span id="reviews-closed-label">Closed</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div id="reviews-closed" class="reviews-list" style="display:none"></div>
+        </div>
         <div id="commit-list" class="commit-list"></div>
         <div id="list-empty" class="empty-state" style="display:none">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><line x1="12" y1="3" x2="12" y2="9"/><line x1="12" y1="15" x2="12" y2="21"/></svg>
@@ -66,6 +75,28 @@
             </button>
             <div class="commit-meta" id="diff-meta"></div>
         </div>
+        <div id="review-chrome" class="review-chrome" style="display:none">
+            <div class="review-title-row">
+                <input id="review-title" class="review-title" type="text" aria-label="Review title" maxlength="200" spellcheck="false">
+                <span id="review-status" class="review-status"></span>
+            </div>
+            <div id="review-refs" class="commit-meta-info review-refs"></div>
+            <div id="review-new-commits" class="review-new-commits" style="display:none"></div>
+            <div id="review-error" class="commit-meta-info diff-error" style="display:none"></div>
+            <div class="review-actions">
+                <button id="review-copy-btn" class="review-action-btn" title="Copy the command the agent runs to read this review">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                    <span>Copy for agent</span>
+                </button>
+                <button id="review-status-btn" class="review-action-btn"></button>
+            </div>
+        </div>
+        <div id="save-review-row" class="save-review-row" style="display:none">
+            <button id="save-review-btn" class="review-action-btn save-review-btn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                <span>Save as review</span>
+            </button>
+        </div>
         <div id="compare-commits" class="file-list-toggle" style="display:none">
             <button id="compare-commits-btn" class="file-list-toggle-btn">
                 <span id="compare-commits-label"></span>
@@ -75,7 +106,7 @@
         </div>
         <div id="file-list-toggle" class="file-list-toggle" style="display:none">
             <button id="file-list-toggle-btn" class="file-list-toggle-btn">
-                <span><span id="file-list-count"></span> files changed</span>
+                <span id="file-list-label"><span id="file-list-count"></span> files changed</span>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
             </button>
             <div id="file-list-panel" class="file-list-panel" style="display:none"></div>

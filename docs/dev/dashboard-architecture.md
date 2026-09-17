@@ -299,6 +299,7 @@ document.addEventListener('DOMContentLoaded', () => {
 | `GET /api/commits/compare/diff` | Parsed unified diff of a comparison |
 | `GET /api/commits/compare/file/{path}` | Full file at the head of a comparison, with gutters |
 | `GET /api/commits/refs` | Local and remote branches, the current branch, the guessed default base |
+| `GET`, `POST /api/commits/reviews`, `GET`, `PATCH /api/commits/reviews/{id}`, `PUT .../viewed/{path}` | Saved reviews with viewed files, one JSON file each under `~/.merlin/reviews/` (see [`commit-review.md`](commit-review.md)) |
 
 ### Files
 
@@ -391,6 +392,7 @@ commits/
 ├── routes.py              # Pages + API endpoints
 ├── git_parser.py          # Git log/diff parsing helpers (subprocess calls to git)
 ├── compare.py             # base..head comparisons: ref safety, single commit, range, branch, working tree
+├── reviews.py             # Saved reviews store: one JSON per review under ~/.merlin/reviews/, flock + atomic write, viewed hash
 ├── templates/
 │   └── commits.html       # SPA: 3 views (list, diff, file) + the compare sheet
 └── static/
@@ -399,7 +401,7 @@ commits/
     └── commits.js         # IIFE: routing by target, diff rendering, highlight.js, gutter nav
 ```
 
-**Pages:** `/commits` (list), `/commits/{hash}` (diff), `/commits/{hash}/file/{path}` (full file), `/commits/compare?base=&head=` and `/commits/compare/file/{path}` (a comparison, see [`commit-review.md`](commit-review.md))
+**Pages:** `/commits` (list), `/commits/{hash}` (diff), `/commits/{hash}/file/{path}` (full file), `/commits/compare?base=&head=` and `/commits/compare/file/{path}` (a comparison), `/commits/reviews/{id}` and `/commits/reviews/{id}/file/{path}` (a saved review), see [`commit-review.md`](commit-review.md)
 
 **SPA pattern:** Single template with 3 views toggled via `display: none`. Uses `history.pushState` + `popstate` for browser navigation. `routeFromUrl()` on load for deep linking.
 
