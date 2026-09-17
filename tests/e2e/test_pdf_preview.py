@@ -7,12 +7,7 @@ pdf.js renders to a 2D canvas (no WebGL), so — unlike the 3D suite — no
 swiftshader flags are needed; headless Chromium renders it directly.
 """
 
-import os
 import shutil
-import signal
-import socket
-import subprocess
-import time
 from pathlib import Path
 
 import pytest
@@ -25,12 +20,6 @@ from playwright.sync_api import sync_playwright
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
 
-def _find_free_port():
-    with socket.socket() as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
-
-
 @pytest.fixture(scope="module")
 def test_files(tmp_path_factory):
     """A valid 2-page PDF, a corrupt PDF, and a neighbour file (for sibling
@@ -41,48 +30,6 @@ def test_files(tmp_path_factory):
     # Sorts after sample_2page.pdf so #file-next-btn navigates to it.
     (root / "zzz.txt").write_text("neighbour\n")
     return root
-
-
-@pytest.fixture(scope="module")
-def server(test_files):
-    """Start the Merlin server without auth on a random port."""
-    port = _find_free_port()
-    env = os.environ.copy()
-    env["DASHBOARD_PASS"] = ""
-    env["MERLIN_SAAS_TOKEN"] = ""
-    env["DISCORD_BOT_TOKEN"] = ""
-    env["DISCORD_CHANNEL_IDS"] = ""
-
-    merlin_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
-    env.pop("MERLIN_HOME", None)
-
-    proc = subprocess.Popen(
-        ["uv", "run", "main.py", "--port", str(port)],
-        cwd=merlin_root,
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    url = f"http://localhost:{port}"
-    for _ in range(30):
-        try:
-            import urllib.request
-
-            urllib.request.urlopen(f"{url}/api/files/browse?path=/tmp", timeout=1)
-            break
-        except Exception:
-            time.sleep(0.5)
-    else:
-        proc.kill()
-        raise RuntimeError("Server failed to start")
-
-    yield url
-
-    proc.send_signal(signal.SIGTERM)
-    proc.wait(timeout=5)
 
 
 @pytest.fixture(scope="module")

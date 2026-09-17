@@ -58,6 +58,14 @@ E2E tests need Playwright; first-time setup:
 uv run --with playwright playwright install firefox
 ```
 
+Every E2E file starts its Merlin through `tests/e2e/conftest.py`: the `server`
+fixture (the URL) and `tmux_env` (for `tmux` commands against that server's
+private socket), or `start_merlin` and `stop_merlin` for a module that needs
+several servers or a password. Each server gets its own home, its own tmux
+server and a random port, so a test run can never touch `~/.merlin` (the live
+server's state file, jobs, logs) or the real tmux server. Do not start a
+server any other way in a test.
+
 Validation includes the doc link-checker test, so run `validate` after
 documentation changes too. The doc-writing contract is
 [documentation-principles.md](documentation-principles.md).

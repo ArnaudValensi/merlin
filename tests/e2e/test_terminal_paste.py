@@ -21,13 +21,7 @@ Run: uv run scripts.py test-e2e   (or pytest tests/e2e/test_terminal_paste.py)
 Requires: chromium (clipboard permissions cannot be granted in Firefox) + tmux.
 """
 
-import os
 import shutil
-import signal
-import socket
-import subprocess
-import time
-import urllib.request
 
 import pytest
 
@@ -38,58 +32,6 @@ from playwright.sync_api import sync_playwright
 pytestmark = pytest.mark.skipif(
     shutil.which("tmux") is None, reason="web terminal needs tmux"
 )
-
-
-def _find_free_port():
-    with socket.socket() as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
-
-
-@pytest.fixture(scope="module")
-def server(tmp_path_factory):
-    """Merlin without auth on a random port, on its own tmux server."""
-    port = _find_free_port()
-    env = os.environ.copy()
-    env["DASHBOARD_PASS"] = ""
-    env["MERLIN_SAAS_TOKEN"] = ""
-    env["DISCORD_BOT_TOKEN"] = ""
-    env["DISCORD_CHANNEL_IDS"] = ""
-    env.pop("MERLIN_HOME", None)
-
-    # Never touch the tmux server the developer is sitting in: an inherited
-    # $TMUX makes the spawned `tmux new-session` refuse to nest, and a shared
-    # socket would attach the test to real windows. The socket path is a unix
-    # socket, so it has to stay well short of ~108 chars.
-    env.pop("TMUX", None)
-    env["TMUX_TMPDIR"] = str(tmp_path_factory.mktemp("tmux"))
-
-    merlin_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
-    proc = subprocess.Popen(
-        ["uv", "run", "main.py", "--port", str(port)],
-        cwd=merlin_root,
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    url = f"http://localhost:{port}"
-    for _ in range(60):
-        try:
-            urllib.request.urlopen(f"{url}/terminal", timeout=1)
-            break
-        except Exception:
-            time.sleep(0.5)
-    else:
-        proc.kill()
-        raise RuntimeError("Server failed to start")
-
-    yield url
-
-    proc.send_signal(signal.SIGTERM)
-    proc.wait(timeout=10)
 
 
 @pytest.fixture(scope="module")

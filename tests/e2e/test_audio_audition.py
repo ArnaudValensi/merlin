@@ -11,12 +11,7 @@ Run with: uv run scripts.py test-e2e   (or)
 Requires: uv run --with playwright playwright install firefox
 """
 
-import os
-import signal
-import socket
 import struct
-import subprocess
-import time
 import wave
 
 import pytest
@@ -30,12 +25,6 @@ from playwright.sync_api import sync_playwright
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-def _find_free_port():
-    with socket.socket() as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
 
 
 def _write_wav(path, seconds=2.0, freq=440.0, rate=8000):
@@ -66,48 +55,6 @@ def sample_files(tmp_path_factory):
     _write_wav(samples / "three.wav", freq=660.0)
     (samples / "notes.txt").write_text("not audio\n")
     return samples
-
-
-@pytest.fixture(scope="module")
-def server(sample_files):
-    """Start the Merlin server without auth on a random port."""
-    port = _find_free_port()
-    env = os.environ.copy()
-    env["DASHBOARD_PASS"] = ""
-    env["MERLIN_SAAS_TOKEN"] = ""
-    env["DISCORD_BOT_TOKEN"] = ""
-    env["DISCORD_CHANNEL_IDS"] = ""
-
-    merlin_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
-    env.pop("MERLIN_HOME", None)
-
-    proc = subprocess.Popen(
-        ["uv", "run", "main.py", "--port", str(port)],
-        cwd=merlin_root,
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    url = f"http://localhost:{port}"
-    for _ in range(30):
-        try:
-            import urllib.request
-
-            urllib.request.urlopen(f"{url}/api/files/browse?path=/tmp", timeout=1)
-            break
-        except Exception:
-            time.sleep(0.5)
-    else:
-        proc.kill()
-        raise RuntimeError("Server failed to start")
-
-    yield url
-
-    proc.send_signal(signal.SIGTERM)
-    proc.wait(timeout=5)
 
 
 @pytest.fixture(scope="module")

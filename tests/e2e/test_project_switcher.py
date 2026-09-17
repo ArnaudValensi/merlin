@@ -8,11 +8,6 @@ Requires: uv run --with playwright playwright install firefox
 """
 
 import json
-import os
-import signal
-import socket
-import subprocess
-import time
 
 import pytest
 
@@ -20,6 +15,8 @@ import pytest
 pytest.importorskip("playwright")
 
 from playwright.sync_api import sync_playwright
+
+from conftest import start_merlin, stop_merlin
 
 
 # ---------------------------------------------------------------------------
@@ -59,71 +56,33 @@ MOCK_PROJECTS = [
 # ---------------------------------------------------------------------------
 
 
-def _find_free_port():
-    with socket.socket() as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
-
-
 TEST_PASSWORD = "testpass123"
 
 
-def _start_server(saas_token=""):
-    """Start a Merlin server instance. Returns (url, process)."""
-    port = _find_free_port()
-    env = os.environ.copy()
-    env["DASHBOARD_PASS"] = TEST_PASSWORD
-    env["MERLIN_SAAS_TOKEN"] = saas_token
-    env["MERLIN_SAAS_API"] = "https://merlincloud.dev"
-    env["DISCORD_BOT_TOKEN"] = ""
-    env["DISCORD_CHANNEL_IDS"] = ""
-    # Don't inherit MERLIN_HOME from test isolation — the subprocess needs
-    # the real ~/.merlin/ to find config.env, extensions, etc.
-    env.pop("MERLIN_HOME", None)
-
-    merlin_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+def _start(tmp_path_factory, saas_token, name):
+    return start_merlin(
+        tmp_path_factory,
+        password=TEST_PASSWORD,
+        saas_token=saas_token,
+        extra_env={"MERLIN_SAAS_API": "https://merlincloud.dev"},
+        name=name,
     )
-    proc = subprocess.Popen(
-        ["uv", "run", "main.py", "--port", str(port)],
-        cwd=merlin_root,
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    url = f"http://localhost:{port}"
-    for _ in range(30):
-        try:
-            import urllib.request
-
-            urllib.request.urlopen(f"{url}/api/files/browse?path=/tmp", timeout=1)
-            break
-        except Exception:
-            time.sleep(0.5)
-    else:
-        proc.kill()
-        raise RuntimeError("Server failed to start")
-
-    return url, proc
 
 
 @pytest.fixture(scope="module")
-def standalone_server():
-    """Start the Merlin server in standalone mode (no MERLIN_SAAS_TOKEN)."""
-    url, proc = _start_server(saas_token="")
-    yield url
-    proc.send_signal(signal.SIGTERM)
-    proc.wait(timeout=5)
+def standalone_server(tmp_path_factory):
+    """Merlin in standalone mode (no MERLIN_SAAS_TOKEN), on its own home."""
+    server = _start(tmp_path_factory, "", "standalone")
+    yield server.url
+    stop_merlin(server)
 
 
 @pytest.fixture(scope="module")
-def saas_server():
-    """Start the Merlin server in SaaS mode (MERLIN_SAAS_TOKEN set)."""
-    url, proc = _start_server(saas_token="mrl_test_fake_token_1234567890")
-    yield url
-    proc.send_signal(signal.SIGTERM)
-    proc.wait(timeout=5)
+def saas_server(tmp_path_factory):
+    """Merlin in SaaS mode (MERLIN_SAAS_TOKEN set), on its own home."""
+    server = _start(tmp_path_factory, "mrl_test_fake_token_1234567890", "saas")
+    yield server.url
+    stop_merlin(server)
 
 
 @pytest.fixture(scope="module")

@@ -6,9 +6,6 @@ Requires: uv run --with playwright playwright install firefox
 """
 
 import os
-import signal
-import socket
-import subprocess
 import textwrap
 import time
 
@@ -23,12 +20,6 @@ from playwright.sync_api import sync_playwright
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-def _find_free_port():
-    with socket.socket() as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
 
 
 @pytest.fixture(scope="module")
@@ -158,52 +149,6 @@ def test_files(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def server(test_files):
-    """Start the Merlin server without auth on a random port."""
-    port = _find_free_port()
-    env = os.environ.copy()
-    env["DASHBOARD_PASS"] = ""
-    env["MERLIN_SAAS_TOKEN"] = ""
-    env["DISCORD_BOT_TOKEN"] = ""
-    env["DISCORD_CHANNEL_IDS"] = ""
-
-    # Start from the merlin project root
-    merlin_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
-    # Don't inherit MERLIN_HOME from test isolation — the subprocess needs
-    # the real ~/.merlin/ (or no MERLIN_HOME) to find config.env, extensions, etc.
-    env.pop("MERLIN_HOME", None)
-
-    proc = subprocess.Popen(
-        ["uv", "run", "main.py", "--port", str(port)],
-        cwd=merlin_root,
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    # Wait for server to be ready
-    url = f"http://localhost:{port}"
-    for _ in range(30):
-        try:
-            import urllib.request
-
-            urllib.request.urlopen(f"{url}/api/files/browse?path=/tmp", timeout=1)
-            break
-        except Exception:
-            time.sleep(0.5)
-    else:
-        proc.kill()
-        raise RuntimeError("Server failed to start")
-
-    yield url
-
-    proc.send_signal(signal.SIGTERM)
-    proc.wait(timeout=5)
-
-
-@pytest.fixture(scope="module")
 def browser_context(server):
     """Provide a Playwright browser context."""
     with sync_playwright() as p:
@@ -292,9 +237,8 @@ class TestMarkdownRendering:
         ctx, url = browser_context
         page = ctx.new_page()
         page.goto(f"{url}/files{test_files}/test.md", wait_until="networkidle")
-        time.sleep(0.5)
-
-        pre = page.query_selector(".markdown-body pre")
+        # The render is client-side: wait for it rather than a fixed pause.
+        pre = page.wait_for_selector(".markdown-body pre", timeout=10000)
         assert pre is not None
         code = pre.query_selector("code")
         assert code is not None

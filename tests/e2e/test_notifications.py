@@ -13,11 +13,8 @@ Requires: chromium + tmux.
 import os
 import re
 import shutil
-import signal
-import socket
 import subprocess
 import time
-import urllib.request
 
 import pytest
 
@@ -33,66 +30,10 @@ SESSION = "merlin-dev"  # the session the web terminal creates on first attach
 PUBLIC_URL = (
     "https://e2e.merlin.test"  # the instance's public URL, for the VAPID subject
 )
-
-
-def _find_free_port():
-    with socket.socket() as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
-
-
-@pytest.fixture(scope="module")
-def tmux_env(tmp_path_factory):
-    env = os.environ.copy()
-    env.pop("TMUX", None)
-    env["TMUX_TMPDIR"] = str(tmp_path_factory.mktemp("tmux"))
-    return env
-
-
-@pytest.fixture(scope="module")
-def server(tmux_env, tmp_path_factory):
-    """Merlin without auth on a random port, on its own tmux server and its
-    own home, so nothing touches ~/.merlin (config, jobs, logs, server state)."""
-    port = _find_free_port()
-    home = tmp_path_factory.mktemp("home")
-    (home / "config.env").write_text("DASHBOARD_PASS=\n")
-    env = dict(tmux_env)
-    env["DASHBOARD_PASS"] = ""
-    env["MERLIN_SAAS_TOKEN"] = ""
-    env["DISCORD_BOT_TOKEN"] = ""
-    env["DISCORD_CHANNEL_IDS"] = ""
-    env["MERLIN_HOME"] = str(home)
-    env["MERLIN_DEV"] = "1"
-    # A public https URL for the instance: the VAPID subject rule picks it up
-    # over any environment slug the shell may carry, so the claim is known.
-    env["MERLIN_DASHBOARD_URL"] = PUBLIC_URL
-
-    merlin_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
-    proc = subprocess.Popen(
-        ["uv", "run", "main.py", "--port", str(port)],
-        cwd=merlin_root,
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    url = f"http://localhost:{port}"
-    for _ in range(60):
-        try:
-            urllib.request.urlopen(f"{url}/terminal", timeout=1)
-            break
-        except Exception:
-            time.sleep(0.5)
-    else:
-        proc.kill()
-        raise RuntimeError("Server failed to start")
-
-    yield url
-
-    proc.send_signal(signal.SIGTERM)
-    proc.wait(timeout=10)
-    subprocess.run(["tmux", "kill-server"], env=tmux_env, capture_output=True)
+# The shared throwaway (tests/e2e/conftest.py) with a public https URL: the
+# VAPID subject rule picks it up over any environment slug the shell may
+# carry, so the claim is known.
+MERLIN_OPTIONS = {"extra_env": {"MERLIN_DASHBOARD_URL": PUBLIC_URL}}
 
 
 def tmux(env, *args):
