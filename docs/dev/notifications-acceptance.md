@@ -79,4 +79,4 @@ that, and everything else is to be redone.
 | 17 | passed 2026-09-16 | Fresh install: permission once, subscribed, listed as this device, test push received. Finding: the previous install's subscription stays listed, iOS tells nobody about an uninstall and Apple keeps accepting sends on it. Removed by hand with the cross. A rule dropping an older subscription with the same label and push service on subscribe would fix it, at the price of two iPhones of one person chasing each other: left as a finding. |
 | 18 | passed 2026-09-16 | Icon and app switcher read `merlin`, badge count shown. |
 | 19 | passed 2026-09-16 | Locked over a minute and a half, reconnected on its own, the reply sent meanwhile visible without a keystroke. |
-| 20 | to run | Needs a Merlin reached over plain HTTP on a LAN address. |
+| 20 | passed 2026-09-17 | A throwaway on port 3124 reached at `http://192.168.1.144:3124` from the phone: toggle disabled, the HTTPS sentence alone with the doc link, count and pills working. Found on the way: the Home Screen advice showed over HTTP and the missing API came before the missing HTTPS, fixed (HTTPS first, no install advice without it). |
