@@ -13,6 +13,7 @@ from unittest import mock
 import pytest
 
 from commits import compare
+from commits.git_parser import HASH_RE as gp_hash_re
 from commits.compare import (
     EMPTY_TREE,
     RefError,
@@ -485,7 +486,14 @@ class TestGitCallSafety:
             compare_file(wt, "new.txt", repo)
         assert not any(a[0] == "show" and ":" in a[-1] for a in calls)
         for args in calls:
-            if args[0] in ("rev-parse", "merge-base", "rev-list", "log", "ls-tree"):
+            if args[0] in (
+                "rev-parse",
+                "merge-base",
+                "rev-list",
+                "log",
+                "ls-tree",
+                "cat-file",
+            ):
                 assert "--end-of-options" in args, args
             if args[0] == "diff" and "--no-index" not in args:
                 assert "--end-of-options" in args, args
@@ -495,7 +503,10 @@ class TestGitCallSafety:
             if args[0] == "ls-files" and "--others" not in args:
                 assert "--" in args, args  # the tracked check carries a path
             if args[0] == "cat-file":
-                assert args[1] == "blob" and len(args[2]) == 40, args
+                # blob --end-of-options <40-hex oid>, the boundary before the id
+                assert args[1] == "blob", args
+                assert args.index("--end-of-options") == len(args) - 2, args
+                assert len(args[-1]) == 40 and gp_hash_re.match(args[-1]), args
             # The user's path only ever appears after "--", whole, never
             # embedded in a revision argument like "<sha>:<path>".
             for i, a in enumerate(args):

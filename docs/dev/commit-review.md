@@ -111,9 +111,10 @@ here. The rules, in `compare.py`:
    refuses them. The `path` itself is validated by the same `SAFE_PATH_RE` as
    the commit routes.
 5. **A path is never a revision.** The committed file read uses `ls-tree --
-   <path>` and `cat-file blob <oid>`, not `show <sha>:<path>`. The spy test
-   asserts that the user's path appears in git arguments only whole and only
-   after `--`.
+   <path>` and `cat-file blob --end-of-options <oid>`, not `show <sha>:<path>`.
+   The spy test asserts that the user's path appears in git arguments only
+   whole and only after `--`, and that `cat-file` carries the boundary before
+   its object id.
 
 ## Routes
 

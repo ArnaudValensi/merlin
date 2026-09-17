@@ -510,7 +510,9 @@ def _blob_at(head_sha: str, head: str, file_path: str, repo_dir: Path) -> str:
     if len(oid) != 40:
         raise FileNotFoundError(f"File {file_path} not found at {head}")
     try:
-        return gp._run_git("cat-file", "blob", oid, repo_dir=repo_dir)
+        return gp._run_git(
+            "cat-file", "blob", "--end-of-options", oid, repo_dir=repo_dir
+        )
     except subprocess.CalledProcessError:
         raise FileNotFoundError(f"File {file_path} not found at {head}")
 
