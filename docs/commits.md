@@ -25,17 +25,60 @@ regex, `git log --grep` under the hood, debounced so it does not fire on
 every keystroke). The **Since** and **Until** date inputs map to
 `git log --since` / `--until` and reload the list when changed.
 
+## Compare
+
+A commit is one comparison among several. The page can compare any two
+points of the repository and shows the result with the same file list,
+diff sections and full-file view a commit gets. Three ways to pick what
+to compare, all from the phone:
+
+- **Select** (the toggle in the filters bar) puts the list in selection
+  mode. Tap a commit to pick one end of a range, tap another to complete
+  it (both inclusive, the order of taps does not matter). A bar at the
+  bottom reads `N commits selected` with a **Compare** button that opens
+  the range. Tapping a picked commit again clears it. There is no long
+  press: it fights the browser on a phone.
+- **Compare** (the button in the header) opens a sheet with a **Head**
+  and a **Base** field. Each shows the repository's branches (local, then
+  remote) filtered as you type, and any ref git understands works as
+  typed (`HEAD~3`, a tag, `origin/main`). Head defaults to the current
+  branch and base to the repository's main branch (the target of
+  `origin/HEAD`, else `main`, else `master`). **Against merge base** is on
+  by default: the comparison then shows only what the head branch added
+  since it forked, even if the base moved on since (GitHub's three-dot
+  view). Untick it for a plain two-point diff.
+- **Working tree**: when the tree is dirty, a pinned row at the top of the
+  list reads `Working tree · N files · +x -y` and opens the uncommitted
+  changes (staged and unstaged together, plus untracked files shown as
+  added) against `HEAD`. The same shortcut sits at the top of the Compare
+  sheet. This is usually what the agent just did.
+
+The comparison page header names what is compared: the kind (Commit,
+Range, Branch, Working tree), both refs with their resolved short hashes,
+whether the merge base is used, and the number of commits included. A
+collapsible `N commits` panel under it lists those commits (up to 200),
+each tappable to open on its own.
+
+A comparison is just a URL (`/commits/compare?base=...&head=...`), so it
+reloads, bookmarks and pastes like a commit link.
+
 ## Read a diff
 
 ![Diff viewer](commits/phone-diff.jpg)
 
 The diff view header shows the commit's message, short hash, author, and
-relative time. A collapsible "N files changed" panel lists each file with
+relative time (or the comparison header above). A collapsible "N files
+changed" panel lists each file with
 a status letter (M modified in yellow, A added in green, D deleted in
 red, R renamed in purple), its path, and +/- stats; tapping a file
 scrolls to its diff section. Diffs render with old/new line numbers,
 additions tinted green, deletions red, context dimmed. Binary files show
 a "Binary file" notice instead of a diff.
+
+Each file's header (its path and the **Full file** button) sticks to the
+top of the screen while you scroll through that file's diff, and the next
+file's header pushes it away. You always know which file you are reading,
+on desktop and on the phone.
 
 The back arrow returns from the diff to the list (and from a file back to
 the diff). Browser back/forward works too.
@@ -43,7 +86,8 @@ the diff). Browser back/forward works too.
 ## Open the full file
 
 Each diff section has a **Full file** button (hidden for deleted files)
-that opens the complete file as it existed at that commit, with syntax
+that opens the complete file as it existed at that commit (at the head of
+a comparison, or on disk for the working tree), with syntax
 highlighting picked from the file extension (auto-detect fallback).
 Tapping a hunk header (the `@@` line) also jumps into the full file,
 scrolled to that hunk, with diff mode already on.
@@ -84,8 +128,12 @@ working in.
 ## Share deep links
 
 URLs are real routes: `/commits?repo=...`, `/commits/<hash>?repo=...`,
-and `/commits/<hash>/file/<path>?repo=...`. Bookmark them, or paste one
-in chat to point your agent (or a friend) at a specific commit.
+`/commits/<hash>/file/<path>?repo=...`, and for comparisons
+`/commits/compare?repo=...&base=...&head=...[&mergebase=1]`,
+`/commits/compare?repo=...&worktree=1` and
+`/commits/compare/file/<path>?...`. Bookmark them, or paste one
+in chat to point your agent (or a friend) at a specific commit or
+comparison.
 
 ## Mobile notes
 
@@ -93,7 +141,10 @@ in chat to point your agent (or a friend) at a specific commit.
 - Code blocks go edge-to-edge and page padding drops to zero, so the diff
   gets the full screen width.
 - Diff tables scroll horizontally with touch momentum while the file
-  header stays put.
+  header stays put, and vertically the header sticks to the top of the
+  screen for the length of its file.
+- Selection mode uses two taps, never a long press, and its bar keeps a
+  44px **Compare** button within thumb reach.
 - The prev/next cluster shrinks and tucks into the corner; commit rows
   and buttons keep 44px tap targets.
 - The repo picker opens as a full-height sheet on the phone (a centered
@@ -119,3 +170,9 @@ in chat to point your agent (or a friend) at a specific commit.
 - **404 opening a file**: the file does not exist at that commit (it was
   added later or lived elsewhere). Paths with unusual characters, leading
   slashes, or `..` are also rejected.
+- **"Unknown ref" or "Invalid ref" on a comparison**: a typed ref did not
+  resolve to a commit, or has a shape git could mistake for an option
+  (a leading `-`, a `..`, a space). Pick a branch from the list or check
+  the spelling.
+- **"Nothing to compare"**: the two points have the same tree, for
+  example a branch compared to itself or a clean working tree.

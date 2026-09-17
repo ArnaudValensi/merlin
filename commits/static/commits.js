@@ -1,4 +1,7 @@
-/* Commit browser — view management, diff rendering, gutter logic */
+/* Commit browser: view management, diff rendering, gutter logic.
+   Every diff view is a comparison "target": {kind: 'commit', hash} for a
+   single commit, or {kind: 'compare', base, head, mergebase, worktree} for
+   a base..head comparison (range, branch, working tree). */
 
 (function() {
     'use strict';
@@ -10,8 +13,12 @@
     let loadedCount = 0;
     const PAGE_SIZE = 50;
     let searchTimeout = null;
-    let currentHash = null;
+    let currentTarget = null;   // the comparison shown by the diff and file views
     let currentFilePath = null;
+    let selectMode = false;     // list rows pick range endpoints instead of opening
+    let selection = CompareModel.emptySelection();
+    let refsCache = null;       // /api/commits/refs for the compare sheet
+    let sheetActiveField = 'head';
     let gutterLines = [];   // indices into file lines that have gutters
     let gutterIndex = -1;
     let lineHunkMap = [];   // per-line-index: hunk id or null
@@ -26,6 +33,10 @@
     let diffMeta, diffContent, diffLoading, fileListToggle, fileListPanel, fileListCount, fileListToggleBtn;
     let fileMeta, fileContent, fileLoading, diffToggle, wrapToggle, gutterFab, fabCounter;
     let repoIndicator, repoPath, repoPickerBtn, noRepoState, pickRepoBtn;
+    let compareBtn, selectToggle, worktreeRow, worktreeRowMeta;
+    let selectBar, selectSummary, selectClearBtn, selectCompareBtn;
+    let compareCommits, compareCommitsBtn, compareCommitsLabel, compareCommitsPanel;
+    let sheet, sheetHead, sheetBase, sheetMergebase, sheetError, sheetRefHint, sheetRefList, sheetGoBtn;
 
     // ---------------------------------------------------------------------------
     // Init
@@ -66,6 +77,26 @@
         repoPickerBtn = document.getElementById('repo-picker-btn');
         noRepoState = document.getElementById('no-repo-state');
         pickRepoBtn = document.getElementById('pick-repo-btn');
+        compareBtn = document.getElementById('compare-btn');
+        selectToggle = document.getElementById('select-toggle');
+        worktreeRow = document.getElementById('worktree-row');
+        worktreeRowMeta = document.getElementById('worktree-row-meta');
+        selectBar = document.getElementById('select-bar');
+        selectSummary = document.getElementById('select-summary');
+        selectClearBtn = document.getElementById('select-clear-btn');
+        selectCompareBtn = document.getElementById('select-compare-btn');
+        compareCommits = document.getElementById('compare-commits');
+        compareCommitsBtn = document.getElementById('compare-commits-btn');
+        compareCommitsLabel = document.getElementById('compare-commits-label');
+        compareCommitsPanel = document.getElementById('compare-commits-panel');
+        sheet = document.getElementById('compare-sheet');
+        sheetHead = document.getElementById('compare-head');
+        sheetBase = document.getElementById('compare-base');
+        sheetMergebase = document.getElementById('compare-mergebase');
+        sheetError = document.getElementById('compare-error');
+        sheetRefHint = document.getElementById('compare-ref-hint');
+        sheetRefList = document.getElementById('compare-ref-list');
+        sheetGoBtn = document.getElementById('compare-go-btn');
 
         // Event listeners
         searchInput.addEventListener('input', debounceSearch);
@@ -74,8 +105,35 @@
         loadMoreBtn.addEventListener('click', loadMore);
         document.getElementById('diff-back-btn').addEventListener('click', () => navigateTo('list'));
         document.getElementById('file-back-btn').addEventListener('click', () => {
-            if (currentHash) navigateTo('diff', currentHash);
+            if (currentTarget) navigateTo('diff', currentTarget);
             else navigateTo('list');
+        });
+        selectToggle.addEventListener('click', toggleSelectMode);
+        selectClearBtn.addEventListener('click', clearSelection);
+        selectCompareBtn.addEventListener('click', openSelectedRange);
+        worktreeRow.addEventListener('click', () => navigateTo('diff', worktreeTarget()));
+        worktreeRow.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateTo('diff', worktreeTarget()); }
+        });
+        compareCommitsBtn.addEventListener('click', toggleCompareCommits);
+        compareBtn.addEventListener('click', openCompareSheet);
+        document.getElementById('compare-sheet-close').addEventListener('click', closeCompareSheet);
+        sheet.querySelector('.picker-overlay').addEventListener('click', closeCompareSheet);
+        document.getElementById('compare-worktree-btn').addEventListener('click', () => {
+            closeCompareSheet();
+            navigateTo('diff', worktreeTarget());
+        });
+        sheetGoBtn.addEventListener('click', submitCompareSheet);
+        for (const [input, field] of [[sheetHead, 'head'], [sheetBase, 'base']]) {
+            input.addEventListener('focus', () => { sheetActiveField = field; renderRefList(); });
+            input.addEventListener('input', renderRefList);
+            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitCompareSheet(); });
+        }
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && sheet.style.display !== 'none') {
+                e.stopPropagation();
+                closeCompareSheet();
+            }
         });
         fileListToggleBtn.addEventListener('click', toggleFileList);
         diffToggle.addEventListener('click', toggleDiffMode);
@@ -174,6 +232,7 @@
         repoIndicator.style.display = '';
         noRepoState.style.display = 'none';
         commitsFilters.style.display = '';
+        compareBtn.style.display = '';
         repoPath.textContent = shortenPath(currentRepo);
     }
 
@@ -182,6 +241,8 @@
         repoIndicator.style.display = 'none';
         noRepoState.style.display = '';
         commitsFilters.style.display = 'none';
+        compareBtn.style.display = 'none';
+        worktreeRow.style.display = 'none';
         listLoading.style.display = 'none';
     }
 
@@ -211,26 +272,100 @@
     }
 
     // ---------------------------------------------------------------------------
+    // Targets and URLs
+    // ---------------------------------------------------------------------------
+
+    function commitTarget(hash) {
+        return { kind: 'commit', hash: hash };
+    }
+
+    function worktreeTarget() {
+        return { kind: 'compare', base: '', head: '', mergebase: false, worktree: true };
+    }
+
+    // Query parameters that identify a comparison (the URL is the only state).
+    function targetParams(target) {
+        const params = new URLSearchParams();
+        if (currentRepo) params.set('repo', currentRepo);
+        if (target && target.kind === 'compare') {
+            if (target.worktree) {
+                params.set('worktree', '1');
+                if (target.base) params.set('base', target.base);
+            } else {
+                params.set('base', target.base);
+                params.set('head', target.head);
+                if (target.mergebase) params.set('mergebase', '1');
+            }
+        }
+        return params;
+    }
+
+    function withQuery(path, params) {
+        const q = params.toString();
+        return q ? path + '?' + q : path;
+    }
+
+    function pageUrl(view, target, filePath) {
+        if (view === 'list') return withQuery('/commits', targetParams(null));
+        const base = target.kind === 'commit' ? '/commits/' + target.hash : '/commits/compare';
+        const path = view === 'file' ? base + '/file/' + filePath : base;
+        return withQuery(path, targetParams(target));
+    }
+
+    function apiUrl(what, target, filePath) {
+        const base = target.kind === 'commit' ? '/api/commits/' + target.hash : '/api/commits/compare';
+        let path = base;
+        if (what === 'diff') path = base + '/diff';
+        if (what === 'file') path = base + '/file/' + encodeURIComponent(filePath).replace(/%2F/g, '/');
+        return withQuery(path, targetParams(target));
+    }
+
+    function targetFromSearch(search) {
+        const params = new URLSearchParams(search);
+        if (params.get('worktree') === '1') {
+            const t = worktreeTarget();
+            t.base = params.get('base') || '';
+            return t;
+        }
+        return {
+            kind: 'compare',
+            base: params.get('base') || '',
+            head: params.get('head') || '',
+            mergebase: params.get('mergebase') === '1',
+            worktree: false,
+        };
+    }
+
+    // ---------------------------------------------------------------------------
     // Routing
     // ---------------------------------------------------------------------------
 
     function routeFromUrl() {
         const path = window.location.pathname;
+        const search = window.location.search;
+        const m_cmp_file = path.match(/^\/commits\/compare\/file\/(.+)$/);
+        const m_cmp = path.match(/^\/commits\/compare$/);
         const m_file = path.match(/^\/commits\/([0-9a-f]+)\/file\/(.+)$/);
         const m_diff = path.match(/^\/commits\/([0-9a-f]+)$/);
 
         // Read repo from URL if not already set
         if (!currentRepo) {
-            const urlParams = new URLSearchParams(window.location.search);
+            const urlParams = new URLSearchParams(search);
             const r = urlParams.get('repo');
             if (r) currentRepo = r;
         }
 
-        if (m_file) {
-            showDiffView(m_file[1], false);
-            showFileView(m_file[1], m_file[2], false);
+        if (m_cmp_file) {
+            const target = targetFromSearch(search);
+            showDiffView(target, false);
+            showFileView(target, decodeURIComponent(m_cmp_file[1]), false);
+        } else if (m_cmp) {
+            showDiffView(targetFromSearch(search), false);
+        } else if (m_file) {
+            showDiffView(commitTarget(m_file[1]), false);
+            showFileView(commitTarget(m_file[1]), decodeURIComponent(m_file[2]), false);
         } else if (m_diff) {
-            showDiffView(m_diff[1], false);
+            showDiffView(commitTarget(m_diff[1]), false);
         } else {
             showListView(false);
         }
@@ -240,18 +375,13 @@
         routeFromUrl();
     }
 
-    function navigateTo(view, hash, filePath) {
-        let url;
-        const repoQ = currentRepo ? '?repo=' + encodeURIComponent(currentRepo) : '';
+    function navigateTo(view, target, filePath) {
         if (view === 'list') {
-            url = '/commits' + repoQ;
             showListView(true);
         } else if (view === 'diff') {
-            url = '/commits/' + hash + repoQ;
-            showDiffView(hash, true);
+            showDiffView(target, true);
         } else if (view === 'file') {
-            url = '/commits/' + hash + '/file/' + filePath + repoQ;
-            showFileView(hash, filePath, true);
+            showFileView(target, filePath, true);
         }
     }
 
@@ -270,34 +400,31 @@
         listView.style.display = '';
         diffView.style.display = 'none';
         fileView.style.display = 'none';
-        const repoQ = currentRepo ? '?repo=' + encodeURIComponent(currentRepo) : '';
-        if (pushState) pushUrl('/commits' + repoQ);
+        if (pushState) pushUrl(pageUrl('list'));
         if (currentRepo && commits.length === 0) {
             loadCommits();
         }
     }
 
-    function showDiffView(hash, pushState) {
+    function showDiffView(target, pushState) {
         currentView = 'diff';
-        currentHash = hash;
+        currentTarget = target;
         listView.style.display = 'none';
         diffView.style.display = '';
         fileView.style.display = 'none';
-        const repoQ = currentRepo ? '?repo=' + encodeURIComponent(currentRepo) : '';
-        if (pushState) pushUrl('/commits/' + hash + repoQ);
-        loadDiff(hash);
+        if (pushState) pushUrl(pageUrl('diff', target));
+        loadDiff(target);
     }
 
-    function showFileView(hash, filePath, pushState) {
+    function showFileView(target, filePath, pushState) {
         currentView = 'file';
-        currentHash = hash;
+        currentTarget = target;
         currentFilePath = filePath;
         listView.style.display = 'none';
         diffView.style.display = 'none';
         fileView.style.display = '';
-        const repoQ = currentRepo ? '?repo=' + encodeURIComponent(currentRepo) : '';
-        if (pushState) pushUrl('/commits/' + hash + '/file/' + filePath + repoQ);
-        loadFile(hash, filePath);
+        if (pushState) pushUrl(pageUrl('file', target, filePath));
+        loadFile(target, filePath);
     }
 
     // ---------------------------------------------------------------------------
@@ -316,6 +443,7 @@
         listLoading.style.display = '';
         loadMoreBtn.style.display = 'none';
         listEmpty.style.display = 'none';
+        if (!append) loadWorktreeRow();
 
         const params = new URLSearchParams();
         params.set('skip', loadedCount);
@@ -341,6 +469,7 @@
         for (const c of data) {
             commitList.appendChild(renderCommitItem(c));
         }
+        renderSelection();
 
         if (data.length >= PAGE_SIZE) {
             loadMoreBtn.style.display = '';
@@ -350,7 +479,11 @@
     function renderCommitItem(c) {
         const el = document.createElement('div');
         el.className = 'commit-item';
-        el.addEventListener('click', () => navigateTo('diff', c.hash));
+        el.dataset.hash = c.hash;
+        el.addEventListener('click', () => {
+            if (selectMode) pickRow(c.hash);
+            else navigateTo('diff', commitTarget(c.hash));
+        });
 
         const statsHtml = (c.insertions || c.deletions)
             ? `<div class="commit-stats">` +
@@ -360,6 +493,7 @@
             : '';
 
         el.innerHTML =
+            `<span class="commit-check" aria-hidden="true"></span>` +
             `<span class="commit-hash">${esc(c.short)}</span>` +
             `<div class="commit-info">` +
                 `<div class="commit-message">${esc(c.message)}</div>` +
@@ -384,30 +518,194 @@
     }
 
     // ---------------------------------------------------------------------------
+    // Working tree row (pinned above the list when the tree is dirty)
+    // ---------------------------------------------------------------------------
+
+    async function loadWorktreeRow() {
+        if (!currentRepo) return;
+        let data = null;
+        try {
+            data = await API.get(apiUrl('detail', worktreeTarget()));
+        } catch (_) {}
+        if (!data || !data.files || data.files.length === 0) {
+            worktreeRow.style.display = 'none';
+            return;
+        }
+        let ins = 0, del = 0;
+        for (const f of data.files) { ins += f.insertions || 0; del += f.deletions || 0; }
+        worktreeRowMeta.innerHTML =
+            `<span>${CompareModel.filesText(data.files.length)}</span>` +
+            (ins ? ` · <span class="stat-add">+${ins}</span>` : '') +
+            (del ? ` <span class="stat-del">-${del}</span>` : '');
+        worktreeRow.style.display = '';
+    }
+
+    // ---------------------------------------------------------------------------
+    // Select mode: two taps pick a range of commits to compare
+    // ---------------------------------------------------------------------------
+
+    function toggleSelectMode() {
+        selectMode = !selectMode;
+        selection = CompareModel.emptySelection();
+        selectToggle.classList.toggle('active', selectMode);
+        selectToggle.setAttribute('aria-pressed', selectMode ? 'true' : 'false');
+        commitList.classList.toggle('selecting', selectMode);
+        listView.classList.toggle('has-select-bar', selectMode);
+        selectBar.style.display = selectMode ? '' : 'none';
+        renderSelection();
+    }
+
+    function clearSelection() {
+        selection = CompareModel.emptySelection();
+        renderSelection();
+    }
+
+    function pickRow(hash) {
+        selection = CompareModel.pick(selection, hash);
+        renderSelection();
+    }
+
+    function selectedRange() {
+        return CompareModel.range(selection, commits.map(c => c.hash));
+    }
+
+    function renderSelection() {
+        const r = selectMode ? selectedRange() : null;
+        const inRange = new Set(r ? r.hashes : []);
+        for (const el of commitList.querySelectorAll('.commit-item')) {
+            const h = el.dataset.hash;
+            el.classList.toggle('selected', h === selection.a || h === selection.b);
+            el.classList.toggle('in-range', inRange.has(h));
+        }
+        if (!selectMode) return;
+        selectSummary.textContent = CompareModel.summaryText(r ? r.count : 0);
+        selectCompareBtn.disabled = !r;
+    }
+
+    function openSelectedRange() {
+        const r = selectedRange();
+        if (!r) return;
+        navigateTo('diff', CompareModel.rangeTarget(r));
+    }
+
+    // ---------------------------------------------------------------------------
+    // Compare sheet: head and base fields with the branch lists
+    // ---------------------------------------------------------------------------
+
+    async function openCompareSheet() {
+        sheetError.style.display = 'none';
+        sheet.style.display = '';
+        document.body.style.overflow = 'hidden';
+        sheetRefList.innerHTML = '<div class="picker-loading">Loading branches...</div>';
+        refsCache = null;
+        const refs = await API.get('/api/commits/refs' + repoParamFirst());
+        if (!refs || refs.detail) {
+            sheetRefList.innerHTML = `<div class="picker-empty">${esc(refs && refs.detail ? refs.detail : 'Could not list branches')}</div>`;
+            return;
+        }
+        refsCache = refs;
+        sheetHead.value = refs.current || '';
+        sheetBase.value = refs.default_base || '';
+        sheetMergebase.checked = true;
+        sheetActiveField = 'head';
+        renderRefList();
+        sheetHead.focus();
+    }
+
+    function closeCompareSheet() {
+        sheet.style.display = 'none';
+        document.body.style.overflow = '';
+    }
+
+    function renderRefList() {
+        if (!refsCache) return;
+        const input = sheetActiveField === 'head' ? sheetHead : sheetBase;
+        const q = input.value.trim().toLowerCase();
+        sheetRefHint.textContent = 'Branches for ' + sheetActiveField + (q ? ' matching "' + input.value.trim() + '"' : '');
+        sheetRefList.innerHTML = '';
+        const groups = [['local', refsCache.local || []], ['remote', refsCache.remote || []]];
+        let shown = 0;
+        for (const [label, names] of groups) {
+            const matches = names.filter(n => !q || n.toLowerCase().includes(q));
+            if (matches.length === 0) continue;
+            const head = document.createElement('div');
+            head.className = 'compare-ref-group';
+            head.textContent = label;
+            sheetRefList.appendChild(head);
+            for (const name of matches) {
+                const item = document.createElement('div');
+                item.className = 'picker-item compare-ref-item';
+                item.setAttribute('role', 'button');
+                item.tabIndex = 0;
+                item.innerHTML =
+                    `<span class="picker-item-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span>` +
+                    `<span class="picker-item-name">${esc(name)}</span>` +
+                    (name === refsCache.current ? '<span class="compare-ref-current">current</span>' : '');
+                const choose = () => {
+                    input.value = name;
+                    // Move on to the other field after filling this one
+                    if (sheetActiveField === 'head') { sheetActiveField = 'base'; sheetBase.focus(); }
+                    else renderRefList();
+                };
+                item.addEventListener('click', choose);
+                item.addEventListener('keydown', (e) => { if (e.key === 'Enter') choose(); });
+                sheetRefList.appendChild(item);
+                shown++;
+            }
+        }
+        if (shown === 0) {
+            sheetRefList.innerHTML = '<div class="picker-empty">No branch matches. Any ref git understands works as typed.</div>';
+        }
+    }
+
+    function submitCompareSheet() {
+        const head = sheetHead.value.trim();
+        const base = sheetBase.value.trim();
+        if (!head || !base) {
+            sheetError.textContent = 'Both head and base are needed';
+            sheetError.style.display = '';
+            return;
+        }
+        closeCompareSheet();
+        navigateTo('diff', { kind: 'compare', base: base, head: head, mergebase: sheetMergebase.checked, worktree: false });
+    }
+
+    // ---------------------------------------------------------------------------
     // Commit Diff (View 2)
     // ---------------------------------------------------------------------------
 
-    async function loadDiff(hash) {
+    async function loadDiff(target) {
         diffContent.innerHTML = '';
         diffLoading.style.display = '';
         fileListToggle.style.display = 'none';
+        compareCommits.style.display = 'none';
+        diffMeta.innerHTML = '';
 
         // Load metadata and diff in parallel
         const [meta, diff] = await Promise.all([
-            API.get('/api/commits/' + hash + repoParamFirst()),
-            API.get('/api/commits/' + hash + '/diff' + repoParamFirst()),
+            API.get(apiUrl('detail', target)),
+            API.get(apiUrl('diff', target)),
         ]);
 
         diffLoading.style.display = 'none';
         if (!meta || !diff) return;
+        if (meta.detail || diff.detail) {
+            diffMeta.innerHTML = `<div class="commit-meta-message">Cannot compare</div>` +
+                `<div class="commit-meta-info diff-error">${esc(meta.detail || diff.detail)}</div>`;
+            return;
+        }
 
         // Render header
-        diffMeta.innerHTML =
-            `<div class="commit-meta-message">${esc(meta.message)}</div>` +
-            `<div class="commit-meta-info">` +
-                `<span class="commit-meta-hash">${esc(meta.short)}</span> · ` +
-                `${esc(meta.author)} · ${timeAgo(meta.date)}` +
-            `</div>`;
+        if (target.kind === 'commit') {
+            diffMeta.innerHTML =
+                `<div class="commit-meta-message">${esc(meta.message)}</div>` +
+                `<div class="commit-meta-info">` +
+                    `<span class="commit-meta-hash">${esc(meta.short)}</span> · ` +
+                    `${esc(meta.author)} · ${timeAgo(meta.date)}` +
+                `</div>`;
+        } else {
+            renderCompareHeader(meta);
+        }
 
         // File list
         if (meta.files && meta.files.length > 0) {
@@ -432,15 +730,58 @@
                 });
                 fileListPanel.appendChild(item);
             }
+        } else if (target.kind === 'compare') {
+            diffContent.innerHTML = '<div class="empty-state"><p>Nothing to compare: no changes between these points</p></div>';
         }
 
         // Render diff sections
         for (const file of diff.files) {
-            diffContent.appendChild(renderDiffFile(file, hash));
+            diffContent.appendChild(renderDiffFile(file, target));
         }
     }
 
-    function renderDiffFile(file, hash) {
+    // The comparison header: what is compared, the resolved hashes, the
+    // commit count, and the included commits collapsed under it.
+    function renderCompareHeader(meta) {
+        const parts = [CompareModel.kindLabel(meta.kind)];
+        if (meta.worktree) {
+            parts.push(`against ${esc(meta.base)} <span class="commit-meta-hash">${esc(meta.base_short)}</span>`);
+        } else {
+            parts.push(`${esc(CompareModel.refLabel(meta.base))} <span class="commit-meta-hash">${esc(meta.diff_base_short)}</span>` +
+                ` .. ${esc(CompareModel.refLabel(meta.head))} <span class="commit-meta-hash">${esc(meta.head_short)}</span>`);
+            if (meta.mergebase) parts.push('merge base');
+            parts.push(CompareModel.commitsText(meta.commit_count));
+        }
+        diffMeta.innerHTML =
+            `<div class="commit-meta-message">${esc(CompareModel.title(meta))}</div>` +
+            `<div class="commit-meta-info">${parts.join(' · ')}</div>`;
+
+        if (meta.worktree || !meta.commits || meta.commits.length === 0) return;
+        compareCommitsLabel.textContent = CompareModel.commitsText(meta.commit_count) +
+            (meta.commit_count > meta.commits.length ? ` (first ${meta.commits.length} shown)` : '');
+        compareCommitsPanel.innerHTML = '';
+        compareCommitsPanel.style.display = 'none';
+        compareCommitsBtn.classList.remove('open');
+        for (const c of meta.commits) {
+            const item = document.createElement('div');
+            item.className = 'compare-commit-item';
+            item.innerHTML =
+                `<span class="commit-hash">${esc(c.short)}</span>` +
+                `<span class="compare-commit-message">${esc(c.message)}</span>` +
+                `<span class="compare-commit-meta">${esc(c.author)} · ${timeAgo(c.date)}</span>`;
+            item.addEventListener('click', () => navigateTo('diff', commitTarget(c.hash)));
+            compareCommitsPanel.appendChild(item);
+        }
+        compareCommits.style.display = '';
+    }
+
+    function toggleCompareCommits() {
+        const open = compareCommitsPanel.style.display === 'none';
+        compareCommitsPanel.style.display = open ? '' : 'none';
+        compareCommitsBtn.classList.toggle('open', open);
+    }
+
+    function renderDiffFile(file, target) {
         const section = document.createElement('div');
         section.className = 'diff-file-section';
         section.id = 'diff-file-' + file.path;
@@ -460,7 +801,7 @@
             btn.textContent = 'Full file';
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                navigateTo('file', hash, file.path);
+                navigateTo('file', target, file.path);
             });
             header.appendChild(btn);
         }
@@ -496,7 +837,7 @@
                     hdr.style.cursor = 'pointer';
                     hdr.addEventListener('click', () => {
                         targetLine = hunkNewStart;
-                        navigateTo('file', hash, file.path);
+                        navigateTo('file', target, file.path);
                     });
                 }
                 hdr.innerHTML = `<td colspan="3">${esc(hunk.header)}${file.status !== 'D' && hunkNewStart ? '<svg class="hunk-view-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>' : ''}</td>`;
@@ -552,7 +893,7 @@
     // Full File with Gutters (View 3)
     // ---------------------------------------------------------------------------
 
-    async function loadFile(hash, filePath) {
+    async function loadFile(target, filePath) {
         fileContent.innerHTML = '';
         fileLoading.style.display = '';
         gutterFab.style.display = 'none';
@@ -562,10 +903,14 @@
 
         fileMeta.innerHTML = `<div class="file-meta-path">${esc(filePath)}</div>`;
 
-        const data = await API.get('/api/commits/' + hash + '/file/' + encodeURIComponent(filePath) + repoParamFirst());
+        const data = await API.get(apiUrl('file', target, filePath));
         fileLoading.style.display = 'none';
 
         if (!data) return;
+        if (data.detail) {
+            fileContent.innerHTML = `<div class="empty-state"><p>${esc(data.detail)}</p></div>`;
+            return;
+        }
 
         // Pre-process: collect deleted_lines per hunk.
         let hunkId = 0;

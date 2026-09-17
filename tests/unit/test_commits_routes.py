@@ -70,24 +70,56 @@ SAMPLE_DIFF = (
 SAMPLE_FILE_CONTENT = "line1\nnew\nline3\n"
 
 
+# The comparison model resolves refs first: "a"*40 is the sample commit,
+# "b"*40 its parent, "c"*40 any other ref (branches in the compare tests).
+PARENT_HASH = "b" * 40
+OTHER_HASH = "c" * 40
+MERGE_BASE_HASH = "d" * 40
+
+
 def _mock_run_git(*args, repo_dir=None, check=True):
-    """Mock _run_git based on command arguments."""
+    """Mock _run_git based on command arguments.
+
+    Single-commit routes now run through compare.py: the commit is resolved
+    with rev-parse, its parent read with ``log -1 --format=%P``, and the
+    files, diff and gutters come from ``git diff <parent> <commit>`` rather
+    than ``git show``, so the diff branch dispatches on the same flags.
+    """
+    if args[0] == "rev-parse":
+        ref = args[-1].removesuffix("^{commit}")
+        if ref.startswith("a" * 40):
+            return "a" * 40 + "\n"
+        if ref.startswith("unknown"):
+            return ""
+        return OTHER_HASH + "\n"
     if args[0] == "log":
+        if "--format=%P" in args:
+            return PARENT_HASH + "\n"
         return SAMPLE_LOG
+    if args[0] == "merge-base":
+        return MERGE_BASE_HASH + "\n"
+    if args[0] == "rev-list":
+        return "2\n"
+    if args[0] == "symbolic-ref":
+        return "" if "refs/remotes/origin/HEAD" in args else "main\n"
+    if args[0] == "for-each-ref":
+        if "refs/heads" in args:
+            return "refs/heads/main\nrefs/heads/feature\n"
+        return "refs/remotes/origin/main\nrefs/remotes/origin/HEAD\n"
+    if args[0] == "ls-files":
+        return ""
     if args[0] == "show":
         if "--no-patch" in args:
             return SAMPLE_SHOW_META
-        if "--numstat" in args:
-            return SAMPLE_NUMSTAT
-        if "--name-status" in args:
-            return SAMPLE_NAME_STATUS
-        if "-p" in args:
-            return SAMPLE_DIFF
         # git show <hash>:<path>
         for a in args:
             if ":" in a and not a.startswith("-"):
                 return SAMPLE_FILE_CONTENT
     if args[0] == "diff":
+        if "--numstat" in args:
+            return SAMPLE_NUMSTAT
+        if "--name-status" in args:
+            return SAMPLE_NAME_STATUS
         return SAMPLE_DIFF
     return ""
 
@@ -391,3 +423,135 @@ class TestPageRoutes:
     def test_invalid_hash_page(self, client):
         resp = client.get("/commits/NOT-VALID!")
         assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# GET /api/commits/compare, /compare/diff, /compare/file, /refs
+# ---------------------------------------------------------------------------
+
+
+class TestApiCompare:
+    def test_detail_shape(self, client):
+        with mock.patch("commits.git_parser._run_git", side_effect=_mock_run_git):
+            resp = client.get("/api/commits/compare?base=main&head=feature&mergebase=1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["kind"] == "branch"
+        assert data["base"] == "main" and data["head"] == "feature"
+        assert data["mergebase"] is True and data["worktree"] is False
+        assert data["base_resolved"] == OTHER_HASH
+        assert data["head_resolved"] == OTHER_HASH
+        assert data["merge_base"] == MERGE_BASE_HASH
+        assert data["diff_base"] == MERGE_BASE_HASH
+        assert data["head_short"] == "c" * 7
+        assert data["commit_count"] == 2
+        assert [c["message"] for c in data["commits"]] == ["Fix bug", "Add feature"]
+        assert [f["path"] for f in data["files"]] == ["src/main.py", "README.md"]
+
+    def test_worktree_detail(self, client):
+        with mock.patch("commits.git_parser._run_git", side_effect=_mock_run_git):
+            resp = client.get("/api/commits/compare?worktree=1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["kind"] == "worktree"
+        assert data["head_resolved"] is None
+        assert data["base"] == "HEAD"
+        assert data["commits"] == [] and data["commit_count"] == 0
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "base=--output=/tmp/x&head=main",
+            "base=main&head=-p",
+            "base=main..x&head=main",
+            "base=a%20b&head=main",
+            "head=main",
+            "base=main",
+        ],
+    )
+    def test_bad_ref_is_400(self, client, query):
+        with mock.patch(
+            "commits.git_parser._run_git", side_effect=_mock_run_git
+        ) as mock_git:
+            resp = client.get(f"/api/commits/compare?{query}")
+        assert resp.status_code == 400
+        # No git call ever saw the rejected value.
+        for call in mock_git.call_args_list:
+            assert "--output=/tmp/x" not in call[0]
+            assert "-p" != call[0][-1]
+
+    def test_unresolvable_ref_is_400(self, client):
+        with mock.patch("commits.git_parser._run_git", side_effect=_mock_run_git):
+            resp = client.get("/api/commits/compare?base=main&head=unknown-branch")
+        assert resp.status_code == 400
+        assert "Unknown ref" in resp.json()["detail"]
+
+    def test_refs_are_resolved_before_any_diff(self, client):
+        with mock.patch(
+            "commits.git_parser._run_git", side_effect=_mock_run_git
+        ) as mock_git:
+            client.get("/api/commits/compare/diff?base=main&head=feature")
+        kinds = [call[0][0] for call in mock_git.call_args_list]
+        assert kinds[0] == "rev-parse"
+        assert kinds.index("rev-parse") < kinds.index("diff")
+        for call in mock_git.call_args_list:
+            args = call[0]
+            if args[0] == "diff":
+                assert "--end-of-options" in args and "--" in args
+                # The typed names never reach git diff, only resolved shas.
+                assert "main" not in args and "feature" not in args
+
+    def test_diff(self, client):
+        with mock.patch("commits.git_parser._run_git", side_effect=_mock_run_git):
+            resp = client.get("/api/commits/compare/diff?base=main&head=feature")
+        assert resp.status_code == 200
+        assert resp.json()["files"][0]["path"] == "src/main.py"
+
+    def test_file(self, client):
+        with mock.patch("commits.git_parser._run_git", side_effect=_mock_run_git):
+            resp = client.get(
+                "/api/commits/compare/file/src/main.py?base=main&head=feature"
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["content"] == SAMPLE_FILE_CONTENT
+        assert "gutter" in data["lines"][0]
+
+    def test_file_bad_path(self, client):
+        resp = client.get(
+            "/api/commits/compare/file/src/%2e%2e/x?base=main&head=feature"
+        )
+        assert resp.status_code in (400, 404)
+
+    def test_refs(self, client):
+        with mock.patch("commits.git_parser._run_git", side_effect=_mock_run_git):
+            resp = client.get("/api/commits/refs")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["current"] == "main"
+        assert data["local"] == ["main", "feature"]
+        assert data["remote"] == ["origin/main"]
+        assert data["default_base"] == "feature"
+
+    def test_compare_not_shadowed_by_commit_hash_route(self, client):
+        """Invariant: /compare and /refs are registered before /{commit_hash}.
+        Reordered, "compare" would fail hash validation with a 400. Here a
+        missing head is the compare handler's own 400 with its own message."""
+        resp = client.get("/api/commits/compare")
+        assert resp.status_code == 400
+        assert "head ref" in resp.json()["detail"]
+
+
+class TestComparePageRoutes:
+    def test_compare_page(self, client):
+        resp = client.get("/commits/compare?base=main&head=feature")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+
+    def test_compare_file_page(self, client):
+        resp = client.get("/commits/compare/file/src/main.py?worktree=1")
+        assert resp.status_code == 200
+
+    def test_compare_file_page_bad_path(self, client):
+        resp = client.get("/commits/compare/file/src/%2e%2e/x")
+        assert resp.status_code in (400, 404)

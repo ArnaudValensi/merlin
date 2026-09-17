@@ -12,6 +12,10 @@
     <div id="commit-list-view" class="commits-view">
         <div class="commits-header">
             <h2>Commits</h2>
+            <button id="compare-btn" class="header-btn" title="Compare branches or the working tree" style="display:none">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>
+                Compare
+            </button>
         </div>
         <div id="repo-indicator" class="repo-indicator">
             <span id="repo-path" class="repo-path"></span>
@@ -33,6 +37,12 @@
                 <input type="date" id="since-input" class="commits-date" title="Since">
                 <input type="date" id="until-input" class="commits-date" title="Until">
             </div>
+            <button id="select-toggle" class="filter-btn" title="Select commits to compare" aria-pressed="false">Select</button>
+        </div>
+        <div id="worktree-row" class="worktree-row" style="display:none" role="button" tabindex="0">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+            <span class="worktree-row-label">Working tree</span>
+            <span class="worktree-row-meta" id="worktree-row-meta"></span>
         </div>
         <div id="commit-list" class="commit-list"></div>
         <div id="list-empty" class="empty-state" style="display:none">
@@ -41,6 +51,11 @@
         </div>
         <button id="load-more-btn" class="load-more-btn" style="display:none">Load more</button>
         <div id="list-loading" class="loading-indicator" style="display:none">Loading commits...</div>
+        <div id="select-bar" class="select-bar" style="display:none">
+            <span id="select-summary" class="select-summary">0 commits selected</span>
+            <button id="select-clear-btn" class="select-clear-btn">Clear</button>
+            <button id="select-compare-btn" class="select-compare-btn" disabled>Compare</button>
+        </div>
     </div>
 
     <!-- View 2: Commit Diff -->
@@ -51,9 +66,16 @@
             </button>
             <div class="commit-meta" id="diff-meta"></div>
         </div>
+        <div id="compare-commits" class="file-list-toggle" style="display:none">
+            <button id="compare-commits-btn" class="file-list-toggle-btn">
+                <span id="compare-commits-label"></span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div id="compare-commits-panel" class="file-list-panel compare-commits-panel" style="display:none"></div>
+        </div>
         <div id="file-list-toggle" class="file-list-toggle" style="display:none">
             <button id="file-list-toggle-btn" class="file-list-toggle-btn">
-                <span id="file-list-count"></span> files changed
+                <span><span id="file-list-count"></span> files changed</span>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
             </button>
             <div id="file-list-panel" class="file-list-panel" style="display:none"></div>
@@ -86,6 +108,44 @@
         </div>
     </div>
 
+    <!-- Compare sheet: full height on the phone, centered modal on desktop -->
+    <div id="compare-sheet" class="picker-modal compare-sheet" role="dialog" aria-modal="true" aria-label="Compare" style="display:none">
+        <div class="picker-overlay"></div>
+        <div class="picker-container">
+            <div class="picker-header">
+                <h3>Compare</h3>
+                <button id="compare-sheet-close" class="back-btn" title="Close">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </button>
+            </div>
+            <div class="compare-fields">
+                <button id="compare-worktree-btn" class="compare-worktree-btn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                    <span>Working tree</span>
+                    <span class="compare-worktree-hint">uncommitted changes against HEAD</span>
+                </button>
+                <label class="compare-field">
+                    <span class="compare-field-label">Head</span>
+                    <input type="text" id="compare-head" class="compare-input" placeholder="branch, tag or ref" autocomplete="off" autocapitalize="off" spellcheck="false">
+                </label>
+                <label class="compare-field">
+                    <span class="compare-field-label">Base</span>
+                    <input type="text" id="compare-base" class="compare-input" placeholder="branch, tag or ref" autocomplete="off" autocapitalize="off" spellcheck="false">
+                </label>
+                <label class="compare-check">
+                    <input type="checkbox" id="compare-mergebase" checked>
+                    <span>Against merge base</span>
+                </label>
+                <div id="compare-error" class="compare-error" style="display:none"></div>
+            </div>
+            <div id="compare-ref-hint" class="compare-ref-hint"></div>
+            <div id="compare-ref-list" class="picker-content compare-ref-list"></div>
+            <div class="picker-footer">
+                <button id="compare-go-btn" class="picker-use-btn">Compare</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Folder picker modal -->
     <div id="folder-picker-modal" class="picker-modal" role="dialog" aria-modal="true" aria-label="Select repository" style="display:none">
         <div class="picker-overlay"></div>
@@ -113,5 +173,6 @@
 {% block scripts %}
 <script src="/static/vendor/highlight.min.js"></script>
 <script src="/static/folder-picker.js"></script>
+<script src="/static/commits/compare-model.js"></script>
 <script src="/static/commits/commits.js"></script>
 {% endblock %}

@@ -38,6 +38,76 @@
     color: var(--text-primary);
 }
 
+/* Header action (Compare) */
+.header-btn {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.header-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+/* Filter toggle (Select) */
+.filter-btn {
+    padding: 8px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    min-height: 36px;
+}
+.filter-btn:hover {
+    color: var(--text-primary);
+}
+.filter-btn.active {
+    color: var(--accent-blue);
+    border-color: var(--accent-blue);
+}
+
+/* Working tree row, pinned above the list when the tree is dirty */
+.worktree-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    margin-bottom: 8px;
+    min-height: 44px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+    color: var(--accent-blue);
+    cursor: pointer;
+}
+.worktree-row:hover {
+    background: var(--bg-hover);
+}
+.worktree-row-label {
+    font-size: 14px;
+    color: var(--text-primary);
+}
+.worktree-row-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-left: auto;
+    white-space: nowrap;
+}
+
 /* Filters */
 .commits-filters {
     display: flex;
@@ -154,6 +224,82 @@
 }
 .stat-add { color: var(--accent-green); }
 .stat-del { color: var(--accent-red); }
+
+/* Select mode: a check circle per row, endpoints filled, the range tinted */
+.commit-check {
+    display: none;
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    border: 2px solid var(--text-muted);
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-sizing: border-box;
+}
+.commit-list.selecting .commit-check {
+    display: block;
+}
+.commit-list.selecting .commit-item.in-range {
+    background: rgba(74, 158, 255, 0.08);
+}
+.commit-list.selecting .commit-item.in-range .commit-check {
+    border-color: var(--accent-blue);
+}
+.commit-list.selecting .commit-item.selected .commit-check {
+    border-color: var(--accent-blue);
+    background: var(--accent-blue);
+    box-shadow: inset 0 0 0 3px var(--bg-primary);
+}
+
+.select-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.35);
+}
+.select-summary {
+    flex: 1;
+    font-size: 14px;
+    color: var(--text-primary);
+}
+.select-clear-btn {
+    padding: 0 12px;
+    min-height: 44px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+}
+.select-clear-btn:hover {
+    color: var(--text-primary);
+}
+.select-compare-btn {
+    padding: 0 16px;
+    min-height: 44px;
+    background: var(--accent-blue);
+    border: none;
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+}
+.select-compare-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
 
 /* Load more */
 .load-more-btn {
@@ -304,19 +450,27 @@
     gap: 16px;
 }
 
+/* No overflow other than visible between the sticky header and the window:
+   the rounded corners are drawn on the header and the scroll wrapper, and
+   the horizontal scroll stays on .diff-table-scroll below the header. */
 .diff-file-section {
     border: 1px solid var(--border);
     border-radius: 6px;
-    overflow: hidden;
 }
 
+/* Pinned to the top of the viewport while its file scrolls, until the next
+   file's header pushes it away. Desktop and phone alike. */
 .diff-file-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 8px 12px;
     background: var(--bg-card);
     border-bottom: 1px solid var(--border);
+    border-radius: 6px 6px 0 0;
     gap: 8px;
     min-height: 40px;
 }
@@ -354,6 +508,11 @@
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-x: contain;
+    border-radius: 0 0 6px 6px;
+}
+
+.diff-error {
+    color: var(--accent-red);
 }
 
 /* Diff table */
@@ -608,6 +767,137 @@
     background: rgba(74, 158, 255, 0.08);
 }
 
+/* Included commits of a comparison (collapsed under the header) */
+.compare-commit-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 8px 12px;
+    min-height: 36px;
+    font-size: 13px;
+    cursor: pointer;
+}
+.compare-commit-item:hover {
+    background: var(--bg-hover);
+}
+.compare-commit-message {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-secondary);
+}
+.compare-commit-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+/* Compare sheet (on top of the shared picker sheet/modal frame) */
+.compare-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+}
+.compare-worktree-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--accent-blue);
+    font-size: 14px;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.compare-worktree-btn:hover {
+    background: var(--bg-hover);
+}
+.compare-worktree-btn > span:first-of-type {
+    color: var(--text-primary);
+}
+.compare-worktree-hint {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.compare-field {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.compare-field-label {
+    width: 44px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.compare-input {
+    flex: 1;
+    min-width: 0;
+    min-height: 44px;
+    padding: 8px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: 'Geist Mono', monospace;
+    font-size: 16px;
+    outline: none;
+}
+.compare-input:focus {
+    border-color: var(--accent-blue);
+}
+.compare-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    min-height: 32px;
+    cursor: pointer;
+}
+.compare-check input {
+    accent-color: var(--accent-blue);
+    width: 18px;
+    height: 18px;
+}
+.compare-error {
+    font-size: 13px;
+    color: var(--accent-red);
+}
+.compare-ref-hint {
+    padding: 8px 16px 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.compare-ref-group {
+    padding: 8px 16px 2px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.compare-ref-current {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--accent-green);
+}
+.compare-ref-item .picker-item-name {
+    font-family: 'Geist Mono', monospace;
+    font-size: 13px;
+}
+
 /* Mobile adjustments */
 @media (max-width: 768px) {
     /* Zero out .main padding for the commits page */
@@ -642,8 +932,9 @@
         border-left: none;
         border-right: none;
     }
-    .diff-file-section {
-        overflow: hidden;
+    .diff-file-header,
+    .diff-table-scroll {
+        border-radius: 0;
     }
 
     .commits-header h2 {
@@ -655,6 +946,15 @@
     }
     .commits-date {
         flex: 1;
+    }
+    .filter-btn {
+        flex: 1;
+    }
+    .worktree-row {
+        margin: 0 0 8px;
+    }
+    .compare-worktree-hint {
+        display: none;
     }
 
     .commit-item {

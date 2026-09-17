@@ -9,13 +9,18 @@ from fastapi.responses import HTMLResponse
 
 from merlin_ext import make_templates
 
-from .git_parser import (
-    _find_repo_root,
-    get_commits,
+from .compare import (
+    RefError,
+    compare_detail,
+    compare_diff,
+    compare_file,
     get_commit_detail,
     get_commit_diff,
     get_file_with_gutters,
+    list_refs,
+    resolve_comparison,
 )
+from .git_parser import _find_repo_root, get_commits
 
 COMMITS_DIR = Path(__file__).parent.resolve()
 COMMITS_TEMPLATES_DIR = COMMITS_DIR / "templates"
@@ -94,6 +99,27 @@ def commits_page(request: Request, repo: str = ""):
             "startup_cwd": _startup_cwd,
             "home_dir": _home_dir,
         },
+    )
+
+
+# Registered before /{commit_hash} so "compare" is a literal segment, not a
+# commit hash (it would fail hash validation with a 400).
+@page_router.get("/compare", response_class=HTMLResponse)
+def compare_page(request: Request, repo: str = ""):
+    return templates.TemplateResponse(
+        request,
+        "commits.html",
+        {"startup_cwd": _startup_cwd, "home_dir": _home_dir},
+    )
+
+
+@page_router.get("/compare/file/{file_path:path}", response_class=HTMLResponse)
+def compare_file_page(request: Request, file_path: str, repo: str = ""):
+    _validate_path(file_path)
+    return templates.TemplateResponse(
+        request,
+        "commits.html",
+        {"file_path": file_path, "startup_cwd": _startup_cwd, "home_dir": _home_dir},
     )
 
 
@@ -220,6 +246,92 @@ async def api_git_repos(q: str = ""):
     return repos
 
 
+def _flag(value: str) -> bool:
+    return value.strip().lower() in ("1", "true", "yes")
+
+
+def _comparison(repo: str, base: str, head: str, mergebase: str, worktree: str):
+    """Resolve the query of a compare route. Bad refs are a 400."""
+    repo_dir = _resolve_repo(repo)
+    try:
+        cmp = resolve_comparison(
+            repo_dir,
+            base=base,
+            head=head,
+            mergebase=_flag(mergebase),
+            worktree=_flag(worktree),
+        )
+    except RefError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return cmp, repo_dir
+
+
+# The compare and refs routes are registered before /{commit_hash} so their
+# first segment is matched as a literal and not captured as a commit hash.
+@api_router.get("/compare")
+def api_compare(
+    repo: str = "",
+    base: str = "",
+    head: str = "",
+    mergebase: str = "",
+    worktree: str = "",
+):
+    """A comparison: kind, resolved refs, included commits, files with stats."""
+    cmp, repo_dir = _comparison(repo, base, head, mergebase, worktree)
+    try:
+        return compare_detail(cmp, repo_dir)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/compare/diff")
+def api_compare_diff(
+    repo: str = "",
+    base: str = "",
+    head: str = "",
+    mergebase: str = "",
+    worktree: str = "",
+):
+    """Parsed unified diff of a comparison."""
+    cmp, repo_dir = _comparison(repo, base, head, mergebase, worktree)
+    try:
+        return compare_diff(cmp, repo_dir)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/compare/file/{file_path:path}")
+def api_compare_file(
+    file_path: str,
+    repo: str = "",
+    base: str = "",
+    head: str = "",
+    mergebase: str = "",
+    worktree: str = "",
+):
+    """Full file at the head of a comparison, with gutter annotations."""
+    _validate_path(file_path)
+    cmp, repo_dir = _comparison(repo, base, head, mergebase, worktree)
+    try:
+        return compare_file(cmp, file_path, repo_dir)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/refs")
+def api_refs(repo: str = ""):
+    """Local and remote branches, the current branch, the guessed base."""
+    repo_dir = _resolve_repo(repo)
+    try:
+        return list_refs(repo_dir)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @api_router.get("/{commit_hash}")
 def api_commit_detail(commit_hash: str, repo: str = ""):
     """Single commit metadata with file stats."""
@@ -240,6 +352,8 @@ def api_commit_diff(commit_hash: str, repo: str = ""):
     repo_dir = _resolve_repo(repo)
     try:
         return get_commit_diff(commit_hash, repo_dir=repo_dir)
+    except RefError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -252,7 +366,7 @@ def api_commit_file(commit_hash: str, file_path: str, repo: str = ""):
     repo_dir = _resolve_repo(repo)
     try:
         return get_file_with_gutters(commit_hash, file_path, repo_dir=repo_dir)
-    except FileNotFoundError as e:
+    except (FileNotFoundError, RefError) as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

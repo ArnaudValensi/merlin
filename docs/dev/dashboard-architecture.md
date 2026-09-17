@@ -295,6 +295,10 @@ document.addEventListener('DOMContentLoaded', () => {
 | `GET /api/commits/{hash}` | Single commit metadata + file list |
 | `GET /api/commits/{hash}/diff` | Parsed unified diff (hunks + lines) |
 | `GET /api/commits/{hash}/file/{path}` | Full file content with gutter annotations |
+| `GET /api/commits/compare?base=&head=[&mergebase=1]` or `?worktree=1` | A `base..head` comparison: kind, resolved refs, included commits, files with stats (see [`commit-review.md`](commit-review.md)) |
+| `GET /api/commits/compare/diff` | Parsed unified diff of a comparison |
+| `GET /api/commits/compare/file/{path}` | Full file at the head of a comparison, with gutters |
+| `GET /api/commits/refs` | Local and remote branches, the current branch, the guessed default base |
 
 ### Files
 
@@ -385,15 +389,17 @@ storage, consent, API, and privacy contracts.
 commits/
 ├── __init__.py            # Exports api_router, page_router, STATIC_DIR
 ├── routes.py              # Pages + API endpoints
-├── git_parser.py          # Git log/diff/show parsing (subprocess calls to git)
+├── git_parser.py          # Git log/diff parsing helpers (subprocess calls to git)
+├── compare.py             # base..head comparisons: ref safety, single commit, range, branch, working tree
 ├── templates/
-│   └── commits.html       # SPA: 3 views (list, diff, file)
+│   └── commits.html       # SPA: 3 views (list, diff, file) + the compare sheet
 └── static/
-    ├── commits.css        # Diff colors, file table, gutter FAB, mobile
-    └── commits.js         # IIFE: routing, diff rendering, highlight.js, gutter nav
+    ├── commits.css        # Diff colors, sticky file header, select mode, compare sheet, mobile
+    ├── compare-model.js   # Pure model: selection reducer, comparison titles (node-tested)
+    └── commits.js         # IIFE: routing by target, diff rendering, highlight.js, gutter nav
 ```
 
-**Pages:** `/commits` (list), `/commits/{hash}` (diff), `/commits/{hash}/file/{path}` (full file)
+**Pages:** `/commits` (list), `/commits/{hash}` (diff), `/commits/{hash}/file/{path}` (full file), `/commits/compare?base=&head=` and `/commits/compare/file/{path}` (a comparison, see [`commit-review.md`](commit-review.md))
 
 **SPA pattern:** Single template with 3 views toggled via `display: none`. Uses `history.pushState` + `popstate` for browser navigation. `routeFromUrl()` on load for deep linking.
 
