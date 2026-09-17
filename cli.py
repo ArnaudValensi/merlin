@@ -472,6 +472,12 @@ def _delegate_chat(argv: list[str]) -> None:
     chat_main(argv)
 
 
+def _delegate_review(argv: list[str]) -> None:
+    from commits.review_cli import main as review_main
+
+    sys.exit(review_main(argv, prog="merlin review"))
+
+
 # Delegated core commands: cli_main routes them before argparse so every arg
 # (including --help) reaches the command's own parser, and build_parser
 # registers a help stub from the same entry. Adding a command here is the
@@ -485,6 +491,10 @@ DELEGATED_COMMANDS: dict[str, tuple] = {
     "chat": (
         _delegate_chat,
         "Send messages, replies, and reactions to the chat channel",
+    ),
+    "review": (
+        _delegate_review,
+        "Read and answer the user's code reviews (list/show/diff/comment/reply/resolve)",
     ),
 }
 

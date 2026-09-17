@@ -334,3 +334,258 @@ class TestViewed:
         review = branch_review(repo)
         with pytest.raises(ValueError):
             rv.set_viewed(review["id"], "../x", True, repo)
+
+
+# ---------------------------------------------------------------------------
+# Comments and re-anchoring
+# ---------------------------------------------------------------------------
+
+
+class TestAnchorRule:
+    """The pure rule of decision 12 over (comment, current lines)."""
+
+    def _c(self, line, text):
+        return {"id": "c1", "line": line, "line_text": text, "side": "new"}
+
+    def test_current_when_the_text_is_still_at_the_line(self):
+        assert rv.anchor_comment(self._c(2, "b"), ["a", "b", "c"], "h") == (
+            "current",
+            2,
+        )
+
+    def test_moved_when_the_text_occurs_exactly_once_elsewhere(self):
+        assert rv.anchor_comment(self._c(2, "b"), ["x", "a", "b", "c"], "h") == (
+            "moved",
+            3,
+        )
+
+    def test_outdated_when_the_text_is_gone(self):
+        assert rv.anchor_comment(self._c(2, "b"), ["a", "c"], "h") == ("outdated", None)
+
+    def test_outdated_when_the_text_occurs_several_times(self):
+        assert rv.anchor_comment(self._c(2, "b"), ["b", "a", "b"], "h") == (
+            "outdated",
+            None,
+        )
+
+    def test_outdated_when_the_side_is_gone(self):
+        assert rv.anchor_comment(self._c(2, "b"), None, "h") == ("outdated", None)
+
+    def test_exact_text_nothing_trimmed(self):
+        assert rv.anchor_comment(self._c(1, "b"), ["b "], "h") == ("outdated", None)
+        assert rv.anchor_comment(self._c(1, " b"), ["b"], "h") == ("outdated", None)
+        assert rv.anchor_comment(self._c(1, "b "), ["b "], "h") == ("current", 1)
+
+    def test_current_line_wins_over_a_second_occurrence(self):
+        # The text is at its line and also elsewhere: current, not outdated
+        assert rv.anchor_comment(self._c(1, "b"), ["b", "b"], "h") == ("current", 1)
+
+    def test_anchor_comments_updates_moved_and_skips_same_head(self):
+        comments = [
+            {
+                "id": "same",
+                "path": "a",
+                "side": "new",
+                "line": 9,
+                "line_text": "zz",
+                "anchor_head": "h2",
+            },
+            {
+                "id": "mv",
+                "path": "a",
+                "side": "new",
+                "line": 1,
+                "line_text": "b",
+                "anchor_head": "h1",
+            },
+            {
+                "id": "cur",
+                "path": "a",
+                "side": "old",
+                "line": 1,
+                "line_text": "o",
+                "anchor_head": "h1",
+            },
+            {
+                "id": "gone",
+                "path": "b",
+                "side": "new",
+                "line": 1,
+                "line_text": "q",
+                "anchor_head": "h1",
+            },
+            {
+                "id": "wide",
+                "path": None,
+                "side": None,
+                "line": None,
+                "line_text": None,
+                "anchor_head": None,
+            },
+        ]
+        sides = {("a", "new"): ["a", "b"], ("a", "old"): ["o"], ("b", "new"): None}
+        states = rv.anchor_comments(comments, lambda p, s: sides[(p, s)], "h2")
+        assert states == {
+            "same": "current",
+            "mv": "moved",
+            "cur": "current",
+            "gone": "outdated",
+        }
+        assert comments[1]["line"] == 2 and comments[1]["anchor_head"] == "h2"
+        assert comments[2]["anchor_head"] == "h2"
+        assert comments[3]["line"] == 1 and comments[3]["anchor_head"] == "h1"  # kept
+        assert len(comments) == 5  # nothing dropped
+
+    def test_worktree_always_rechecks(self):
+        comments = [
+            {
+                "id": "c",
+                "path": "a",
+                "side": "new",
+                "line": 1,
+                "line_text": "b",
+                "anchor_head": None,
+            }
+        ]
+        states = rv.anchor_comments(comments, lambda p, s: ["x", "b"], None)
+        assert states == {"c": "moved"} and comments[0]["line"] == 2
+
+
+class TestComments:
+    def test_line_comment_records_the_line_and_the_head(self, repo):
+        review = branch_review(repo)
+        updated, comment = rv.add_comment(
+            review["id"], repo, body="Why f1?", path="f.txt", side="new", line=1
+        )
+        assert comment["path"] == "f.txt" and comment["side"] == "new"
+        assert comment["line"] == 1 and comment["line_text"] == "f1"
+        assert comment["anchor_head"] == git(repo, "rev-parse", "feature")
+        assert comment["author"] == "user" and comment["status"] == "open"
+        assert comment["replies"] == [] and comment["resolved_by"] is None
+        assert updated["comments"] == [comment]
+        assert rv.load(review["id"])["comments"] == [comment]
+
+    def test_review_wide_comment(self, repo):
+        review = branch_review(repo)
+        _, comment = rv.add_comment(
+            review["id"], repo, body="Overall fine", author="agent"
+        )
+        assert comment["path"] is None and comment["line"] is None
+        assert comment["anchor_head"] is None and comment["author"] == "agent"
+
+    def test_bad_comments(self, repo):
+        review = branch_review(repo)
+        with pytest.raises(ValueError):
+            rv.add_comment(review["id"], repo, body="   ")
+        with pytest.raises(ValueError):
+            rv.add_comment(review["id"], repo, body="x" * 4001)
+        with pytest.raises(ValueError):
+            rv.add_comment(review["id"], repo, body="x", author="bot")
+        with pytest.raises(ValueError):
+            rv.add_comment(review["id"], repo, body="x", path="f.txt", line=99)
+        with pytest.raises(ValueError):
+            rv.add_comment(review["id"], repo, body="x", path="f.txt", line=0)
+        with pytest.raises(ValueError):
+            rv.add_comment(
+                review["id"], repo, body="x", path="f.txt", side="left", line=1
+            )
+        with pytest.raises(ValueError):
+            rv.add_comment(review["id"], repo, body="x", line=1)
+        with pytest.raises(ValueError):
+            rv.add_comment(review["id"], repo, body="x", path="../x", line=1)
+        # f.txt was added on the branch: it has no old side
+        with pytest.raises(ValueError):
+            rv.add_comment(
+                review["id"], repo, body="x", path="f.txt", side="old", line=1
+            )
+        assert rv.load(review["id"])["comments"] == []
+
+    def test_old_side_comment_reads_the_base_version(self, repo):
+        (repo / "a.txt").write_text("alpha\nBETA\n")
+        git(repo, "commit", "-q", "-am", "Edit a on feature")
+        review = branch_review(repo)
+        _, comment = rv.add_comment(
+            review["id"], repo, body="was beta", path="a.txt", side="old", line=2
+        )
+        assert comment["line_text"] == "beta"
+        _, new = rv.add_comment(
+            review["id"], repo, body="now BETA", path="a.txt", side="new", line=2
+        )
+        assert new["line_text"] == "BETA"
+
+    def test_worktree_comment_reads_the_disk(self, repo):
+        review = rv.create(repo, resolve_comparison(repo, worktree=True))
+        _, comment = rv.add_comment(
+            review["id"], repo, body="untracked", path="new.txt", side="new", line=1
+        )
+        assert comment["line_text"] == "n1" and comment["anchor_head"] is None
+
+    def test_reply_resolve_reopen(self, repo):
+        review = branch_review(repo)
+        _, comment = rv.add_comment(review["id"], repo, body="Q", path="f.txt", line=1)
+        cid = comment["id"]
+        r = rv.reply(review["id"], cid, "Done in abc", "agent")
+        assert r["comments"][0]["replies"][0]["author"] == "agent"
+        assert r["comments"][0]["replies"][0]["body"] == "Done in abc"
+        r = rv.resolve(review["id"], cid, "agent", "Fixed.")
+        c = r["comments"][0]
+        assert c["status"] == "resolved" and c["resolved_by"] == "agent"
+        assert c["resolved_at"] and len(c["replies"]) == 2
+        r = rv.reply(
+            review["id"], cid, "Thanks", "user"
+        )  # a reply on a resolved thread
+        assert len(r["comments"][0]["replies"]) == 3
+        r = rv.reopen(review["id"], cid)
+        c = r["comments"][0]
+        assert (
+            c["status"] == "open"
+            and c["resolved_by"] is None
+            and c["resolved_at"] is None
+        )
+        assert len(c["replies"]) == 3  # nothing dropped
+        with pytest.raises(KeyError):
+            rv.reply(review["id"], "deadbeef", "x")
+        with pytest.raises(ValueError):
+            rv.reply(review["id"], cid, "  ")
+
+    def test_open_thread_counts(self, repo):
+        review = branch_review(repo)
+        _, a = rv.add_comment(review["id"], repo, body="1", path="f.txt", line=1)
+        rv.add_comment(review["id"], repo, body="2", path="f.txt", line=1)
+        rv.add_comment(review["id"], repo, body="3")
+        rv.resolve(review["id"], a["id"])
+        assert rv.open_thread_counts(rv.load(review["id"])) == {"f.txt": 1, "": 1}
+
+    def test_refresh_reanchors_moved_and_outdated(self, repo):
+        (repo / "f.txt").write_text("f1\nf2\nf3\n")
+        git(repo, "commit", "-q", "-am", "Three lines")
+        review = branch_review(repo)
+        _, c2 = rv.add_comment(review["id"], repo, body="on f2", path="f.txt", line=2)
+        _, c3 = rv.add_comment(review["id"], repo, body="on f3", path="f.txt", line=3)
+        _, wide = rv.add_comment(review["id"], repo, body="wide")
+        loaded = rv.refresh(review["id"], repo)
+        assert loaded.anchors == {c2["id"]: "current", c3["id"]: "current"}
+        # Insert a line above: f2 moves to line 3, f3 is rewritten
+        (repo / "f.txt").write_text("f0\nf1\nf2\nF3\n")
+        git(repo, "commit", "-q", "-am", "Shift and rewrite")
+        loaded = rv.refresh(review["id"], repo)
+        assert loaded.anchors == {c2["id"]: "moved", c3["id"]: "outdated"}
+        stored = {c["id"]: c for c in rv.load(review["id"])["comments"]}
+        assert stored[c2["id"]]["line"] == 3
+        assert stored[c2["id"]]["anchor_head"] == git(repo, "rev-parse", "feature")
+        assert stored[c3["id"]]["line"] == 3 and stored[c3["id"]]["line_text"] == "f3"
+        assert len(stored) == 3  # the outdated and the wide ones are kept
+        # Next load: the moved one is current at its new line, the outdated stays
+        loaded = rv.refresh(review["id"], repo)
+        assert loaded.anchors == {c2["id"]: "current", c3["id"]: "outdated"}
+
+    def test_show_does_not_advance_last_seen(self, repo):
+        review = branch_review(repo)
+        (repo / "f.txt").write_text("f1\nf2\n")
+        git(repo, "commit", "-q", "-am", "Feature two")
+        loaded = rv.refresh(review["id"], repo, advance_seen=False)
+        assert loaded.new_commits == 1
+        assert rv.load(review["id"])["last_seen_head"] == review["last_seen_head"]
+        loaded = rv.refresh(review["id"], repo)
+        assert loaded.new_commits == 1  # the user's look still sees it
+        assert rv.refresh(review["id"], repo).new_commits == 0

@@ -396,6 +396,21 @@ class ViewedBody(BaseModel):
     viewed: bool = True
 
 
+class CommentCreate(BaseModel):
+    body: str
+    path: str | None = None
+    side: str = "new"
+    line: int | None = None
+
+
+class ReplyBody(BaseModel):
+    body: str
+
+
+class ResolveBody(BaseModel):
+    message: str | None = None
+
+
 def _load_review(review_id: str) -> dict:
     _validate_review_id(review_id)
     try:
@@ -492,26 +507,30 @@ def api_review_get(review_id: str, since: str | None = None):
             "error": f"Repository not found: {review.get('repo')}",
         }
     try:
-        review, changed, new_commits, cmp = rv.refresh(review_id, repo_dir)
+        loaded = rv.refresh(review_id, repo_dir)
     except RefError as e:
         return {
             "review": review,
             "comparison": None,
             "changed_since_viewed": [],
             "new_commits": 0,
+            "anchors": {},
+            "open_threads": rv.open_thread_counts(review),
             "error": str(e),
         }
     except rv.ReviewCorrupt as e:
         raise HTTPException(status_code=500, detail=str(e))
     try:
-        comparison = compare_detail(cmp, repo_dir)
+        comparison = compare_detail(loaded.cmp, repo_dir)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     return {
-        "review": review,
+        "review": loaded.review,
         "comparison": comparison,
-        "changed_since_viewed": changed,
-        "new_commits": new_commits,
+        "changed_since_viewed": loaded.changed,
+        "new_commits": loaded.new_commits,
+        "anchors": loaded.anchors,
+        "open_threads": rv.open_thread_counts(loaded.review),
         "error": None,
     }
 
@@ -555,6 +574,76 @@ def api_review_patch(review_id: str, body: ReviewPatch):
     except rv.ReviewNotFound:
         raise HTTPException(status_code=404, detail=f"Unknown review: {review_id}")
     return review
+
+
+@api_router.post("/reviews/{review_id}/comments", status_code=201)
+def api_review_comment(review_id: str, body: CommentCreate):
+    """A new thread from the page, on a line or review-wide. The page's
+    author is always the user."""
+    review = _load_review(review_id)
+    repo_dir = _review_repo(review)
+    if repo_dir is None:
+        raise HTTPException(
+            status_code=400, detail=f"Repository not found: {review.get('repo')}"
+        )
+    if body.path is not None:
+        _validate_path(body.path)
+    try:
+        review, comment = rv.add_comment(
+            review_id,
+            repo_dir,
+            body=body.body,
+            author="user",
+            path=body.path,
+            side=body.side,
+            line=body.line,
+        )
+    except (ValueError, RefError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except rv.ReviewNotFound:
+        raise HTTPException(status_code=404, detail=f"Unknown review: {review_id}")
+    return {"review": review, "comment": comment}
+
+
+def _thread_action(review_id: str, comment_id: str, action):
+    _load_review(review_id)
+    _validate_review_id(comment_id)
+    try:
+        return action()
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Unknown comment: {comment_id}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except rv.ReviewNotFound:
+        raise HTTPException(status_code=404, detail=f"Unknown review: {review_id}")
+
+
+@api_router.post("/reviews/{review_id}/comments/{comment_id}/replies")
+def api_review_reply(review_id: str, comment_id: str, body: ReplyBody):
+    """A reply on a thread, from the user."""
+    return _thread_action(
+        review_id,
+        comment_id,
+        lambda: rv.reply(review_id, comment_id, body.body, "user"),
+    )
+
+
+@api_router.post("/reviews/{review_id}/comments/{comment_id}/resolve")
+def api_review_resolve(review_id: str, comment_id: str, body: ResolveBody):
+    """Resolve a thread, with an optional closing reply."""
+    return _thread_action(
+        review_id,
+        comment_id,
+        lambda: rv.resolve(review_id, comment_id, "user", body.message),
+    )
+
+
+@api_router.post("/reviews/{review_id}/comments/{comment_id}/reopen")
+def api_review_reopen(review_id: str, comment_id: str):
+    """Reopen a resolved thread."""
+    return _thread_action(
+        review_id, comment_id, lambda: rv.reopen(review_id, comment_id)
+    )
 
 
 @api_router.put("/reviews/{review_id}/viewed/{file_path:path}")

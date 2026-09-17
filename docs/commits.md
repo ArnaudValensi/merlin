@@ -94,6 +94,70 @@ one per review, where your agent can read them too.
   while it is visible, so what the agent does from the CLI shows up on the
   phone without a reload.
 
+## Comments
+
+Comments are how a review reaches your agent. They live in the review's
+file, never anywhere else, and they come in two shapes: on a line, or on
+the review as a whole.
+
+- **On a line.** In a diff or in the full file, tap a line number: a small
+  **+** appears on that row. Tap it to open a composer under the line and
+  write the comment (plain text, line breaks kept, no markdown). A deleted
+  line carries its comment on the old side, added and context lines on the
+  new side. The first comment on a plain comparison saves it as a review,
+  like the first viewed tick.
+- **On the review.** The **Comments on the review** panel above the files
+  has an **Add a comment** button for remarks that belong to no line.
+- **Threads.** A comment is a thread: it shows who wrote it (`you` or
+  `agent`), when, its body, the replies indented under it, a **Reply**
+  field and **Resolve**. A resolved thread folds to one line (`Resolved · 2
+  replies`) with a **Show** button and a **Reopen** button inside. Nothing
+  is ever deleted: resolving is how a thread retires. The file header
+  counts that file's open threads.
+- **When the code moves.** A thread remembers the text of its line. When
+  the branch moves on, a thread whose line is still there stays put, one
+  whose line moved (the text now sits at one other place) follows it with a
+  small **moved** tag, and one whose line is gone shows at the top of its
+  file as **outdated**, with the original line quoted, still answerable and
+  resolvable.
+- **Live.** The page refreshes its threads every 5 seconds while visible,
+  so a reply or a resolve made by the agent from the terminal appears on
+  the phone without a reload.
+
+## Working with your agent
+
+The loop this page is built for: you annotate on the phone, the agent works
+the list, the page shows the resolved state.
+
+1. Open a review, leave your comments, then tap **Copy for agent** (or type
+   the command it copies) and paste it in the terminal:
+
+   ```
+   merlin review show 3f9a1c2d
+   ```
+
+2. The agent reads the review as markdown: the refs, the files with their
+   viewed marks, every open thread with the quoted line and the replies.
+   `merlin review diff 3f9a1c2d` gives it the diff as git prints it, and
+   `merlin review list` the repository's open reviews.
+
+3. The agent addresses each thread, replies with what it did and resolves
+   it:
+
+   ```
+   merlin review reply 3f9a1c2d 8b1c2d3e "Renamed to fetch_user in 4a5b6c7."
+   merlin review resolve 3f9a1c2d 8b1c2d3e -m "Done."
+   ```
+
+   When it disagrees it says so in a reply and leaves the thread open for
+   you. The agent can also comment on a line (`merlin review comment <id>
+   --path a.py --line 12 "..."`) and close the review when everything is
+   settled.
+
+The agent's `show` does not count as your look: the `N new commits since you
+last looked` line is yours. Your Merlin agent learns all of this from its
+brain doc and the `review` skill, so pasting the `show` line is enough.
+
 ## Read a diff
 
 ![Diff viewer](commits/phone-diff.jpg)
@@ -210,6 +274,9 @@ comparison.
 - **"Nothing to compare"**: the two points have the same tree, for
   example a branch compared to itself or a clean working tree.
 - **A review shows "Unknown ref" or "Repository not found"**: its branch
-  was deleted, or the repository moved. The review and its ticks are kept
-  in `~/.merlin/reviews/<id>.json`, and the page shows the error instead
-  of the diff.
+  was deleted, or the repository moved. The review, its ticks and its
+  comments are kept in `~/.merlin/reviews/<id>.json`, and the page shows
+  the error instead of the diff (the threads still render in the panel).
+- **"has N lines on the new side"** from `merlin review comment`: the line
+  does not exist in the current version of that file on that side. Check
+  with `merlin review diff`.

@@ -35,6 +35,10 @@ from . import git_parser as gp
 ID_RE = re.compile(r"[0-9a-f]{8}")
 STATUSES = ("open", "closed")
 TITLE_MAX = 200
+AUTHORS = ("user", "agent")
+SIDES = ("new", "old")
+BODY_MAX = 4000
+ANCHOR_STATES = ("current", "moved", "outdated")
 
 
 class ReviewNotFound(KeyError):
@@ -324,6 +328,211 @@ def set_viewed(review_id: str, path: str, viewed: bool, repo_dir: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Comments: threads anchored to a line, or to the review (decision 11)
+# ---------------------------------------------------------------------------
+
+
+def clean_body(body: str | None) -> str:
+    """Plain text, line breaks kept, at most BODY_MAX characters, never
+    empty. No markdown is interpreted anywhere."""
+    text = (body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        raise ValueError("A comment cannot be empty")
+    if len(text) > BODY_MAX:
+        raise ValueError(f"A comment is at most {BODY_MAX} characters")
+    return text
+
+
+def _author(author: str | None) -> str:
+    a = (author or "user").strip().lower()
+    if a not in AUTHORS:
+        raise ValueError(f"Author must be one of {', '.join(AUTHORS)}")
+    return a
+
+
+def _find_comment(review: dict, comment_id: str) -> dict:
+    for c in review.get("comments") or []:
+        if c.get("id") == comment_id:
+            return c
+    raise KeyError(f"Unknown comment: {comment_id}")
+
+
+def add_comment(
+    review_id: str,
+    repo_dir: Path,
+    *,
+    body: str,
+    author: str = "user",
+    path: str | None = None,
+    side: str = "new",
+    line: int | None = None,
+) -> tuple[dict, dict]:
+    """A new thread. With ``path`` and ``line`` it anchors to that line on
+    ``side`` of the current comparison and records the line's text, and a
+    line that does not exist there is an error. Without a path it is a
+    review-wide comment. Returns (review, comment)."""
+    text = clean_body(body)
+    who = _author(author)
+    if path is not None:
+        gp._validate_file_path(path)
+        if side not in SIDES:
+            raise ValueError(f"Side must be one of {', '.join(SIDES)}")
+        if line is None or line < 1:
+            raise ValueError("A line comment needs a line number of 1 or more")
+    elif line is not None:
+        raise ValueError("A line number needs a path")
+    created: dict = {}
+
+    def fn(review: dict) -> None:
+        comment = {
+            "id": new_id(),
+            "path": None,
+            "side": None,
+            "line": None,
+            "line_text": None,
+            "anchor_head": None,
+            "author": who,
+            "body": text,
+            "created": now_iso(),
+            "status": "open",
+            "resolved_at": None,
+            "resolved_by": None,
+            "replies": [],
+        }
+        if path is not None:
+            cmp = comparison_of(review, repo_dir)
+            lines = cm.side_lines(cmp, path, side, repo_dir)
+            if lines is None:
+                raise ValueError(f"{path} has no {side} side in this comparison")
+            assert line is not None
+            if line > len(lines):
+                raise ValueError(f"{path} has {len(lines)} lines on the {side} side")
+            comment.update(
+                {
+                    "path": path,
+                    "side": side,
+                    "line": line,
+                    "line_text": lines[line - 1],
+                    "anchor_head": cmp.head_resolved,
+                }
+            )
+        review.setdefault("comments", []).append(comment)
+        created.update(comment)
+
+    review = update(review_id, fn)
+    return review, created
+
+
+def reply(review_id: str, comment_id: str, body: str, author: str = "user") -> dict:
+    """A reply on a thread, open or resolved. Returns the review."""
+    text = clean_body(body)
+    who = _author(author)
+
+    def fn(review: dict) -> None:
+        comment = _find_comment(review, comment_id)
+        comment.setdefault("replies", []).append(
+            {"id": new_id(), "author": who, "body": text, "created": now_iso()}
+        )
+
+    return update(review_id, fn)
+
+
+def resolve(
+    review_id: str, comment_id: str, author: str = "user", message: str | None = None
+) -> dict:
+    """Resolve a thread, with an optional closing reply. Returns the review."""
+    who = _author(author)
+    text = clean_body(message) if message else None
+
+    def fn(review: dict) -> None:
+        comment = _find_comment(review, comment_id)
+        if text:
+            comment.setdefault("replies", []).append(
+                {"id": new_id(), "author": who, "body": text, "created": now_iso()}
+            )
+        comment["status"] = "resolved"
+        comment["resolved_at"] = now_iso()
+        comment["resolved_by"] = who
+
+    return update(review_id, fn)
+
+
+def reopen(review_id: str, comment_id: str) -> dict:
+    """Reopen a resolved thread. Returns the review."""
+
+    def fn(review: dict) -> None:
+        comment = _find_comment(review, comment_id)
+        comment["status"] = "open"
+        comment["resolved_at"] = None
+        comment["resolved_by"] = None
+
+    return update(review_id, fn)
+
+
+def anchor_comment(
+    comment: dict, lines: list[str] | None, head: str | None
+) -> tuple[str, int | None]:
+    """The re-anchoring rule (decision 12), one comment against the current
+    lines of its side. Returns (state, line): ``current`` when the recorded
+    text is still at the recorded line, ``moved`` with the new line when the
+    text occurs exactly once elsewhere, ``outdated`` otherwise. Exact text
+    on both sides, nothing trimmed. ``lines`` None means the file has no
+    such side any more."""
+    text = comment.get("line_text")
+    line = comment.get("line")
+    if lines is None or text is None or not line:
+        return "outdated", None
+    if 1 <= line <= len(lines) and lines[line - 1] == text:
+        return "current", line
+    hits = [i + 1 for i, current in enumerate(lines) if current == text]
+    if len(hits) == 1:
+        return "moved", hits[0]
+    return "outdated", None
+
+
+def anchor_comments(
+    comments: list[dict],
+    side_lines_of: Callable[[str, str], list[str] | None],
+    head: str | None,
+) -> dict[str, str]:
+    """Re-anchor every line comment whose ``anchor_head`` differs from the
+    current head (always for the working tree, whose head is None). A moved
+    comment gets its ``line`` and ``anchor_head`` updated in place. Returns
+    the state of every line comment by id. Nothing is ever dropped."""
+    states: dict[str, str] = {}
+    cache: dict[tuple[str, str], list[str] | None] = {}
+    for comment in comments:
+        path = comment.get("path")
+        if not path:
+            continue
+        if head is not None and comment.get("anchor_head") == head:
+            states[comment["id"]] = "current"
+            continue
+        key = (path, comment.get("side") or "new")
+        if key not in cache:
+            cache[key] = side_lines_of(*key)
+        state, line = anchor_comment(comment, cache[key], head)
+        if state == "moved":
+            comment["line"] = line
+            comment["anchor_head"] = head
+        elif state == "current":
+            comment["anchor_head"] = head
+        states[comment["id"]] = state
+    return states
+
+
+def open_thread_counts(review: dict) -> dict[str, int]:
+    """Open threads per path (review-wide ones under the key "")."""
+    counts: dict[str, int] = {}
+    for c in review.get("comments") or []:
+        if c.get("status") != "open":
+            continue
+        key = c.get("path") or ""
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+# ---------------------------------------------------------------------------
 # Loading a review: recompute the viewed state, count the new commits
 # ---------------------------------------------------------------------------
 
@@ -347,14 +556,39 @@ def _new_commits_since(last_seen: str, head: str, repo_dir: Path) -> int:
     return int(out.strip() or "0")
 
 
-def refresh(
-    review_id: str, repo_dir: Path
-) -> tuple[dict, list[str], int, cm.Comparison]:
+class Loaded:
+    """What a full load returns: the record, the cleared viewed paths, the
+    new-commit count, the live comparison, the anchor state per comment.
+    Unpacks as the first four for the callers that need only those."""
+
+    def __init__(
+        self,
+        review: dict,
+        changed: list[str],
+        new_commits: int,
+        cmp: cm.Comparison,
+        anchors: dict[str, str],
+    ) -> None:
+        self.review = review
+        self.changed = changed
+        self.new_commits = new_commits
+        self.cmp = cmp
+        self.anchors = anchors
+
+    def __iter__(self):
+        return iter((self.review, self.changed, self.new_commits, self.cmp))
+
+    def __getitem__(self, i: int):
+        return (self.review, self.changed, self.new_commits, self.cmp)[i]
+
+
+def refresh(review_id: str, repo_dir: Path, *, advance_seen: bool = True) -> Loaded:
     """A full load. Inside the lock: resolve the comparison as it is now,
-    count the commits since ``last_seen_head`` and only then advance it,
-    recompute every viewed file's hash and clear the entries whose patch
-    changed. Returns the record, the cleared paths, the new-commit count and
-    the live comparison. The record is written only when something changed.
+    count the commits since ``last_seen_head`` and only then advance it
+    (unless ``advance_seen`` is off: the agent's ``merlin review show`` is
+    not the user's look), recompute every viewed file's hash and clear the
+    entries whose patch changed, re-anchor every line comment. The record is
+    written only when something changed.
     """
     with locked(review_id):
         review = _read(review_id)
@@ -367,7 +601,7 @@ def refresh(
         head = cmp.head_resolved
         if head and last_seen and head != last_seen:
             new_commits = _new_commits_since(last_seen, head, repo_dir)
-        if head != last_seen:
+        if head != last_seen and advance_seen:
             review["last_seen_head"] = head
             dirty = True
 
@@ -380,7 +614,15 @@ def refresh(
                 changed.append(path)
                 dirty = True
 
+        comments = review.get("comments") or []
+        before = json.dumps(comments, sort_keys=True)
+        anchors = anchor_comments(
+            comments, lambda p, s: cm.side_lines(cmp, p, s, repo_dir), head
+        )
+        if json.dumps(comments, sort_keys=True) != before:
+            dirty = True
+
         if dirty:
             review["updated"] = now_iso()
             _write(review)
-    return review, changed, new_commits, cmp
+    return Loaded(review, changed, new_commits, cmp, anchors)

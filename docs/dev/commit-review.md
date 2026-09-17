@@ -272,7 +272,103 @@ hidden or the view is not a review, stopped on navigation, and run once more
 when the tab becomes visible. A newer record re-renders the chrome and the
 viewed state, never the diff.
 
-## Later milestones
+## Comments
 
-Comments (the re-anchoring rule) and the `merlin review` CLI are documented
-here as they land.
+A comment is a thread on a line or on the review (decision 11), stored in
+the record's `comments` list:
+
+```json
+{ "id": "<8 hex>", "path": "<path or null>", "side": "new | old",
+  "line": 42, "line_text": "<the line as it was>",
+  "anchor_head": "<sha or null>", "author": "user | agent", "body": "…",
+  "created": "<iso>", "status": "open | resolved",
+  "resolved_at": "<iso or null>", "resolved_by": "user | agent | null",
+  "replies": [ { "id": "<8 hex>", "author": "user | agent", "body": "…",
+                 "created": "<iso>" } ] }
+```
+
+`add_comment` reads `line_text` from the current comparison through
+`compare.side_lines(cmp, path, side)`: the head version (the disk for the
+working tree) for `new`, the base version for `old`, both through the same
+blob and containment readers as the full-file view. A line beyond the side's
+length, a side the file does not have (a file added on the branch has no old
+side), a missing path with a line, or a body that is empty or longer than
+4000 characters is a `ValueError` (400, exit 1). Bodies are plain text with
+line breaks, never interpreted. `reply`, `resolve` (with an optional closing
+reply) and `reopen` are locked updates. Nothing deletes a comment or a reply.
+
+### Re-anchoring
+
+`anchor_comment(comment, lines, head)` is the pure rule of decision 12 over
+one comment and the current lines of its side: `current` when `line_text`
+is still at `line`, `moved` (with the new line) when the text occurs exactly
+once elsewhere, `outdated` otherwise (gone, several occurrences, or the side
+no longer exists). The comparison is exact on both sides, nothing trimmed.
+`anchor_comments` applies it to every line comment whose `anchor_head`
+differs from the current head (always for the working tree, whose head is
+null), updates `line` and `anchor_head` of a moved comment in place, and
+returns the state per id. Nothing is ever dropped. `refresh` runs it under
+the lock and writes the record only when a comment moved, and the full load
+returns the states as `anchors` and the open counts per path as
+`open_threads`.
+
+### Routes
+
+| Route | Does |
+|-------|------|
+| `POST /api/commits/reviews/<id>/comments` `{body, path?, side?, line?}` | A new thread from the page. The author is always `user`. 201 with `{review, comment}` |
+| `POST .../comments/<cid>/replies` `{body}` | A reply, from the user |
+| `POST .../comments/<cid>/resolve` `{message?}` | Resolve, with an optional closing reply |
+| `POST .../comments/<cid>/reopen` | Reopen |
+
+### The page
+
+Every diff row carries `data-side` and `data-line` (a deleted line is
+`old`, added and context lines are `new`), and every number cell is
+`commentable`: a tap arms the row and shows the `+` affordance (44 px on the
+phone, on hover on desktop), and the affordance opens the composer row under
+the line. `submitComment` goes through `ensureReview` first, so the first
+comment on a plain comparison or a commit page creates the review (decision
+8), then POSTs through the serial mutation queue. `renderThread` is the one
+thread component (author badge, time, body, replies, Reply, Resolve or
+Reopen, folded when resolved), and `renderAllThreads` places every thread of
+the record on each render: under its row in the diff table or the file
+table, at the top of its file section when it is outdated or its line is
+not among the hunks shown (with the original line quoted), and in the
+review-wide panel. The file header's count is the file's open threads. The
+poll re-renders the threads with the chrome.
+
+The full-file view shows the head version, so only `new`-side threads sit
+under their line there. Old-side and outdated threads of that file render
+at the top of the file view with their quote.
+
+## The `merlin review` CLI
+
+`commits/review_cli.py`, registered in `cli.py`'s `DELEGATED_COMMANDS` and
+`ext_commands.CORE_COMMANDS` (the drift tests enforce both). It uses
+`reviews.py` directly, no HTTP, so every write goes through the same lock and
+atomic rename as the server, and the page picks it up within a poll. The
+repository of a review is the one its record stores (checked to be exactly
+a root); `--repo` only chooses which repository `list` looks at, defaulting
+to the git root of the current directory. Output is markdown for an agent's
+context, `--json` the raw record with its live comparison.
+
+| Command | Does |
+|---------|------|
+| `list [--all] [--repo] [--json]` | The open reviews (`--all` includes closed): id, title, kind, status, open threads, updated |
+| `show <id> [--all] [--json]` | Title, repo, kind, refs and hashes, the new-commits note, the files with viewed marks and open counts, every open thread with the quoted line and its replies, `[moved]` and `[outdated]` labels, resolved threads as a count unless `--all` |
+| `diff <id> [--path <p>]` | The unified diff as git prints it (`compare_patch`, untracked files appended for the working tree) |
+| `comment <id> [--path <p> --line <n> [--side new\|old]] [--author agent\|user] <body>` | A new thread. `line_text` read from the comparison, a missing line is an error. `-` reads the body from stdin |
+| `reply <id> <cid> [--author] <body>` | A reply |
+| `resolve <id> <cid> [-m <reply>] [--author]`, `reopen <id> <cid>` | Thread status |
+| `close <id>`, `reopen-review <id>` | Review status |
+
+`show` loads the review with `refresh(..., advance_seen=False)`: it
+re-anchors and recomputes viewed like the page, but the agent's look does
+not advance `last_seen_head`, so the user's `N new commits since you last
+looked` line survives it.
+
+The agent learns the loop from the "Code reviews" section of
+`agent/MERLIN.md` and the core `skills/review/SKILL.md` operating card, which
+triggers on review comments, a review id or a pasted `merlin review show`
+line.

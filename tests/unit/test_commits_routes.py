@@ -851,3 +851,91 @@ class TestReviewBoundContent:
         assert client.get("/api/commits/reviews/00000000/diff").status_code == 404
         assert client.get("/api/commits/reviews/00000000/file/a.txt").status_code == 404
         assert client.get("/api/commits/reviews/bad/diff").status_code == 400
+
+
+class TestApiComments:
+    def _create(self, client, root):
+        resp = client.post(
+            "/api/commits/reviews",
+            json={
+                "repo": str(root),
+                "base": "main",
+                "head": "feature",
+                "mergebase": True,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_line_comment_reply_resolve_reopen(self, client, real_repo):
+        root, git = real_repo
+        review = self._create(client, root)
+        base = f"/api/commits/reviews/{review['id']}"
+        resp = client.post(
+            f"{base}/comments",
+            json={"body": "Why?", "path": "f.txt", "side": "new", "line": 1},
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        comment = data["comment"]
+        assert comment["author"] == "user" and comment["line_text"] == "f1"
+        assert data["review"]["comments"][0]["id"] == comment["id"]
+        cid = comment["id"]
+        resp = client.post(f"{base}/comments/{cid}/replies", json={"body": "Because"})
+        assert resp.status_code == 200
+        assert resp.json()["comments"][0]["replies"][0]["author"] == "user"
+        resp = client.post(f"{base}/comments/{cid}/resolve", json={"message": "ok"})
+        assert resp.status_code == 200
+        c = resp.json()["comments"][0]
+        assert c["status"] == "resolved" and len(c["replies"]) == 2
+        resp = client.post(f"{base}/comments/{cid}/reopen")
+        assert (
+            resp.status_code == 200 and resp.json()["comments"][0]["status"] == "open"
+        )
+        # The full load carries the anchor states and the open counts
+        data = client.get(base).json()
+        assert data["anchors"] == {cid: "current"}
+        assert data["open_threads"] == {"f.txt": 1}
+
+    def test_bad_comments_and_unknown_threads(self, client, real_repo):
+        root, git = real_repo
+        review = self._create(client, root)
+        base = f"/api/commits/reviews/{review['id']}"
+        assert client.post(f"{base}/comments", json={"body": "  "}).status_code == 400
+        assert (
+            client.post(
+                f"{base}/comments", json={"body": "x", "path": "f.txt", "line": 99}
+            ).status_code
+            == 400
+        )
+        assert (
+            client.post(
+                f"{base}/comments", json={"body": "x", "path": "%2e%2e/x", "line": 1}
+            ).status_code
+            == 400
+        )
+        assert (
+            client.post(
+                f"{base}/comments/deadbeef/replies", json={"body": "x"}
+            ).status_code
+            == 404
+        )
+        assert client.post(f"{base}/comments/bad/resolve", json={}).status_code == 400
+        assert (
+            client.post(
+                "/api/commits/reviews/00000000/comments", json={"body": "x"}
+            ).status_code
+            == 404
+        )
+
+    def test_review_wide_comment(self, client, real_repo):
+        root, git = real_repo
+        review = self._create(client, root)
+        resp = client.post(
+            f"/api/commits/reviews/{review['id']}/comments", json={"body": "All good"}
+        )
+        assert resp.status_code == 201
+        assert resp.json()["comment"]["path"] is None
+        data = client.get(f"/api/commits/reviews/{review['id']}").json()
+        assert data["open_threads"] == {"": 1}
+        assert data["anchors"] == {}

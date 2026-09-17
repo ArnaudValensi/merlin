@@ -299,7 +299,7 @@ document.addEventListener('DOMContentLoaded', () => {
 | `GET /api/commits/compare/diff` | Parsed unified diff of a comparison |
 | `GET /api/commits/compare/file/{path}` | Full file at the head of a comparison, with gutters |
 | `GET /api/commits/refs` | Local and remote branches, the current branch, the guessed default base |
-| `GET`, `POST /api/commits/reviews`, `GET`, `PATCH /api/commits/reviews/{id}`, `PUT .../viewed/{path}` | Saved reviews with viewed files, one JSON file each under `~/.merlin/reviews/` (see [`commit-review.md`](commit-review.md)) |
+| `GET`, `POST /api/commits/reviews`, `GET`, `PATCH /api/commits/reviews/{id}`, `GET .../diff`, `.../file/{path}`, `PUT .../viewed/{path}`, `POST .../comments[/{cid}/replies\|resolve\|reopen]` | Saved reviews with viewed files and comment threads, one JSON file each under `~/.merlin/reviews/` (see [`commit-review.md`](commit-review.md)) |
 
 ### Files
 
@@ -392,7 +392,8 @@ commits/
 ├── routes.py              # Pages + API endpoints
 ├── git_parser.py          # Git log/diff parsing helpers (subprocess calls to git)
 ├── compare.py             # base..head comparisons: ref safety, single commit, range, branch, working tree
-├── reviews.py             # Saved reviews store: one JSON per review under ~/.merlin/reviews/, flock + atomic write, viewed hash
+├── reviews.py             # Saved reviews store: one JSON per review under ~/.merlin/reviews/, flock + atomic write, viewed hash, comments + re-anchoring
+├── review_cli.py          # merlin review: the agent's CLI over the same store (list/show/diff/comment/reply/resolve)
 ├── templates/
 │   └── commits.html       # SPA: 3 views (list, diff, file) + the compare sheet
 └── static/

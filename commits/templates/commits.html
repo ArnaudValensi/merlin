@@ -97,6 +97,20 @@
                 <span>Save as review</span>
             </button>
         </div>
+        <div id="review-comments" class="review-comments" style="display:none">
+            <div class="review-comments-head">
+                <span class="reviews-heading">Comments on the review</span>
+                <button id="review-add-comment-btn" class="review-action-btn">Add a comment</button>
+            </div>
+            <div id="review-threads" class="review-threads"></div>
+            <div id="review-composer" class="thread-composer" style="display:none">
+                <textarea id="review-composer-text" class="thread-textarea" rows="3" placeholder="A comment on the whole review" maxlength="4000"></textarea>
+                <div class="thread-composer-actions">
+                    <button id="review-composer-cancel" class="thread-btn">Cancel</button>
+                    <button id="review-composer-submit" class="thread-btn thread-btn-primary">Comment</button>
+                </div>
+            </div>
+        </div>
         <div id="compare-commits" class="file-list-toggle" style="display:none">
             <button id="compare-commits-btn" class="file-list-toggle-btn">
                 <span id="compare-commits-label"></span>
@@ -124,6 +138,7 @@
             <div class="file-meta" id="file-meta"></div>
             <button id="wrap-toggle" class="wrap-toggle-btn" title="Toggle line wrap">Wrap</button>
         </div>
+        <div id="file-threads-top" class="file-threads-top" style="display:none"></div>
         <div id="file-content" class="file-content"></div>
         <div id="file-loading" class="loading-indicator">Loading file...</div>
         <!-- FAB for gutter navigation -->

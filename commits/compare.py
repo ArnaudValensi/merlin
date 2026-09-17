@@ -517,6 +517,54 @@ def _blob_at(head_sha: str, head: str, file_path: str, repo_dir: Path) -> str:
         raise FileNotFoundError(f"File {file_path} not found at {head}")
 
 
+def compare_patch(cmp: Comparison, repo_dir: Path, path: str | None = None) -> str:
+    """The unified diff of the comparison as git prints it, for the agent's
+    ``merlin review diff``. Optionally one file. Untracked working-tree
+    files are appended through the same containment gate as the page."""
+    revs = _diff_args(cmp)
+    paths = ["--", path] if path else ["--"]
+    if path:
+        gp._validate_file_path(path)
+    out = gp._run_git("diff", *revs, *paths, repo_dir=repo_dir, check=False)
+    if cmp.worktree:
+        readable = _readable_untracked(_untracked_files(repo_dir), repo_dir)
+        parts = [out] if out else []
+        for p, target in readable.items():
+            if path and p != path:
+                continue
+            if target is not None:
+                parts.append(_untracked_diff(p, repo_dir))
+        out = "".join(part if part.endswith("\n") else part + "\n" for part in parts)
+    return out
+
+
+def side_lines(
+    cmp: Comparison, path: str, side: str, repo_dir: Path
+) -> list[str] | None:
+    """The lines of ``path`` on one side of the comparison: ``new`` is the
+    head version (the disk for the working tree), ``old`` is the base
+    version. None when the file does not exist on that side."""
+    gp._validate_file_path(path)
+    try:
+        if side == "new":
+            if cmp.worktree:
+                content = worktree_file_path(path, repo_dir).read_text(errors="replace")
+            else:
+                content = _blob_at(cmp.head_resolved or "", cmp.head, path, repo_dir)
+        elif side == "old":
+            content = _blob_at(cmp.diff_base, cmp.base, path, repo_dir)
+        else:
+            raise ValueError(f"Unknown side: {side}")
+    except (FileNotFoundError, ValueError):
+        return None
+    if cmp.diff_base == EMPTY_TREE and side == "old":
+        return None
+    lines = content.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def _parse_commit_lines(output: str) -> list[dict]:
     commits = []
     for line in output.strip().split("\n"):

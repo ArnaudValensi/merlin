@@ -239,7 +239,8 @@ def test_file_header_is_sticky(page, server, repo):
         "() => document.querySelector('.diff-file-header').getBoundingClientRect().top"
     )
     assert before > 0
-    page.evaluate("window.scrollBy(0, 400)")
+    # Scroll well into the first file, wherever the page's chrome puts it
+    page.evaluate(f"window.scrollBy(0, {int(before) + 300})")
     page.wait_for_timeout(200)
     info = page.evaluate(
         """() => {
@@ -252,7 +253,7 @@ def test_file_header_is_sticky(page, server, repo):
         }"""
     )
     assert info["scrollY"] >= 300
-    assert info["section"] < 0, info
+    assert info["section"] < -200, info
     assert info["bottom"] > 0, info
     assert abs(info["header"]) <= 1, info
     # No ancestor between the header and the window clips it

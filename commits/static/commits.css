@@ -1122,6 +1122,247 @@
     flex-shrink: 0;
 }
 
+/* Comments: the affordance on a number cell, the composer, the threads */
+.diff-line-no.commentable,
+.file-line-no.commentable {
+    position: relative;
+    cursor: pointer;
+}
+.comment-add-btn {
+    display: none;
+    position: absolute;
+    right: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: var(--accent-blue);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 18px;
+    cursor: pointer;
+    z-index: 1;
+}
+tr.comment-armed .comment-add-btn {
+    display: block;
+}
+@media (hover: hover) {
+    tr:hover .comment-add-btn {
+        display: block;
+    }
+}
+.comment-composer-row td,
+.comment-thread-row td {
+    white-space: normal;
+    padding: 0 !important;
+    background: var(--bg-secondary);
+}
+/* The diff table is as wide as its longest line and scrolls sideways. A
+   thread must not widen it and must stay in view while the code scrolls:
+   the JS sizes it to the wrapper's visible width and it sticks left. */
+.comment-composer-row .thread-composer,
+.comment-thread-row .thread {
+    position: sticky;
+    left: 0;
+    box-sizing: border-box;
+    max-width: 100vw;
+}
+.thread-composer {
+    padding: 8px 12px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+}
+.thread-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 16px;
+    line-height: 1.4;
+    resize: vertical;
+    outline: none;
+}
+.thread-textarea:focus {
+    border-color: var(--accent-blue);
+}
+.thread-composer-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 6px;
+}
+.thread-btn {
+    min-height: 36px;
+    padding: 0 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+}
+.thread-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+.thread-btn-primary {
+    background: var(--accent-blue);
+    border-color: var(--accent-blue);
+    color: var(--text-primary);
+}
+.thread {
+    padding: 8px 12px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: normal;
+}
+.thread + .thread {
+    border-top: none;
+}
+.thread-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-height: 24px;
+}
+.author-badge {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+}
+.author-you {
+    color: var(--accent-blue);
+}
+.author-agent {
+    color: var(--accent-purple);
+}
+.thread-time,
+.thread-where {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.thread-where {
+    font-family: 'Geist Mono', monospace;
+}
+.thread-state {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 8px;
+    border: 1px solid currentColor;
+}
+.thread-state.moved {
+    color: var(--accent-yellow);
+}
+.thread-state.outdated {
+    color: var(--accent-red);
+}
+.thread-resolved-label {
+    font-size: 12px;
+    color: var(--accent-green);
+}
+.thread-expand {
+    margin-left: auto;
+    min-height: 28px;
+    padding: 0 10px;
+    font-size: 12px;
+}
+.thread.resolved:not(.expanded) .thread-content {
+    display: none;
+}
+.thread-quote {
+    margin: 6px 0;
+    padding: 4px 10px;
+    border-left: 3px solid var(--border);
+    color: var(--text-secondary);
+    font-family: 'Geist Mono', monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+.thread-quote-line {
+    display: block;
+    font-family: inherit;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.thread-body {
+    margin-top: 4px;
+    color: var(--text-primary);
+    word-break: break-word;
+}
+.thread-reply {
+    margin-top: 8px;
+    padding-left: 12px;
+    border-left: 2px solid var(--border);
+}
+.thread-actions {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 8px;
+}
+.thread-actions .thread-textarea {
+    flex: 1;
+    min-height: 36px;
+}
+.file-threads-top {
+    padding: 4px 0;
+    background: var(--bg-secondary);
+}
+.file-threads-top-inline {
+    border-bottom: 1px solid var(--border);
+}
+#file-view .file-threads-top {
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+.review-comments {
+    margin: -4px 0 16px;
+    padding: 8px 0 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+}
+.review-comments-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px 6px;
+}
+.review-comments-head .reviews-heading {
+    padding: 0;
+}
+.review-comments .thread-composer {
+    border-bottom: none;
+}
+.review-comments .thread:first-child {
+    border-top: 1px solid var(--border);
+}
+.review-threads:empty + .thread-composer {
+    border-top: 1px solid var(--border);
+}
+
 /* Mobile adjustments */
 @media (max-width: 768px) {
     /* Zero out .main padding for the commits page */
@@ -1186,8 +1427,28 @@
     }
     .review-action-btn,
     .review-title,
-    .reviews-closed-btn {
+    .reviews-closed-btn,
+    .thread-btn {
         min-height: 44px;
+    }
+    .comment-add-btn {
+        width: 44px;
+        height: 44px;
+        line-height: 44px;
+        font-size: 20px;
+        border-radius: 22px;
+        right: auto;
+        left: 0;
+    }
+    .thread-expand {
+        min-height: 36px;
+    }
+    .review-comments {
+        margin-left: 8px;
+        margin-right: 8px;
+    }
+    #file-view .file-threads-top {
+        margin: 0 8px 8px;
     }
     .review-chrome,
     .save-review-row {

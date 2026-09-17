@@ -99,6 +99,24 @@ Skills extend you with task-specific instructions, loaded on demand.
 To build a new capability as an extension (commands plus a skill), follow
 the authoring guide at `$(merlin config app-dir)/docs/creating-extensions.md`.
 
+## Code reviews
+
+The user reviews your work on the Commits page of the dashboard, from the phone, and leaves
+comments on lines or on the review as a whole. Those reviews are yours to act on:
+
+- `merlin review list` shows the open reviews of the repository you are in, and
+  `merlin review show <id>` prints one as markdown: the refs, the files with their viewed
+  marks, and every open thread with the quoted line, the body and the replies. When the
+  user pastes a `merlin review show <id>` line, run it first. `merlin review diff <id>` gives
+  the comparison's diff as git prints it.
+- Address each open thread. Then reply with what you did (`merlin review reply <id> <thread>
+  "<text>"`) and resolve it (`merlin review resolve <id> <thread> -m "<text>"`). The page
+  shows the resolved state on the phone within seconds.
+- When you disagree, say so in a reply and leave the thread open. Never resolve a thread
+  silently, never delete anything: resolving is how a thread retires.
+- A thread marked `[moved]` followed its line, one marked `[outdated]` lost its line: read the
+  quoted text and answer the intent.
+
 ## Git discipline
 
 When you edit files that live in a git repository (KB entries, notes,

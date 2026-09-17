@@ -25,6 +25,7 @@
     let reviewMeta = null;      // its comparison detail (files, commits)
     let reviewChanged = new Set();  // paths whose tick was cleared on this load
     let reviewNewCommits = 0;   // commits since the last look, reported once
+    let reviewAnchors = {};     // comment id -> current | moved | outdated, from the full load
     let reviewPollTimer = null;
     const REVIEW_POLL_MS = 5000;
     // One review creation at a time (two quick ticks share it), and one
@@ -52,6 +53,7 @@
     let fileListLabel, reviewChrome, reviewTitle, reviewStatus, reviewRefs, reviewNewCommitsEl, reviewError;
     let reviewCopyBtn, reviewStatusBtn, saveReviewRow, saveReviewBtn;
     let reviewsSection, reviewsOpen, reviewsClosedBtn, reviewsClosedLabel, reviewsClosed;
+    let reviewComments, reviewThreads, reviewAddCommentBtn, reviewComposer, reviewComposerText, fileThreadsTop;
 
     // ---------------------------------------------------------------------------
     // Init
@@ -128,6 +130,12 @@
         reviewsClosedBtn = document.getElementById('reviews-closed-btn');
         reviewsClosedLabel = document.getElementById('reviews-closed-label');
         reviewsClosed = document.getElementById('reviews-closed');
+        reviewComments = document.getElementById('review-comments');
+        reviewThreads = document.getElementById('review-threads');
+        reviewAddCommentBtn = document.getElementById('review-add-comment-btn');
+        reviewComposer = document.getElementById('review-composer');
+        reviewComposerText = document.getElementById('review-composer-text');
+        fileThreadsTop = document.getElementById('file-threads-top');
 
         // Event listeners
         searchInput.addEventListener('input', debounceSearch);
@@ -179,6 +187,22 @@
         });
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden) pollReview();
+        });
+        window.addEventListener('resize', sizeInlineThreads);
+        reviewAddCommentBtn.addEventListener('click', () => {
+            reviewComposer.style.display = '';
+            reviewComposerText.focus();
+        });
+        document.getElementById('review-composer-cancel').addEventListener('click', () => {
+            reviewComposer.style.display = 'none';
+            reviewComposerText.value = '';
+        });
+        document.getElementById('review-composer-submit').addEventListener('click', async () => {
+            const ok = await submitComment({ body: reviewComposerText.value });
+            if (ok) {
+                reviewComposerText.value = '';
+                reviewComposer.style.display = 'none';
+            }
         });
         fileListToggleBtn.addEventListener('click', toggleFileList);
         diffToggle.addEventListener('click', toggleDiffMode);
@@ -829,6 +853,9 @@
         compareCommits.style.display = 'none';
         reviewChrome.style.display = 'none';
         saveReviewRow.style.display = 'none';
+        reviewComments.style.display = 'none';
+        reviewThreads.innerHTML = '';
+        reviewComposer.style.display = 'none';
         diffMeta.innerHTML = '';
         stopReviewPoll();
         if (!currentTarget || currentTarget.kind !== 'review') {
@@ -836,6 +863,7 @@
             reviewMeta = null;
             reviewChanged = new Set();
             reviewNewCommits = 0;
+            reviewAnchors = {};
         }
     }
 
@@ -884,7 +912,9 @@
         }
         reviewMeta = target.kind === 'compare' ? meta : null;
         saveReviewRow.style.display = '';
+        reviewComments.style.display = '';
         applyViewedState();
+        renderAllThreads();
     }
 
     // The files panel: one row per file with its viewed checkbox, status,
@@ -1026,6 +1056,10 @@
         pathSpan.textContent = file.path;
         header.appendChild(pathSpan);
 
+        const count = document.createElement('span');
+        count.className = 'diff-file-count';
+        header.appendChild(count);
+
         if (file.status !== 'D') {
             const btn = document.createElement('button');
             btn.className = 'full-file-btn';
@@ -1077,6 +1111,10 @@
                 for (const line of hunk.lines) {
                     const tr = document.createElement('tr');
                     tr.className = 'diff-line-' + (line.type === 'add' ? 'add' : line.type === 'del' ? 'del' : 'ctx');
+                    // A deleted line lives on the old side, added and context
+                    // lines on the new side (decision 11).
+                    tr.dataset.side = line.type === 'del' ? 'old' : 'new';
+                    tr.dataset.line = line.type === 'del' ? line.old_no : line.new_no;
 
                     const oldNo = document.createElement('td');
                     oldNo.className = 'diff-line-no';
@@ -1094,6 +1132,7 @@
                     tr.appendChild(oldNo);
                     tr.appendChild(newNo);
                     tr.appendChild(content);
+                    armCommentCells(tr, [oldNo, newNo], file.path);
                     tbody.appendChild(tr);
                 }
             }
@@ -1126,9 +1165,14 @@
         reviewMeta = data.comparison;
         reviewChanged = new Set(data.changed_since_viewed || []);
         reviewNewCommits = data.new_commits || 0;
+        reviewAnchors = data.anchors || {};
         diffMeta.innerHTML = `<div class="commit-meta-info">Review · ${esc(CompareModel.kindLabel(currentReview.kind))}</div>`;
         renderReviewChrome(data.error);
-        if (!data.comparison) return;
+        reviewComments.style.display = '';
+        if (!data.comparison) {
+            renderAllThreads();
+            return;
+        }
 
         diffLoading.style.display = '';
         const diff = await API.get(apiUrl('diff', currentTarget));
@@ -1149,6 +1193,7 @@
             diffContent.appendChild(renderDiffFile(file, currentTarget));
         }
         applyViewedState();
+        renderAllThreads();
         startReviewPoll();
     }
 
@@ -1250,11 +1295,17 @@
         reviewChanged = new Set();
         reviewNewCommits = 0;
         currentTarget = { kind: 'review', id: review.id };
-        history.replaceState(null, '', pageUrl('diff', currentTarget));
-        diffMeta.innerHTML = `<div class="commit-meta-info">Review · ${esc(CompareModel.kindLabel(review.kind))}</div>`;
-        renderReviewChrome(null);
-        applyViewedState();
-        startReviewPoll();
+        const url = currentView === 'file'
+            ? pageUrl('file', currentTarget, currentFilePath)
+            : pageUrl('diff', currentTarget);
+        history.replaceState(null, '', url);
+        if (currentView === 'diff') {
+            diffMeta.innerHTML = `<div class="commit-meta-info">Review · ${esc(CompareModel.kindLabel(review.kind))}</div>`;
+            renderReviewChrome(null);
+            applyViewedState();
+            renderAllThreads();
+            startReviewPoll();
+        }
         return review.id;
     }
 
@@ -1358,6 +1409,282 @@
         currentReview = data.review;
         renderReviewChrome(null);
         applyViewedState();
+        renderAllThreads();
+    }
+
+    // ---------------------------------------------------------------------------
+    // Comments: threads on a line or on the review (decisions 11 to 13)
+    // ---------------------------------------------------------------------------
+
+    // Tapping a number cell shows the affordance on that row, and the
+    // affordance opens the composer under it. Desktop shows it on hover.
+    function armCommentCells(tr, cells, path) {
+        for (const cell of cells) {
+            cell.classList.add('commentable');
+            cell.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (e.target.closest('.comment-add-btn')) return;
+                const armed = tr.classList.contains('comment-armed');
+                for (const other of tr.parentElement.querySelectorAll('tr.comment-armed')) {
+                    other.classList.remove('comment-armed');
+                }
+                if (!armed) tr.classList.add('comment-armed');
+            });
+        }
+        const btn = document.createElement('button');
+        btn.className = 'comment-add-btn';
+        btn.type = 'button';
+        btn.title = 'Comment on this line';
+        btn.setAttribute('aria-label', 'Comment on line ' + tr.dataset.line);
+        btn.textContent = '+';
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openComposer(tr, path);
+        });
+        cells[cells.length - 1].appendChild(btn);
+    }
+
+    function closeComposers() {
+        for (const row of document.querySelectorAll('.comment-composer-row')) row.remove();
+    }
+
+    // The composer under a line: a textarea, Comment, Cancel.
+    function openComposer(tr, path) {
+        closeComposers();
+        const side = tr.dataset.side;
+        const line = parseInt(tr.dataset.line, 10);
+        const row = document.createElement('tr');
+        row.className = 'comment-composer-row';
+        const td = document.createElement('td');
+        td.colSpan = 3;
+        td.innerHTML =
+            `<div class="thread-composer">` +
+                `<textarea class="thread-textarea" rows="3" maxlength="4000" placeholder="Comment on ${esc(path)}:${line}"></textarea>` +
+                `<div class="thread-composer-actions">` +
+                    `<button type="button" class="thread-btn composer-cancel">Cancel</button>` +
+                    `<button type="button" class="thread-btn thread-btn-primary composer-submit">Comment</button>` +
+                `</div>` +
+            `</div>`;
+        row.appendChild(td);
+        tr.after(row);
+        sizeInlineThreads();
+        const textarea = td.querySelector('textarea');
+        td.querySelector('.composer-cancel').addEventListener('click', () => row.remove());
+        td.querySelector('.composer-submit').addEventListener('click', async () => {
+            const ok = await submitComment({ body: textarea.value, path: path, side: side, line: line });
+            if (ok) row.remove();
+        });
+        tr.classList.remove('comment-armed');
+        textarea.focus();
+    }
+
+    // A new thread. The first comment on a plain comparison creates the
+    // review (decision 8), then the comment lands on it.
+    async function submitComment(fields) {
+        const body = (fields.body || '').trim();
+        if (!body) return false;
+        const id = await ensureReview();
+        if (!id) return false;
+        const payload = { body: body };
+        if (fields.path) {
+            payload.path = fields.path;
+            payload.side = fields.side;
+            payload.line = fields.line;
+        }
+        const data = await enqueueMutation(() => apiJson('POST', '/api/commits/reviews/' + id + '/comments', payload));
+        if (!data || data.detail || !data.review) {
+            reviewError.textContent = (data && data.detail) || 'Could not add the comment';
+            reviewError.style.display = '';
+            reviewChrome.style.display = '';
+            return false;
+        }
+        if (!currentTarget || currentTarget.kind !== 'review' || currentTarget.id !== id) return true;
+        currentReview = data.review;
+        if (data.comment && data.comment.id) reviewAnchors[data.comment.id] = 'current';
+        renderAllThreads();
+        return true;
+    }
+
+    async function threadAction(commentId, action, body) {
+        if (!currentTarget || currentTarget.kind !== 'review') return;
+        const id = currentTarget.id;
+        const url = '/api/commits/reviews/' + id + '/comments/' + commentId + '/' + action;
+        const review = await enqueueMutation(() => apiJson('POST', url, body || {}));
+        if (!review || review.detail) {
+            reviewError.textContent = (review && review.detail) || 'Could not update the thread';
+            reviewError.style.display = '';
+            return;
+        }
+        if (!currentTarget || currentTarget.kind !== 'review' || currentTarget.id !== id) return;
+        currentReview = review;
+        renderAllThreads();
+    }
+
+    function authorBadge(author) {
+        const who = author === 'agent' ? 'agent' : 'you';
+        return `<span class="author-badge author-${who}">${who}</span>`;
+    }
+
+    function bodyHtml(text) {
+        return esc(text).replace(/\n/g, '<br>');
+    }
+
+    // The thread component, used inline under a line, at the top of a file
+    // for outdated threads, and in the review-wide panel.
+    function renderThread(c, opts) {
+        opts = opts || {};
+        const state = reviewAnchors[c.id] || 'current';
+        const resolved = c.status === 'resolved';
+        const el = document.createElement('div');
+        el.className = 'thread' + (resolved ? ' resolved' : ' open') + (opts.quoted ? ' quoted' : '');
+        el.dataset.commentId = c.id;
+        const replies = c.replies || [];
+        let head =
+            `<div class="thread-head">` +
+                authorBadge(c.author) +
+                `<span class="thread-time">${esc(timeAgo(c.created))}</span>` +
+                (c.path && opts.where ? `<span class="thread-where">${esc(c.path)}:${c.line} (${esc(c.side)})</span>` : '') +
+                (state === 'moved' ? `<span class="thread-state moved">moved</span>` : '') +
+                (state === 'outdated' ? `<span class="thread-state outdated">outdated</span>` : '') +
+                (resolved ? `<span class="thread-resolved-label">Resolved · ${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}</span>` +
+                            `<button type="button" class="thread-btn thread-expand">Show</button>` : '') +
+            `</div>`;
+        let quote = '';
+        if (opts.quoted && c.line_text != null) {
+            quote = `<blockquote class="thread-quote"><span class="thread-quote-line">line ${c.line}</span>${esc(c.line_text)}</blockquote>`;
+        }
+        let repliesHtml = '';
+        for (const r of replies) {
+            repliesHtml +=
+                `<div class="thread-reply">` +
+                    `<div class="thread-head">${authorBadge(r.author)}<span class="thread-time">${esc(timeAgo(r.created))}</span></div>` +
+                    `<div class="thread-body">${bodyHtml(r.body)}</div>` +
+                `</div>`;
+        }
+        el.innerHTML =
+            head +
+            `<div class="thread-content">` +
+                quote +
+                `<div class="thread-body">${bodyHtml(c.body)}</div>` +
+                `<div class="thread-replies">${repliesHtml}</div>` +
+                `<div class="thread-actions">` +
+                    `<textarea class="thread-textarea thread-reply-text" rows="1" maxlength="4000" placeholder="Reply"></textarea>` +
+                    `<button type="button" class="thread-btn thread-reply-btn">Reply</button>` +
+                    (resolved
+                        ? `<button type="button" class="thread-btn thread-reopen-btn">Reopen</button>`
+                        : `<button type="button" class="thread-btn thread-btn-primary thread-resolve-btn">Resolve</button>`) +
+                `</div>` +
+            `</div>`;
+        const expand = el.querySelector('.thread-expand');
+        if (expand) {
+            expand.addEventListener('click', () => {
+                const open = el.classList.toggle('expanded');
+                expand.textContent = open ? 'Hide' : 'Show';
+            });
+        }
+        const replyText = el.querySelector('.thread-reply-text');
+        el.querySelector('.thread-reply-btn').addEventListener('click', () => {
+            const body = replyText.value.trim();
+            if (!body) return;
+            threadAction(c.id, 'replies', { body: body });
+        });
+        const resolveBtn = el.querySelector('.thread-resolve-btn');
+        if (resolveBtn) {
+            resolveBtn.addEventListener('click', () => {
+                const body = replyText.value.trim();
+                threadAction(c.id, 'resolve', body ? { message: body } : {});
+            });
+        }
+        const reopenBtn = el.querySelector('.thread-reopen-btn');
+        if (reopenBtn) reopenBtn.addEventListener('click', () => threadAction(c.id, 'reopen', {}));
+        return el;
+    }
+
+    function threadRow(c, opts, colSpan) {
+        const row = document.createElement('tr');
+        row.className = 'comment-thread-row';
+        const td = document.createElement('td');
+        td.colSpan = colSpan;
+        td.appendChild(renderThread(c, opts));
+        row.appendChild(td);
+        return row;
+    }
+
+    // A thread or composer inside a scrolling table gets the width of the
+    // table's visible wrapper, so a long sentence never widens the table
+    // and the thread stays in view while the code scrolls sideways.
+    function sizeInlineThreads() {
+        for (const el of document.querySelectorAll('.comment-thread-row .thread, .comment-composer-row .thread-composer')) {
+            const wrapper = el.closest('.diff-table-scroll, .file-content');
+            if (wrapper) el.style.width = wrapper.clientWidth + 'px';
+        }
+    }
+
+    // Place every thread of the record: under its line in the diff (or the
+    // full file), at the top of its file when outdated or not in the hunks
+    // shown, and in the review-wide panel. Rebuilt on every change.
+    function renderAllThreads() {
+        placeThreads();
+        sizeInlineThreads();
+    }
+
+    function placeThreads() {
+        for (const row of document.querySelectorAll('.comment-thread-row')) row.remove();
+        for (const top of document.querySelectorAll('.file-threads-top-inline')) top.remove();
+        reviewThreads.innerHTML = '';
+        fileThreadsTop.innerHTML = '';
+        fileThreadsTop.style.display = 'none';
+        const comments = (currentReview && currentReview.comments) || [];
+        const openByPath = {};
+        for (const c of comments) {
+            if (c.path && c.status === 'open') openByPath[c.path] = (openByPath[c.path] || 0) + 1;
+        }
+        for (const section of diffContent.querySelectorAll('.diff-file-section')) {
+            const count = section.querySelector('.diff-file-count');
+            const n = openByPath[section.dataset.path] || 0;
+            if (count) count.textContent = n ? n + ' open' : '';
+        }
+        for (const c of comments) {
+            if (!c.path) {
+                reviewThreads.appendChild(renderThread(c, {}));
+                continue;
+            }
+            if (currentView === 'file') {
+                if (c.path !== currentFilePath) continue;
+                const state = reviewAnchors[c.id] || 'current';
+                const row = state !== 'outdated' && c.side === 'new'
+                    ? fileContent.querySelector('#file-line-' + c.line)
+                    : null;
+                if (row) {
+                    let after = row;
+                    while (after.nextElementSibling && after.nextElementSibling.classList.contains('comment-thread-row')) after = after.nextElementSibling;
+                    after.after(threadRow(c, {}, 3));
+                } else {
+                    fileThreadsTop.appendChild(renderThread(c, { quoted: true, where: true }));
+                    fileThreadsTop.style.display = '';
+                }
+                continue;
+            }
+            const section = document.getElementById('diff-file-' + c.path);
+            if (!section) continue;
+            const state = reviewAnchors[c.id] || 'current';
+            const row = state !== 'outdated'
+                ? section.querySelector(`tr[data-side="${c.side}"][data-line="${c.line}"]`)
+                : null;
+            if (row) {
+                let after = row;
+                while (after.nextElementSibling && after.nextElementSibling.classList.contains('comment-thread-row')) after = after.nextElementSibling;
+                after.after(threadRow(c, {}, 3));
+            } else {
+                let top = section.querySelector('.file-threads-top-inline');
+                if (!top) {
+                    top = document.createElement('div');
+                    top.className = 'file-threads-top file-threads-top-inline';
+                    section.querySelector('.diff-file-header').after(top);
+                }
+                top.appendChild(renderThread(c, { quoted: true, where: true }));
+            }
+        }
     }
 
     function toggleFileList() {
@@ -1385,6 +1712,14 @@
         lineHunkMap = [];
 
         fileMeta.innerHTML = `<div class="file-meta-path">${esc(filePath)}</div>`;
+        fileThreadsTop.innerHTML = '';
+        fileThreadsTop.style.display = 'none';
+
+        if (target.kind === 'review' && !(currentReview && currentReview.id === target.id)) {
+            // The record carries the threads of this file
+            const rv = await API.get('/api/commits/reviews/' + target.id + '?since=');
+            if (rv && rv.review) currentReview = rv.review;
+        }
 
         const data = await API.get(apiUrl('file', target, filePath));
         fileLoading.style.display = 'none';
@@ -1488,6 +1823,9 @@
             tr.appendChild(gutter);
             tr.appendChild(lineNo);
             tr.appendChild(content);
+            tr.dataset.side = 'new';
+            tr.dataset.line = line.no;
+            armCommentCells(tr, [lineNo], filePath);
             tbody.appendChild(tr);
         }
 
@@ -1495,6 +1833,7 @@
         fileContent.appendChild(table);
 
         applySyntaxHighlighting(filePath);
+        renderAllThreads();
 
         if (gutterLines.length > 0) {
             const hunks = [gutterLines[0]];
