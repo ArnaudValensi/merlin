@@ -99,7 +99,7 @@ def _mock_run_git(*args, repo_dir=None, check=True):
     if args[0] == "merge-base":
         return MERGE_BASE_HASH + "\n"
     if args[0] == "rev-list":
-        return "2\n"
+        return "a" * 40 + "\n" + "b" * 40 + "\n"
     if args[0] == "symbolic-ref":
         return "" if "refs/remotes/origin/HEAD" in args else "main\n"
     if args[0] == "for-each-ref":
@@ -111,10 +111,13 @@ def _mock_run_git(*args, repo_dir=None, check=True):
     if args[0] == "show":
         if "--no-patch" in args:
             return SAMPLE_SHOW_META
-        # git show <hash>:<path>
-        for a in args:
-            if ":" in a and not a.startswith("-"):
-                return SAMPLE_FILE_CONTENT
+    if args[0] == "ls-tree":
+        # The file read names the blob with ls-tree -- <path>, then cat-file
+        if args[-1] == "nonexistent.py":
+            return ""
+        return "100644 blob " + "e" * 40 + "\t" + args[-1] + "\0"
+    if args[0] == "cat-file":
+        return SAMPLE_FILE_CONTENT
     if args[0] == "diff":
         if "--numstat" in args:
             return SAMPLE_NUMSTAT
@@ -251,15 +254,8 @@ class TestApiCommitFile:
     def test_file_not_found(self, client):
         h = "a" * 40
 
-        def mock_git_404(*args, repo_dir=None, check=True):
-            for a in args:
-                if ":" in a and not a.startswith("-"):
-                    from subprocess import CalledProcessError
-
-                    raise CalledProcessError(128, ["git"], "", "fatal: not found")
-            return _mock_run_git(*args, repo_dir=repo_dir, check=check)
-
-        with mock.patch("commits.git_parser._run_git", side_effect=mock_git_404):
+        # ls-tree answers nothing for a path absent at that commit
+        with mock.patch("commits.git_parser._run_git", side_effect=_mock_run_git):
             resp = client.get(f"/api/commits/{h}/file/nonexistent.py")
         assert resp.status_code == 404
 
@@ -444,7 +440,9 @@ class TestApiCompare:
         assert data["merge_base"] == MERGE_BASE_HASH
         assert data["diff_base"] == MERGE_BASE_HASH
         assert data["head_short"] == "c" * 7
+        assert data["merge_base_short"] == "d" * 7
         assert data["commit_count"] == 2
+        assert data["oldest"]["message"] == "Add feature"
         assert [c["message"] for c in data["commits"]] == ["Fix bug", "Add feature"]
         assert [f["path"] for f in data["files"]] == ["src/main.py", "README.md"]
 

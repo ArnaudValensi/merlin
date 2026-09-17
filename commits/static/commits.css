@@ -947,8 +947,18 @@
     .commits-date {
         flex: 1;
     }
+    /* 44 px tap targets for the phone's primary controls */
+    .header-btn {
+        height: auto;
+        min-height: 44px;
+    }
     .filter-btn {
         flex: 1;
+        min-height: 44px;
+    }
+    .compare-commit-item {
+        min-height: 44px;
+        align-items: center;
     }
     .worktree-row {
         margin: 0 0 8px;

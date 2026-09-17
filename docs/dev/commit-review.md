@@ -51,15 +51,32 @@ Three functions produce what the page renders, for any comparison:
 - `compare_diff(cmp)`: `git diff -p` parsed by `_parse_unified_diff` into
   `FileDiff` records. Untracked files get a diff from
   `git diff --no-index -- /dev/null <path>`, appended to the same text.
-- `compare_file(cmp, path)`: the full file at the head (`git show
-  <head>:<path>`) with gutters from `git diff diff_base head -- path`. For the
-  working tree the file is read from disk after `worktree_file_path` resolves
-  it (symlinks followed) and checks it is inside the repository root.
+- `compare_file(cmp, path)`: the full file at the head, with gutters from
+  `git diff diff_base head -- path`. The blob is named by `git ls-tree
+  --end-of-options <head> -- <path>` and read by `git cat-file blob <oid>`:
+  the user's path is never embedded in a revision argument like
+  `<sha>:<path>`. For the working tree the file is read from disk after
+  `worktree_file_path` resolves it (symlinks followed) and checks it is
+  inside the repository root.
 
-`compare_commits(cmp)` lists `diff_base..head` (newest first, at most 200)
-and counts it with `rev-list --count`. `compare_detail(cmp)` is the payload of
-`GET /api/commits/compare`: the record's fields plus short hashes, the
-commits, the count and the files.
+Every read from disk goes through one gate, `_contained_file`: the path is
+resolved with symlinks followed and must land on a regular file inside the
+resolved root. The full-file view refuses anything else (a 400 for a path
+that escapes, a 404 for a missing path, a directory, a FIFO). The untracked
+entries of the working-tree list and diff go through the same gate: an
+untracked symlink that escapes the root or a dangling link is still listed
+as added, with no line count and an empty diff, and is never opened (git
+itself does not list a FIFO or a device under `--others`, and a direct read
+of one is a 404). Line counts are streamed in 1 MB chunks so a large
+untracked file never lands in memory at once.
+
+`compare_commits(cmp)` lists `diff_base..head` (newest first, at most 200),
+counts it from one `rev-list`, and returns the oldest included commit
+separately, because the list is capped and the range's start must not be
+read from a truncated list. `compare_detail(cmp)` is the payload of
+`GET /api/commits/compare`: the record's fields plus short hashes
+(`base_short`, `head_short`, `merge_base_short`, `diff_base_short`), the
+commits, the count, `oldest` and the files.
 
 The single-commit routes are the special case: `get_commit_detail`,
 `get_commit_diff` and `get_file_with_gutters` in `compare.py` build a
@@ -86,10 +103,17 @@ here. The rules, in `compare.py`:
    input puts `--end-of-options` before refs and `--` before paths, including
    the calls that only ever see resolved shas. `tests/unit/test_compare.py`
    spies on `_run_git` across a full comparison and asserts it.
-4. **Working-tree reads stay inside the root.** `worktree_file_path` resolves
-   `root / path` with symlinks followed and refuses a target outside the
-   resolved root (a 400), a missing path or a directory (a 404). The `path`
-   itself is validated by the same `SAFE_PATH_RE` as the commit routes.
+4. **Working-tree reads stay inside the root.** `_contained_file` resolves
+   `root / path` with symlinks followed and accepts only a regular file inside
+   the resolved root. `worktree_file_path` maps the rest to a 400 (escapes the
+   root) or a 404 (missing, a directory, not a regular file), and the
+   untracked entries of the list and the diff are never opened when the gate
+   refuses them. The `path` itself is validated by the same `SAFE_PATH_RE` as
+   the commit routes.
+5. **A path is never a revision.** The committed file read uses `ls-tree --
+   <path>` and `cat-file blob <oid>`, not `show <sha>:<path>`. The spy test
+   asserts that the user's path appears in git arguments only whole and only
+   after `--`.
 
 ## Routes
 
@@ -100,7 +124,7 @@ API (`/api/commits`). The compare and refs routes are registered before
 
 | Page | API | Notes |
 |------|-----|-------|
-| `/commits/compare?repo=&base=&head=[&mergebase=1]` | `GET /api/commits/compare` | Detail: kind, refs, resolved shas, `merge_base`, `diff_base`, `commits` (up to 200), `commit_count`, `files` |
+| `/commits/compare?repo=&base=&head=[&mergebase=1]` | `GET /api/commits/compare` | Detail: kind, refs, resolved shas and their short forms, `merge_base`, `diff_base`, `commits` (up to 200), `commit_count`, `oldest`, `files` |
 | `/commits/compare?repo=&worktree=1[&base=]` | same, `worktree=1` | `head_resolved` is null |
 | | `GET /api/commits/compare/diff` | `{"files": [FileDiff]}` |
 | `/commits/compare/file/<path>?...` | `GET /api/commits/compare/file/<path>` | `{content, lines}` with gutters |
@@ -136,8 +160,11 @@ the first other local branch, and never the current branch.
 - The **Working tree row** is loaded with the list from
   `/api/commits/compare?worktree=1` and hidden when there are no files.
 - The comparison **header** is `renderCompareHeader`: the title from
-  `CompareModel.title` (also the default review title), kind, refs with
-  short hashes, commit count, and the included commits collapsed under it.
+  `CompareModel.title` (also the default review title, its range start taken
+  from `oldest`), the kind, each ref with its own resolved short hash, the
+  merge base with its hash when that mode is on (the base's hash is the
+  branch tip, the merge base is where the diff starts), the commit count,
+  and the included commits collapsed under it.
 
 ## The sticky file header
 

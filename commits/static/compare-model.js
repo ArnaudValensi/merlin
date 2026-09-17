@@ -65,7 +65,9 @@ var CompareModel = (function() {
         if (detail.kind === 'commit' && commits.length === 1) return commits[0].message;
         if (commits.length > 0) {
             var n = detail.commit_count || commits.length;
-            var oldest = commits[commits.length - 1].short;
+            // The listed commits are capped: the range's start is the server's
+            // `oldest`, never the last listed one.
+            var oldest = (detail.oldest || commits[commits.length - 1]).short;
             var newest = commits[0].short;
             return oldest + '..' + newest + ' (' + n + ' commit' + (n === 1 ? '' : 's') + ')';
         }

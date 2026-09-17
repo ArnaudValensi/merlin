@@ -116,6 +116,7 @@ class Comparison:
         d = asdict(self)
         d["base_short"] = _short(self.base_resolved)
         d["head_short"] = _short(self.head_resolved)
+        d["merge_base_short"] = _short(self.merge_base)
         d["diff_base_short"] = _short(self.diff_base)
         return d
 
@@ -254,37 +255,77 @@ def _untracked_diff(path: str, repo_dir: Path) -> str:
 
 
 def _count_lines(path: Path) -> int:
-    """Lines of a text file on disk, 0 for a binary one (git's heuristic:
-    a NUL byte in the first 8000 bytes)."""
+    """Lines of a regular text file on disk, streamed so a large file never
+    lands in memory at once. 0 for a binary file (git's heuristic: a NUL
+    byte in the first 8000 bytes). The caller has already proved ``path``
+    is a regular file inside the repository."""
+    lines = 0
+    ends_with_newline = True
     try:
-        data = path.read_bytes()
+        with path.open("rb") as fh:
+            first = True
+            while True:
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    break
+                if first:
+                    first = False
+                    if b"\0" in chunk[:8000]:
+                        return 0
+                lines += chunk.count(b"\n")
+                ends_with_newline = chunk.endswith(b"\n")
     except OSError:
         return 0
-    if b"\0" in data[:8000]:
+    if first:
         return 0
-    if not data:
-        return 0
-    return data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
+    return lines + (0 if ends_with_newline else 1)
+
+
+def _contained_file(file_path: str, repo_dir: Path) -> Path | None:
+    """The regular file ``file_path`` names inside the repository root, with
+    symlinks followed, or None when it is missing, not a regular file, or
+    resolves outside the root. The one gate every read from disk goes
+    through: the full-file view, the untracked line counts, the untracked
+    diffs."""
+    root = repo_dir.resolve()
+    try:
+        target = (root / file_path).resolve(strict=True)
+    except OSError:
+        return None
+    if not target.is_relative_to(root):
+        return None
+    if not target.is_file():
+        return None
+    return target
 
 
 def worktree_file_path(file_path: str, repo_dir: Path) -> Path:
     """Resolve a working-tree path and check it stays inside the root.
 
     Symlinks are followed before the check, so a link that escapes the
-    repository is refused (``ValueError``). A missing path or a directory is
-    a ``FileNotFoundError``.
+    repository is refused (``ValueError``, a 400). A missing path or a
+    directory is a ``FileNotFoundError`` (a 404).
     """
     gp._validate_file_path(file_path)
-    root = repo_dir.resolve()
-    try:
-        target = (root / file_path).resolve(strict=True)
-    except OSError:
-        raise FileNotFoundError(f"File {file_path} not found in the working tree")
-    if not target.is_relative_to(root):
-        raise ValueError(f"Path escapes the repository: {file_path}")
-    if not target.is_file():
+    target = _contained_file(file_path, repo_dir)
+    if target is None:
+        root = repo_dir.resolve()
+        try:
+            resolved = (root / file_path).resolve(strict=True)
+        except OSError:
+            raise FileNotFoundError(f"File {file_path} not found in the working tree")
+        if not resolved.is_relative_to(root):
+            raise ValueError(f"Path escapes the repository: {file_path}")
         raise FileNotFoundError(f"File {file_path} not found in the working tree")
     return target
+
+
+def _readable_untracked(paths: list[str], repo_dir: Path) -> dict[str, Path | None]:
+    """Each untracked path with the contained regular file it names, or None
+    when it must not be read (a symlink escaping the root, a FIFO, a device,
+    a dangling link). Such an entry is still listed as added, with no line
+    count and no diff: the tree is shown, the file is never opened."""
+    return {p: _contained_file(p, repo_dir) for p in paths}
 
 
 # ---------------------------------------------------------------------------
@@ -366,13 +407,13 @@ def compare_files(cmp: Comparison, repo_dir: Path) -> list[dict]:
     )
     files = _parse_file_stats(numstat, name_status)
     if cmp.worktree:
-        root = repo_dir.resolve()
-        for path in _untracked_files(repo_dir):
+        readable = _readable_untracked(_untracked_files(repo_dir), repo_dir)
+        for path, target in readable.items():
             files.append(
                 {
                     "path": path,
                     "status": "A",
-                    "insertions": _count_lines(root / path),
+                    "insertions": _count_lines(target) if target else 0,
                     "deletions": 0,
                 }
             )
@@ -389,9 +430,14 @@ def compare_diff(cmp: Comparison, repo_dir: Path) -> dict:
     status_map = _status_map(name_status)
     if cmp.worktree:
         parts = [diff_output]
-        for path in _untracked_files(repo_dir):
-            parts.append(_untracked_diff(path, repo_dir))
+        readable = _readable_untracked(_untracked_files(repo_dir), repo_dir)
+        for path, target in readable.items():
             status_map[path] = "A"
+            if target is None:
+                # Listed, never read: an empty file diff with no hunks.
+                parts.append(f"diff --git a/{path} b/{path}\n")
+            else:
+                parts.append(_untracked_diff(path, repo_dir))
         diff_output = "\n".join(p for p in parts if p)
     files = gp._parse_unified_diff(diff_output, status_map)
     return {"files": files}
@@ -417,15 +463,7 @@ def compare_file(cmp: Comparison, file_path: str, repo_dir: Path) -> dict:
         else:
             diff_output = _untracked_diff(file_path, repo_dir)
     else:
-        try:
-            content = gp._run_git(
-                "show",
-                "--end-of-options",
-                f"{cmp.head_resolved}:{file_path}",
-                repo_dir=repo_dir,
-            )
-        except subprocess.CalledProcessError:
-            raise FileNotFoundError(f"File {file_path} not found at {cmp.head}")
+        content = _blob_at(cmp.head_resolved or "", cmp.head, file_path, repo_dir)
         diff_output = gp._run_git(
             "diff",
             "--end-of-options",
@@ -441,6 +479,40 @@ def compare_file(cmp: Comparison, file_path: str, repo_dir: Path) -> dict:
         "content": content,
         "lines": gp._compute_gutters(diff_output, content),
     }
+
+
+def _blob_at(head_sha: str, head: str, file_path: str, repo_dir: Path) -> str:
+    """The content of ``file_path`` at ``head_sha``.
+
+    The path is user input, so it is never embedded in a revision argument
+    like ``<sha>:<path>``. ``git ls-tree --end-of-options <sha> -- <path>``
+    names the blob, and ``git cat-file blob <oid>`` reads it by its validated
+    object id. A missing path, or one that is a directory, is a
+    ``FileNotFoundError``.
+    """
+    entry = gp._run_git(
+        "ls-tree",
+        "-z",
+        "--end-of-options",
+        head_sha,
+        "--",
+        file_path,
+        repo_dir=repo_dir,
+        check=False,
+    )
+    line = entry.split("\0", 1)[0]
+    # "<mode> <type> <oid>\t<path>"
+    meta, _, _ = line.partition("\t")
+    fields = meta.split()
+    if len(fields) != 3 or fields[1] != "blob" or not gp.HASH_RE.match(fields[2]):
+        raise FileNotFoundError(f"File {file_path} not found at {head}")
+    oid = fields[2]
+    if len(oid) != 40:
+        raise FileNotFoundError(f"File {file_path} not found at {head}")
+    try:
+        return gp._run_git("cat-file", "blob", oid, repo_dir=repo_dir)
+    except subprocess.CalledProcessError:
+        raise FileNotFoundError(f"File {file_path} not found at {head}")
 
 
 def _parse_commit_lines(output: str) -> list[dict]:
@@ -460,19 +532,28 @@ def _parse_commit_lines(output: str) -> list[dict]:
     return commits
 
 
-def compare_commits(cmp: Comparison, repo_dir: Path) -> tuple[list[dict], int]:
+def compare_commits(
+    cmp: Comparison, repo_dir: Path
+) -> tuple[list[dict], int, dict | None]:
     """Commits included in ``diff_base..head`` (newest first, at most
-    ``MAX_COMMITS``) and the total count. Empty for the working tree."""
+    ``MAX_COMMITS``), the total count, and the oldest included commit.
+
+    The oldest is carried separately because the list is capped: a title
+    that takes the last listed commit as the range's start would be wrong
+    past 200 commits. Empty for the working tree.
+    """
     if cmp.worktree or not cmp.head_resolved:
-        return [], 0
+        return [], 0, None
     if cmp.diff_base == EMPTY_TREE:
         rev = cmp.head_resolved
     else:
         rev = f"{cmp.diff_base}..{cmp.head_resolved}"
-    count_out = gp._run_git(
-        "rev-list", "--count", "--end-of-options", rev, "--", repo_dir=repo_dir
-    )
-    count = int(count_out.strip() or "0")
+    shas = gp._run_git(
+        "rev-list", "--end-of-options", rev, "--", repo_dir=repo_dir
+    ).split()
+    count = len(shas)
+    if count == 0:
+        return [], 0, None
     log_out = gp._run_git(
         "log",
         "--format=%H|%h|%an|%aI|%s",
@@ -482,15 +563,31 @@ def compare_commits(cmp: Comparison, repo_dir: Path) -> tuple[list[dict], int]:
         "--",
         repo_dir=repo_dir,
     )
-    return _parse_commit_lines(log_out), count
+    commits = _parse_commit_lines(log_out)
+    if count <= len(commits):
+        oldest = commits[-1] if commits else None
+    else:
+        oldest_out = gp._run_git(
+            "log",
+            "-1",
+            "--format=%H|%h|%an|%aI|%s",
+            "--end-of-options",
+            shas[-1],
+            "--",
+            repo_dir=repo_dir,
+        )
+        parsed = _parse_commit_lines(oldest_out)
+        oldest = parsed[0] if parsed else None
+    return commits, count, oldest
 
 
 def compare_detail(cmp: Comparison, repo_dir: Path) -> dict:
     """The payload of ``GET /api/commits/compare``."""
-    commits, count = compare_commits(cmp, repo_dir)
+    commits, count, oldest = compare_commits(cmp, repo_dir)
     detail = cmp.to_dict()
     detail["commits"] = commits
     detail["commit_count"] = count
+    detail["oldest"] = oldest
     detail["files"] = compare_files(cmp, repo_dir)
     return detail
 

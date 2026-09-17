@@ -747,9 +747,11 @@
         if (meta.worktree) {
             parts.push(`against ${esc(meta.base)} <span class="commit-meta-hash">${esc(meta.base_short)}</span>`);
         } else {
-            parts.push(`${esc(CompareModel.refLabel(meta.base))} <span class="commit-meta-hash">${esc(meta.diff_base_short)}</span>` +
+            // Each ref with its own resolved hash. In merge-base mode the diff
+            // runs from the merge base, which is reported on its own.
+            parts.push(`${esc(CompareModel.refLabel(meta.base))} <span class="commit-meta-hash">${esc(meta.base_short)}</span>` +
                 ` .. ${esc(CompareModel.refLabel(meta.head))} <span class="commit-meta-hash">${esc(meta.head_short)}</span>`);
-            if (meta.mergebase) parts.push('merge base');
+            if (meta.mergebase) parts.push(`merge base <span class="commit-meta-hash">${esc(meta.merge_base_short)}</span>`);
             parts.push(CompareModel.commitsText(meta.commit_count));
         }
         diffMeta.innerHTML =

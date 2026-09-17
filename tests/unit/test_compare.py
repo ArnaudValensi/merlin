@@ -269,22 +269,41 @@ class TestCompareFiles:
             "b.txt": "A",
             "c.txt": "A",
         }
-        commits, count = compare_commits(cmp, repo)
+        commits, count, oldest = compare_commits(cmp, repo)
         assert count == 2
         assert [c["message"] for c in commits] == ["Third commit", "Second commit"]
+        assert oldest == commits[-1]
 
     def test_branch_against_merge_base_excludes_base_advance(self, repo, shas):
         cmp = resolve_comparison(repo, base="main", head="feature", mergebase=True)
         files = compare_files(cmp, repo)
         assert [f["path"] for f in files] == ["f.txt"]
-        commits, count = compare_commits(cmp, repo)
+        commits, count, oldest = compare_commits(cmp, repo)
         assert count == 2
         assert [c["message"] for c in commits] == ["Feature two", "Feature one"]
+        assert oldest is not None and oldest["message"] == "Feature one"
         detail = compare_detail(cmp, repo)
         assert detail["kind"] == "branch"
         assert detail["commit_count"] == 2
         assert len(detail["commits"]) == 2
+        assert detail["oldest"]["hash"] == shas["feat1"]
         assert detail["files"][0]["path"] == "f.txt"
+        # The base's own hash and the merge base are distinct and both reported
+        assert detail["base_short"] == shas["third"][:7]
+        assert detail["merge_base_short"] == shas["second"][:7]
+        assert detail["diff_base_short"] == detail["merge_base_short"]
+
+    def test_oldest_commit_survives_the_list_cap(self, repo, shas):
+        cmp = resolve_comparison(repo, base=f"{shas['root']}^", head="main")
+        with mock.patch("commits.compare.MAX_COMMITS", 2):
+            commits, count, oldest = compare_commits(cmp, repo)
+            detail = compare_detail(cmp, repo)
+        assert count == 3 and len(commits) == 2
+        assert commits[-1]["hash"] == shas["second"]
+        assert oldest is not None and oldest["hash"] == shas["root"]
+        assert oldest["message"] == "Root commit"
+        assert detail["oldest"]["hash"] == shas["root"]
+        assert detail["commit_count"] == 3
 
     def test_worktree_staged_unstaged_untracked(self, repo):
         cmp = resolve_comparison(repo, worktree=True)
@@ -302,8 +321,8 @@ class TestCompareFiles:
         assert files["blob.bin"]["insertions"] == 0
         assert "ignored.log" not in files
         assert ".gitignore" in files
-        commits, count = compare_commits(cmp, repo)
-        assert commits == [] and count == 0
+        commits, count, oldest = compare_commits(cmp, repo)
+        assert commits == [] and count == 0 and oldest is None
 
     def test_worktree_diff_includes_untracked_as_added(self, repo):
         cmp = resolve_comparison(repo, worktree=True)
@@ -322,8 +341,9 @@ class TestCompareFiles:
     def test_root_commit_diff_in_a_range(self, repo, shas):
         cmp = resolve_comparison(repo, base=f"{shas['root']}^", head="main")
         assert cmp.diff_base == EMPTY_TREE
-        commits, count = compare_commits(cmp, repo)
+        commits, count, oldest = compare_commits(cmp, repo)
         assert count == 3
+        assert oldest is not None and oldest["hash"] == shas["root"]
 
 
 class TestCompareFile:
@@ -335,6 +355,19 @@ class TestCompareFile:
     def test_commit_file_not_found(self, repo, shas):
         with pytest.raises(FileNotFoundError):
             get_file_with_gutters(shas["second"], "f.txt", repo)
+
+    def test_commit_file_that_is_a_directory_is_not_found(self, repo, shas):
+        git(repo, "add", "sub/deep.txt")
+        git(repo, "commit", "-q", "-m", "Add sub/deep.txt")
+        try:
+            head = git(repo, "rev-parse", "HEAD")
+            data = get_file_with_gutters(head, "sub/deep.txt", repo)
+            assert data["content"] == "d1\n"
+            with pytest.raises(FileNotFoundError):
+                get_file_with_gutters(head, "sub", repo)
+        finally:
+            git(repo, "reset", "-q", "--soft", "HEAD~1")
+            git(repo, "reset", "-q", "sub/deep.txt")
 
     def test_branch_file_gutters_against_merge_base(self, repo):
         cmp = resolve_comparison(repo, base="main", head="feature", mergebase=True)
@@ -378,6 +411,46 @@ class TestCompareFile:
         finally:
             link.unlink()
 
+    def test_untracked_escaping_symlink_is_listed_but_never_read(self, repo, tmp_path):
+        outside = tmp_path / "outside.txt"
+        outside.write_text("s1\ns2\ns3\n")
+        link = repo / "escape.txt"
+        link.symlink_to(outside)
+        try:
+            cmp = resolve_comparison(repo, worktree=True)
+            files = {f["path"]: f for f in compare_files(cmp, repo)}
+            assert files["escape.txt"] == {
+                "path": "escape.txt",
+                "status": "A",
+                "insertions": 0,
+                "deletions": 0,
+            }
+            detail = compare_detail(cmp, repo)
+            assert "escape.txt" in {f["path"] for f in detail["files"]}
+            diff = {f["path"]: f for f in compare_diff(cmp, repo)["files"]}
+            assert diff["escape.txt"]["status"] == "A"
+            assert diff["escape.txt"]["hunks"] == []
+            with pytest.raises(ValueError):
+                compare_file(cmp, "escape.txt", repo)
+        finally:
+            link.unlink()
+
+    def test_untracked_fifo_is_listed_but_never_opened(self, repo):
+        fifo = repo / "pipe.fifo"
+        os.mkfifo(fifo)
+        try:
+            cmp = resolve_comparison(repo, worktree=True)
+            # git ls-files --others skips non-regular files, so it is not
+            # listed at all, and a direct read is refused without opening it
+            files = {f["path"]: f for f in compare_files(cmp, repo)}
+            assert "pipe.fifo" not in files
+            diff = {f["path"]: f for f in compare_diff(cmp, repo)["files"]}
+            assert "pipe.fifo" not in diff
+            with pytest.raises(FileNotFoundError):
+                compare_file(cmp, "pipe.fifo", repo)
+        finally:
+            fifo.unlink()
+
     def test_worktree_symlink_inside_root_allowed(self, repo):
         link = repo / "inside.txt"
         link.symlink_to(repo / "new.txt")
@@ -410,8 +483,9 @@ class TestGitCallSafety:
             compare_diff(wt, repo)
             compare_file(wt, "f.txt", repo)
             compare_file(wt, "new.txt", repo)
+        assert not any(a[0] == "show" and ":" in a[-1] for a in calls)
         for args in calls:
-            if args[0] in ("rev-parse", "merge-base", "rev-list", "log", "show"):
+            if args[0] in ("rev-parse", "merge-base", "rev-list", "log", "ls-tree"):
                 assert "--end-of-options" in args, args
             if args[0] == "diff" and "--no-index" not in args:
                 assert "--end-of-options" in args, args
@@ -420,6 +494,14 @@ class TestGitCallSafety:
                 assert args.index("--") < args.index("/dev/null"), args
             if args[0] == "ls-files" and "--others" not in args:
                 assert "--" in args, args  # the tracked check carries a path
+            if args[0] == "cat-file":
+                assert args[1] == "blob" and len(args[2]) == 40, args
+            # The user's path only ever appears after "--", whole, never
+            # embedded in a revision argument like "<sha>:<path>".
+            for i, a in enumerate(args):
+                if "f.txt" in a or "new.txt" in a:
+                    assert a in ("f.txt", "new.txt"), args
+                    assert "--" in args and args.index("--") < i, args
 
 
 # ---------------------------------------------------------------------------

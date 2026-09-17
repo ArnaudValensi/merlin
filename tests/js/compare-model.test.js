@@ -81,6 +81,19 @@ test('default title follows the kind', () => {
     assert.equal(M.title({ kind: 'range', base: 'v1', head: 'v2', commits: [] }), 'v1..v2');
 });
 
+test('a range longer than the listed commits takes its start from oldest', () => {
+    const listed = [{ short: 'fff0000' }, { short: 'eee0000' }];
+    assert.equal(
+        M.title({ kind: 'range', commit_count: 350, commits: listed, oldest: { short: '1110000' } }),
+        '1110000..fff0000 (350 commits)',
+    );
+    // Without oldest metadata the last listed commit is the only fallback
+    assert.equal(
+        M.title({ kind: 'range', commit_count: 2, commits: listed, oldest: null }),
+        'eee0000..fff0000 (2 commits)',
+    );
+});
+
 test('kind labels', () => {
     assert.equal(M.kindLabel('branch'), 'Branch');
     assert.equal(M.kindLabel('worktree'), 'Working tree');

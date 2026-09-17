@@ -127,6 +127,16 @@ def test_compare_sheet_opens_branch_comparison(page, server, repo):
     assert "main" in header and "feature/x" in header
     assert "merge base" in header
     assert "2 commits" in header
+    # main advanced after the fork: its own hash and the merge base differ,
+    # and the header shows each next to the right label.
+    main_short = _git(repo, "rev-parse", "--short=7", "main")
+    fork_short = _git(repo, "rev-parse", "--short=7", "main~1")
+    head_short = _git(repo, "rev-parse", "--short=7", "feature/x")
+    assert main_short != fork_short
+    assert f"main {main_short}" in header
+    assert f"feature/x {head_short}" in header
+    assert f"merge base {fork_short}" in header
+
     # Only the branch's own file, not main's later c.txt
     paths = [el.inner_text() for el in page.query_selector_all(".diff-file-path")]
     assert paths == ["feat.py"]
@@ -167,6 +177,20 @@ def test_select_mode_opens_range(page, server, repo):
     page.click("#diff-back-btn")
     page.wait_for_selector(".commit-item")
     assert urlparse(page.url).path == "/commits"
+
+
+def test_phone_controls_are_44px(page, server, repo):
+    """The new primary controls keep the 44 px tap target on the phone."""
+    if page.viewport_size["width"] >= 768:
+        pytest.skip("phone only")
+    _open_list(page, server, repo)
+    for sel in ("#compare-btn", "#select-toggle", "#worktree-row"):
+        box = page.query_selector(sel).bounding_box()
+        assert box["height"] >= 44, (sel, box)
+    page.click("#select-toggle")
+    for sel in ("#select-compare-btn", "#select-clear-btn"):
+        box = page.query_selector(sel).bounding_box()
+        assert box["height"] >= 44, (sel, box)
 
 
 def test_worktree_row_on_dirty_tree(page, server, repo):
