@@ -1170,7 +1170,10 @@
         renderReviewChrome(data.error);
         reviewComments.style.display = '';
         if (!data.comparison) {
+            // No diff to show (repository gone, branch deleted): the record
+            // and its threads are still here, and the poll still follows them.
             renderAllThreads();
+            startReviewPoll();
             return;
         }
 
@@ -1668,7 +1671,13 @@
                 continue;
             }
             const section = document.getElementById('diff-file-' + c.path);
-            if (!section) continue;
+            if (!section) {
+                // Its file is not in this comparison any more, or there is no
+                // comparison at all: the thread stays reachable in the panel,
+                // with its path, side, line and the quoted text.
+                reviewThreads.appendChild(renderThread(c, { quoted: true, where: true }));
+                continue;
+            }
             const state = reviewAnchors[c.id] || 'current';
             const row = state !== 'outdated'
                 ? section.querySelector(`tr[data-side="${c.side}"][data-line="${c.line}"]`)

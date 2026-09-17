@@ -145,6 +145,34 @@ class TestShow:
         code, out, err = run("show", "nope")
         assert code == 1 and "Invalid review id" in err
 
+    def test_moved_repository_still_prints_the_threads(self, repo, review):
+        import shutil
+
+        shutil.rmtree(repo)
+        code, out, err = run("show", review["id"])
+        assert code == 0, err
+        assert f"Error: Repository not found: {repo}" in out
+        assert "## Open threads (2)" in out
+        assert f"### {review['_thread']} · f.txt:2 (new)" in out and "> f2" in out
+        assert "## Files" not in out  # no live files without a repository
+        code, out, err = run("show", review["id"], "--json")
+        data = json.loads(out)
+        assert data["comparison"] is None
+        assert "Repository not found" in data["error"]
+        assert [c["id"] for c in data["review"]["comments"]][0] == review["_thread"]
+        # The mutations that need no content still work
+        code, out, err = run("reply", review["id"], review["_thread"], "Noted")
+        assert code == 0
+        code, out, err = run("resolve", review["id"], review["_thread"])
+        assert code == 0
+        # The ones that need content stay strict
+        code, out, err = run("diff", review["id"])
+        assert code == 1 and "Repository not found" in err
+        code, out, err = run(
+            "comment", review["id"], "--path", "f.txt", "--line", "1", "x"
+        )
+        assert code == 1 and "Repository not found" in err
+
     def test_deleted_branch_reports_the_error(self, repo, review):
         git(repo, "checkout", "-q", "main")
         git(repo, "branch", "-q", "-D", "feature")

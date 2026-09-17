@@ -248,14 +248,18 @@ def cmd_list(args) -> int:
 
 def cmd_show(args) -> int:
     review = _load(args.review)
-    repo_dir = _review_repo(review)
     error = None
     cmp = None
     files: list[dict] = []
     count = 0
     new_commits = 0
     anchors: dict[str, str] = {}
+    repo_dir: Path | None = None
     try:
+        # A repository that moved or a branch that is gone is an error next
+        # to the record, never a reason to hide the threads: the agent still
+        # needs their ids to reply and resolve.
+        repo_dir = _review_repo(review)
         # The agent's look is not the user's: last_seen_head stays.
         loaded = rv.refresh(args.review, repo_dir, advance_seen=False)
         review = loaded.review
@@ -264,12 +268,14 @@ def cmd_show(args) -> int:
         anchors = loaded.anchors
         files = cm.compare_files(cmp, repo_dir)
         _, count, _ = cm.compare_commits(cmp, repo_dir)
-    except cm.RefError as e:
+    except (cm.RefError, CliError) as e:
         error = str(e)
     if args.json:
         payload = {
             "review": review,
-            "comparison": cm.compare_detail(cmp, repo_dir) if cmp else None,
+            "comparison": cm.compare_detail(cmp, repo_dir)
+            if cmp and repo_dir
+            else None,
             "new_commits": new_commits,
             "anchors": anchors,
             "open_threads": rv.open_thread_counts(review),

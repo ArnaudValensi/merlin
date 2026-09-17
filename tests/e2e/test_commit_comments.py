@@ -324,6 +324,34 @@ def test_poll_runs_in_the_full_file_view(page, server, repo, tmux_env):
     )
 
 
+def test_line_threads_survive_a_deleted_branch(page, server, repo, tmux_env):
+    """With the branch gone the page shows the error, every line thread in
+    the review panel with its quote, and still follows the agent's replies."""
+    _open_branch_comparison(page, server, repo)
+    _comment_on(page, "#diff-file-feat\\.py", "new", 2, "keep me")
+    page.wait_for_function("() => location.pathname.startsWith('/commits/reviews/')")
+    review_id = _review_id(page)
+    page.wait_for_selector("#diff-file-feat\\.py .comment-thread-row .thread")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "branch", "-q", "-D", "feature/x")
+    page.reload()
+    page.wait_for_selector("#review-error", state="visible")
+    assert "Unknown ref: feature/x" in page.inner_text("#review-error")
+    assert page.query_selector_all(".diff-file-section") == []
+    page.wait_for_selector("#review-threads .thread")
+    thread = page.query_selector("#review-threads .thread")
+    assert "keep me" in thread.inner_text()
+    assert thread.query_selector(".thread-where").inner_text() == "feat.py:2 (new)"
+    assert "print(2)" in thread.query_selector(".thread-quote").inner_text()
+    shown = merlin_review(tmux_env, "show", review_id)
+    thread_id = re.search(r"^### ([0-9a-f]{8}) · feat.py:2", shown, re.M).group(1)
+    merlin_review(tmux_env, "reply", review_id, thread_id, "Still here.")
+    page.wait_for_selector("#review-threads .thread-reply", timeout=15000)
+    assert "Still here." in page.inner_text("#review-threads .thread-reply")
+    merlin_review(tmux_env, "resolve", review_id, thread_id)
+    page.wait_for_selector("#review-threads .thread.resolved", timeout=15000)
+
+
 def test_phone_comment_controls_are_44px(page, server, repo):
     if page.viewport_size["width"] >= 768:
         pytest.skip("phone only")
