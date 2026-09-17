@@ -257,6 +257,73 @@ def test_comment_from_the_full_file_view(page, server, repo):
     assert prev == "5"
 
 
+def test_review_file_deep_link_carries_anchor_states(page, server, repo):
+    """A direct /commits/reviews/<id>/file/<path> URL loads the review in
+    full, so a moved thread follows its line and an outdated one sits at the
+    top with its quote and label."""
+    _open_branch_comparison(page, server, repo)
+    _comment_on(page, "#diff-file-feat\\.py", "new", 3, "will move")
+    page.wait_for_function("() => location.pathname.startsWith('/commits/reviews/')")
+    review_id = _review_id(page)
+    page.wait_for_selector("#diff-file-feat\\.py .comment-thread-row .thread")
+    _comment_on(page, "#diff-file-feat\\.py", "new", 10, "will be outdated")
+    page.wait_for_function(
+        "() => document.querySelectorAll('#diff-file-feat\\\\.py .comment-thread-row').length === 2"
+    )
+    # Shift the file by one line and rewrite line 10's text
+    lines = ["print(0)"] + [f"print({i})" for i in range(1, 21)]
+    lines[10] = "print('ten')"  # was print(10)
+    (repo / "feat.py").write_text("".join(line + "\n" for line in lines))
+    _git(repo, "commit", "-q", "-am", "Shift and rewrite")
+    # A fresh page, straight to the file URL
+    page.goto(f"{server}/commits/reviews/{review_id}/file/feat.py")
+    page.wait_for_selector(".file-table")
+    page.wait_for_selector("#file-content .comment-thread-row .thread")
+    moved = page.query_selector("#file-content .comment-thread-row .thread")
+    assert "will move" in moved.inner_text()
+    assert moved.query_selector(".thread-state.moved") is not None
+    prev = page.evaluate(
+        "() => document.querySelector('#file-content .comment-thread-row').previousElementSibling.id"
+    )
+    assert prev == "file-line-4"  # print(3) is now line 4
+    page.wait_for_selector("#file-threads-top .thread")
+    top = page.query_selector("#file-threads-top .thread")
+    assert "will be outdated" in top.inner_text()
+    assert top.query_selector(".thread-state.outdated") is not None
+    assert "print(10)" in top.query_selector(".thread-quote").inner_text()
+    assert len(page.query_selector_all("#file-content .comment-thread-row")) == 1
+
+
+def test_poll_runs_in_the_full_file_view(page, server, repo, tmux_env):
+    """A review created from the full-file view, and a direct file URL, both
+    pick up an agent's reply and resolve through the poll."""
+    _open_branch_comparison(page, server, repo)
+    page.click("#diff-file-feat\\.py .full-file-btn")
+    page.wait_for_selector(".file-table")
+    row = page.query_selector("#file-line-7")
+    row.query_selector(".file-line-no").click()
+    row.query_selector(".comment-add-btn").click()
+    page.fill(".comment-composer-row textarea", "Seven")
+    page.click(".comment-composer-row .composer-submit")
+    page.wait_for_function("() => location.pathname.startsWith('/commits/reviews/')")
+    review_id = _review_id(page)
+    page.wait_for_selector("#file-content .thread.open")
+    shown = merlin_review(tmux_env, "show", review_id)
+    thread_id = re.search(r"^### ([0-9a-f]{8}) · feat.py:7", shown, re.M).group(1)
+    merlin_review(tmux_env, "reply", review_id, thread_id, "Noted.")
+    page.wait_for_selector("#file-content .thread-reply", timeout=15000)
+    assert "Noted." in page.inner_text("#file-content .thread-reply")
+    # A fresh page on the file URL follows a resolve too
+    page.goto(f"{server}/commits/reviews/{review_id}/file/feat.py")
+    page.wait_for_selector("#file-content .thread.open")
+    merlin_review(tmux_env, "resolve", review_id, thread_id, "-m", "Done.")
+    page.wait_for_selector("#file-content .thread.resolved", timeout=15000)
+    assert (
+        page.inner_text("#file-content .thread-resolved-label")
+        == "Resolved · 2 replies"
+    )
+
+
 def test_phone_comment_controls_are_44px(page, server, repo):
     if page.viewport_size["width"] >= 768:
         pytest.skip("phone only")

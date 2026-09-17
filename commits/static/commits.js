@@ -1304,8 +1304,8 @@
             renderReviewChrome(null);
             applyViewedState();
             renderAllThreads();
-            startReviewPoll();
         }
+        startReviewPoll();
         return review.id;
     }
 
@@ -1397,7 +1397,7 @@
     }
 
     async function pollReview() {
-        if (document.hidden || currentView !== 'diff') return;
+        if (document.hidden || (currentView !== 'diff' && currentView !== 'file')) return;
         if (!currentTarget || currentTarget.kind !== 'review' || !currentReview) return;
         const id = currentTarget.id;
         let data = null;
@@ -1407,8 +1407,10 @@
         if (!data || !data.changed || !data.review) return;
         if (!currentTarget || currentTarget.kind !== 'review' || currentTarget.id !== id) return;
         currentReview = data.review;
-        renderReviewChrome(null);
-        applyViewedState();
+        if (currentView === 'diff') {
+            renderReviewChrome(null);
+            applyViewedState();
+        }
         renderAllThreads();
     }
 
@@ -1716,9 +1718,16 @@
         fileThreadsTop.style.display = 'none';
 
         if (target.kind === 'review' && !(currentReview && currentReview.id === target.id)) {
-            // The record carries the threads of this file
-            const rv = await API.get('/api/commits/reviews/' + target.id + '?since=');
-            if (rv && rv.review) currentReview = rv.review;
+            // A deep link into a review's file: the full load, so the threads
+            // of this file come with their anchor states (moved, outdated).
+            const rv = await API.get('/api/commits/reviews/' + target.id);
+            if (rv && rv.review) {
+                currentReview = rv.review;
+                reviewMeta = rv.comparison;
+                reviewChanged = new Set(rv.changed_since_viewed || []);
+                reviewNewCommits = rv.new_commits || 0;
+                reviewAnchors = rv.anchors || {};
+            }
         }
 
         const data = await API.get(apiUrl('file', target, filePath));
@@ -1834,6 +1843,7 @@
 
         applySyntaxHighlighting(filePath);
         renderAllThreads();
+        if (target.kind === 'review') startReviewPoll();
 
         if (gutterLines.length > 0) {
             const hunks = [gutterLines[0]];

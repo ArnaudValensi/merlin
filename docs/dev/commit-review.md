@@ -349,7 +349,7 @@ at the top of the file view with their quote.
 `reviews.py` directly, no HTTP, so every write goes through the same lock and
 atomic rename as the server, and the page picks it up within a poll. The
 repository of a review is the one its record stores (checked to be exactly
-a root); `--repo` only chooses which repository `list` looks at, defaulting
+a root). `--repo` only chooses which repository `list` looks at, defaulting
 to the git root of the current directory. Output is markdown for an agent's
 context, `--json` the raw record with its live comparison.
 

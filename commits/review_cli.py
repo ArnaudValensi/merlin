@@ -7,7 +7,7 @@ the page (``commits/reviews.py``, direct file access under the same lock, no
 HTTP), so the page shows every change within its next poll.
 
 Subcommands: list, show, diff, comment, reply, resolve, reopen, close,
-reopen-review. The default author is ``agent``; ``--author user`` is there
+reopen-review. The default author is ``agent``. ``--author user`` is there
 because nothing stops the user from using the CLI too.
 """
 
