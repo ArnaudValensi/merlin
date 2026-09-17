@@ -236,6 +236,113 @@ def test_copy_for_agent(page, server, repo):
     assert label in ("Copied", f"merlin review show {review_id}")
 
 
+def _make_other_repo(tmp_path) -> Path:
+    other = tmp_path / "other-repo"
+    other.mkdir()
+    _git(other, "init", "-q", "-b", "main")
+    _git(other, "config", "user.email", "t@example.com")
+    _git(other, "config", "user.name", "Tester")
+    (other / "feat.py").write_text("OTHER\n")
+    _git(other, "add", ".")
+    _git(other, "commit", "-q", "-m", "Other root")
+    (other / "feat.py").write_text("OTHER\nMORE\n")
+    _git(other, "commit", "-q", "-am", "Other second")
+    _git(other, "checkout", "-q", "-b", "feature/x")
+    return other
+
+
+def test_bare_review_url_binds_to_the_review_repository(page, server, repo, tmp_path):
+    """A review id is enough: with no ?repo=, a saved repo or a conflicting
+    ?repo=, the page shows the review's own repository."""
+    other = _make_other_repo(tmp_path)
+    resp = page.request.post(
+        f"{server}/api/commits/reviews",
+        data={
+            "repo": str(repo),
+            "base": "main",
+            "head": "feature/x",
+            "mergebase": True,
+        },
+    )
+    review_id = resp.json()["id"]
+    # The browser last used the other repository
+    page.goto(f"{server}/commits?repo={other}")
+    page.wait_for_selector(".commit-item")
+    # Bare URL, no repo at all
+    page.goto(f"{server}/commits/reviews/{review_id}")
+    page.wait_for_selector("#review-chrome")
+    page.wait_for_selector(".diff-file-section")
+    paths = [el.inner_text() for el in page.query_selector_all(".diff-file-path")]
+    assert paths == ["feat.py", "other.py"]
+    assert "OTHER" not in page.inner_text("#diff-content")
+    assert "print(1)" in page.inner_text("#diff-content")
+    assert page.inner_text("#repo-path").endswith("review-repo")
+    # A conflicting ?repo= is overridden by the record
+    page.goto(f"{server}/commits/reviews/{review_id}?repo={other}")
+    page.wait_for_selector("#review-chrome")
+    page.wait_for_selector(".diff-file-section")
+    assert "OTHER" not in page.inner_text("#diff-content")
+    assert "print(1)" in page.inner_text("#diff-content")
+    assert f"repo={other}" not in page.url
+    page.click("#diff-file-feat\\.py .full-file-btn")
+    page.wait_for_selector(".file-table")
+    assert "print(1)" in page.inner_text("#file-content")
+    assert "OTHER" not in page.inner_text("#file-content")
+    # Back to the list: the review's repository is now the page's
+    page.click("#file-back-btn")
+    page.wait_for_selector("#review-chrome")
+    page.click("#diff-back-btn")
+    page.wait_for_selector(".commit-item")
+    assert "Feature two" in page.inner_text("#commit-list")
+
+
+def test_two_quick_ticks_create_one_review(page, server, repo):
+    _open_branch_comparison(page, server, repo)
+    page.evaluate(
+        """() => {
+            const boxes = document.querySelectorAll('#diff-content .viewed-check input');
+            boxes[0].click();
+            boxes[1].click();
+        }"""
+    )
+    page.wait_for_function(
+        "() => document.querySelector('#file-list-label').textContent === '2 of 2 viewed'"
+    )
+    review_id = _review_id(page)
+    listed = page.request.get(f"{server}/api/commits/reviews?repo={repo}").json()
+    assert [r["id"] for r in listed] == [review_id]
+    record = page.request.get(f"{server}/api/commits/reviews/{review_id}?since=").json()
+    assert set(record["review"]["files"]) == {"feat.py", "other.py"}
+    page.reload()
+    page.wait_for_function(
+        "() => document.querySelector('#file-list-label').textContent === '2 of 2 viewed'"
+    )
+
+
+def test_phone_review_controls_are_44px(page, server, repo):
+    if page.viewport_size["width"] >= 768:
+        pytest.skip("phone only")
+    _open_branch_comparison(page, server, repo)
+    page.click("#save-review-btn")
+    page.wait_for_selector("#review-chrome")
+    for sel in (
+        "#review-title",
+        "#review-copy-btn",
+        "#review-status-btn",
+        "#diff-file-feat\\.py .viewed-check",
+    ):
+        box = page.query_selector(sel).bounding_box()
+        assert box["height"] >= 44, (sel, box)
+    page.click("#review-status-btn")
+    page.wait_for_function(
+        "() => document.querySelector('#review-status').textContent === 'Closed'"
+    )
+    page.goto(f"{server}/commits?repo={repo}")
+    page.wait_for_selector("#reviews-closed-btn", state="visible")
+    box = page.query_selector("#reviews-closed-btn").bounding_box()
+    assert box["height"] >= 44, box
+
+
 def test_review_file_deep_link(page, server, repo):
     _open_branch_comparison(page, server, repo)
     page.click("#save-review-btn")

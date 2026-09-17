@@ -27,6 +27,10 @@
     let reviewNewCommits = 0;   // commits since the last look, reported once
     let reviewPollTimer = null;
     const REVIEW_POLL_MS = 5000;
+    // One review creation at a time (two quick ticks share it), and one
+    // mutation of the record at a time (their responses never race).
+    const createReviewOnce = CompareModel.singleFlight(createReview);
+    const enqueueMutation = CompareModel.serialQueue();
     let gutterLines = [];   // indices into file lines that have gutters
     let gutterIndex = -1;
     let lineHunkMap = [];   // per-line-index: hunk id or null
@@ -202,6 +206,20 @@
     // ---------------------------------------------------------------------------
 
     async function resolveDefaultRepo() {
+        // 0. A review URL names its repository itself: the record's stored
+        //    root wins over any ?repo=, saved repo or terminal directory.
+        const reviewId = reviewIdFromPath(window.location.pathname);
+        if (reviewId) {
+            const rv = await API.get('/api/commits/reviews/' + reviewId + '?since=');
+            if (rv && rv.review && rv.review.repo) {
+                selectRepo(rv.review.repo);
+                return;
+            }
+            // No such review: route anyway so the page says so
+            routeFromUrl();
+            return;
+        }
+
         // 1. Check URL ?repo= param
         const urlParams = new URLSearchParams(window.location.search);
         const urlRepo = urlParams.get('repo');
@@ -320,6 +338,11 @@
         return { kind: 'commit', hash: hash };
     }
 
+    function reviewIdFromPath(path) {
+        const m = path.match(/^\/commits\/reviews\/([0-9a-f]{8})(?:\/file\/.+)?$/);
+        return m ? m[1] : null;
+    }
+
     function worktreeTarget() {
         return { kind: 'compare', base: '', head: '', mergebase: false, worktree: true };
     }
@@ -356,21 +379,25 @@
         return withQuery(path, targetParams(target));
     }
 
-    // The comparison behind a target: a commit is commit^..commit, a review
-    // is the comparison its record names (loaded first).
+    // The comparison behind a commit or compare target, for saving it as a
+    // review: a commit is commit^..commit.
     function compareTargetOf(target) {
         if (target.kind === 'compare') return target;
         if (target.kind === 'commit') {
             return { kind: 'compare', base: target.hash + '^', head: target.hash, mergebase: false, worktree: false };
         }
-        if (target.kind === 'review' && currentReview && currentReview.id === target.id) {
-            return CompareModel.targetOfReview(currentReview);
-        }
         return null;
     }
 
     function apiUrl(what, target, filePath) {
-        if (target.kind === 'review') target = compareTargetOf(target);
+        if (target.kind === 'review') {
+            // Keyed by the review id alone: the server resolves the diff in
+            // the review's stored repository, no query can point elsewhere.
+            const base = '/api/commits/reviews/' + target.id;
+            if (what === 'diff') return base + '/diff';
+            if (what === 'file') return base + '/file/' + encodeURIComponent(filePath).replace(/%2F/g, '/');
+            return base;
+        }
         const base = target.kind === 'commit' ? '/api/commits/' + target.hash : '/api/commits/compare';
         let path = base;
         if (what === 'diff') path = base + '/diff';
@@ -1185,11 +1212,26 @@
 
     // The review behind the current page, created on first use: the first
     // viewed tick (or Save as review) on a plain comparison saves it and
-    // swaps the URL in place, so back still returns to the list.
+    // swaps the URL in place, so back still returns to the list. Callers
+    // that arrive while the creation is pending get the same id.
     async function ensureReview() {
+        if (currentTarget && currentTarget.kind === 'review') return currentTarget.id;
+        return createReviewOnce();
+    }
+
+    async function createReview() {
         if (currentTarget && currentTarget.kind === 'review') return currentTarget.id;
         const cmp = compareTargetOf(currentTarget);
         if (!cmp) return null;
+        saveReviewBtn.disabled = true;
+        try {
+            return await postReview(cmp);
+        } finally {
+            saveReviewBtn.disabled = false;
+        }
+    }
+
+    async function postReview(cmp) {
         const body = {
             repo: currentRepo,
             base: cmp.base,
@@ -1223,7 +1265,7 @@
             return;
         }
         const url = '/api/commits/reviews/' + id + '/viewed/' + encodeURIComponent(path).replace(/%2F/g, '/');
-        const review = await apiJson('PUT', url, { viewed: viewed });
+        const review = await enqueueMutation(() => apiJson('PUT', url, { viewed: viewed }));
         if (!review || review.detail) {
             reviewError.textContent = (review && review.detail) || 'Could not update the review';
             reviewError.style.display = '';
@@ -1243,7 +1285,8 @@
             reviewTitle.value = currentReview ? currentReview.title : '';
             return;
         }
-        const review = await apiJson('PATCH', '/api/commits/reviews/' + currentTarget.id, { title: title });
+        const id = currentTarget.id;
+        const review = await enqueueMutation(() => apiJson('PATCH', '/api/commits/reviews/' + id, { title: title }));
         if (review && !review.detail) {
             currentReview = review;
             renderReviewChrome(null);
@@ -1253,7 +1296,8 @@
     async function toggleReviewStatus() {
         if (!currentTarget || currentTarget.kind !== 'review' || !currentReview) return;
         const status = currentReview.status === 'closed' ? 'open' : 'closed';
-        const review = await apiJson('PATCH', '/api/commits/reviews/' + currentTarget.id, { status: status });
+        const id = currentTarget.id;
+        const review = await enqueueMutation(() => apiJson('PATCH', '/api/commits/reviews/' + id, { status: status }));
         if (review && !review.detail) {
             currentReview = review;
             renderReviewChrome(null);
@@ -1341,17 +1385,6 @@
         lineHunkMap = [];
 
         fileMeta.innerHTML = `<div class="file-meta-path">${esc(filePath)}</div>`;
-
-        if (target.kind === 'review' && !(currentReview && currentReview.id === target.id)) {
-            // A deep link into a review's file: the record names the comparison
-            const rv = await API.get('/api/commits/reviews/' + target.id + '?since=');
-            if (!rv || !rv.review) {
-                fileLoading.style.display = 'none';
-                fileContent.innerHTML = `<div class="empty-state"><p>${esc((rv && rv.detail) || 'Review not found')}</p></div>`;
-                return;
-            }
-            currentReview = rv.review;
-        }
 
         const data = await API.get(apiUrl('file', target, filePath));
         fileLoading.style.display = 'none';

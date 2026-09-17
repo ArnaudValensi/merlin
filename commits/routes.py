@@ -407,12 +407,34 @@ def _load_review(review_id: str) -> dict:
 
 
 def _review_repo(review: dict) -> Path | None:
-    """The review's repository root, or None when it is gone."""
+    """The review's repository root, exactly the stored one, or None when it
+    is gone. A stored path that is now a plain directory inside some other
+    repository does not count: that would bind the review to the wrong
+    repository."""
     repo = review.get("repo") or ""
     p = Path(repo)
-    if not p.is_dir():
+    if not repo or not p.is_dir():
         return None
-    return _find_repo_root(str(p))
+    root = _find_repo_root(str(p))
+    if root is None or root.resolve() != p.resolve():
+        return None
+    return root
+
+
+def _review_comparison(review_id: str):
+    """The review's comparison, resolved in its own repository. The review
+    id is the only input: no query parameter can point it elsewhere."""
+    review = _load_review(review_id)
+    repo_dir = _review_repo(review)
+    if repo_dir is None:
+        raise HTTPException(
+            status_code=400, detail=f"Repository not found: {review.get('repo')}"
+        )
+    try:
+        cmp = rv.comparison_of(review, repo_dir)
+    except RefError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return review, repo_dir, cmp
 
 
 @api_router.get("/reviews")
@@ -492,6 +514,31 @@ def api_review_get(review_id: str, since: str | None = None):
         "new_commits": new_commits,
         "error": None,
     }
+
+
+@api_router.get("/reviews/{review_id}/diff")
+def api_review_diff(review_id: str):
+    """Parsed unified diff of the review's comparison, in its repository."""
+    _review, repo_dir, cmp = _review_comparison(review_id)
+    try:
+        return compare_diff(cmp, repo_dir)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/reviews/{review_id}/file/{file_path:path}")
+def api_review_file(review_id: str, file_path: str):
+    """Full file at the head of the review's comparison, in its repository."""
+    _validate_path(file_path)
+    _review, repo_dir, cmp = _review_comparison(review_id)
+    try:
+        return compare_file(cmp, file_path, repo_dir)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @api_router.patch("/reviews/{review_id}")

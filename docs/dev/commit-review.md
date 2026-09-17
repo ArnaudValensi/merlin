@@ -234,6 +234,7 @@ All registered before `/{commit_hash}`.
 | `POST /api/commits/reviews` `{repo, base, head, mergebase, worktree, title?}` | Resolves the comparison (400 on a bad ref) and creates the review. 201 with the record |
 | `GET /api/commits/reviews/<id>` | The full load: `{review, comparison, changed_since_viewed, new_commits, error}`. A repository that is gone or a branch that was deleted gives `comparison: null` and an `error` string, the record intact |
 | `GET /api/commits/reviews/<id>?since=<updated>` | The poll: `{"changed": false}` when the stamp matches, else `{"changed": true, "review"}`. Never recomputes or writes |
+| `GET /api/commits/reviews/<id>/diff`, `.../file/<path>` | The diff and the full files of the review's comparison, resolved in the review's stored repository. Keyed by the id alone: no query parameter can point them at another repository |
 | `PATCH /api/commits/reviews/<id>` `{title?, status?}` | Rename (whitespace collapsed, 200 chars, never empty) or open and close |
 | `PUT /api/commits/reviews/<id>/viewed/<path>` `{viewed}` | Tick or untick a file |
 
@@ -242,17 +243,29 @@ Pages: `/commits/reviews`, `/commits/reviews/<id>`,
 
 ### The page
 
-A third target kind, `{kind: 'review', id}`. `loadReview` fetches the full
-load, keeps the record in `currentReview`, renders the chrome (title input,
-status pill, refs from the live comparison, the new-commits line, the error
-line, Copy for agent, Close or Reopen), then fetches the diff with the
-comparison the record names (`CompareModel.targetOfReview`) and renders the
-same sections as any comparison. `applyViewedState` projects the record's
+A third target kind, `{kind: 'review', id}`. A review URL establishes its
+own repository: `resolveDefaultRepo` reads the record first and selects
+`review.repo`, ahead of any `?repo=`, saved repository or terminal directory,
+so a bare `/commits/reviews/<id>` link works and a conflicting `?repo=` is
+overridden. `loadReview` fetches the full load, keeps the record in
+`currentReview`, renders the chrome (title input, status pill, refs from the
+live comparison, the new-commits line, the error line, Copy for agent, Close
+or Reopen), then fetches the diff from `/api/commits/reviews/<id>/diff`, a
+route keyed by the id that resolves in the stored repository (`_review_repo`
+accepts only the exact stored root, never an enclosing repository), and
+renders the same sections as any comparison. The full-file view of a review
+uses `/api/commits/reviews/<id>/file/<path>` the same way. `applyViewedState` projects the record's
 `files` onto the panel and the sections: ticked rows, collapsed sections
 (`.viewed`, expanded again with `.expanded` on a header tap), the `changed`
 markers, the `k of n viewed` label. `ensureReview` is the implicit creation:
 a tick or Save as review on a comparison or a commit page POSTs the review,
-swaps the URL with `history.replaceState` and re-renders in place.
+swaps the URL with `history.replaceState` and re-renders in place. The
+creation is single-flight (`CompareModel.singleFlight`): two quick ticks
+share one POST and both wait for the same id, and the Save button is
+disabled while it is pending. Every mutation of the record (a tick, a
+rename, a status change) runs through one serial queue
+(`CompareModel.serialQueue`), so two responses never overwrite each other
+out of order.
 
 The poll is one `setInterval` of 5 seconds, skipped while the document is
 hidden or the view is not a review, stopped on navigation, and run once more

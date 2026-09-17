@@ -113,17 +113,36 @@ test('viewed progress text', () => {
     assert.equal(M.viewedProgress(3, 3), '3 of 3 viewed');
 });
 
-test('a review record maps back to its comparison target', () => {
-    assert.deepEqual(
-        M.targetOfReview({ kind: 'branch', base: 'main', head: 'feature/x', mergebase: true }),
-        { kind: 'compare', base: 'main', head: 'feature/x', mergebase: true, worktree: false },
-    );
-    assert.deepEqual(
-        M.targetOfReview({ kind: 'worktree', base: 'HEAD', head: '', mergebase: false }),
-        { kind: 'compare', base: 'HEAD', head: '', mergebase: false, worktree: true },
-    );
-    assert.deepEqual(
-        M.targetOfReview({ kind: 'range', base: 'abc^', head: 'def' }),
-        { kind: 'compare', base: 'abc^', head: 'def', mergebase: false, worktree: false },
-    );
+test('singleFlight shares one pending call and then allows a new one', async () => {
+    let calls = 0;
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const create = M.singleFlight(async () => { calls += 1; await gate; return 'id-' + calls; });
+    const a = create();
+    const b = create();
+    assert.equal(a, b);
+    release();
+    assert.equal(await a, 'id-1');
+    assert.equal(await b, 'id-1');
+    assert.equal(calls, 1);
+    assert.equal(await create(), 'id-2');
+});
+
+test('singleFlight clears after a failure so the next call retries', async () => {
+    let n = 0;
+    const create = M.singleFlight(async () => { n += 1; if (n === 1) throw new Error('boom'); return n; });
+    await assert.rejects(create(), /boom/);
+    assert.equal(await create(), 2);
+});
+
+test('serialQueue runs tasks one after another, failures included', async () => {
+    const order = [];
+    const enqueue = M.serialQueue();
+    const first = enqueue(async () => { await new Promise(r => setTimeout(r, 20)); order.push('a'); return 'a'; });
+    const second = enqueue(async () => { order.push('b'); throw new Error('b failed'); });
+    const third = enqueue(async () => { order.push('c'); return 'c'; });
+    assert.equal(await first, 'a');
+    await assert.rejects(second, /b failed/);
+    assert.equal(await third, 'c');
+    assert.deepEqual(order, ['a', 'b', 'c']);
 });

@@ -757,3 +757,97 @@ class TestApiReviews:
         assert (
             client.get(f"/commits/reviews/{review['id']}/file/f.txt").status_code == 200
         )
+
+
+class TestReviewBoundContent:
+    """The diff and files of a review come from the review's own repository,
+    keyed by id alone, whatever repository the page is otherwise on."""
+
+    def _create(self, client, root):
+        resp = client.post(
+            "/api/commits/reviews",
+            json={
+                "repo": str(root),
+                "base": "main",
+                "head": "feature",
+                "mergebase": True,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_diff_and_file_from_the_stored_repository(
+        self, client, real_repo, tmp_path, monkeypatch
+    ):
+        from pathlib import Path
+
+        root, git = real_repo
+        review = self._create(client, root)
+        # Another repository becomes the ambient one: the review ignores it
+        other = tmp_path / "other"
+        other.mkdir()
+        _make_repo(other)
+        (other / "f.txt").write_text("OTHER\n")
+        ambient = lambda search_dir: Path(other)
+        monkeypatch.setattr("commits.routes._find_repo_root", ambient)
+        monkeypatch.setattr("commits.git_parser._find_repo_root", ambient)
+        # _review_repo resolves the stored root itself, so restore the exact
+        # answer for the stored path only
+        real_root = Path(root)
+
+        def by_path(search_dir):
+            return (
+                real_root
+                if Path(search_dir).resolve() == real_root.resolve()
+                else Path(other)
+            )
+
+        monkeypatch.setattr("commits.routes._find_repo_root", by_path)
+        monkeypatch.setattr("commits.git_parser._find_repo_root", by_path)
+
+        resp = client.get(f"/api/commits/reviews/{review['id']}/diff?repo={other}")
+        assert resp.status_code == 200
+        files = resp.json()["files"]
+        assert [f["path"] for f in files] == ["f.txt"]
+        adds = [
+            line["content"]
+            for line in files[0]["hunks"][0]["lines"]
+            if line["type"] == "add"
+        ]
+        assert adds == ["f1"]  # the stored repository's content, not OTHER
+        resp = client.get(
+            f"/api/commits/reviews/{review['id']}/file/f.txt?repo={other}"
+        )
+        assert resp.status_code == 200
+        assert resp.json()["content"] == "f1\n"
+        resp = client.get(f"/api/commits/reviews/{review['id']}/file/nope.txt")
+        assert resp.status_code == 404
+        resp = client.get(f"/api/commits/reviews/{review['id']}/file/%2e%2e/x")
+        assert resp.status_code in (400, 404)
+
+    def test_stored_path_inside_another_repository_is_not_bound(
+        self, client, real_repo, monkeypatch
+    ):
+        """If the stored root is gone and its path now sits inside some other
+        repository, the review must not bind to that enclosing one."""
+        import shutil
+        from pathlib import Path
+
+        root, git = real_repo
+        review = self._create(client, root)
+        shutil.rmtree(root)
+        root.mkdir()  # a plain directory again, no .git
+        enclosing = lambda search_dir: Path(root).parent  # pretend the parent is a repo
+        monkeypatch.setattr("commits.routes._find_repo_root", enclosing)
+        resp = client.get(f"/api/commits/reviews/{review['id']}/diff")
+        assert resp.status_code == 400
+        assert "Repository not found" in resp.json()["detail"]
+        resp = client.get(f"/api/commits/reviews/{review['id']}")
+        assert resp.status_code == 200
+        assert resp.json()["comparison"] is None
+        assert "Repository not found" in resp.json()["error"]
+
+    def test_unknown_review_content_is_404(self, client, real_repo):
+        assert client.get("/api/commits/reviews/00000000/diff").status_code == 404
+        assert client.get("/api/commits/reviews/00000000/file/a.txt").status_code == 404
+        assert client.get("/api/commits/reviews/bad/diff").status_code == 400

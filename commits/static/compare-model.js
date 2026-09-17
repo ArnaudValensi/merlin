@@ -81,14 +81,26 @@ var CompareModel = (function() {
         return m ? m[1].slice(0, 7) + m[2] : (ref || '');
     }
 
-    // The comparison a saved review points at, from its record.
-    function targetOfReview(review) {
-        return {
-            kind: 'compare',
-            base: review.kind === 'worktree' ? (review.base || '') : (review.base || ''),
-            head: review.kind === 'worktree' ? '' : (review.head || ''),
-            mergebase: !!review.mergebase,
-            worktree: review.kind === 'worktree',
+    // One flight at a time: while a call of `fn` is pending, every further
+    // call gets the same promise. Used for the implicit review creation, so
+    // two quick ticks create one review and both wait for its id.
+    function singleFlight(fn) {
+        var pending = null;
+        return function() {
+            if (pending) return pending;
+            pending = Promise.resolve().then(fn).finally(function() { pending = null; });
+            return pending;
+        };
+    }
+
+    // A serial queue: each task starts after the previous one settled, so
+    // two mutations of one record never race each other's response.
+    function serialQueue() {
+        var tail = Promise.resolve();
+        return function(task) {
+            var run = tail.then(task, task);
+            tail = run.catch(function() {});
+            return run;
         };
     }
 
@@ -118,7 +130,8 @@ var CompareModel = (function() {
         summaryText: summaryText,
         title: title,
         refLabel: refLabel,
-        targetOfReview: targetOfReview,
+        singleFlight: singleFlight,
+        serialQueue: serialQueue,
         viewedProgress: viewedProgress,
         kindLabel: kindLabel,
         commitsText: commitsText,
