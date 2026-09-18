@@ -708,6 +708,8 @@ class TestApiReviews:
         assert data["changed_since_viewed"] == ["f.txt"]
         assert data["review"]["files"] == {}
         assert data["new_commits"] == 1
+        # The visit before this load is reported, the load records this one
+        assert data["seen_before"] <= data["review"]["last_seen_at"]
         data = client.get(f"/api/commits/reviews/{review['id']}").json()
         assert data["new_commits"] == 0
         resp = client.put(

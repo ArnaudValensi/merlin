@@ -121,8 +121,93 @@ var CompareModel = (function() {
         return n + ' file' + (n === 1 ? '' : 's');
     }
 
+    // The sheet's pickers: branches (local first, then remote) and the
+    // recent commits, filtered by `q` on the branch name, the short hash or
+    // the subject. Case-insensitive, empty `q` keeps everything.
+    function filterRefs(refs, q) {
+        q = (q || '').trim().toLowerCase();
+        var hit = function(text) { return !q || (text || '').toLowerCase().indexOf(q) >= 0; };
+        var branches = [];
+        (refs.local || []).forEach(function(name) {
+            if (hit(name)) branches.push({ name: name, remote: false, current: name === refs.current });
+        });
+        (refs.remote || []).forEach(function(name) {
+            if (hit(name)) branches.push({ name: name, remote: true, current: false });
+        });
+        var commits = (refs.commits || []).filter(function(c) {
+            return hit(c.short) || hit(c.hash) || hit(c.message);
+        });
+        return { branches: branches, commits: commits };
+    }
+
+    // Whether the typed text names a listed branch or commit exactly: then
+    // the "use as typed" row is redundant.
+    function refIsListed(refs, text) {
+        text = (text || '').trim();
+        if (!text) return true;
+        if ((refs.local || []).indexOf(text) >= 0 || (refs.remote || []).indexOf(text) >= 0) return true;
+        return (refs.commits || []).some(function(c) { return c.hash === text || c.short === text; });
+    }
+
+    // The merge base is worth a word only when it is not the base itself:
+    // when the base branch moved on since the fork, the diff starts at the
+    // fork, not at the base's tip.
+    function mergeBaseNote(meta) {
+        if (!meta || !meta.mergebase || !meta.merge_base) return '';
+        if (meta.merge_base === meta.base_resolved) return '';
+        return 'from merge base ' + (meta.merge_base_short || meta.merge_base.slice(0, 7));
+    }
+
+    // What happened on a review since the user's previous visit, newest
+    // first: commits that landed on the head, and the agent's comments,
+    // replies and resolutions (the user's own actions are theirs to know).
+    // `seenBefore` is the previous visit's ISO stamp, so items the agent
+    // adds while the page is open (they arrive by the poll) also qualify.
+    function activitySince(review, seenBefore, newCommits) {
+        var items = [];
+        var since = seenBefore || '';
+        var after = function(ts) { return !!ts && (!since || ts > since); };
+        if (newCommits > 0) items.push({ kind: 'commits', count: newCommits, ts: '\uffff' });
+        ((review && review.comments) || []).forEach(function(c) {
+            var where = { commentId: c.id, path: c.path || null, line: c.line || null, side: c.side || null };
+            if (c.author !== 'user' && after(c.created)) {
+                items.push(Object.assign({ kind: 'comment', author: c.author, ts: c.created, excerpt: c.body }, where));
+            }
+            (c.replies || []).forEach(function(r) {
+                if (r.author !== 'user' && after(r.created)) {
+                    items.push(Object.assign({ kind: 'reply', author: r.author, ts: r.created, excerpt: r.body }, where));
+                }
+            });
+            if (c.status === 'resolved' && c.resolved_by !== 'user' && after(c.resolved_at)) {
+                items.push(Object.assign({ kind: 'resolved', author: c.resolved_by, ts: c.resolved_at, excerpt: '' }, where));
+            }
+        });
+        items.sort(function(a, b) { return a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0; });
+        return items;
+    }
+
+    // Thread ids with agent activity since the previous visit, for the
+    // unread marker on the thread heads.
+    function unreadThreads(items) {
+        var ids = {};
+        items.forEach(function(it) { if (it.commentId) ids[it.commentId] = true; });
+        return ids;
+    }
+
+    function excerpt(text, max) {
+        text = (text || '').replace(/\s+/g, ' ').trim();
+        max = max || 80;
+        return text.length > max ? text.slice(0, max - 1) + '\u2026' : text;
+    }
+
     return {
         emptySelection: emptySelection,
+        filterRefs: filterRefs,
+        refIsListed: refIsListed,
+        mergeBaseNote: mergeBaseNote,
+        activitySince: activitySince,
+        unreadThreads: unreadThreads,
+        excerpt: excerpt,
         pick: pick,
         count: count,
         range: range,

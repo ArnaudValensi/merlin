@@ -105,8 +105,8 @@ def _refs_line(cmp: cm.Comparison, count: int) -> str:
     parts = [
         f"{cmp.base} ({_short(cmp.base_resolved)}) .. {cmp.head} ({_short(cmp.head_resolved)})"
     ]
-    if cmp.mergebase:
-        parts.append(f"merge base {_short(cmp.merge_base)}")
+    if cmp.mergebase and cmp.merge_base != cmp.base_resolved:
+        parts.append(f"from merge base {_short(cmp.merge_base)}")
     parts.append(f"{count} commit{'' if count == 1 else 's'}")
     return " · ".join(parts)
 

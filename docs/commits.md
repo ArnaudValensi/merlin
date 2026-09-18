@@ -39,25 +39,32 @@ to compare, all from the phone:
   the range. Tapping a picked commit again clears it. There is no long
   press: it fights the browser on a phone.
 - **Compare** (the button in the header) opens a sheet with a **Head**
-  and a **Base** field. Each shows the repository's branches (local, then
-  remote) filtered as you type, and any ref git understands works as
-  typed (`HEAD~3`, a tag, `origin/main`). Head defaults to the current
-  branch and base to the repository's main branch (the target of
-  `origin/HEAD`, else `main`, else `master`). **Against merge base** is on
-  by default: the comparison then shows only what the head branch added
-  since it forked, even if the base moved on since (GitHub's three-dot
-  view). Untick it for a plain two-point diff.
+  and a **Base** select. Tap one and pick from the list under it: the
+  repository's branches (local, then remote, the current one marked), then
+  the 30 most recent commits, newest first, with their hash, subject and
+  age. The filter box narrows both groups as you type, and any ref git
+  understands can be typed there and taken **as typed** (`HEAD~3`, a tag,
+  `origin/main`). Head defaults to the current branch and base to the
+  repository's main branch (the target of `origin/HEAD`, else `main`, else
+  `master`). The comparison always shows what the head added since it
+  forked from the base, even if the base moved on since (GitHub's
+  three-dot view): there is nothing to tick, and the header says `from
+  merge base <hash>` only when that fork point differs from the base's
+  tip. Picking a specific commit as head gives a range: a commit does not
+  move, so there is nothing to follow.
 - **Working tree**: when the tree is dirty, a pinned row at the top of the
   list reads `Working tree · N files · +x -y` and opens the uncommitted
   changes (staged and unstaged together, plus untracked files shown as
   added) against `HEAD`. The same shortcut sits at the top of the Compare
-  sheet. This is usually what the agent just did.
+  sheet, greyed out with `no uncommitted changes` when the tree is clean.
+  This is usually what the agent just did.
 
 The comparison page header names what is compared: the kind (Commit,
 Range, Branch, Working tree), both refs with their resolved short hashes,
-whether the merge base is used, and the number of commits included. A
-collapsible `N commits` panel under it lists those commits (up to 200),
-each tappable to open on its own.
+the merge base when it is not the base itself, and the number of commits
+included. A collapsible `N commits` panel under it lists those commits
+(up to 200), each tappable to open on its own. A comparison with nothing
+in it says so (`The working tree is clean` for the tree).
 
 A comparison is just a URL (`/commits/compare?base=...&head=...`), so it
 reloads, bookmarks and pastes like a commit link.
@@ -82,9 +89,15 @@ one per review, where your agent can read them too.
   or an edit changes that file's diff, the tick clears on the next load and
   the file shows a small **changed** marker. Files whose diff did not
   change keep their tick, even in a branch review whose base moved on.
-- **A moving head.** A branch or range review follows its branch. When
-  commits landed since you last looked, the page says `N new commits since
-  you last looked`, once.
+- **Since your last visit.** Coming back to a review, a panel under its
+  header lists what happened while you were away, newest first: commits
+  that landed on the head (a branch or range review follows its branch),
+  and the agent's comments, replies and resolutions, each with the file
+  and line and the first words. Tap a row to jump to its thread. Threads
+  with such activity carry a blue dot until your next visit. Your own
+  actions are not listed: you know what you did. The panel stays live
+  while the page is open, so a reply the agent makes now appears there
+  too, and it empties on the visit after the one that showed it.
 - **Open and closed.** A review is open or closed, nothing more. The list
   page shows the repository's open reviews above the commits, with a
   collapsed **Closed** group. A closed review stays readable and can be

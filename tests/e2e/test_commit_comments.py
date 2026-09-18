@@ -188,11 +188,56 @@ def test_cli_resolve_shows_up_after_the_poll(page, server, repo, tmux_env):
     text = page.inner_text("#diff-file-feat\\.py .thread.resolved")
     assert "Removed in the next commit." in text and "Done." in text
     assert "agent" in text.lower()
+    # The agent's reply and resolve arrived after this visit began: the
+    # "since your last visit" panel lists them live, the thread is unread.
+    activity = page.inner_text("#review-activity")
+    assert "agent replied on feat.py:3" in activity
+    assert "agent resolved feat.py:3" in activity
+    assert "Removed in the next commit." in activity
+    assert (
+        page.query_selector("#diff-file-feat\\.py .thread.unread .thread-unread")
+        is not None
+    )
+    # Tapping an activity row scrolls to the thread
+    page.click("#review-activity .activity-resolved")
+    page.wait_for_timeout(300)
+    assert page.query_selector("#diff-file-feat\\.py .thread").is_visible()
+    # A fresh visit measures from the previous one: the agent's actions
+    # still show (they came after that visit), then a second visit clears them.
+    page.reload()
+    page.wait_for_selector("#review-chrome")
+    page.wait_for_timeout(300)
+    assert "agent resolved feat.py:3" in page.inner_text("#review-activity")
+    page.reload()
+    page.wait_for_selector("#review-chrome")
+    page.wait_for_timeout(300)
+    assert not page.query_selector("#review-activity").is_visible()
     # Reopen from the page, the CLI sees it open again
+    page.click("#diff-file-feat\\.py .thread-expand")
     page.click("#diff-file-feat\\.py .thread-reopen-btn")
     page.wait_for_selector("#diff-file-feat\\.py .thread.open")
     shown = merlin_review(tmux_env, "show", review_id)
     assert "## Open threads (1)" in shown
+
+
+def test_clean_tree_disables_the_worktree_shortcut(page, server, repo):
+    """This repository has no uncommitted change: no pinned row, and the
+    sheet's shortcut is disabled and says so."""
+    page.goto(f"{server}/commits?repo={repo}")
+    page.wait_for_selector(".commit-item")
+    page.wait_for_timeout(300)
+    assert not page.query_selector("#worktree-row").is_visible()
+    page.click("#compare-btn")
+    page.wait_for_selector(".compare-ref-item")
+    page.wait_for_function(
+        "() => document.querySelector('#compare-worktree-btn').disabled"
+    )
+    if page.viewport_size["width"] >= 768:
+        assert "no uncommitted changes" in page.inner_text("#compare-worktree-hint")
+    # A worktree comparison opened by URL on a clean tree says so too
+    page.goto(f"{server}/commits/compare?repo={repo}&worktree=1")
+    page.wait_for_selector("#diff-content .empty-state")
+    assert "working tree is clean" in page.inner_text("#diff-content").lower()
 
 
 def test_outdated_thread_moves_to_the_top_of_its_file(page, server, repo):

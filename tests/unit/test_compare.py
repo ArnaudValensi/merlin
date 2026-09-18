@@ -183,6 +183,18 @@ class TestResolveComparison:
         assert cmp.diff_base == shas["second"]
         assert cmp.merge_base is None
 
+    def test_merge_base_on_a_hash_head_is_a_range(self, repo, shas):
+        """The sheet always compares from the merge base. A head picked as a
+        commit is a range (nothing to follow), a branch head is a branch."""
+        head = git(repo, "rev-parse", "feature")
+        cmp = resolve_comparison(repo, base="main", head=head, mergebase=True)
+        assert cmp.kind == "range"
+        assert cmp.merge_base == git(repo, "merge-base", "main", "feature")
+        cmp = resolve_comparison(repo, base="main", head=head[:8], mergebase=True)
+        assert cmp.kind == "range"
+        cmp = resolve_comparison(repo, base="main", head="feature", mergebase=True)
+        assert cmp.kind == "branch"
+
     def test_range_kind(self, repo, shas):
         cmp = resolve_comparison(repo, base="main~2", head="main")
         assert cmp.kind == "range"
@@ -527,6 +539,16 @@ class TestRefs:
         assert set(refs["local"]) == {"main", "feature"}
         assert refs["remote"] == []
         assert refs["default_base"] == "main"
+        # The recent commits, newest first, for the sheet's pickers
+        commits = refs["commits"]
+        assert [c["message"] for c in commits] == [
+            "Feature two",
+            "Feature one",
+            "Second commit",
+            "Root commit",
+        ]
+        assert commits[0]["hash"] == git(repo, "rev-parse", "feature")
+        assert set(commits[0]) == {"hash", "short", "author", "date", "message"}
 
     def test_guess_default_base(self):
         assert (

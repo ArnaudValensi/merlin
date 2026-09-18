@@ -232,6 +232,7 @@ def create(repo_dir: Path, cmp: cm.Comparison, title: str | None = None) -> dict
         "base_resolved": cmp.base_resolved,
         "head_resolved": cmp.head_resolved,
         "last_seen_head": cmp.head_resolved,
+        "last_seen_at": stamp,
         "status": "open",
         "created": stamp,
         "updated": stamp,
@@ -558,8 +559,10 @@ def _new_commits_since(last_seen: str, head: str, repo_dir: Path) -> int:
 
 class Loaded:
     """What a full load returns: the record, the cleared viewed paths, the
-    new-commit count, the live comparison, the anchor state per comment.
-    Unpacks as the first four for the callers that need only those."""
+    new-commit count, the live comparison, the anchor state per comment,
+    and ``seen_before``, the user's previous visit stamp (what "since your
+    last visit" is measured from). Unpacks as the first four for the
+    callers that need only those."""
 
     def __init__(
         self,
@@ -568,12 +571,14 @@ class Loaded:
         new_commits: int,
         cmp: cm.Comparison,
         anchors: dict[str, str],
+        seen_before: str | None = None,
     ) -> None:
         self.review = review
         self.changed = changed
         self.new_commits = new_commits
         self.cmp = cmp
         self.anchors = anchors
+        self.seen_before = seen_before
 
     def __iter__(self):
         return iter((self.review, self.changed, self.new_commits, self.cmp))
@@ -586,9 +591,10 @@ def refresh(review_id: str, repo_dir: Path, *, advance_seen: bool = True) -> Loa
     """A full load. Inside the lock: resolve the comparison as it is now,
     count the commits since ``last_seen_head`` and only then advance it
     (unless ``advance_seen`` is off: the agent's ``merlin review show`` is
-    not the user's look), recompute every viewed file's hash and clear the
-    entries whose patch changed, re-anchor every line comment. The record is
-    written only when something changed.
+    not the user's look), record the visit in ``last_seen_at`` the same way
+    and hand back the previous stamp as ``seen_before``, recompute every
+    viewed file's hash and clear the entries whose patch changed, re-anchor
+    every line comment. The record is written only when something changed.
     """
     with locked(review_id):
         review = _read(review_id)
@@ -603,6 +609,13 @@ def refresh(review_id: str, repo_dir: Path, *, advance_seen: bool = True) -> Loa
             new_commits = _new_commits_since(last_seen, head, repo_dir)
         if head != last_seen and advance_seen:
             review["last_seen_head"] = head
+            dirty = True
+
+        # The previous visit, for the "since your last visit" panel. A
+        # record from before this field existed counts from its creation.
+        seen_before = review.get("last_seen_at") or review.get("created")
+        if advance_seen:
+            review["last_seen_at"] = now_iso()
             dirty = True
 
         files = review.get("files") or {}
@@ -625,4 +638,4 @@ def refresh(review_id: str, repo_dir: Path, *, advance_seen: bool = True) -> Loa
         if dirty:
             review["updated"] = now_iso()
             _write(review)
-    return Loaded(review, changed, new_commits, cmp, anchors)
+    return Loaded(review, changed, new_commits, cmp, anchors, seen_before)

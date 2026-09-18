@@ -50,7 +50,7 @@
     border-radius: 6px;
     background: var(--bg-card);
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: 12px;
     font-family: inherit;
     cursor: pointer;
     flex-shrink: 0;
@@ -67,7 +67,7 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: 12px;
     font-family: inherit;
     cursor: pointer;
     min-height: 36px;
@@ -124,7 +124,7 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     color: var(--text-primary);
-    font-size: 14px;
+    font-size: 13px;
     font-family: inherit;
     outline: none;
 }
@@ -187,7 +187,7 @@
 
 .commit-hash {
     font-family: 'Geist Mono', monospace;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--accent-blue);
     flex-shrink: 0;
     line-height: 1.5;
@@ -267,7 +267,7 @@
 }
 .select-summary {
     flex: 1;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-primary);
 }
 .select-clear-btn {
@@ -277,7 +277,7 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: 12px;
     font-family: inherit;
     cursor: pointer;
 }
@@ -291,7 +291,7 @@
     border: none;
     border-radius: 6px;
     color: var(--text-primary);
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
     font-family: inherit;
     cursor: pointer;
@@ -311,7 +311,7 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     color: var(--accent-blue);
-    font-size: 14px;
+    font-size: 13px;
     font-family: inherit;
     cursor: pointer;
     min-height: 44px;
@@ -324,7 +324,7 @@
     text-align: center;
     padding: 24px;
     color: var(--text-muted);
-    font-size: 14px;
+    font-size: 13px;
 }
 
 /* Empty state */
@@ -344,19 +344,19 @@
     min-width: 0;
 }
 .commit-meta .commit-meta-message {
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--text-primary);
     word-break: break-word;
 }
 .commit-meta .commit-meta-info {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted);
     margin-top: 2px;
 }
 .commit-meta .commit-meta-hash {
     font-family: 'Geist Mono', monospace;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--accent-blue);
 }
 
@@ -372,7 +372,7 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: 12px;
     font-family: inherit;
     cursor: pointer;
     display: flex;
@@ -405,7 +405,7 @@
     align-items: center;
     gap: 8px;
     padding: 8px 12px;
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
     min-height: 36px;
 }
@@ -477,7 +477,7 @@
 
 .diff-file-path {
     font-family: 'Geist Mono', monospace;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-primary);
     flex: 1;
     min-width: 0;
@@ -558,7 +558,7 @@
 .diff-hunk-header td {
     background: rgba(74, 158, 255, 0.08);
     color: var(--accent-blue);
-    font-size: 12px;
+    font-size: 11px;
     padding: 4px 8px;
     font-style: italic;
 }
@@ -593,7 +593,7 @@
     padding: 16px;
     text-align: center;
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: 12px;
     font-style: italic;
 }
 
@@ -604,7 +604,7 @@
 }
 .file-meta .file-meta-path {
     font-family: 'Geist Mono', monospace;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-primary);
     word-break: break-all;
 }
@@ -774,7 +774,7 @@
     gap: 8px;
     padding: 8px 12px;
     min-height: 36px;
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
 }
 .compare-commit-item:hover {
@@ -813,7 +813,7 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     color: var(--accent-blue);
-    font-size: 14px;
+    font-size: 13px;
     font-family: inherit;
     text-align: left;
     cursor: pointer;
@@ -837,43 +837,13 @@
 }
 .compare-field-label {
     width: 44px;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
 }
-.compare-input {
-    flex: 1;
-    min-width: 0;
-    min-height: 44px;
-    padding: 8px 12px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text-primary);
-    font-family: 'Geist Mono', monospace;
-    font-size: 16px;
-    outline: none;
-}
-.compare-input:focus {
-    border-color: var(--accent-blue);
-}
-.compare-check {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    color: var(--text-secondary);
-    min-height: 32px;
-    cursor: pointer;
-}
-.compare-check input {
-    accent-color: var(--accent-blue);
-    width: 18px;
-    height: 18px;
-}
 .compare-error {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--accent-red);
 }
 .compare-ref-hint {
@@ -986,13 +956,13 @@
 .review-title {
     flex: 1;
     min-width: 0;
-    min-height: 40px;
+    min-height: 36px;
     padding: 6px 10px;
     background: transparent;
     border: 1px solid transparent;
     border-radius: 6px;
     color: var(--text-primary);
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 600;
     font-family: inherit;
     outline: none;
@@ -1020,19 +990,13 @@
 }
 .review-refs {
     padding: 4px 10px 0;
+    font-size: 12px;
+    color: var(--text-secondary);
 }
 .review-refs .commit-meta-hash {
     font-family: 'Geist Mono', monospace;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--accent-blue);
-}
-.review-new-commits {
-    margin: 8px 10px 0;
-    padding: 6px 10px;
-    border-radius: 6px;
-    background: rgba(74, 158, 255, 0.1);
-    color: var(--accent-blue);
-    font-size: 13px;
 }
 .review-actions {
     display: flex;
@@ -1044,13 +1008,13 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    min-height: 36px;
+    min-height: 32px;
     padding: 0 12px;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 6px;
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: 12px;
     font-family: inherit;
     cursor: pointer;
 }
@@ -1170,11 +1134,13 @@ tr.comment-armed .comment-add-btn {
     left: 0;
     box-sizing: border-box;
     max-width: 100vw;
+    font-size: 13px;
 }
 .thread-composer {
     padding: 8px 12px;
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }
 .thread-textarea {
     width: 100%;
@@ -1184,8 +1150,8 @@ tr.comment-armed .comment-add-btn {
     border: 1px solid var(--border);
     border-radius: 6px;
     color: var(--text-primary);
-    font-family: inherit;
-    font-size: 16px;
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
     line-height: 1.4;
     resize: vertical;
     outline: none;
@@ -1197,17 +1163,17 @@ tr.comment-armed .comment-add-btn {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
-    margin-top: 6px;
+    margin-top: 8px;
 }
 .thread-btn {
-    min-height: 36px;
+    min-height: 32px;
     padding: 0 12px;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 6px;
     color: var(--text-secondary);
-    font-size: 13px;
-    font-family: inherit;
+    font-size: 12px;
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     cursor: pointer;
 }
 .thread-btn:hover {
@@ -1239,7 +1205,7 @@ tr.comment-armed .comment-add-btn {
     min-height: 24px;
 }
 .author-badge {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -1255,7 +1221,7 @@ tr.comment-armed .comment-add-btn {
 }
 .thread-time,
 .thread-where {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted);
 }
 .thread-where {
@@ -1277,14 +1243,14 @@ tr.comment-armed .comment-add-btn {
     color: var(--accent-red);
 }
 .thread-resolved-label {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--accent-green);
 }
 .thread-expand {
     margin-left: auto;
     min-height: 28px;
     padding: 0 10px;
-    font-size: 12px;
+    font-size: 11px;
 }
 .thread.resolved:not(.expanded) .thread-content {
     display: none;
@@ -1295,14 +1261,14 @@ tr.comment-armed .comment-add-btn {
     border-left: 3px solid var(--border);
     color: var(--text-secondary);
     font-family: 'Geist Mono', monospace;
-    font-size: 12px;
+    font-size: 11px;
     white-space: pre-wrap;
     word-break: break-all;
 }
 .thread-quote-line {
     display: block;
     font-family: inherit;
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted);
 }
 .thread-body {
@@ -1323,7 +1289,7 @@ tr.comment-armed .comment-add-btn {
 }
 .thread-actions .thread-textarea {
     flex: 1;
-    min-height: 36px;
+    min-height: 32px;
 }
 .file-threads-top {
     padding: 4px 0;
@@ -1361,6 +1327,182 @@ tr.comment-armed .comment-add-btn {
 }
 .review-threads:empty + .thread-composer {
     border-top: 1px solid var(--border);
+}
+
+/* The sheet's Head and Base selects, over one picker */
+.compare-select {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 40px;
+    padding: 6px 10px 6px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: 'Geist Mono', monospace;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+.compare-select svg {
+    margin-left: auto;
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+.compare-select:hover {
+    background: var(--bg-hover);
+}
+.compare-select.active {
+    border-color: var(--accent-blue);
+}
+.compare-select-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.compare-select-value.placeholder {
+    color: var(--text-muted);
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+.compare-worktree-btn:disabled,
+.compare-worktree-btn.disabled {
+    color: var(--text-muted);
+    cursor: default;
+}
+.compare-worktree-btn:disabled > span:first-of-type {
+    color: var(--text-muted);
+}
+.compare-worktree-btn:disabled:hover {
+    background: var(--bg-card);
+}
+.compare-picker {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+.compare-filter-wrap {
+    padding: 4px 16px 8px;
+}
+.compare-ref-filter {
+    font-family: 'Geist Mono', monospace;
+    font-size: 13px;
+}
+.compare-ref-item.selected {
+    background: var(--bg-hover);
+}
+.compare-ref-item.selected .picker-item-name,
+.compare-ref-item.selected .commit-hash {
+    color: var(--accent-blue);
+}
+.compare-ref-note {
+    margin-left: auto;
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.compare-ref-commit {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+}
+.compare-ref-commit .commit-hash {
+    flex-shrink: 0;
+}
+.compare-ref-subject {
+    font-size: 13px;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Since your last visit: the review's activity feed */
+.review-activity {
+    margin: 10px 10px 0;
+    padding: 8px 10px 4px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+}
+.review-activity .reviews-heading {
+    padding: 0 0 4px;
+}
+.activity-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    width: 100%;
+    min-height: 28px;
+    padding: 4px 0;
+    background: none;
+    border: none;
+    border-top: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.4;
+    text-align: left;
+}
+.activity-item:first-child {
+    border-top: none;
+}
+button.activity-item {
+    cursor: pointer;
+}
+button.activity-item:hover .activity-text {
+    color: var(--text-primary);
+}
+.activity-dot {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--accent-blue);
+    position: relative;
+    top: -1px;
+}
+.activity-commits .activity-dot { background: var(--accent-green); }
+.activity-resolved .activity-dot { background: var(--accent-green); }
+.activity-comment .activity-dot,
+.activity-reply .activity-dot { background: var(--accent-purple); }
+.activity-text {
+    flex: 1;
+    min-width: 0;
+}
+.activity-where {
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    color: var(--text-primary);
+}
+.activity-excerpt {
+    display: block;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.activity-time {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.thread-unread {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--accent-blue);
+}
+.thread.flash {
+    box-shadow: inset 3px 0 0 var(--accent-blue);
+    transition: box-shadow 0.6s;
 }
 
 /* Mobile adjustments */
@@ -1428,8 +1570,13 @@ tr.comment-armed .comment-add-btn {
     .review-action-btn,
     .review-title,
     .reviews-closed-btn,
-    .thread-btn {
+    .thread-btn,
+    .compare-select,
+    .activity-item {
         min-height: 44px;
+    }
+    .activity-item {
+        align-items: center;
     }
     .comment-add-btn {
         width: 44px;

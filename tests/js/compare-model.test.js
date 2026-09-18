@@ -146,3 +146,68 @@ test('serialQueue runs tasks one after another, failures included', async () => 
     assert.equal(await third, 'c');
     assert.deepEqual(order, ['a', 'b', 'c']);
 });
+
+test('filterRefs matches branches by name and commits by hash or subject', () => {
+    const refs = {
+        current: 'feature/x',
+        local: ['main', 'feature/x'],
+        remote: ['origin/main'],
+        commits: [
+            { hash: 'a'.repeat(40), short: 'aaaaaaa', message: 'Add the sheet' },
+            { hash: 'b'.repeat(40), short: 'bbbbbbb', message: 'Fix main' },
+        ],
+    };
+    let r = M.filterRefs(refs, '');
+    assert.deepEqual(r.branches.map(b => b.name), ['main', 'feature/x', 'origin/main']);
+    assert.equal(r.branches[1].current, true);
+    assert.equal(r.branches[2].remote, true);
+    assert.equal(r.commits.length, 2);
+    r = M.filterRefs(refs, 'MAIN');
+    assert.deepEqual(r.branches.map(b => b.name), ['main', 'origin/main']);
+    assert.deepEqual(r.commits.map(c => c.short), ['bbbbbbb']);
+    r = M.filterRefs(refs, 'aaaa');
+    assert.deepEqual(r.branches, []);
+    assert.deepEqual(r.commits.map(c => c.short), ['aaaaaaa']);
+    assert.equal(M.refIsListed(refs, 'main'), true);
+    assert.equal(M.refIsListed(refs, 'aaaaaaa'), true);
+    assert.equal(M.refIsListed(refs, 'HEAD~3'), false);
+    assert.equal(M.refIsListed(refs, ''), true);
+});
+
+test('mergeBaseNote speaks only when the merge base is not the base', () => {
+    const same = { mergebase: true, merge_base: 'x'.repeat(40), base_resolved: 'x'.repeat(40), merge_base_short: 'xxxxxxx' };
+    assert.equal(M.mergeBaseNote(same), '');
+    const moved = { mergebase: true, merge_base: 'y'.repeat(40), base_resolved: 'x'.repeat(40), merge_base_short: 'yyyyyyy' };
+    assert.equal(M.mergeBaseNote(moved), 'from merge base yyyyyyy');
+    assert.equal(M.mergeBaseNote({ mergebase: false }), '');
+    assert.equal(M.mergeBaseNote(null), '');
+});
+
+test('activitySince lists the agent side newest first and skips the user', () => {
+    const review = { comments: [
+        { id: 'c1', author: 'user', created: '2026-09-18T10:00:00+00:00', path: 'a.txt', line: 2, side: 'new', body: 'Why?',
+          status: 'resolved', resolved_at: '2026-09-18T10:20:00+00:00', resolved_by: 'agent',
+          replies: [{ id: 'r1', author: 'agent', created: '2026-09-18T10:19:00+00:00', body: 'Because the spec says so, see decision 4 of the requirements file which is long' }] },
+        { id: 'c2', author: 'agent', created: '2026-09-18T10:30:00+00:00', path: null, body: 'Overall fine', status: 'open', replies: [] },
+        { id: 'c3', author: 'user', created: '2026-09-18T10:40:00+00:00', path: 'b.txt', line: 1, side: 'old', body: 'mine', status: 'open', replies: [] },
+        { id: 'c0', author: 'agent', created: '2026-09-18T09:00:00+00:00', path: null, body: 'old', status: 'open', replies: [] },
+    ] };
+    const items = M.activitySince(review, '2026-09-18T10:10:00+00:00', 2);
+    assert.deepEqual(items.map(i => i.kind), ['commits', 'comment', 'resolved', 'reply']);
+    assert.equal(items[0].count, 2);
+    assert.equal(items[1].commentId, 'c2');
+    assert.equal(items[2].commentId, 'c1');
+    assert.equal(items[3].path, 'a.txt');
+    assert.deepEqual(M.unreadThreads(items), { c2: true, c1: true });
+    // No previous visit: everything from the agent counts, nothing from the user
+    assert.equal(M.activitySince(review, null, 0).length, 4);
+    assert.equal(M.activitySince({ comments: [] }, null, 0).length, 0);
+});
+
+test('excerpt collapses whitespace and clips with an ellipsis', () => {
+    assert.equal(M.excerpt('  a\n  b  '), 'a b');
+    const long = 'x'.repeat(100);
+    assert.equal(M.excerpt(long).length, 80);
+    assert.ok(M.excerpt(long).endsWith('\u2026'));
+    assert.equal(M.excerpt('short', 10), 'short');
+});

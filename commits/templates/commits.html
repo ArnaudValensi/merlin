@@ -81,8 +81,11 @@
                 <span id="review-status" class="review-status"></span>
             </div>
             <div id="review-refs" class="commit-meta-info review-refs"></div>
-            <div id="review-new-commits" class="review-new-commits" style="display:none"></div>
             <div id="review-error" class="commit-meta-info diff-error" style="display:none"></div>
+            <div id="review-activity" class="review-activity" style="display:none">
+                <div class="reviews-heading">Since your last visit</div>
+                <div id="review-activity-list" class="review-activity-list"></div>
+            </div>
             <div class="review-actions">
                 <button id="review-copy-btn" class="review-action-btn" title="Copy the command the agent runs to read this review">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
@@ -168,24 +171,31 @@
                 <button id="compare-worktree-btn" class="compare-worktree-btn">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
                     <span>Working tree</span>
-                    <span class="compare-worktree-hint">uncommitted changes against HEAD</span>
+                    <span class="compare-worktree-hint" id="compare-worktree-hint">uncommitted changes against HEAD</span>
                 </button>
-                <label class="compare-field">
-                    <span class="compare-field-label">Head</span>
-                    <input type="text" id="compare-head" class="compare-input" placeholder="branch, tag or ref" autocomplete="off" autocapitalize="off" spellcheck="false">
-                </label>
-                <label class="compare-field">
-                    <span class="compare-field-label">Base</span>
-                    <input type="text" id="compare-base" class="compare-input" placeholder="branch, tag or ref" autocomplete="off" autocapitalize="off" spellcheck="false">
-                </label>
-                <label class="compare-check">
-                    <input type="checkbox" id="compare-mergebase" checked>
-                    <span>Against merge base</span>
-                </label>
+                <div class="compare-field">
+                    <span class="compare-field-label" id="compare-head-label">Head</span>
+                    <button type="button" id="compare-head" class="compare-select" data-field="head" aria-labelledby="compare-head-label" aria-haspopup="listbox">
+                        <span class="compare-select-value"></span>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                    </button>
+                </div>
+                <div class="compare-field">
+                    <span class="compare-field-label" id="compare-base-label">Base</span>
+                    <button type="button" id="compare-base" class="compare-select" data-field="base" aria-labelledby="compare-base-label" aria-haspopup="listbox">
+                        <span class="compare-select-value"></span>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                    </button>
+                </div>
                 <div id="compare-error" class="compare-error" style="display:none"></div>
             </div>
-            <div id="compare-ref-hint" class="compare-ref-hint"></div>
-            <div id="compare-ref-list" class="picker-content compare-ref-list"></div>
+            <div class="compare-picker">
+                <div id="compare-ref-hint" class="compare-ref-hint"></div>
+                <div class="picker-search-wrap compare-filter-wrap">
+                    <input type="text" id="compare-ref-filter" class="picker-search compare-ref-filter" placeholder="Filter, or type any ref" aria-label="Filter branches and commits, or type a ref" autocomplete="off" autocapitalize="off" spellcheck="false">
+                </div>
+                <div id="compare-ref-list" class="picker-content compare-ref-list" role="listbox"></div>
+            </div>
             <div class="picker-footer">
                 <button id="compare-go-btn" class="picker-use-btn">Compare</button>
             </div>

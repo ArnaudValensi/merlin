@@ -83,6 +83,7 @@ class TestStore:
             "base_resolved",
             "head_resolved",
             "last_seen_head",
+            "last_seen_at",
             "status",
             "created",
             "updated",
@@ -308,8 +309,25 @@ class TestViewed:
         review = branch_review(repo)
         path = rv.reviews_dir() / f"{review['id']}.json"
         before = path.stat().st_mtime_ns
-        rv.refresh(review["id"], repo)
+        # The agent's look changes nothing: no write.
+        rv.refresh(review["id"], repo, advance_seen=False)
         assert path.stat().st_mtime_ns == before
+        # The user's look records the visit, and only that.
+        loaded = rv.refresh(review["id"], repo)
+        assert loaded.review["last_seen_at"] >= review["last_seen_at"]
+        assert loaded.review["files"] == {} and loaded.changed == []
+
+    def test_refresh_reports_the_previous_visit_then_advances_it(self, repo):
+        review = branch_review(repo)
+        created = review["last_seen_at"]
+        loaded = rv.refresh(review["id"], repo)
+        assert loaded.seen_before == created
+        assert rv.load(review["id"])["last_seen_at"] > created
+        # A record from before the field existed counts from its creation.
+        rv.update(review["id"], lambda r: r.pop("last_seen_at"))
+        loaded = rv.refresh(review["id"], repo, advance_seen=False)
+        assert loaded.seen_before == review["created"]
+        assert "last_seen_at" not in rv.load(review["id"])
 
     def test_new_commits_counted_before_last_seen_advances(self, repo):
         review = branch_review(repo)

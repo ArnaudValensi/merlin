@@ -196,17 +196,16 @@ def test_amending_a_viewed_file_clears_the_tick(page, server, repo):
     assert item.query_selector(".file-changed-marker").is_visible()
     feat = page.query_selector(".file-list-item[data-path='feat.py']")
     assert not feat.query_selector(".file-changed-marker").is_visible()
-    assert page.query_selector("#review-new-commits").is_visible()
-    assert "1 new commit since you last looked" in page.inner_text(
-        "#review-new-commits"
-    )
+    # The activity panel reports the head's new commit since the last visit
+    assert page.query_selector("#review-activity").is_visible()
+    assert "1 new commit on the head" in page.inner_text("#review-activity")
     # The section is open again
     assert page.query_selector("#diff-file-other\\.py .diff-table-scroll").is_visible()
     # A second look reports nothing new
     page.reload()
     page.wait_for_selector("#review-chrome")
     page.wait_for_timeout(300)
-    assert not page.query_selector("#review-new-commits").is_visible()
+    assert not page.query_selector("#review-activity").is_visible()
 
 
 def test_poll_picks_up_a_change_made_elsewhere(page, server, repo):

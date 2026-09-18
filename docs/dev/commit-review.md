@@ -129,7 +129,7 @@ API (`/api/commits`). The compare and refs routes are registered before
 | `/commits/compare?repo=&worktree=1[&base=]` | same, `worktree=1` | `head_resolved` is null |
 | | `GET /api/commits/compare/diff` | `{"files": [FileDiff]}` |
 | `/commits/compare/file/<path>?...` | `GET /api/commits/compare/file/<path>` | `{content, lines}` with gutters |
-| | `GET /api/commits/refs?repo=` | `{current, local, remote, default_base}` |
+| | `GET /api/commits/refs?repo=` | `{current, local, remote, default_base, commits}`, the commits being the last 30 from `HEAD` for the sheet pickers |
 
 Errors: a bad or unknown ref is a 400 with `Invalid ref` or `Unknown ref`, a
 missing file is a 404, a path escaping the root is a 400. `mergebase` and
@@ -156,16 +156,33 @@ the first other local branch, and never the current branch.
   range.
 - The **Compare sheet** reuses the folder picker's frame classes
   (`.picker-modal`, full height on the phone, centered on desktop) with a
-  Working tree shortcut, head and base inputs, the merge-base checkbox and a
-  branch list that follows the focused field.
+  Working tree shortcut, Head and Base as two select buttons
+  (`.compare-select`, `sheetValues` holds the picks) over one picker: a
+  filter input and a list of the branches then the recent commits
+  (`/api/commits/refs` carries `commits`, the last 30 from `HEAD`), filtered
+  by `CompareModel.filterRefs`. Typed text that names nothing listed is
+  offered "as typed" (`CompareModel.refIsListed`), so any ref still works.
+  Choosing fills the active field and moves to the other one when it is
+  empty. The sheet always submits `mergebase: true`: the checkbox went away
+  on 2026-09-18 (the merge base equals the base whenever the base is an
+  ancestor of the head, so the option only mattered when the base had moved
+  on, where the merge base is what a review wants). The shortcut is
+  disabled with `no uncommitted changes` when `worktreeState` (shared with
+  the pinned row) says the tree is clean.
 - The **Working tree row** is loaded with the list from
   `/api/commits/compare?worktree=1` and hidden when there are no files.
 - The comparison **header** is `renderCompareHeader`: the title from
   `CompareModel.title` (also the default review title, its range start taken
-  from `oldest`), the kind, each ref with its own resolved short hash, the
-  merge base with its hash when that mode is on (the base's hash is the
-  branch tip, the merge base is where the diff starts), the commit count,
-  and the included commits collapsed under it.
+  from `oldest`), the kind, each ref with its own resolved short hash, `from
+  merge base <hash>` only when the merge base differs from the base's tip
+  (`CompareModel.mergeBaseNote`), the commit count, and the included
+  commits collapsed under it. An empty comparison shows an empty state,
+  worded for the working tree when that is what it is.
+- **Kinds.** `resolve_comparison` derives the kind: `worktree`, `branch`
+  when merge-base mode is on and the head is not a hash, `commit` when the
+  diff base is the head's parent, `range` otherwise. So a commit picked as
+  head in the sheet is a range, not a branch review of something that
+  cannot move.
 
 ## The sticky file header
 
@@ -199,10 +216,10 @@ different processes:
 - **The record** is decision 7's shape: `id`, `repo` (the resolved root),
   `title`, `kind`, `base`, `head` and `mergebase` as typed (a branch review
   follows its branch, the merge base is recomputed on every load),
-  `base_resolved` and `head_resolved` at creation, `last_seen_head`,
-  `status` (`open` or `closed`), `created`, `updated`, `files` and
-  `comments`. `updated` is stamped on every write and is what the poll
-  compares.
+  `base_resolved` and `head_resolved` at creation, `last_seen_head` and
+  `last_seen_at` (the user's last visit), `status` (`open` or `closed`),
+  `created`, `updated`, `files` and `comments`. `updated` is stamped on
+  every write and is what the poll compares.
 
 ### Viewed files
 
@@ -216,13 +233,28 @@ under the lock, drops the entries whose patch changed and returns them as
 `changed_since_viewed`, and the page shows those files unticked with a
 `changed` marker for that load.
 
-### The moving head
+### The moving head and the last visit
 
 `refresh` also compares the review's `last_seen_head` with the head as it
 resolves now. When they differ it counts `last_seen..head` (`rev-list
 --count`, or everything up to the head when the old sha is gone), returns
-the count as `new_commits`, and only then advances `last_seen_head`. The
-record is written only when something changed.
+the count as `new_commits`, and only then advances `last_seen_head`. In the
+same pass it hands back `last_seen_at` as `seen_before` (a record from
+before the field existed counts from its `created`) and stamps the visit.
+Both advance only when `advance_seen` is on: the page's full load is a
+visit, the agent's `merlin review show` is not, and the poll never calls
+`refresh`. The record is written only when something changed, and a visit
+is a change.
+
+The "since your last visit" panel is computed on the page, not stored:
+`CompareModel.activitySince(review, seen_before, new_commits)` lists the
+new commits and every comment, reply and resolution by an author other
+than `user` whose stamp is after `seen_before`, newest first. Because the
+stamp is the previous visit's, activity the agent adds while the page is
+open (it arrives by the poll and re-renders the chrome) qualifies too, and
+the panel empties on the visit after the one that showed it. Thread ids in
+that list get the `unread` dot. Stamps are ISO 8601 in UTC with a fixed
+offset, so string order is time order.
 
 ### Routes
 
@@ -232,7 +264,7 @@ All registered before `/{commit_hash}`.
 |-------|------|
 | `GET /api/commits/reviews?repo=` | Summaries of the repository's reviews, newest update first, closed ones included |
 | `POST /api/commits/reviews` `{repo, base, head, mergebase, worktree, title?}` | Resolves the comparison (400 on a bad ref) and creates the review. 201 with the record |
-| `GET /api/commits/reviews/<id>` | The full load: `{review, comparison, changed_since_viewed, new_commits, error}`. A repository that is gone or a branch that was deleted gives `comparison: null` and an `error` string, the record intact |
+| `GET /api/commits/reviews/<id>` | The full load: `{review, comparison, changed_since_viewed, new_commits, seen_before, anchors, open_threads, error}`. A repository that is gone or a branch that was deleted gives `comparison: null` and an `error` string, the record intact |
 | `GET /api/commits/reviews/<id>?since=<updated>` | The poll: `{"changed": false}` when the stamp matches, else `{"changed": true, "review"}`. Never recomputes or writes |
 | `GET /api/commits/reviews/<id>/diff`, `.../file/<path>` | The diff and the full files of the review's comparison, resolved in the review's stored repository. Keyed by the id alone: no query parameter can point them at another repository |
 | `PATCH /api/commits/reviews/<id>` `{title?, status?}` | Rename (whitespace collapsed, 200 chars, never empty) or open and close |
@@ -365,8 +397,9 @@ context, `--json` the raw record with its live comparison.
 
 `show` loads the review with `refresh(..., advance_seen=False)`: it
 re-anchors and recomputes viewed like the page, but the agent's look does
-not advance `last_seen_head`, so the user's `N new commits since you last
-looked` line survives it.
+not advance `last_seen_head` or `last_seen_at`, so the user's "since your
+last visit" panel survives it. Its refs line names the merge base only when
+it differs from the base, like the page header.
 
 The agent learns the loop from the "Code reviews" section of
 `agent/MERLIN.md` and the core `skills/review/SKILL.md` operating card, which

@@ -504,6 +504,9 @@ def api_review_get(review_id: str, since: str | None = None):
             "comparison": None,
             "changed_since_viewed": [],
             "new_commits": 0,
+            "seen_before": review.get("last_seen_at") or review.get("created"),
+            "anchors": {},
+            "open_threads": rv.open_thread_counts(review),
             "error": f"Repository not found: {review.get('repo')}",
         }
     try:
@@ -514,6 +517,7 @@ def api_review_get(review_id: str, since: str | None = None):
             "comparison": None,
             "changed_since_viewed": [],
             "new_commits": 0,
+            "seen_before": review.get("last_seen_at") or review.get("created"),
             "anchors": {},
             "open_threads": rv.open_thread_counts(review),
             "error": str(e),
@@ -529,6 +533,7 @@ def api_review_get(review_id: str, since: str | None = None):
         "comparison": comparison,
         "changed_since_viewed": loaded.changed,
         "new_commits": loaded.new_commits,
+        "seen_before": loaded.seen_before,
         "anchors": loaded.anchors,
         "open_threads": rv.open_thread_counts(loaded.review),
         "error": None,

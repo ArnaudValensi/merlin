@@ -121,6 +121,13 @@ class Comparison:
         return d
 
 
+def _looks_like_hash(ref: str) -> bool:
+    """A head typed as a commit hash (from the sheet's recent commits or by
+    hand) is not a branch: merge-base mode then yields a range, not a
+    branch review that would claim to follow something that cannot move."""
+    return bool(re.fullmatch(r"[0-9a-f]{4,40}", ref))
+
+
 def _resolve_base(base: str, head_resolved: str, repo_dir: Path) -> str:
     """Resolve the base ref, with ``<root>^`` standing for the empty tree.
 
@@ -190,7 +197,7 @@ def resolve_comparison(
             merge_base = out.strip()
     diff_base = merge_base if merge_base else base_resolved
 
-    if mergebase:
+    if mergebase and not _looks_like_hash(head):
         kind = "branch"
     elif diff_base == parent_or_empty_tree(head_resolved, repo_dir):
         kind = "commit"
@@ -703,8 +710,27 @@ def guess_default_base(
     return None
 
 
+RECENT_COMMITS = 30
+
+
+def _recent_commits(repo_dir: Path) -> list[dict]:
+    """The last commits reachable from HEAD, newest first, for the sheet's
+    commit pickers. Empty in a repository with no commits."""
+    out = gp._run_git(
+        "log",
+        "--format=%H|%h|%an|%aI|%s",
+        f"--max-count={RECENT_COMMITS}",
+        "HEAD",
+        "--",
+        repo_dir=repo_dir,
+        check=False,
+    )
+    return _parse_commit_lines(out)
+
+
 def list_refs(repo_dir: Path) -> dict:
-    """Local and remote branches, the current branch, the guessed base."""
+    """Local and remote branches, the current branch, the guessed base, the
+    recent commits."""
     current = _current_branch(repo_dir)
     local = _branches(repo_dir, "refs/heads")
     remote = _branches(repo_dir, "refs/remotes")
@@ -721,6 +747,7 @@ def list_refs(repo_dir: Path) -> dict:
         "local": local,
         "remote": remote,
         "default_base": guess_default_base(local, remote, current, origin_head or None),
+        "commits": _recent_commits(repo_dir),
     }
 
 

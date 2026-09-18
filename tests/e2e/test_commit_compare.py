@@ -96,27 +96,66 @@ def _query(page) -> dict:
     return {k: v[0] for k, v in parse_qs(urlparse(page.url).query).items()}
 
 
+def _select_value(page, sel) -> str:
+    return page.inner_text(f"{sel} .compare-select-value")
+
+
 def test_compare_sheet_opens_branch_comparison(page, server, repo):
     _open_list(page, server, repo)
     page.click("#compare-btn")
     page.wait_for_selector("#compare-sheet", state="visible")
     page.wait_for_selector(".compare-ref-item")
-    assert page.input_value("#compare-head") == "feature/x"
-    assert page.input_value("#compare-base") == "main"
-    assert page.is_checked("#compare-mergebase")
-    # The list follows the focused field and filters by its text
-    names = [el.inner_text() for el in page.query_selector_all(".picker-item-name")]
-    assert names == ["feature/x"]
+    # Head and base are prefilled, head is the field being chosen
+    assert _select_value(page, "#compare-head") == "feature/x"
+    assert _select_value(page, "#compare-base") == "main"
     assert "head" in page.inner_text("#compare-ref-hint").lower()
-    page.focus("#compare-base")
+    assert page.query_selector("#compare-mergebase") is None  # no checkbox
+    # The picker lists the branches, then the recent commits (newest first)
+    groups = [el.inner_text() for el in page.query_selector_all(".compare-ref-group")]
+    assert groups == ["Branches", "Recent commits"]
+    names = [el.inner_text() for el in page.query_selector_all(".picker-item-name")]
+    assert names == ["feature/x", "main"]
+    subjects = [
+        el.inner_text() for el in page.query_selector_all(".compare-ref-subject")
+    ]
+    assert subjects[:2] == ["Feature two", "Feature one"]
+    assert (
+        page.query_selector(".compare-ref-item.selected .picker-item-name").inner_text()
+        == "feature/x"
+    )
+    # Switching to base moves the highlight, the filter narrows both groups
+    page.click("#compare-base")
     page.wait_for_timeout(100)
-    names = [el.inner_text() for el in page.query_selector_all(".picker-item-name")]
-    assert names == ["main"]
-    page.fill("#compare-base", "")
-    names = [el.inner_text() for el in page.query_selector_all(".picker-item-name")]
-    assert set(names) == {"main", "feature/x"}
+    assert "base" in page.inner_text("#compare-ref-hint").lower()
+    assert (
+        page.query_selector(".compare-ref-item.selected .picker-item-name").inner_text()
+        == "main"
+    )
+    page.fill("#compare-ref-filter", "feat")
+    names = [
+        el.inner_text()
+        for el in page.query_selector_all(
+            ".compare-ref-item:not(.typed) .picker-item-name"
+        )
+    ]
+    assert names == ["feature/x"]
+    assert (
+        page.query_selector(".compare-ref-item.typed .picker-item-name").inner_text()
+        == "feat"
+    )
+    subjects = [
+        el.inner_text() for el in page.query_selector_all(".compare-ref-subject")
+    ]
+    assert subjects == ["Feature two", "Feature one"]
+    # Free text still works: a ref that is not listed is offered as typed
+    page.fill("#compare-ref-filter", "HEAD~1")
+    assert (
+        page.query_selector(".compare-ref-item.typed .picker-item-name").inner_text()
+        == "HEAD~1"
+    )
+    page.fill("#compare-ref-filter", "")
     page.click(".compare-ref-item:has-text('main')")
-    assert page.input_value("#compare-base") == "main"
+    assert _select_value(page, "#compare-base") == "main"
     page.click("#compare-go-btn")
     page.wait_for_selector(".diff-file-section")
     assert urlparse(page.url).path == "/commits/compare"
@@ -125,18 +164,16 @@ def test_compare_sheet_opens_branch_comparison(page, server, repo):
     header = page.inner_text("#diff-meta")
     assert "feature/x vs main" in header
     assert "main" in header and "feature/x" in header
-    assert "merge base" in header
     assert "2 commits" in header
     # main advanced after the fork: its own hash and the merge base differ,
-    # and the header shows each next to the right label.
+    # and the header names the merge base because of that.
     main_short = _git(repo, "rev-parse", "--short=7", "main")
     fork_short = _git(repo, "rev-parse", "--short=7", "main~1")
     head_short = _git(repo, "rev-parse", "--short=7", "feature/x")
     assert main_short != fork_short
     assert f"main {main_short}" in header
     assert f"feature/x {head_short}" in header
-    assert f"merge base {fork_short}" in header
-
+    assert f"from merge base {fork_short}" in header
     # Only the branch's own file, not main's later c.txt
     paths = [el.inner_text() for el in page.query_selector_all(".diff-file-path")]
     assert paths == ["feat.py"]
@@ -144,6 +181,36 @@ def test_compare_sheet_opens_branch_comparison(page, server, repo):
     items = page.query_selector_all(".compare-commit-item")
     assert [i.inner_text() for i in items] and len(items) == 2
     assert "Feature two" in items[0].inner_text()
+
+
+def test_merge_base_is_silent_when_it_is_the_base(page, server, repo):
+    """feature/x forked from main~1: compared against main~1 itself, the
+    merge base is the base and the header does not repeat it."""
+    page.goto(
+        f"{server}/commits/compare?repo={repo}&base=main~1&head=feature/x&mergebase=1"
+    )
+    page.wait_for_selector(".diff-file-section")
+    header = page.inner_text("#diff-meta")
+    assert "merge base" not in header
+    assert "2 commits" in header
+
+
+def test_sheet_picks_a_recent_commit_as_head(page, server, repo):
+    _open_list(page, server, repo)
+    page.click("#compare-btn")
+    page.wait_for_selector(".compare-ref-subject")
+    page.click(".compare-ref-item:has-text('Feature one')")
+    head = _git(repo, "rev-parse", "feature/x~1")
+    assert _select_value(page, "#compare-head") == head[:7]
+    page.click("#compare-go-btn")
+    page.wait_for_selector(".diff-file-section")
+    q = _query(page)
+    assert q["head"] == head and q["base"] == "main"
+    # A commit head under merge base is not a branch review: here the head
+    # is the fork's first commit, so the comparison is that one commit.
+    header = page.inner_text("#diff-meta")
+    assert "Branch" not in header
+    assert "Commit" in header and "1 commit" in header
 
 
 def test_select_mode_opens_range(page, server, repo):
@@ -199,6 +266,15 @@ def test_worktree_row_on_dirty_tree(page, server, repo):
     text = row.inner_text()
     assert "Working tree" in text
     assert "3 files" in text  # a.txt staged, feat.py unstaged, untracked.txt
+    # The sheet's shortcut says the same and is enabled
+    page.click("#compare-btn")
+    page.wait_for_selector(".compare-ref-item")
+    assert not page.query_selector("#compare-worktree-btn").is_disabled()
+    assert (
+        "3 files" in page.inner_text("#compare-worktree-hint")
+        or page.viewport_size["width"] < 768
+    )
+    page.keyboard.press("Escape")
     row.click()
     page.wait_for_selector(".diff-file-section")
     assert urlparse(page.url).path == "/commits/compare"

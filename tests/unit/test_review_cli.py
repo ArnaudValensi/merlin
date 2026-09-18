@@ -96,7 +96,9 @@ class TestShow:
         assert code == 0, err
         assert out.startswith(f"# feature vs main ({review['id']})")
         assert "Kind: branch" in out and "Status: open" in out
-        assert "main (" in out and ".. feature (" in out and "merge base" in out
+        assert "main (" in out and ".. feature (" in out
+        # main is the merge base itself here: the refs line does not repeat it
+        assert "merge base" not in out
         assert "1 commit" in out
         assert "## Files (1 of 1 viewed)" in out
         assert "- [x] f.txt (A, +2 -0) · 1 open thread" in out

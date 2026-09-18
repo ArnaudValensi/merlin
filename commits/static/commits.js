@@ -21,10 +21,14 @@
     let selection = CompareModel.emptySelection();
     let refsCache = null;       // /api/commits/refs for the compare sheet
     let sheetActiveField = 'head';
+    let sheetValues = { head: '', base: '' };   // the sheet's two picks
+    let worktreeState = null;   // {files, ins, del} from the last worktree load, null until known
     let currentReview = null;   // the loaded review record on a review page
     let reviewMeta = null;      // its comparison detail (files, commits)
     let reviewChanged = new Set();  // paths whose tick was cleared on this load
     let reviewNewCommits = 0;   // commits since the last look, reported once
+    let reviewSeenBefore = null;   // the previous visit's stamp, what "since your last visit" counts from
+    let reviewUnread = {};      // thread ids with agent activity since that visit
     let reviewAnchors = {};     // comment id -> current | moved | outdated, from the full load
     let reviewPollTimer = null;
     const REVIEW_POLL_MS = 5000;
@@ -49,8 +53,8 @@
     let compareBtn, selectToggle, worktreeRow, worktreeRowMeta;
     let selectBar, selectSummary, selectClearBtn, selectCompareBtn;
     let compareCommits, compareCommitsBtn, compareCommitsLabel, compareCommitsPanel;
-    let sheet, sheetHead, sheetBase, sheetMergebase, sheetError, sheetRefHint, sheetRefList, sheetGoBtn;
-    let fileListLabel, reviewChrome, reviewTitle, reviewStatus, reviewRefs, reviewNewCommitsEl, reviewError;
+    let sheet, sheetHead, sheetBase, sheetError, sheetRefHint, sheetRefList, sheetGoBtn, sheetFilter, sheetWorktreeBtn, sheetWorktreeHint;
+    let fileListLabel, reviewChrome, reviewTitle, reviewStatus, reviewRefs, reviewActivity, reviewActivityList, reviewError;
     let reviewCopyBtn, reviewStatusBtn, saveReviewRow, saveReviewBtn;
     let reviewsSection, reviewsOpen, reviewsClosedBtn, reviewsClosedLabel, reviewsClosed;
     let reviewComments, reviewThreads, reviewAddCommentBtn, reviewComposer, reviewComposerText, fileThreadsTop;
@@ -109,17 +113,20 @@
         sheet = document.getElementById('compare-sheet');
         sheetHead = document.getElementById('compare-head');
         sheetBase = document.getElementById('compare-base');
-        sheetMergebase = document.getElementById('compare-mergebase');
         sheetError = document.getElementById('compare-error');
         sheetRefHint = document.getElementById('compare-ref-hint');
         sheetRefList = document.getElementById('compare-ref-list');
         sheetGoBtn = document.getElementById('compare-go-btn');
+        sheetFilter = document.getElementById('compare-ref-filter');
+        sheetWorktreeBtn = document.getElementById('compare-worktree-btn');
+        sheetWorktreeHint = document.getElementById('compare-worktree-hint');
         fileListLabel = document.getElementById('file-list-label');
         reviewChrome = document.getElementById('review-chrome');
         reviewTitle = document.getElementById('review-title');
         reviewStatus = document.getElementById('review-status');
         reviewRefs = document.getElementById('review-refs');
-        reviewNewCommitsEl = document.getElementById('review-new-commits');
+        reviewActivity = document.getElementById('review-activity');
+        reviewActivityList = document.getElementById('review-activity-list');
         reviewError = document.getElementById('review-error');
         reviewCopyBtn = document.getElementById('review-copy-btn');
         reviewStatusBtn = document.getElementById('review-status-btn');
@@ -158,16 +165,23 @@
         compareBtn.addEventListener('click', openCompareSheet);
         document.getElementById('compare-sheet-close').addEventListener('click', closeCompareSheet);
         sheet.querySelector('.picker-overlay').addEventListener('click', closeCompareSheet);
-        document.getElementById('compare-worktree-btn').addEventListener('click', () => {
+        sheetWorktreeBtn.addEventListener('click', () => {
+            if (sheetWorktreeBtn.disabled) return;
             closeCompareSheet();
             navigateTo('diff', worktreeTarget());
         });
         sheetGoBtn.addEventListener('click', submitCompareSheet);
-        for (const [input, field] of [[sheetHead, 'head'], [sheetBase, 'base']]) {
-            input.addEventListener('focus', () => { sheetActiveField = field; renderRefList(); });
-            input.addEventListener('input', renderRefList);
-            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitCompareSheet(); });
+        for (const btn of [sheetHead, sheetBase]) {
+            btn.addEventListener('click', () => activateSheetField(btn.dataset.field));
         }
+        sheetFilter.addEventListener('input', renderRefList);
+        sheetFilter.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            // Enter takes the typed text as the ref when it names none listed,
+            // else the first listed match.
+            const first = sheetRefList.querySelector('.compare-ref-item');
+            if (first) first.click();
+        });
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && sheet.style.display !== 'none') {
                 e.stopPropagation();
@@ -644,21 +658,33 @@
 
     async function loadWorktreeRow() {
         if (!currentRepo) return;
+        const state = await fetchWorktreeState();
+        if (!state || state.files === 0) {
+            worktreeRow.style.display = 'none';
+            return;
+        }
+        worktreeRowMeta.innerHTML =
+            `<span>${CompareModel.filesText(state.files)}</span>` +
+            (state.ins ? ` · <span class="stat-add">+${state.ins}</span>` : '') +
+            (state.del ? ` <span class="stat-del">-${state.del}</span>` : '');
+        worktreeRow.style.display = '';
+    }
+
+    // The working tree's summary, shared by the pinned row and the sheet's
+    // shortcut (which is disabled on a clean tree). Null when it cannot be
+    // known (no repo, a failed call).
+    async function fetchWorktreeState() {
+        worktreeState = null;
+        if (!currentRepo) return null;
         let data = null;
         try {
             data = await API.get(apiUrl('detail', worktreeTarget()));
         } catch (_) {}
-        if (!data || !data.files || data.files.length === 0) {
-            worktreeRow.style.display = 'none';
-            return;
-        }
+        if (!data || data.detail || !Array.isArray(data.files)) return null;
         let ins = 0, del = 0;
         for (const f of data.files) { ins += f.insertions || 0; del += f.deletions || 0; }
-        worktreeRowMeta.innerHTML =
-            `<span>${CompareModel.filesText(data.files.length)}</span>` +
-            (ins ? ` · <span class="stat-add">+${ins}</span>` : '') +
-            (del ? ` <span class="stat-del">-${del}</span>` : '');
-        worktreeRow.style.display = '';
+        worktreeState = { files: data.files.length, ins: ins, del: del };
+        return worktreeState;
     }
 
     // ---------------------------------------------------------------------------
@@ -764,24 +790,41 @@
     // Compare sheet: head and base fields with the branch lists
     // ---------------------------------------------------------------------------
 
+    // The Compare sheet: a Working tree shortcut, then Head and Base as two
+    // select buttons over one picker (branches, recent commits, a filter
+    // that also takes any ref as typed). The comparison always runs from the
+    // merge base: there is no checkbox, the header says when it matters.
     async function openCompareSheet() {
         sheetError.style.display = 'none';
         sheet.style.display = '';
         document.body.style.overflow = 'hidden';
         sheetRefList.innerHTML = '<div class="picker-loading">Loading branches...</div>';
+        sheetFilter.value = '';
         refsCache = null;
-        const refs = await API.get('/api/commits/refs' + repoParamFirst());
+        renderWorktreeShortcut();
+        const [refs] = await Promise.all([
+            API.get('/api/commits/refs' + repoParamFirst()),
+            worktreeState ? Promise.resolve(worktreeState) : fetchWorktreeState(),
+        ]);
+        renderWorktreeShortcut();
         if (!refs || refs.detail) {
             sheetRefList.innerHTML = `<div class="picker-empty">${esc(refs && refs.detail ? refs.detail : 'Could not list branches')}</div>`;
             return;
         }
         refsCache = refs;
-        sheetHead.value = refs.current || '';
-        sheetBase.value = refs.default_base || '';
-        sheetMergebase.checked = true;
-        sheetActiveField = 'head';
-        renderRefList();
-        sheetHead.focus();
+        sheetValues = { head: refs.current || '', base: refs.default_base || '' };
+        renderSheetSelects();
+        activateSheetField('head');
+    }
+
+    function renderWorktreeShortcut() {
+        const known = worktreeState !== null;
+        const clean = known && worktreeState.files === 0;
+        sheetWorktreeBtn.disabled = clean;
+        sheetWorktreeBtn.classList.toggle('disabled', clean);
+        if (!known) sheetWorktreeHint.textContent = 'uncommitted changes against HEAD';
+        else if (clean) sheetWorktreeHint.textContent = 'no uncommitted changes';
+        else sheetWorktreeHint.textContent = CompareModel.filesText(worktreeState.files) + ' changed against HEAD';
     }
 
     function closeCompareSheet() {
@@ -789,57 +832,110 @@
         document.body.style.overflow = '';
     }
 
+    function activateSheetField(field) {
+        sheetActiveField = field;
+        sheetFilter.value = '';
+        renderSheetSelects();
+        renderRefList();
+        // The keyboard would cover the list on the phone: focus the filter
+        // only where there is room for both.
+        if (window.innerWidth > 768) sheetFilter.focus();
+    }
+
+    function renderSheetSelects() {
+        for (const btn of [sheetHead, sheetBase]) {
+            const field = btn.dataset.field;
+            const value = sheetValues[field];
+            const label = btn.querySelector('.compare-select-value');
+            label.textContent = CompareModel.refLabel(value) || 'Choose';
+            label.classList.toggle('placeholder', !value);
+            btn.classList.toggle('active', field === sheetActiveField);
+            btn.setAttribute('aria-expanded', field === sheetActiveField ? 'true' : 'false');
+        }
+    }
+
+    function refItem(name, html, selected) {
+        const item = document.createElement('div');
+        item.className = 'picker-item compare-ref-item' + (selected ? ' selected' : '');
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', selected ? 'true' : 'false');
+        item.tabIndex = 0;
+        item.innerHTML = html;
+        const choose = () => chooseRef(name);
+        item.addEventListener('click', choose);
+        item.addEventListener('keydown', (e) => { if (e.key === 'Enter') choose(); });
+        return item;
+    }
+
+    function chooseRef(name) {
+        sheetValues[sheetActiveField] = name;
+        sheetError.style.display = 'none';
+        // Move on to the other field when it is still empty, else stay.
+        const other = sheetActiveField === 'head' ? 'base' : 'head';
+        if (!sheetValues[other]) activateSheetField(other);
+        else { sheetFilter.value = ''; renderSheetSelects(); renderRefList(); }
+    }
+
+    const BRANCH_ICON = '<span class="picker-item-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span>';
+    const COMMIT_ICON = '<span class="picker-item-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><line x1="3" y1="12" x2="9" y2="12"/><line x1="15" y1="12" x2="21" y2="12"/></svg></span>';
+
     function renderRefList() {
         if (!refsCache) return;
-        const input = sheetActiveField === 'head' ? sheetHead : sheetBase;
-        const q = input.value.trim().toLowerCase();
-        sheetRefHint.textContent = 'Branches for ' + sheetActiveField + (q ? ' matching "' + input.value.trim() + '"' : '');
+        const typed = sheetFilter.value.trim();
+        const current = sheetValues[sheetActiveField];
+        sheetRefHint.textContent = 'Choose the ' + sheetActiveField + (typed ? ' matching "' + typed + '"' : '');
         sheetRefList.innerHTML = '';
-        const groups = [['local', refsCache.local || []], ['remote', refsCache.remote || []]];
-        let shown = 0;
-        for (const [label, names] of groups) {
-            const matches = names.filter(n => !q || n.toLowerCase().includes(q));
-            if (matches.length === 0) continue;
+        const found = CompareModel.filterRefs(refsCache, typed);
+        if (typed && !CompareModel.refIsListed(refsCache, typed)) {
+            const item = refItem(typed,
+                `<span class="picker-item-icon">…</span>` +
+                `<span class="picker-item-name">${esc(typed)}</span>` +
+                `<span class="compare-ref-note">as typed</span>`, typed === current);
+            item.classList.add('typed');
+            sheetRefList.appendChild(item);
+        }
+        if (found.branches.length) {
             const head = document.createElement('div');
             head.className = 'compare-ref-group';
-            head.textContent = label;
+            head.textContent = 'Branches';
             sheetRefList.appendChild(head);
-            for (const name of matches) {
-                const item = document.createElement('div');
-                item.className = 'picker-item compare-ref-item';
-                item.setAttribute('role', 'button');
-                item.tabIndex = 0;
-                item.innerHTML =
-                    `<span class="picker-item-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span>` +
-                    `<span class="picker-item-name">${esc(name)}</span>` +
-                    (name === refsCache.current ? '<span class="compare-ref-current">current</span>' : '');
-                const choose = () => {
-                    input.value = name;
-                    // Move on to the other field after filling this one
-                    if (sheetActiveField === 'head') { sheetActiveField = 'base'; sheetBase.focus(); }
-                    else renderRefList();
-                };
-                item.addEventListener('click', choose);
-                item.addEventListener('keydown', (e) => { if (e.key === 'Enter') choose(); });
-                sheetRefList.appendChild(item);
-                shown++;
+            for (const b of found.branches) {
+                sheetRefList.appendChild(refItem(b.name,
+                    BRANCH_ICON +
+                    `<span class="picker-item-name">${esc(b.name)}</span>` +
+                    (b.current ? '<span class="compare-ref-current">current</span>' : b.remote ? '<span class="compare-ref-note">remote</span>' : ''),
+                    b.name === current));
             }
         }
-        if (shown === 0) {
-            sheetRefList.innerHTML = '<div class="picker-empty">No branch matches. Any ref git understands works as typed.</div>';
+        if (found.commits.length) {
+            const head = document.createElement('div');
+            head.className = 'compare-ref-group';
+            head.textContent = 'Recent commits';
+            sheetRefList.appendChild(head);
+            for (const c of found.commits) {
+                sheetRefList.appendChild(refItem(c.hash,
+                    COMMIT_ICON +
+                    `<span class="compare-ref-commit"><span class="commit-hash">${esc(c.short)}</span>` +
+                    `<span class="compare-ref-subject">${esc(c.message)}</span></span>` +
+                    `<span class="compare-ref-note">${esc(timeAgo(c.date))}</span>`,
+                    c.hash === current || c.short === current));
+            }
+        }
+        if (!sheetRefList.children.length) {
+            sheetRefList.innerHTML = '<div class="picker-empty">Nothing matches.</div>';
         }
     }
 
     function submitCompareSheet() {
-        const head = sheetHead.value.trim();
-        const base = sheetBase.value.trim();
+        const head = sheetValues.head.trim();
+        const base = sheetValues.base.trim();
         if (!head || !base) {
             sheetError.textContent = 'Both head and base are needed';
             sheetError.style.display = '';
             return;
         }
         closeCompareSheet();
-        navigateTo('diff', { kind: 'compare', base: base, head: head, mergebase: sheetMergebase.checked, worktree: false });
+        navigateTo('diff', { kind: 'compare', base: base, head: head, mergebase: true, worktree: false });
     }
 
     // ---------------------------------------------------------------------------
@@ -903,7 +999,7 @@
         // File list
         renderFilesPanel(meta.files || []);
         if (!(meta.files && meta.files.length) && target.kind === 'compare') {
-            diffContent.innerHTML = '<div class="empty-state"><p>Nothing to compare: no changes between these points</p></div>';
+            diffContent.innerHTML = emptyComparisonHtml(meta);
         }
 
         // Render diff sections
@@ -915,6 +1011,13 @@
         reviewComments.style.display = '';
         applyViewedState();
         renderAllThreads();
+    }
+
+    function emptyComparisonHtml(meta) {
+        const text = meta && meta.worktree
+            ? 'The working tree is clean: nothing to compare against ' + esc(meta.base || 'HEAD')
+            : 'Nothing to compare: no changes between these points';
+        return `<div class="empty-state"><p>${text}</p></div>`;
     }
 
     // The files panel: one row per file with its viewed checkbox, status,
@@ -984,7 +1087,7 @@
             // runs from the merge base, which is reported on its own.
             parts.push(`${esc(CompareModel.refLabel(meta.base))} <span class="commit-meta-hash">${esc(meta.base_short)}</span>` +
                 ` .. ${esc(CompareModel.refLabel(meta.head))} <span class="commit-meta-hash">${esc(meta.head_short)}</span>`);
-            if (meta.mergebase) parts.push(`merge base <span class="commit-meta-hash">${esc(meta.merge_base_short)}</span>`);
+            if (CompareModel.mergeBaseNote(meta)) parts.push(`from merge base <span class="commit-meta-hash">${esc(meta.merge_base_short)}</span>`);
             parts.push(CompareModel.commitsText(meta.commit_count));
         }
         diffMeta.innerHTML =
@@ -1000,7 +1103,7 @@
         } else {
             parts.push(`${esc(CompareModel.refLabel(meta.base))} <span class="commit-meta-hash">${esc(meta.base_short)}</span>` +
                 ` .. ${esc(CompareModel.refLabel(meta.head))} <span class="commit-meta-hash">${esc(meta.head_short)}</span>`);
-            if (meta.mergebase) parts.push(`merge base <span class="commit-meta-hash">${esc(meta.merge_base_short)}</span>`);
+            if (CompareModel.mergeBaseNote(meta)) parts.push(`from merge base <span class="commit-meta-hash">${esc(meta.merge_base_short)}</span>`);
             parts.push(CompareModel.commitsText(meta.commit_count));
         }
         return parts.join(' · ');
@@ -1165,6 +1268,7 @@
         reviewMeta = data.comparison;
         reviewChanged = new Set(data.changed_since_viewed || []);
         reviewNewCommits = data.new_commits || 0;
+        reviewSeenBefore = data.seen_before || null;
         reviewAnchors = data.anchors || {};
         diffMeta.innerHTML = `<div class="commit-meta-info">Review · ${esc(CompareModel.kindLabel(currentReview.kind))}</div>`;
         renderReviewChrome(data.error);
@@ -1190,7 +1294,7 @@
         renderIncludedCommits(data.comparison);
         renderFilesPanel(data.comparison.files || []);
         if (!(data.comparison.files && data.comparison.files.length)) {
-            diffContent.innerHTML = '<div class="empty-state"><p>Nothing to compare: no changes between these points</p></div>';
+            diffContent.innerHTML = emptyComparisonHtml(data.comparison);
         }
         for (const file of diff.files) {
             diffContent.appendChild(renderDiffFile(file, currentTarget));
@@ -1216,22 +1320,64 @@
             const parts = [CompareModel.kindLabel(r.kind)];
             if (r.kind === 'worktree') parts.push('against ' + esc(r.base || 'HEAD'));
             else parts.push(esc(CompareModel.refLabel(r.base)) + ' .. ' + esc(CompareModel.refLabel(r.head)));
-            if (r.mergebase) parts.push('merge base');
             reviewRefs.innerHTML = parts.join(' · ');
         }
-        const movable = currentReview.kind === 'branch' || currentReview.kind === 'range';
-        if (movable && reviewNewCommits > 0) {
-            reviewNewCommitsEl.textContent = CompareModel.commitsText(reviewNewCommits).replace(/ commit/, ' new commit') + ' since you last looked';
-            reviewNewCommitsEl.style.display = '';
-        } else {
-            reviewNewCommitsEl.style.display = 'none';
-        }
+        renderActivity();
         if (error) {
             reviewError.textContent = error;
             reviewError.style.display = '';
         } else {
             reviewError.style.display = 'none';
         }
+    }
+
+    // What happened since the previous visit: commits on the head, the
+    // agent's comments, replies and resolutions. Computed from the record
+    // against the stamp the full load reported, so it stays live through
+    // the poll. Each row scrolls to its thread.
+    function renderActivity() {
+        const movable = currentReview && (currentReview.kind === 'branch' || currentReview.kind === 'range');
+        const items = CompareModel.activitySince(currentReview, reviewSeenBefore, movable ? reviewNewCommits : 0);
+        reviewUnread = CompareModel.unreadThreads(items);
+        reviewActivityList.innerHTML = '';
+        if (items.length === 0) {
+            reviewActivity.style.display = 'none';
+            return;
+        }
+        for (const it of items) {
+            const row = document.createElement(it.commentId ? 'button' : 'div');
+            row.className = 'activity-item activity-' + it.kind;
+            if (it.commentId) row.type = 'button';
+            const where = it.path ? `<span class="activity-where">${esc(it.path)}:${it.line}</span>` : 'the review';
+            let text;
+            if (it.kind === 'commits') text = CompareModel.commitsText(it.count).replace(/ commit/, ' new commit') + ' on the head';
+            else if (it.kind === 'comment') text = `${esc(it.author)} commented on ${where}`;
+            else if (it.kind === 'reply') text = `${esc(it.author)} replied on ${where}`;
+            else text = `${esc(it.author)} resolved ${where}`;
+            row.innerHTML =
+                `<span class="activity-dot"></span>` +
+                `<span class="activity-text">${text}` +
+                    (it.excerpt ? `<span class="activity-excerpt">${esc(CompareModel.excerpt(it.excerpt))}</span>` : '') +
+                `</span>` +
+                (it.kind === 'commits' ? '' : `<span class="activity-time">${esc(timeAgo(it.ts))}</span>`);
+            if (it.commentId) row.addEventListener('click', () => revealThread(it.commentId));
+            reviewActivityList.appendChild(row);
+        }
+        reviewActivity.style.display = '';
+    }
+
+    // Scroll to a thread: open its file section when viewed and collapsed,
+    // unfold it when resolved.
+    function revealThread(commentId) {
+        const el = document.querySelector(`.thread[data-comment-id="${CSS.escape(commentId)}"]`);
+        if (!el) return;
+        const section = el.closest('.diff-file-section');
+        if (section && section.classList.contains('viewed')) section.classList.add('expanded');
+        const expand = el.querySelector('.thread-expand');
+        if (expand && !el.classList.contains('expanded')) expand.click();
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('flash');
+        setTimeout(() => el.classList.remove('flash'), 1200);
     }
 
     // Viewed state onto the files panel and the diff sections: ticks,
@@ -1297,6 +1443,7 @@
         currentReview = review;
         reviewChanged = new Set();
         reviewNewCommits = 0;
+        reviewSeenBefore = review.last_seen_at || review.created || null;
         currentTarget = { kind: 'review', id: review.id };
         const url = currentView === 'file'
             ? pageUrl('file', currentTarget, currentFilePath)
@@ -1541,11 +1688,12 @@
         const state = reviewAnchors[c.id] || 'current';
         const resolved = c.status === 'resolved';
         const el = document.createElement('div');
-        el.className = 'thread' + (resolved ? ' resolved' : ' open') + (opts.quoted ? ' quoted' : '');
+        el.className = 'thread' + (resolved ? ' resolved' : ' open') + (opts.quoted ? ' quoted' : '') + (reviewUnread[c.id] ? ' unread' : '');
         el.dataset.commentId = c.id;
         const replies = c.replies || [];
         let head =
             `<div class="thread-head">` +
+                (reviewUnread[c.id] ? '<span class="thread-unread" title="Activity since your last visit"></span>' : '') +
                 authorBadge(c.author) +
                 `<span class="thread-time">${esc(timeAgo(c.created))}</span>` +
                 (c.path && opts.where ? `<span class="thread-where">${esc(c.path)}:${c.line} (${esc(c.side)})</span>` : '') +
