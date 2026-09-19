@@ -167,8 +167,8 @@ the list, the page shows the resolved state.
    --path a.py --line 12 "..."`) and close the review when everything is
    settled.
 
-The agent's `show` does not count as your look: the `N new commits since you
-last looked` line is yours. Your Merlin agent learns all of this from its
+The agent's `show` does not count as a visit: the **Since your last visit**
+panel is yours. Your Merlin agent learns all of this from its
 brain doc and the `review` skill, so pasting the `show` line is enough.
 
 ## Read a diff

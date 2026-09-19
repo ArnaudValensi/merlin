@@ -8,9 +8,10 @@ A malformed file is reported (``ReviewCorrupt``), never replaced.
 
 The record shape is decision 7 of the commit-review epic: the refs as the
 user typed them (so a branch review follows its branch), ``base_resolved``
-recorded at creation, ``last_seen_head`` for the "N new commits since you
-last looked" line, ``files`` with a ``viewed_hash`` per viewed file, and
-``comments`` (threads, milestone 3).
+recorded at creation, ``last_seen_head`` and ``last_seen_at`` for the
+"Since your last visit" panel (new commits on the head, the agent's activity
+since the user's previous full load), ``files`` with a ``viewed_hash`` per
+viewed file, and ``comments`` (threads, milestone 3).
 """
 
 from __future__ import annotations
