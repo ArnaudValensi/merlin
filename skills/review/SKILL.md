@@ -61,6 +61,6 @@ Close a review only when the user asked for it (`merlin review close <id>`).
 ## Notes
 
 - The default author of the CLI is `agent`. The user's own comments say `user`.
-- `show` does not count as the user's look at the review: the "N new commits since you last
-  looked" note stays theirs.
+- `show` does not count as the user's visit: the "Since your last visit" panel on the review
+  page stays theirs. The new-commits note `show` prints is for you.
 - A line that does not exist on that side is an error: check the line numbers in the diff.

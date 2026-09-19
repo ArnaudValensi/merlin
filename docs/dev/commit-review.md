@@ -21,8 +21,8 @@ Every diff the page shows is a comparison of two points of the repository,
 | Kind | base | head | How it is picked |
 |------|------|------|------------------|
 | `commit` | `commit^` (the empty tree for a root commit) | `commit` | Tap a row, or a Select-mode range of one |
-| `range` | `oldest^` | `newest` | Select mode, two taps in the list, or the Compare sheet with a commit hash as head (then the base is the merge base) |
-| `branch` | `merge-base(base, head)` | `head` | The Compare sheet with a branch (or any symbolic ref) as head. The sheet always compares from the merge base |
+| `range` | `oldest^`, or `merge-base(base, head)` from the sheet | `newest`, or the hash typed or picked in the sheet | Select mode, two taps in the list, or the Compare sheet with a 4 to 40 lowercase hex hash as head |
+| `branch` | `merge-base(base, head)` | `head` | The Compare sheet with any head that is not such a hash: a branch, a tag, `HEAD~2`, `origin/main`. The sheet always compares from the merge base |
 | `worktree` | `HEAD` (or a typed base) | the files on disk | The pinned Working tree row or the sheet's shortcut |
 
 `resolve_comparison()` turns the query (`base`, `head`, `mergebase`,
@@ -31,8 +31,9 @@ and `head_resolved` (shas), `merge_base` when asked for (recomputed on every
 load, so a base branch that advances is followed), and `diff_base`, the sha
 every diff runs against. `head_resolved` is null for the working tree, which
 has no head commit. The kind is derived: `worktree`, then in merge-base mode
-`branch` for a symbolic head and `range` for a head that is a 4 to 40 hex
-hash (a hash cannot move), and outside merge-base mode `commit` when
+`range` for a head that is a 4 to 40 lowercase hex hash (a hash cannot
+move) and `branch` for any other head (a branch, a tag, `HEAD~2`), and
+outside merge-base mode `commit` when
 `diff_base` is the head's first parent (or the empty tree under a root
 commit), `range` otherwise.
 
@@ -181,9 +182,10 @@ the first other local branch, and never the current branch.
   commits collapsed under it. An empty comparison shows an empty state,
   worded for the working tree when that is what it is.
 - **Kinds.** `resolve_comparison` derives the kind: `worktree`, then in
-  merge-base mode `branch` for a symbolic head and `range` for a head that
-  is a 4 to 40 hex hash (even a range of one commit: a hash cannot move, so
-  there is nothing to follow), and outside merge-base mode `commit` when the
+  merge-base mode `range` for a head that is a 4 to 40 lowercase hex hash
+  (even a range of one commit: a hash cannot move, so there is nothing to
+  follow) and `branch` for any other head (a branch, a tag, `HEAD~2`), and
+  outside merge-base mode `commit` when the
   diff base is the head's parent, `range` otherwise (Select mode's ranges).
   A review saved before this rule with a hash head and kind `branch` takes
   the live kind on its next load (`_reconcile_kind`, under the lock). Its
