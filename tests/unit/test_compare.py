@@ -192,8 +192,15 @@ class TestResolveComparison:
         assert cmp.merge_base == git(repo, "merge-base", "main", "feature")
         cmp = resolve_comparison(repo, base="main", head=head[:8], mergebase=True)
         assert cmp.kind == "range"
+        # Even a range of one commit: the head is fixed, nothing follows it
+        one = git(repo, "rev-parse", "feature~1")
+        cmp = resolve_comparison(repo, base="main", head=one, mergebase=True)
+        assert cmp.kind == "range"
         cmp = resolve_comparison(repo, base="main", head="feature", mergebase=True)
         assert cmp.kind == "branch"
+        # Without merge-base mode the hash rule does not apply (Select mode)
+        cmp = resolve_comparison(repo, base=f"{one}^", head=one)
+        assert cmp.kind == "commit"
 
     def test_range_kind(self, repo, shas):
         cmp = resolve_comparison(repo, base="main~2", head="main")

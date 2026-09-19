@@ -1134,7 +1134,6 @@ tr.comment-armed .comment-add-btn {
     left: 0;
     box-sizing: border-box;
     max-width: 100vw;
-    font-size: 13px;
 }
 .thread-composer {
     padding: 8px 12px;
@@ -1190,7 +1189,7 @@ tr.comment-armed .comment-add-btn {
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
     font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.5;
     white-space: normal;
 }

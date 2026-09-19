@@ -178,11 +178,15 @@ the first other local branch, and never the current branch.
   (`CompareModel.mergeBaseNote`), the commit count, and the included
   commits collapsed under it. An empty comparison shows an empty state,
   worded for the working tree when that is what it is.
-- **Kinds.** `resolve_comparison` derives the kind: `worktree`, `branch`
-  when merge-base mode is on and the head is not a hash, `commit` when the
-  diff base is the head's parent, `range` otherwise. So a commit picked as
-  head in the sheet is a range, not a branch review of something that
-  cannot move.
+- **Kinds.** `resolve_comparison` derives the kind: `worktree`, then in
+  merge-base mode `branch` for a symbolic head and `range` for a head that
+  is a 4 to 40 hex hash (even a range of one commit: a hash cannot move, so
+  there is nothing to follow), and outside merge-base mode `commit` when the
+  diff base is the head's parent, `range` otherwise (Select mode's ranges).
+  A review saved before this rule with a hash head and kind `branch` takes
+  the live kind on its next load (`_reconcile_kind`, under the lock); its
+  title is recomputed only when it is still the old default `<head> vs
+  <base>`.
 
 ## The sticky file header
 
@@ -241,10 +245,13 @@ resolves now. When they differ it counts `last_seen..head` (`rev-list
 the count as `new_commits`, and only then advances `last_seen_head`. In the
 same pass it hands back `last_seen_at` as `seen_before` (a record from
 before the field existed counts from its `created`) and stamps the visit.
-Both advance only when `advance_seen` is on: the page's full load is a
-visit, the agent's `merlin review show` is not, and the poll never calls
-`refresh`. The record is written only when something changed, and a visit
-is a change.
+Both advance only when `advance_seen` is on: the review page's full load
+is a visit, the full-file view's load (`?visit=0`, it has no activity
+panel) and the agent's `merlin review show` are not, and the poll never
+calls `refresh`. A review whose repository is gone or whose branch was
+deleted still shows its record and threads, so that load records the
+visit too (`record_visit`, under the lock). The record is written only
+when something changed, and a visit is a change.
 
 The "since your last visit" panel is computed on the page, not stored:
 `CompareModel.activitySince(review, seen_before, new_commits)` lists the
@@ -264,7 +271,7 @@ All registered before `/{commit_hash}`.
 |-------|------|
 | `GET /api/commits/reviews?repo=` | Summaries of the repository's reviews, newest update first, closed ones included |
 | `POST /api/commits/reviews` `{repo, base, head, mergebase, worktree, title?}` | Resolves the comparison (400 on a bad ref) and creates the review. 201 with the record |
-| `GET /api/commits/reviews/<id>` | The full load: `{review, comparison, changed_since_viewed, new_commits, seen_before, anchors, open_threads, error}`. A repository that is gone or a branch that was deleted gives `comparison: null` and an `error` string, the record intact |
+| `GET /api/commits/reviews/<id>[?visit=0]` | The full load: `{review, comparison, changed_since_viewed, new_commits, seen_before, anchors, open_threads, error}`. A repository that is gone or a branch that was deleted gives `comparison: null` and an `error` string, the record intact. `visit=0` loads without recording the visit (the full-file view) |
 | `GET /api/commits/reviews/<id>?since=<updated>` | The poll: `{"changed": false}` when the stamp matches, else `{"changed": true, "review"}`. Never recomputes or writes |
 | `GET /api/commits/reviews/<id>/diff`, `.../file/<path>` | The diff and the full files of the review's comparison, resolved in the review's stored repository. Keyed by the id alone: no query parameter can point them at another repository |
 | `PATCH /api/commits/reviews/<id>` `{title?, status?}` | Rename (whitespace collapsed, 200 chars, never empty) or open and close |

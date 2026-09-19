@@ -197,8 +197,10 @@ def resolve_comparison(
             merge_base = out.strip()
     diff_base = merge_base if merge_base else base_resolved
 
-    if mergebase and not _looks_like_hash(head):
-        kind = "branch"
+    if mergebase:
+        # From the merge base: a branch head is followed, a hash head is a
+        # fixed range (even of one commit), since a hash cannot move.
+        kind = "range" if _looks_like_hash(head) else "branch"
     elif diff_base == parent_or_empty_tree(head_resolved, repo_dir):
         kind = "commit"
     else:

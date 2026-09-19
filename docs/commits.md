@@ -50,8 +50,8 @@ to compare, all from the phone:
   forked from the base, even if the base moved on since (GitHub's
   three-dot view): there is nothing to tick, and the header says `from
   merge base <hash>` only when that fork point differs from the base's
-  tip. Picking a specific commit as head gives a range: a commit does not
-  move, so there is nothing to follow.
+  tip. Picking a specific commit as head gives a range, even of one
+  commit: a commit does not move, so there is nothing to follow.
 - **Working tree**: when the tree is dirty, a pinned row at the top of the
   list reads `Working tree · N files · +x -y` and opens the uncommitted
   changes (staged and unstaged together, plus untracked files shown as

@@ -587,6 +587,34 @@ class Loaded:
         return (self.review, self.changed, self.new_commits, self.cmp)[i]
 
 
+def record_visit(review_id: str) -> str | None:
+    """Stamp a visit on a review whose comparison cannot be resolved (its
+    repository is gone, its branch deleted): the record and its threads are
+    still shown, so the visit counts. Returns the previous stamp."""
+    with locked(review_id):
+        review = _read(review_id)
+        seen_before = review.get("last_seen_at") or review.get("created")
+        review["last_seen_at"] = now_iso()
+        review["updated"] = now_iso()
+        _write(review)
+    return seen_before
+
+
+def _reconcile_kind(review: dict, cmp: cm.Comparison, repo_dir: Path) -> bool:
+    """Align a stored kind with the live one. The kind rule changed on
+    2026-09-18 (a hash head under merge base is a range, not a branch): a
+    review saved before then keeps working and takes the live kind, and an
+    untouched old default title (``<head> vs <base>``) is recomputed. A
+    custom title stays."""
+    if cmp.worktree or review.get("kind") == cmp.kind:
+        return False
+    old_default = f"{review.get('head')} vs {review.get('base')}"
+    review["kind"] = cmp.kind
+    if review.get("title") == old_default:
+        review["title"] = default_title(cmp, repo_dir)
+    return True
+
+
 def refresh(review_id: str, repo_dir: Path, *, advance_seen: bool = True) -> Loaded:
     """A full load. Inside the lock: resolve the comparison as it is now,
     count the commits since ``last_seen_head`` and only then advance it
@@ -601,7 +629,7 @@ def refresh(review_id: str, repo_dir: Path, *, advance_seen: bool = True) -> Loa
         cmp = comparison_of(review, repo_dir)
         changed: list[str] = []
         new_commits = 0
-        dirty = False
+        dirty = _reconcile_kind(review, cmp, repo_dir)
 
         last_seen = review.get("last_seen_head")
         head = cmp.head_resolved

@@ -339,6 +339,58 @@ def test_review_file_deep_link_carries_anchor_states(page, server, repo):
     assert len(page.query_selector_all("#file-content .comment-thread-row")) == 1
 
 
+def test_file_deep_link_is_not_a_visit(page, server, repo, tmux_env):
+    """Opening a review's file by URL loads the anchors but does not consume
+    the "since your last visit" panel: back on the review page, the agent's
+    reply is still listed."""
+    _open_branch_comparison(page, server, repo)
+    _comment_on(page, "#diff-file-feat\\.py", "new", 3, "Drop this print")
+    page.wait_for_function("() => location.pathname.startsWith('/commits/reviews/')")
+    review_id = _review_id(page)
+    page.wait_for_selector("#diff-file-feat\\.py .thread.open")
+    shown = merlin_review(tmux_env, "show", review_id)
+    thread_id = re.search(r"^### ([0-9a-f]{8}) · feat.py:3", shown, re.M).group(1)
+    # The user leaves, the agent replies
+    page.goto(f"{server}/commits?repo={repo}")
+    page.wait_for_selector(".commit-item")
+    merlin_review(tmux_env, "reply", review_id, thread_id, "Gone.")
+    # A file deep link, then the review page
+    page.goto(f"{server}/commits/reviews/{review_id}/file/feat.py")
+    page.wait_for_selector("#file-content .comment-thread-row .thread")
+    assert "Gone." in page.inner_text("#file-content .comment-thread-row .thread")
+    page.goto(f"{server}/commits/reviews/{review_id}")
+    page.wait_for_selector("#review-activity", state="visible")
+    assert "agent replied on feat.py:3" in page.inner_text("#review-activity")
+
+
+def test_threads_share_one_size_everywhere(page, server, repo):
+    """The inline thread under a line and the review-wide thread in the
+    panel render the same 13 px, the dashboard's text size."""
+    _open_branch_comparison(page, server, repo)
+    _comment_on(page, "#diff-file-feat\\.py", "new", 3, "inline")
+    page.wait_for_function("() => location.pathname.startsWith('/commits/reviews/')")
+    page.wait_for_selector("#diff-file-feat\\.py .comment-thread-row .thread")
+    page.click("#review-add-comment-btn")
+    page.fill("#review-composer-text", "review-wide")
+    page.click("#review-composer-submit")
+    page.wait_for_selector("#review-threads .thread")
+    sizes = page.evaluate(
+        """() => ['#diff-file-feat\\\\.py .comment-thread-row .thread',
+                  '#diff-file-feat\\\\.py .comment-thread-row .thread-body',
+                  '#review-threads .thread',
+                  '#review-threads .thread-body',
+                  '#review-threads .thread-textarea'].map(
+            s => getComputedStyle(document.querySelector(s)).fontSize)"""
+    )
+    assert sizes == ["13px"] * 5, sizes
+    fonts = page.evaluate(
+        """() => ['#diff-file-feat\\\\.py .comment-thread-row .thread-textarea',
+                  '#review-threads .thread-btn'].map(
+            s => getComputedStyle(document.querySelector(s)).fontFamily)"""
+    )
+    assert all("Geist Mono" not in f for f in fonts), fonts
+
+
 def test_poll_runs_in_the_full_file_view(page, server, repo, tmux_env):
     """A review created from the full-file view, and a direct file URL, both
     pick up an agent's reply and resolve through the poll."""

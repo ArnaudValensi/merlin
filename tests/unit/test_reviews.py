@@ -340,6 +340,39 @@ class TestViewed:
         assert loaded["last_seen_head"] == git(repo, "rev-parse", "feature")
         assert rv.refresh(review["id"], repo)[2] == 0
 
+    def test_old_hash_head_branch_review_takes_the_live_kind(self, repo):
+        """A review saved before 2026-09-18 with a hash head and kind branch:
+        the load aligns the kind, recomputes an untouched default title, and
+        keeps a custom one."""
+        head = git(repo, "rev-parse", "feature")
+        cmp = resolve_comparison(repo, base="main", head=head, mergebase=True)
+        review = rv.create(repo, cmp)
+        assert review["kind"] == "range"
+
+        def old(r):
+            r["kind"] = "branch"
+            r["title"] = f"{head} vs main"
+
+        rv.update(review["id"], old)
+        loaded = rv.refresh(review["id"], repo)
+        assert loaded.review["kind"] == "range"
+        assert loaded.review["title"] == rv.default_title(cmp, repo)
+        assert rv.load(review["id"])["kind"] == "range"
+        # A custom title is the user's
+        rv.update(review["id"], lambda r: r.update(kind="branch", title="My review"))
+        loaded = rv.refresh(review["id"], repo)
+        assert (
+            loaded.review["kind"] == "range" and loaded.review["title"] == "My review"
+        )
+
+    def test_record_visit_advances_the_stamp_without_a_comparison(self, repo):
+        review = branch_review(repo)
+        seen = rv.record_visit(review["id"])
+        assert seen == review["last_seen_at"]
+        after = rv.load(review["id"])
+        assert after["last_seen_at"] > review["last_seen_at"]
+        assert after["updated"] > review["updated"]
+
     def test_deleted_branch_is_a_ref_error(self, repo):
         review = branch_review(repo)
         git(repo, "checkout", "-q", "main")

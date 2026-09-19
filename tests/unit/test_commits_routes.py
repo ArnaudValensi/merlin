@@ -748,6 +748,29 @@ class TestApiReviews:
         assert data["comparison"] is None
         assert "Repository not found" in data["error"]
         assert data["review"]["id"] == review["id"]
+        # The record is still shown: the visit counts, and the next one
+        # measures from it
+        assert data["seen_before"] == review["last_seen_at"]
+        assert data["review"]["last_seen_at"] > review["last_seen_at"]
+        again = client.get(f"/api/commits/reviews/{review['id']}").json()
+        assert again["seen_before"] == data["review"]["last_seen_at"]
+
+    def test_visit_zero_loads_without_recording_a_visit(self, client, real_repo):
+        root, git = real_repo
+        review = self._create(client, root)
+        data = client.get(f"/api/commits/reviews/{review['id']}?visit=0").json()
+        assert data["comparison"] is not None and "anchors" in data
+        assert data["review"]["last_seen_at"] == review["last_seen_at"]
+        assert data["seen_before"] == review["last_seen_at"]
+        # A deleted branch with visit=0 does not record one either
+        git("checkout", "-q", "main")
+        git("branch", "-q", "-D", "feature")
+        data = client.get(f"/api/commits/reviews/{review['id']}?visit=0").json()
+        assert data["comparison"] is None
+        assert data["review"]["last_seen_at"] == review["last_seen_at"]
+        # While the user's load of that same unavailable review does
+        data = client.get(f"/api/commits/reviews/{review['id']}").json()
+        assert data["review"]["last_seen_at"] > review["last_seen_at"]
 
     def test_reviews_not_shadowed_by_commit_hash_route(self, client, real_repo):
         root, git = real_repo

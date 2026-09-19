@@ -1877,7 +1877,9 @@
         if (target.kind === 'review' && !(currentReview && currentReview.id === target.id)) {
             // A deep link into a review's file: the full load, so the threads
             // of this file come with their anchor states (moved, outdated).
-            const rv = await API.get('/api/commits/reviews/' + target.id);
+            // Not a visit: this view has no activity panel, the review page
+            // shows what happened when the user gets there.
+            const rv = await API.get('/api/commits/reviews/' + target.id + '?visit=0');
             if (rv && rv.review) {
                 currentReview = rv.review;
                 reviewMeta = rv.comparison;

@@ -206,11 +206,10 @@ def test_sheet_picks_a_recent_commit_as_head(page, server, repo):
     page.wait_for_selector(".diff-file-section")
     q = _query(page)
     assert q["head"] == head and q["base"] == "main"
-    # A commit head under merge base is not a branch review: here the head
-    # is the fork's first commit, so the comparison is that one commit.
+    # A commit head under merge base is a range, even of one commit: a hash
+    # cannot move, so there is nothing to follow.
     header = page.inner_text("#diff-meta")
-    assert "Branch" not in header
-    assert "Commit" in header and "1 commit" in header
+    assert "Range" in header and "1 commit" in header
 
 
 def test_select_mode_opens_range(page, server, repo):

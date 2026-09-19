@@ -480,15 +480,18 @@ def api_reviews_create(body: ReviewCreate):
 
 
 @api_router.get("/reviews/{review_id}")
-def api_review_get(review_id: str, since: str | None = None):
+def api_review_get(review_id: str, since: str | None = None, visit: int = 1):
     """A review with its live comparison.
 
     A full load (no ``since``) recomputes the viewed state, counts the
-    commits since the last look and advances ``last_seen_head``. With
-    ``since``, the page's known ``updated`` stamp, this is the poll: it
-    answers ``{"changed": false}`` when nothing moved, else the record,
-    without touching the review.
+    commits since the last look and advances ``last_seen_head`` and
+    ``last_seen_at``, the user's visit. ``visit=0`` is the same load
+    without the visit: the full-file view uses it for its anchor states,
+    since it shows no activity panel. With ``since``, the page's known
+    ``updated`` stamp, this is the poll: it answers ``{"changed": false}``
+    when nothing moved, else the record, without touching the review.
     """
+    advance = bool(visit)
     review = _load_review(review_id)
     if since is not None:
         # A "+00:00" offset arrives as a space when the client forgot to
@@ -497,31 +500,32 @@ def api_review_get(review_id: str, since: str | None = None):
             return {"changed": False}
         return {"changed": True, "review": review}
 
+    def unavailable(error: str) -> dict:
+        # The record and its threads are still shown: the visit counts.
+        if advance:
+            seen_before = rv.record_visit(review_id)
+            current = rv.load(review_id)
+        else:
+            seen_before = review.get("last_seen_at") or review.get("created")
+            current = review
+        return {
+            "review": current,
+            "comparison": None,
+            "changed_since_viewed": [],
+            "new_commits": 0,
+            "seen_before": seen_before,
+            "anchors": {},
+            "open_threads": rv.open_thread_counts(current),
+            "error": error,
+        }
+
     repo_dir = _review_repo(review)
     if repo_dir is None:
-        return {
-            "review": review,
-            "comparison": None,
-            "changed_since_viewed": [],
-            "new_commits": 0,
-            "seen_before": review.get("last_seen_at") or review.get("created"),
-            "anchors": {},
-            "open_threads": rv.open_thread_counts(review),
-            "error": f"Repository not found: {review.get('repo')}",
-        }
+        return unavailable(f"Repository not found: {review.get('repo')}")
     try:
-        loaded = rv.refresh(review_id, repo_dir)
+        loaded = rv.refresh(review_id, repo_dir, advance_seen=advance)
     except RefError as e:
-        return {
-            "review": review,
-            "comparison": None,
-            "changed_since_viewed": [],
-            "new_commits": 0,
-            "seen_before": review.get("last_seen_at") or review.get("created"),
-            "anchors": {},
-            "open_threads": rv.open_thread_counts(review),
-            "error": str(e),
-        }
+        return unavailable(str(e))
     except rv.ReviewCorrupt as e:
         raise HTTPException(status_code=500, detail=str(e))
     try:
