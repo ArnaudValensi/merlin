@@ -36,17 +36,17 @@ def client(monkeypatch):
 @pytest.mark.parametrize(
     ("path", "expected"),
     [
-        ("/login", "atlas · login"),
-        ("/files", "atlas · files"),
-        ("/terminal", "atlas · term"),
-        ("/terminal/clipboard-test", "atlas · clipboard"),
-        ("/commits", "atlas · commits"),
-        ("/jobs", "atlas · jobs"),
-        ("/extensions", "atlas · extensions"),
-        ("/settings", "atlas · settings"),
+        ("/login", "login · atlas"),
+        ("/files", "files · atlas"),
+        ("/terminal", "term · atlas"),
+        ("/terminal/clipboard-test", "clipboard · atlas"),
+        ("/commits", "commits · atlas"),
+        ("/jobs", "jobs · atlas"),
+        ("/extensions", "extensions · atlas"),
+        ("/settings", "settings · atlas"),
     ],
 )
-def test_static_page_titles_are_machine_first(client, path, expected):
+def test_static_page_titles_end_with_the_machine(client, path, expected):
     response = client.get(path)
     assert response.status_code == 200
     assert _title(response.text) == expected

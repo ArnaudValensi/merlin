@@ -1,4 +1,5 @@
-/* Shared machine-first browser title formatting. */
+/* Shared browser title formatting: the specific part first, the environment
+   last, the order the notifications use (window · session · environment). */
 
 const MerlinPageTitle = (() => {
     'use strict';
@@ -11,16 +12,12 @@ const MerlinPageTitle = (() => {
             .trim();
     };
 
+    // <context> · <app> · <machine>, each part omitted when missing, so a tab
+    // reads the thing it shows first and the environment survives at the end.
     const format = (machine, app, context) => {
-        const machinePart = clean(machine);
-        const appPart = clean(app).toLowerCase();
-        const contextPart = clean(context);
-        const pagePart = appPart
-            ? appPart + (contextPart ? ': ' + contextPart : '')
-            : contextPart;
-
-        if (machinePart && pagePart) return machinePart + ' · ' + pagePart;
-        return machinePart || pagePart || 'Merlin';
+        const parts = [clean(context), clean(app).toLowerCase(), clean(machine)]
+            .filter((p) => p);
+        return parts.length ? parts.join(' · ') : 'Merlin';
     };
 
     const pathContext = (path) => {
@@ -31,11 +28,12 @@ const MerlinPageTitle = (() => {
         return clean(parts[parts.length - 1]);
     };
 
+    // The window first, then the session: what one has in mind, then where.
     const tmuxContext = (session, windowName) => {
         const sessionPart = clean(session);
         const windowPart = clean(windowName);
-        if (sessionPart && windowPart) return sessionPart + '/' + windowPart;
-        return sessionPart || windowPart;
+        if (sessionPart && windowPart) return windowPart + ' · ' + sessionPart;
+        return windowPart || sessionPart;
     };
 
     // Attention count, shown as a "(n) " prefix. Kept here so a later set()

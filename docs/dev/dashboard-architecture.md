@@ -590,27 +590,35 @@ switch windows; the web switcher is a browser feature.
 ## Browser Page Titles
 
 Titles are navigation metadata for people running several Merlin instances and
-many tabs. The shared grammar is machine-first because browsers truncate the
-right side of narrow tabs:
+many tabs. The shared grammar puts the specific part first and the environment
+last, the order the notifications use (`window · session · environment`):
 
 ```text
-<machine> · <lowercase app>: <compact context>
+<compact context> · <lowercase app> · <machine>
 ```
+
+`handoff · merl · term · merlin`, `README.md · files · merlin`, `term · merlin`
+before any context. Browsers truncate the right side of a narrow tab, so what
+survives is the thing the tab shows, which is what one has in mind; the
+environment is the part read least often, and a per-environment favicon colour
+is the planned way to tell instances apart at a glance. This supersedes the
+machine-first order of `epics/cli/archive/browser-tab-titles/` (2026-09-20).
 
 `lib/merlin_ext.py` publishes `machine_name` to every template. Managed
 instances use `MERLIN_ENVIRONMENT_SLUG`. An instance connected to the portal
 without that variable (the founder's sandbox) uses the slug the portal's
 whoami returns, memoized with the public host in `job/webhook.py`. Self-hosted
 instances use the OS hostname. The same name goes into the web app manifest and
-the notification titles. `templates/base.html` owns the machine prefix and each page's `title`
-block supplies only its lowercase app label and any server-rendered context.
-Do not add `Merlin` or `Dashboard` as a suffix; the favicon carries product
-identity. The generic no-metadata fallback remains `Merlin`.
+the notification titles. `templates/base.html` owns the machine suffix and each
+page's `title` block supplies its lowercase app label, preceded by any
+server-rendered context (`#tag · notes`). Do not add `Merlin` or `Dashboard`;
+the favicon carries product identity. The generic no-metadata fallback remains
+`Merlin`.
 
 Client-rendered context uses `static/page-title.js` rather than writing
 `document.title` directly. Keep it compact: Files uses the current path leaf,
 Commits the repository leaf, Notes the note title, and Terminal the confirmed
-tmux `session/window`. Missing context is omitted without leaving a colon.
+tmux `window · session`. Missing context is omitted without leaving a separator.
 
 ## Adding a New Page
 

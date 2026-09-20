@@ -1,20 +1,20 @@
-/* Tests for shared machine-first browser title formatting. */
+/* Tests for the shared browser title formatting: context · app · machine. */
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const PageTitle = require('../../static/page-title.js');
 
-test('formats machine, lowercase app, and context in hierarchy order', () => {
+test('formats context, lowercase app, then machine, the specific part first', () => {
     assert.equal(
         PageTitle.format('worker-1', 'TERM', 'api/main'),
-        'worker-1 · term: api/main',
+        'api/main · term · worker-1',
     );
 });
 
 test('omits missing segments and reserves Merlin for the empty fallback', () => {
-    assert.equal(PageTitle.format('worker-1', 'files'), 'worker-1 · files');
-    assert.equal(PageTitle.format('', 'notes', 'Roadmap'), 'notes: Roadmap');
+    assert.equal(PageTitle.format('worker-1', 'files'), 'files · worker-1');
+    assert.equal(PageTitle.format('', 'notes', 'Roadmap'), 'Roadmap · notes');
     assert.equal(PageTitle.format('worker-1', '', ''), 'worker-1');
     assert.equal(PageTitle.format('', '', ''), 'Merlin');
 });
@@ -22,7 +22,7 @@ test('omits missing segments and reserves Merlin for the empty fallback', () => 
 test('normalizes whitespace and removes title control characters', () => {
     assert.equal(
         PageTitle.format(' worker-1\n', ' FILES ', '  release\t plan\u0007 '),
-        'worker-1 · files: release plan',
+        'release plan · files · worker-1',
     );
 });
 
@@ -33,8 +33,8 @@ test('extracts compact filesystem context', () => {
     assert.equal(PageTitle.pathContext(''), '');
 });
 
-test('composes tmux session and window with graceful partial metadata', () => {
-    assert.equal(PageTitle.tmuxContext('api', 'main'), 'api/main');
+test('composes the tmux window then the session, with graceful partial metadata', () => {
+    assert.equal(PageTitle.tmuxContext('api', 'main'), 'main · api');
     assert.equal(PageTitle.tmuxContext('api', ''), 'api');
     assert.equal(PageTitle.tmuxContext('', 'main'), 'main');
 });
@@ -45,8 +45,8 @@ test('sets the document title from its machine data attribute', () => {
         title: '',
     };
 
-    assert.equal(PageTitle.set('FILES', 'marketing', doc), 'ovh · files: marketing');
-    assert.equal(doc.title, 'ovh · files: marketing');
+    assert.equal(PageTitle.set('FILES', 'marketing', doc), 'marketing · files · ovh');
+    assert.equal(doc.title, 'marketing · files · ovh');
 });
 
 test('setCount prefixes the title and survives a later set()', () => {
@@ -55,17 +55,17 @@ test('setCount prefixes the title and survives a later set()', () => {
         title: '',
     };
 
-    PageTitle.set('term', 'api/main', doc);
-    assert.equal(PageTitle.setCount(3, doc), '(3) ovh · term: api/main');
-    assert.equal(doc.title, '(3) ovh · term: api/main');
+    PageTitle.set('term', 'main · api', doc);
+    assert.equal(PageTitle.setCount(3, doc), '(3) main · api · term · ovh');
+    assert.equal(doc.title, '(3) main · api · term · ovh');
     // A session switch re-titles the page: the count stays.
-    assert.equal(PageTitle.set('term', 'api/review', doc), '(3) ovh · term: api/review');
-    assert.equal(PageTitle.setCount(0, doc), 'ovh · term: api/review');
-    assert.equal(PageTitle.setCount(-2, doc), 'ovh · term: api/review');
-    assert.equal(PageTitle.setCount('x', doc), 'ovh · term: api/review');
+    assert.equal(PageTitle.set('term', 'review · api', doc), '(3) review · api · term · ovh');
+    assert.equal(PageTitle.setCount(0, doc), 'review · api · term · ovh');
+    assert.equal(PageTitle.setCount(-2, doc), 'review · api · term · ovh');
+    assert.equal(PageTitle.setCount('x', doc), 'review · api · term · ovh');
 });
 
 test('withCount formats the prefix only for a positive count', () => {
-    assert.equal(PageTitle.withCount('ovh · term', 2), '(2) ovh · term');
-    assert.equal(PageTitle.withCount('ovh · term', 0), 'ovh · term');
+    assert.equal(PageTitle.withCount('term · ovh', 2), '(2) term · ovh');
+    assert.equal(PageTitle.withCount('term · ovh', 0), 'term · ovh');
 });

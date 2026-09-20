@@ -6,7 +6,7 @@ tapping the notification lands you in that window. Nothing is on until you turn 
 
 ## What you get
 
-- **A count in the tab title and on the app icon.** `(2) worker-1 · term` means two windows
+- **A count in the tab title and on the app icon.** `(2) term · worker-1` means two windows
   want you. No permission needed, it is on everywhere.
 - **Browser notifications while a tab is open.** One per transition, replaced (not stacked)
   when the same window flips again. Not shown for the window you are looking at, in the
