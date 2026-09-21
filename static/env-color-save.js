@@ -39,7 +39,11 @@ const MerlinEnvColorSave = (() => {
                     }
                 } catch (e) {
                     if (pending === null) {
+                        // Both the swatch and the painted identity go back to
+                        // the confirmed color: a save that succeeded while a
+                        // newer choice waited was never painted.
                         opts.onSelect(confirmed.name);
+                        opts.onApply(confirmed.name, confirmed.hex);
                         opts.onError((e && e.message) || 'Save failed');
                     }
                 }

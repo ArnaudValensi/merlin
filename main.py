@@ -911,6 +911,10 @@ def api_save_settings(body: dict = Body(...), _auth=Depends(require_auth)):
 
     public_base, public_source = job_webhook.resolve_public_base()
 
+    # Resolved once: the name and its hex must be one version of the setting,
+    # since the page paints the pair as confirmed.
+    effective_color = env_color.current()
+
     return {
         "ok": True,
         "password_set": bool(cfg.get("DASHBOARD_PASS")),
@@ -920,8 +924,8 @@ def api_save_settings(body: dict = Body(...), _auth=Depends(require_auth)):
         "effective_public_url": public_base,
         "public_url_source": public_source,
         "default_public_url": job_webhook.discovered_public_base()[0],
-        "env_color": env_color.current(),
-        "env_color_hex": env_color.accent(env_color.current()),
+        "env_color": effective_color,
+        "env_color_hex": env_color.accent(effective_color),
     }
 
 

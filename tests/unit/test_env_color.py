@@ -279,6 +279,18 @@ class TestSettingsApi:
         assert "MERLIN_ENV_COLOR" not in content
         assert "OTHER=val" in content
 
+    def test_post_answer_names_and_paints_one_color(
+        self, client, tmp_path, monkeypatch
+    ):
+        # The page paints the answered pair as confirmed, so the name and the
+        # hex must come from one resolution, whatever lands between reads.
+        write_config(tmp_path, "")
+        answers = iter(["blue", "red", "cyan", "pink", "orange"])
+        monkeypatch.setattr(env_color, "current", lambda *a: next(answers))
+        data = client.post("/api/settings", json={"OPENAI_API_KEY": "sk-x"}).json()
+        assert data["env_color"] == "blue"
+        assert data["env_color_hex"] == "#60a5fa"
+
     def test_config_write_is_atomic(self, client, tmp_path, monkeypatch):
         # A reader that opens config.env during a save (the favicon route, a
         # page render) must see the old file or the new one, never a

@@ -96,6 +96,7 @@ test('a rejected save restores the confirmed selection and shows the failure', a
     assert.deepEqual(log, [
         'select:blue',
         'select:green',
+        'apply:green:#4ade80',
         'error:Save failed: Unknown environment color',
     ]);
     assert.deepEqual(saver.confirmed(), { name: 'green', hex: HEX.green });
@@ -123,9 +124,25 @@ test('a failure after a confirmed save restores that save, not the page load col
     done = saver.choose('red');
     calls[1].reject(new Error('offline'));
     await done;
-    assert.equal(log.at(-2), 'select:blue');
-    assert.equal(log.at(-1), 'error:offline');
+    assert.deepEqual(log.slice(-3), ['select:blue', 'apply:blue:#60a5fa', 'error:offline']);
     assert.equal(saver.confirmed().name, 'blue');
+});
+
+test('a queued choice that fails paints the color confirmed meanwhile', async () => {
+    // Blue is confirmed while red waits, so blue was never painted. Red then
+    // fails: the swatch, the mark and the favicon link all end on blue.
+    const { saver, calls, log } = harness();
+    const done = saver.choose('blue');
+    saver.choose('red');
+    calls[0].resolve();
+    await tick();
+    assert.ok(!log.includes('apply:blue:#60a5fa'));
+    calls[1].reject(new Error('offline'));
+    await done;
+    assert.deepEqual(log.slice(-3), ['select:blue', 'apply:blue:#60a5fa', 'error:offline']);
+    assert.equal(saver.confirmed().name, 'blue');
+    const selects = log.filter((l) => l.startsWith('select:'));
+    assert.equal(selects.at(-1), 'select:blue');
 });
 
 test('a rejection without a message still says something', async () => {
