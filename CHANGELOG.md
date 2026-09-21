@@ -2,6 +2,14 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.37.0 (2026-09-21)
+
+### Added
+- **Tell your environments apart with a color**: Settings gains an environment color chosen from a palette of eight. The tab favicon, the installed app icon, the push notification icon and the sidebar mark all carry it, so a glance separates one environment from another on a tab strip, a home screen or a lock screen. The favicon, push icon and sidebar mark change on the next load, the app icon after you reinstall the app on the phone.
+
+### Fixed
+- **App icons are no longer clipped on the home screen**: The icons dropped their border for a full-bleed plate with the mark inside the safe zone, so the rounded mask iOS and Android apply no longer bites into it.
+
 ## v0.36.0 (2026-09-21)
 
 ### Added
