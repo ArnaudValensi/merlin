@@ -73,6 +73,21 @@ asks you to install first.
 On a phone the installed app reconnects by itself when you come back to it after a
 suspension: a short absence probes the connection, a long one replaces it.
 
+## Tell your environments apart
+
+Every Merlin instance carries the same hat, so a person running several environments
+gives each one a color: **Settings**, then **Environment color**, a row of eight swatches
+(green, blue, violet, pink, red, orange, yellow, cyan). The choice is saved at once and
+shows on the next page load, no restart. It colors the tab's favicon, the installed app's
+icon, the icon a push notification shows and the mark at the top of the sidebar, and
+nothing else: the dashboard keeps its own colors. The color is read before any word, on a
+tab strip, a home screen or a lock screen, which is what tells `merlin` from `arts` when
+the tab is too narrow for the name.
+
+A phone reads the app icon when the app is installed, so an installed app keeps its old
+icon until you remove it from the home screen and add it again. Push notifications and
+the tab show the new color right away.
+
 ## HTTPS is required
 
 Service workers, push and browser notifications only work in a secure context: `https://`

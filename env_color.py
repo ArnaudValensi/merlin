@@ -110,6 +110,56 @@ def favicon_svg(source: str, name: str | None) -> str:
     return _FAVICON_ACCENT_RE.sub(accent(name), source)
 
 
+# ---------------------------------------------------------------------------
+# The app icons
+# ---------------------------------------------------------------------------
+
+# The four committed files per color, with their pixel size. Rendered once at
+# build time by ``uv run scripts.py render-icons`` (rsvg-convert) into
+# ``static/icons/<color>/``, never on an instance.
+ICON_FILES: tuple[tuple[str, int], ...] = (
+    ("icon-192.png", 192),
+    ("icon-512.png", 512),
+    ("icon-maskable-512.png", 512),
+    ("apple-touch-icon.png", 180),
+)
+
+# The mark's fraction of the plate. iOS masks a home screen icon with a
+# squircle and Android's maskable icons with a mask of the same family, both
+# biting into the sides, so the mark stays inside the inner 80 percent (a
+# circle of diameter 0.8): a square of side 0.56 has a diagonal of 0.79.
+APP_ICON_MARK_SCALE = 0.56
+
+_MARK_PATH_RE = re.compile(r'<path fill="[^"]*" d="([^"]+)"')
+
+
+def mark_path(favicon_source: str) -> str:
+    """The hat's path data, read from the favicon so the icons never drift
+    from it."""
+    m = _MARK_PATH_RE.search(favicon_source)
+    if not m:
+        raise ValueError("favicon.svg has no mark path")
+    return m.group(1)
+
+
+def app_icon_svg(favicon_source: str, name: str | None) -> str:
+    """The SVG an app icon is rendered from: a full-bleed dark plate with no
+    border and the favicon's mark centered inside the safe zone, in the
+    color's accent. One recipe for the two PWA icons, the maskable icon and
+    the Apple touch icon (decision 3 of the environment-color epic)."""
+    size = 512
+    mark = size * APP_ICON_MARK_SCALE
+    offset = (size - mark) / 2
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}">\n'
+        f'  <rect width="{size}" height="{size}" fill="{PLATE}"/>\n'
+        f'  <g transform="translate({offset:g} {offset:g}) scale({APP_ICON_MARK_SCALE})">\n'
+        f'    <path fill="{accent(name)}" d="{mark_path(favicon_source)}"/>\n'
+        f"  </g>\n"
+        f"</svg>\n"
+    )
+
+
 def icon_dir(name: str | None) -> str:
     """The URL prefix of a color's committed app icons."""
     return f"/static/icons/{normalize(name)}"

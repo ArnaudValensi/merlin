@@ -24,7 +24,10 @@ merlin/
 │   └── login.html             # Password login page
 ├── static/
 │   ├── dashboard.css          # Dark theme, responsive
-│   └── dashboard.js           # Shared JS: API, auto-refresh, formatting
+│   ├── dashboard.js           # Shared JS: API, auto-refresh, formatting
+│   ├── favicon.svg            # The hat, served recolored by /static/favicon.svg
+│   └── icons/<color>/         # The committed app icons per environment color
+├── env_color.py               # The environment color: palette, setting, favicon, icon recipe
 ├── files/                     # File browser module
 ├── terminal/                  # Web terminal module
 ├── commits/                   # Commit browser module
@@ -84,7 +87,7 @@ Dark theme using CSS custom properties in `:root`:
 --text-secondary: #8b8fa3   /* body text, labels */
 --text-muted: #5c6078       /* timestamps, less important */
 --accent-blue: #4a9eff      /* links, active states */
---accent-green: #34d399     /* success, online */
+--accent-green: #4ade80     /* success, online, and the favicon's default accent */
 --accent-red: #f87171       /* errors */
 --accent-orange: #fb923c    /* job badge */
 --accent-yellow: #fbbf24    /* warnings */
@@ -600,9 +603,9 @@ last, the order the notifications use (`window · session · environment`):
 `handoff · merl · term · merlin`, `README.md · files · merlin`, `term · merlin`
 before any context. Browsers truncate the right side of a narrow tab, so what
 survives is the thing the tab shows, which is what one has in mind; the
-environment is the part read least often, and a per-environment favicon colour
-is the planned way to tell instances apart at a glance. This supersedes the
-machine-first order of `epics/cli/archive/browser-tab-titles/` (2026-09-20).
+environment is the part read least often, and the environment color (below)
+tells instances apart at a glance. This supersedes the machine-first order of
+`epics/cli/archive/browser-tab-titles/` (2026-09-20).
 
 `lib/merlin_ext.py` publishes `machine_name` to every template. Managed
 instances use `MERLIN_ENVIRONMENT_SLUG`. An instance connected to the portal
@@ -619,6 +622,89 @@ Client-rendered context uses `static/page-title.js` rather than writing
 `document.title` directly. Keep it compact: Files uses the current path leaf,
 Commits the repository leaf, Notes the note title, and Terminal the confirmed
 tmux `window · session`. Missing context is omitted without leaving a separator.
+
+## Environment Color
+
+One palette color per instance, so the favicon, the installed app's icon, the push icon
+and the sidebar's brand mark tell `merlin` from `arts` before any word is read. The
+module is `env_color.py` at the root, beside `paths.py`. The epic is
+`epics/cli/environment-color/` in merlin-saas.
+
+**The palette.** Eight named colors, the current green first as the default: `green
+#4ade80`, `blue #60a5fa`, `violet #a78bfa`, `pink #f472b6`, `red #f87171`, `orange
+#fb923c`, `yellow #facc15`, `cyan #22d3ee`. Named, never a free value: the app icons are
+rendered once at build time and committed, so an instance needs no rasterizer.
+`normalize` lowercases and trims, and reads an unknown or empty value as `green`, never an
+error.
+
+**The setting.** `MERLIN_ENV_COLOR` in `config.env`, written by `POST /api/settings` (a
+palette name in any case, an empty string or `null` to go back to the default, any other
+string or JSON type answered with 422 and the saved value left alone) and read back by
+`GET /api/settings` as `env_color`, with `env_palette`. `env_color.current()` is the one
+resolver: `config.env` first (the last occurrence of the key, as `_read_config_env`
+reads it), then the process environment (a container started with the variable), then the
+default. It is read at request time, so a save shows on the next page load, the next
+manifest fetch and the next push with no restart. The write keeps the process
+environment in step, because `config.env` is loaded into it at boot with setdefault
+semantics and it is the read fallback. `_write_config_env` replaces the file atomically
+(a sibling temp file, mode 0600, `os.replace`), so a reader during a save never sees a
+truncated file.
+
+**Settings.** The "Environment" section shows the environment name (`machine_name`,
+read-only) and the "Environment color" row: eight `role="radio"` buttons, each carrying
+its hex as `--swatch` inline from the Python palette, the current one rendered selected
+server-side. A click saves through `static/env-color-save.js`, a pure controller with
+node tests (`tests/js/env-color-save.test.js`): one save in flight, the latest click
+queued behind it, a response applied only when no newer choice waits, and on a failure
+the confirmed color put back on the swatch, the mark and the favicon link with a red
+message. A success updates the favicon link and the mark in place.
+
+**What the color paints, and only that.** The favicon's mark and border, the app icons'
+mark, the push icon, the sidebar's brand mark. The plate stays `#1e2035`, the manifest's
+`theme_color` and `background_color` stay the page background, no design system variable
+changes and no control is restyled. The mark reads `var(--env-color, var(--accent-green))`
+in `.sidebar-logo`, and `base.html` sets `--env-color` inline on that element from the
+name it resolved once for the render (`{% set env_color_name = env_color() %}`, then
+`env_accent(env_color_name)`), so the favicon link and the mark of one page never
+disagree.
+
+**The favicon is served.** `GET /static/favicon.svg` is a route declared before the
+static mount, so it takes the path over the file on disk: the SVG with its accent
+(`#4ade80`, on the mark's fill and the plate's stroke, nothing else) substituted. The page
+links it as `/static/favicon.svg?c=<color>`: the query is a cache key the route ignores,
+so a browser refetches after a change. The static middleware marks it `no-store` like the
+rest of `/static/`. The file on disk keeps the default green, and so does
+`favicon.ico`, the fallback for browsers without SVG favicons, listed first with
+`sizes="32x32"` so Chrome and Firefox prefer the SVG (Safari shows the green ICO in its
+tab strip). The in-tab notification icon is the same URL, so it is colored too.
+
+**The app icons are committed.** `uv run scripts.py render-icons` renders, with
+`rsvg-convert`, four PNGs per color under `static/icons/<color>/`: `icon-192.png`,
+`icon-512.png`, `icon-maskable-512.png` (512) and `apple-touch-icon.png` (180). One
+recipe, `env_color.app_icon_svg`: a full-bleed dark plate with no border and the favicon's
+mark (read from `favicon.svg`, so the icons cannot drift from it) centered at 56 percent
+of the plate, inside the inner 80 percent that iOS's squircle and Android's maskable masks
+leave whole. Only the favicon keeps its border: a tab applies no mask, and at 16 pixels
+the border is what reads as a plate. Run the command after a change to the palette or
+the favicon and commit the PNGs. `tests/unit/test_env_color.py` asserts that every palette
+color has its four files at their sizes (a color cannot be added without its icons), that
+the plate reaches every edge and the accent sits on the center line (pixels read by a
+small PNG decoder in the test), and, where `rsvg-convert` is installed, that the committed
+bytes equal a fresh render of the recipe.
+
+**The manifest and the push.** `build_manifest(machine, color)` points the three icons at
+the chosen set, and `/manifest.webmanifest` reads the color at request time. `base.html`
+links the manifest as `/manifest.webmanifest?c=<color>` and the touch icon at
+`/static/icons/<color>/apple-touch-icon.png`. iOS reads the manifest at install, so an
+installed app keeps its icon until it is reinstalled (the user doc says so). The push
+payload carries `icon`, the color's `icon-192.png`, and the worker falls back to the green
+one (see [`notifications.md`](notifications.md)).
+
+**Tests.** `tests/unit/test_env_color.py` (the palette, the setting, the route per color,
+the API, the page shell, the icons, the manifest, the push icon),
+`tests/js/env-color-save.test.js` (the save queue), `tests/e2e/test_environment_color.py`
+(a throwaway with `MERLIN_ENV_COLOR=blue`: the links, the served favicon, the manifest and
+its icons, the Settings row, a click saved and reflected on the next load).
 
 ## Adding a New Page
 

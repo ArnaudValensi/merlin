@@ -382,9 +382,11 @@ def _merlin_version() -> str:
     return get_version()
 
 
-def build_manifest(machine: str) -> dict:
+def build_manifest(machine: str, color: str | None = None) -> dict:
     """The web app manifest. One instance installs as one app, told apart on
-    a home screen by the machine name."""
+    a home screen by the machine name and by the environment color of its
+    icons (the committed set under ``static/icons/<color>/``). The theme and
+    background colors stay the page background."""
     label = machine.strip() or "Merlin"
     return {
         "name": f"Merlin · {label}" if machine.strip() else "Merlin",
@@ -397,17 +399,17 @@ def build_manifest(machine: str) -> dict:
         "theme_color": _MANIFEST_THEME,
         "icons": [
             {
-                "src": "/static/icons/icon-192.png",
+                "src": env_color.icon_url(color, "icon-192.png"),
                 "sizes": "192x192",
                 "type": "image/png",
             },
             {
-                "src": "/static/icons/icon-512.png",
+                "src": env_color.icon_url(color, "icon-512.png"),
                 "sizes": "512x512",
                 "type": "image/png",
             },
             {
-                "src": "/static/icons/icon-maskable-512.png",
+                "src": env_color.icon_url(color, "icon-maskable-512.png"),
                 "sizes": "512x512",
                 "type": "image/png",
                 "purpose": "maskable",
@@ -418,10 +420,14 @@ def build_manifest(machine: str) -> dict:
 
 @app.get("/manifest.webmanifest")
 def web_manifest():
+    """The manifest of the moment: the color is read at request time, and the
+    page links the manifest with the color as a query string so a browser
+    refetches it after a change. An installed app keeps the icon it was
+    installed with until it is reinstalled."""
     from merlin_ext import resolve_machine_name
 
     return JSONResponse(
-        build_manifest(resolve_machine_name()),
+        build_manifest(resolve_machine_name(), env_color.current()),
         media_type="application/manifest+json",
     )
 

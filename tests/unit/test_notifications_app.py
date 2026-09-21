@@ -82,12 +82,14 @@ class TestManifest:
         assert r.status_code == 303
 
     def test_icons_are_pngs_of_the_declared_size(self):
-        assert png_size((ROOT / "static/icons/icon-192.png").read_bytes()) == (192, 192)
-        assert png_size((ROOT / "static/icons/icon-512.png").read_bytes()) == (512, 512)
-        assert png_size((ROOT / "static/icons/icon-maskable-512.png").read_bytes()) == (
-            512,
-            512,
-        )
+        # The default set. Every color's set is checked in test_env_color.py.
+        for file, size in (
+            ("icon-192.png", 192),
+            ("icon-512.png", 512),
+            ("icon-maskable-512.png", 512),
+        ):
+            data = (ROOT / "static/icons/green" / file).read_bytes()
+            assert png_size(data) == (size, size)
 
 
 class TestServiceWorker:
@@ -110,7 +112,7 @@ class TestServiceWorker:
 class TestPageShell:
     def test_base_links_manifest_and_registers_the_worker(self, client):
         html = client.get("/terminal").text
-        assert '<link rel="manifest" href="/manifest.webmanifest">' in html
+        assert '<link rel="manifest" href="/manifest.webmanifest?c=green">' in html
         assert 'name="theme-color" content="#0f1117"' in html
         assert "navigator.serviceWorker.register('/sw.js?v=" in html
         assert "{ scope: '/' }" in html

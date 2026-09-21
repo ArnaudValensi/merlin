@@ -16,7 +16,7 @@ self.addEventListener('push', function (e) {
   var title = data.title || 'Merlin';
   var options = {
     body: data.body || '',
-    icon: data.icon || '/static/icons/icon-192.png',
+    icon: data.icon || '/static/icons/green/icon-192.png',
     data: { url: data.url || '/terminal', sid: data.sid || '', state: data.state || '' },
   };
   if (data.tag) options.tag = data.tag;

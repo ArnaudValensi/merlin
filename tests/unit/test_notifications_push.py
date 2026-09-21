@@ -185,6 +185,7 @@ class TestPayload:
             "url": "/terminal?target=alpha%3A%401",
             "sid": "s1",
             "state": "done",
+            "icon": "/static/icons/green/icon-192.png",
         }
         assert build_payload(event(state="ask"))["body"] == "Needs an answer"
         assert len(json.dumps(p)) < 3 * 1024

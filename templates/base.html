@@ -11,8 +11,8 @@
     {% set env_color_name = env_color() %}
     <link rel="icon" href="/static/favicon.ico" sizes="32x32">
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?c={{ env_color_name }}">
-    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/static/icons/{{ env_color_name }}/apple-touch-icon.png">
+    <link rel="manifest" href="/manifest.webmanifest?c={{ env_color_name }}">
     <meta name="theme-color" content="#0f1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">

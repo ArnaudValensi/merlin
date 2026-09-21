@@ -182,11 +182,18 @@ unauthenticated routes this feature adds, registered in `main.py` beside the app
 routes. The manifest is `Merlin · <machine>` with `short_name` the machine (`machine_name`
 from `lib/merlin_ext.py`), `display` standalone, `start_url` `/terminal`, `scope` `/`, both
 colours the page background `#0f1117`, icons at 192 and 512 plus a maskable 512 under
-`static/icons/` (rendered from `static/favicon.svg` with `rsvg-convert`). `base.html` links
-the manifest and registers `/sw.js?v=<merlin version>` at scope `/`, in secure contexts only.
+`static/icons/<color>/`, the set of the instance's environment color, read at request
+time (`env_color.current()`, see the Environment Color section of
+[`dashboard-architecture.md`](dashboard-architecture.md): the sets are rendered at build
+time by `scripts.py render-icons` and committed, borderless so a home screen mask leaves
+the hat whole). `base.html` links the manifest as `/manifest.webmanifest?c=<color>` so a
+color change is refetched, links the touch icon of the same set, and registers
+`/sw.js?v=<merlin version>` at scope `/`, in secure contexts only. iOS reads the manifest
+at install: an installed app keeps its icon until it is reinstalled.
 
 **The worker does two things.** `push` shows the payload's notification (title, body, tag,
-icon, deep link in `data.url`). `notificationclick` focuses a same-origin window and
+the payload's `icon` with the green `icon-192.png` as the fallback, deep link in
+`data.url`). `notificationclick` focuses a same-origin window and
 navigates it to the deep link, or opens one. No `fetch` handler, no cache, no precache: a
 proxied page is never served stale. `tests/unit/test_notifications_app.py` asserts the
 source never mentions `'fetch'`, `caches` or `respondWith`.
@@ -205,8 +212,9 @@ written atomically with mode 0600:
 A store file that fails to parse is moved to `<name>.corrupt-<timestamp>` and the store
 starts empty. A send answered with 404 or 410 removes the subscription. Any other failure is
 logged with `log_event("push_failed", ...)` and never raised. TTL 300, urgency `high`,
-payload under 3 KB: `title`, `body`, `tag`, `url` (`/terminal?target=...`), `sid`, `state`.
-`title` and `body` are the event's own. `encode_payload` clips `title` to 120 and `body` to
+payload under 3 KB: `title`, `body`, `tag`, `url` (`/terminal?target=...`), `sid`, `state`,
+`icon` (the environment color's `icon-192.png`, resolved at send time, so a color change
+shows on the next push). `title` and `body` are the event's own. `encode_payload` clips `title` to 120 and `body` to
 300 characters (the snippet inside it is already clipped at 240, the state and the duration
 fit in front), `tag` and `sid` to 200, then halves every string until the UTF-8 JSON is
 strictly under 3 KB, and falls back to a minimal payload past that. The snippet is the one

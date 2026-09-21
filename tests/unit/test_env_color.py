@@ -391,3 +391,249 @@ class TestSettingsPage:
     def test_shows_the_environment_name(self, client):
         html = client.get("/settings").text
         assert "Environment name" in html
+
+
+# ---------------------------------------------------------------------------
+# M2: the app icons, the manifest, the push icon
+# ---------------------------------------------------------------------------
+
+
+def decode_png(data: bytes) -> tuple[int, int, list[list[tuple[int, int, int]]]]:
+    """A small PNG reader for the tests: 8-bit RGB or RGBA, no interlace, the
+    five filters. Returns the rows of ``(r, g, b)``."""
+    import struct
+    import zlib
+
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    pos, chunks, width, height, channels = 8, [], 0, 0, 0
+    while pos < len(data):
+        (length,) = struct.unpack(">I", data[pos : pos + 4])
+        kind = data[pos + 4 : pos + 8]
+        body = data[pos + 8 : pos + 8 + length]
+        if kind == b"IHDR":
+            width, height, depth, ctype, _, _, interlace = struct.unpack(
+                ">IIBBBBB", body
+            )
+            assert depth == 8 and interlace == 0
+            channels = {2: 3, 6: 4}[ctype]
+        elif kind == b"IDAT":
+            chunks.append(body)
+        pos += 12 + length
+    raw = zlib.decompress(b"".join(chunks))
+    stride = width * channels
+    rows: list[list[tuple[int, int, int]]] = []
+    prev = bytearray(stride)
+    p = 0
+    for _ in range(height):
+        f = raw[p]
+        line = bytearray(raw[p + 1 : p + 1 + stride])
+        p += 1 + stride
+        for i in range(stride):
+            a = line[i - channels] if i >= channels else 0
+            b = prev[i]
+            c = prev[i - channels] if i >= channels else 0
+            if f == 1:
+                line[i] = (line[i] + a) & 0xFF
+            elif f == 2:
+                line[i] = (line[i] + b) & 0xFF
+            elif f == 3:
+                line[i] = (line[i] + (a + b) // 2) & 0xFF
+            elif f == 4:
+                q = a + b - c
+                pa, pb, pc = abs(q - a), abs(q - b), abs(q - c)
+                pred = a if pa <= pb and pa <= pc else (b if pb <= pc else c)
+                line[i] = (line[i] + pred) & 0xFF
+        rows.append(
+            [tuple(line[i : i + 3]) for i in range(0, stride, channels)]  # type: ignore[misc]
+        )
+        prev = line
+    return width, height, rows
+
+
+def rgb(hex_: str) -> tuple[int, int, int]:
+    return int(hex_[1:3], 16), int(hex_[3:5], 16), int(hex_[5:7], 16)
+
+
+class TestAppIconRecipe:
+    def test_full_bleed_plate_no_border_mark_in_the_safe_zone(self):
+        svg = env_color.app_icon_svg(FAVICON, "blue")
+        assert '<rect width="512" height="512" fill="#1e2035"/>' in svg
+        assert "stroke" not in svg
+        assert "rx=" not in svg
+        assert 'fill="#60a5fa"' in svg
+        assert svg.count("<path") == 1
+        # The mark's square, at the recipe's scale and offset, sits inside the
+        # inner 80 percent (a circle of diameter 409.6 on a 512 plate).
+        side = 512 * env_color.APP_ICON_MARK_SCALE
+        offset = (512 - side) / 2
+        assert f"translate({offset:g} {offset:g}) scale(0.56)" in svg
+        half_diagonal = (side**2 * 2) ** 0.5 / 2
+        assert half_diagonal < 512 * 0.8 / 2
+
+    def test_mark_is_the_favicon_path(self):
+        svg = env_color.app_icon_svg(FAVICON, "green")
+        assert env_color.mark_path(FAVICON) in svg
+        assert env_color.mark_path(FAVICON).startswith("M64 416L168.6 180.7")
+
+    def test_unknown_color_renders_the_default(self):
+        assert env_color.app_icon_svg(FAVICON, "teal") == env_color.app_icon_svg(
+            FAVICON, "green"
+        )
+
+
+class TestCommittedIcons:
+    @pytest.mark.parametrize("name", env_color.NAMES)
+    def test_every_color_has_its_four_files_at_their_sizes(self, name):
+        for file, size in env_color.ICON_FILES:
+            path = ROOT / "static" / "icons" / name / file
+            assert path.is_file(), f"missing {path}"
+            width, height, _ = decode_png(path.read_bytes())
+            assert (width, height) == (size, size), path
+
+    def test_the_four_files_are_the_four_the_manifest_and_the_page_use(self):
+        assert {f for f, _ in env_color.ICON_FILES} == {
+            "icon-192.png",
+            "icon-512.png",
+            "icon-maskable-512.png",
+            "apple-touch-icon.png",
+        }
+
+    def test_no_stray_icon_outside_a_color_set(self):
+        icons = ROOT / "static" / "icons"
+        assert sorted(p.name for p in icons.iterdir() if p.is_dir()) == sorted(
+            env_color.NAMES
+        )
+        assert [p for p in icons.iterdir() if p.is_file()] == []
+        assert not (ROOT / "static" / "apple-touch-icon.png").exists()
+
+    @pytest.mark.parametrize("name,hex_", env_color.PALETTE)
+    def test_no_border_and_the_accent_in_the_center(self, name, hex_):
+        # The plate reaches every edge (no border) and the mark carries the
+        # color's accent: read from the pixels of the maskable icon and of the
+        # touch icon, the two a mask bites into.
+        plate = rgb(env_color.PLATE)
+        for file in ("icon-maskable-512.png", "apple-touch-icon.png"):
+            path = ROOT / "static" / "icons" / name / file
+            w, h, rows = decode_png(path.read_bytes())
+            edge = [rows[0][0], rows[0][w - 1], rows[h - 1][0], rows[h - 1][w - 1]]
+            edge += [rows[0][w // 2], rows[h - 1][w // 2], rows[h // 2][0]]
+            edge += [rows[h // 2][w - 1], rows[h // 8][w // 8], rows[h // 8][w // 2]]
+            assert all(px == plate for px in edge), (path, edge)
+            # The hat's brim crosses the vertical center line near the bottom
+            # of the safe zone: an accent pixel is there.
+            column = [rows[y][w // 2] for y in range(h)]
+            assert rgb(hex_) in column, path
+
+    def test_committed_icons_match_the_recipe(self):
+        """Re-render with rsvg-convert and compare bytes, so a palette or
+        favicon change without ``scripts.py render-icons`` fails here. Skipped
+        without the tool (an instance, a CI image without librsvg)."""
+        import shutil
+        import subprocess
+
+        if shutil.which("rsvg-convert") is None:
+            pytest.skip("rsvg-convert not installed")
+        for name, _ in env_color.PALETTE:
+            svg = env_color.app_icon_svg(FAVICON, name).encode()
+            for file, size in env_color.ICON_FILES:
+                fresh = subprocess.run(
+                    ["rsvg-convert", "-w", str(size), "-h", str(size)],
+                    input=svg,
+                    capture_output=True,
+                    check=True,
+                ).stdout
+                committed = (ROOT / "static" / "icons" / name / file).read_bytes()
+                assert fresh == committed, f"{name}/{file} drifted: run render-icons"
+
+
+class TestManifest:
+    @pytest.mark.parametrize("name", env_color.NAMES)
+    def test_points_at_the_color_set(self, name):
+        m = app_mod.build_manifest("box", name)
+        assert [i["src"] for i in m["icons"]] == [
+            f"/static/icons/{name}/icon-192.png",
+            f"/static/icons/{name}/icon-512.png",
+            f"/static/icons/{name}/icon-maskable-512.png",
+        ]
+        assert m["theme_color"] == "#0f1117"
+        assert m["background_color"] == "#0f1117"
+
+    def test_no_color_and_an_unknown_one_point_at_green(self):
+        assert app_mod.build_manifest("box")["icons"][0]["src"].startswith(
+            "/static/icons/green/"
+        )
+        assert app_mod.build_manifest("box", "teal")["icons"][0]["src"].startswith(
+            "/static/icons/green/"
+        )
+
+    def test_route_reads_the_setting_and_serves_the_files(self, client, tmp_path):
+        write_config(tmp_path, "MERLIN_ENV_COLOR=pink\n")
+        body = client.get("/manifest.webmanifest?c=pink").json()
+        for icon in body["icons"]:
+            assert icon["src"].startswith("/static/icons/pink/")
+            assert client.get(icon["src"]).status_code == 200
+        write_config(tmp_path, "MERLIN_ENV_COLOR=cyan\n")
+        body = client.get("/manifest.webmanifest").json()
+        assert body["icons"][0]["src"] == "/static/icons/cyan/icon-192.png"
+
+
+class TestPageLinks:
+    def test_manifest_and_touch_icon_follow_the_color(self, client, tmp_path):
+        write_config(tmp_path, "MERLIN_ENV_COLOR=violet\n")
+        html = client.get("/terminal").text
+        assert '<link rel="manifest" href="/manifest.webmanifest?c=violet">' in html
+        assert (
+            '<link rel="apple-touch-icon" href="/static/icons/violet/apple-touch-icon.png">'
+            in html
+        )
+        assert (
+            client.get("/static/icons/violet/apple-touch-icon.png").status_code == 200
+        )
+
+    def test_login_touch_icon_follows_the_color(self, tmp_path, monkeypatch):
+        import auth
+
+        monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "secret")
+        auth.configure("secret")
+        write_config(tmp_path, "MERLIN_ENV_COLOR=red\n")
+        with TestClient(app_mod.app) as c:
+            html = c.get("/login").text
+        assert 'href="/static/icons/red/apple-touch-icon.png"' in html
+
+
+class TestPushIcon:
+    def test_payload_icon_follows_the_color(self, tmp_path):
+        from board.sweep import Window
+        from notifications.push import build_payload
+        from notifications.watcher import Watcher
+
+        def event():
+            w = Watcher(lambda: [], machine="box")
+            (ev,) = w.observe(
+                [
+                    Window(
+                        sid="s1",
+                        state="done",
+                        cwd="/h/u/proj",
+                        parent="",
+                        relation="",
+                        session="alpha",
+                        window_id="@1",
+                        index=1,
+                        active=False,
+                        activity=0,
+                        name="claude",
+                    )
+                ]
+            )
+            return ev
+
+        assert build_payload(event())["icon"] == "/static/icons/green/icon-192.png"
+        write_config(tmp_path, "MERLIN_ENV_COLOR=orange\n")
+        assert build_payload(event())["icon"] == "/static/icons/orange/icon-192.png"
+        assert (ROOT / "static/icons/orange/icon-192.png").is_file()
+
+    def test_worker_default_is_a_committed_file(self):
+        src = (ROOT / "notifications/static/sw.js").read_text()
+        assert "data.icon || '/static/icons/green/icon-192.png'" in src
+        assert (ROOT / "static/icons/green/icon-192.png").is_file()

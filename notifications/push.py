@@ -53,6 +53,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
+import env_color
+
 if TYPE_CHECKING:
     from .watcher import Event
 
@@ -367,8 +369,10 @@ def deep_link(target: str) -> str:
 
 def build_payload(event: Event) -> dict:
     """The push payload the service worker shows: the event's own ``title``
-    and ``body`` (composed once by the watcher, shown verbatim). Complete
-    JSON, strictly under 3 KB once encoded (``encode_payload`` checks)."""
+    and ``body`` (composed once by the watcher, shown verbatim), and the
+    icon of the environment color of the moment, so the notification is
+    told apart by color like the tab and the app. Complete JSON, strictly
+    under 3 KB once encoded (``encode_payload`` checks)."""
     return {
         "title": _clip(event.title, _TITLE_MAX),
         "body": _clip(event.body, _BODY_MAX),
@@ -376,6 +380,7 @@ def build_payload(event: Event) -> dict:
         "url": deep_link(event.target),
         "sid": _clip(event.sid, _TAG_MAX),
         "state": event.state,
+        "icon": env_color.icon_url(env_color.current(), "icon-192.png"),
     }
 
 

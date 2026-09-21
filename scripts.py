@@ -80,6 +80,42 @@ def cmd_test_e2e(args):
     )
 
 
+def cmd_render_icons(args):
+    """Render the app icons of every environment color (~1s).
+
+    One recipe from ``env_color.app_icon_svg``: a full-bleed dark plate, no
+    border, the favicon's mark in the safe zone, the color's accent. Four PNGs
+    per color under ``static/icons/<color>/``, committed, so an instance never
+    needs a rasterizer. Needs ``rsvg-convert`` (librsvg) on this machine. Run
+    it after a change to the palette or to ``static/favicon.svg``, then commit
+    the PNGs. ``tests/unit/test_env_color.py`` checks the sets are complete and
+    match this recipe.
+    """
+    if shutil.which("rsvg-convert") is None:
+        print("rsvg-convert not found: install librsvg (pacman -S librsvg)")
+        sys.exit(1)
+    sys.path.insert(0, str(ROOT))
+    import env_color
+
+    favicon = (ROOT / "static" / "favicon.svg").read_text()
+    for name, _ in env_color.PALETTE:
+        out_dir = ROOT / "static" / "icons" / name
+        out_dir.mkdir(parents=True, exist_ok=True)
+        svg = env_color.app_icon_svg(favicon, name)
+        for file, size in env_color.ICON_FILES:
+            result = subprocess.run(
+                ["rsvg-convert", "-w", str(size), "-h", str(size)],
+                input=svg.encode(),
+                capture_output=True,
+                cwd=ROOT,
+            )
+            if result.returncode != 0:
+                print(result.stderr.decode())
+                sys.exit(result.returncode)
+            (out_dir / file).write_bytes(result.stdout)
+        print(f"  → static/icons/{name}/ ({len(env_color.ICON_FILES)} files)")
+
+
 def cmd_lint(args):
     """Run ruff lint + format check + ty."""
     lint = run(["uvx", RUFF, "check", "."])
@@ -114,6 +150,9 @@ def main():
 
     sub.add_parser("test", help="Run unit tests (~4s)")
     sub.add_parser("test-e2e", help="Run E2E tests with Playwright (~2min)")
+    sub.add_parser(
+        "render-icons", help="Render the app icons of every environment color"
+    )
     sub.add_parser("lint", help="Run ruff lint + format check + pyright")
     sub.add_parser(
         "validate", help="Full validation: lint + format + typecheck + tests"
@@ -128,6 +167,7 @@ def main():
     commands = {
         "test": cmd_test,
         "test-e2e": cmd_test_e2e,
+        "render-icons": cmd_render_icons,
         "lint": cmd_lint,
         "validate": cmd_validate,
     }
