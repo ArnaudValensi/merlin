@@ -2,6 +2,32 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.36.0 (2026-09-21)
+
+### Added
+- **Notifications when an agent needs you**: The tab title and the app icon count the terminal windows that flipped to done or ask, and the bell in the terminal turns on one browser notification per transition. Clicking it lands you in that window.
+- **Push to your phone with the tab closed**: Subscribe a device from the bell popover and the instance sends it a Web Push, with a device list and a **Send a test** button. HTTPS is required, and iPhone delivers push only to the installed app.
+- **Install Merlin as an app**: Every instance is installable from the browser, named after its machine so several sit side by side on a phone, and it reconnects on its own after a phone suspension.
+- **Compare any two points of a repository**: On the Commits page, **Select** picks a range of commits with two taps, the **Compare** sheet takes two branches or commits, and a pinned **Working tree** row opens the uncommitted changes. Each file's header sticks to the top while its diff scrolls.
+- **Reviews with viewed files**: Ticking a file as viewed saves the comparison as a review under `~/.merlin/reviews/` and collapses the file. The tick clears on its own when that file's diff changes later.
+- **Comment threads your agent answers**: Comment on a line or on the whole review, reply, resolve and reopen. The new `merlin review` command lets the agent read the review and answer from the terminal, and **Copy for agent** hands it the command.
+- **Since your last visit**: Coming back to a review, a panel lists the commits and the agent's comments, replies and resolutions that happened while you were away, each row jumping to its thread.
+
+### Changed
+- **Notifications say what happened**: The title reads `<window> · <session> · <environment>` and the body leads with the state and the agent's last words, such as `Finished after 14 min: …`.
+- **Notifications reach every device except the window you are reading**: The bell popover's two toggles are one. Every done or ask event goes to every subscribed device and every open tab but the window in a focused tab, and handling a window on one device clears its notification on the others.
+- **Tab titles read the specific part first**: Tabs now read `handoff · merl · term · worker-1` instead of starting with the machine name, so a narrow tab keeps the part you had in mind.
+- **Sandbox instances are named after their portal slug**: An instance on Merlin Cloud without an environment slug takes its machine name from the portal, in tab titles, the app name and notifications alike.
+- **Review pages follow the dashboard's text sizes**: The review header, the comment threads and the composer now use the dashboard's 13 px Geist text instead of larger sizes and the diff's monospace font.
+
+### Fixed
+- **Push notifications reach iPhones**: Apple rejected every push over a placeholder VAPID subject. The subject is now the instance's public https URL, and existing subscriptions keep working.
+- **Agent pills and notifications survive Claude Code 2.1.273**: Its hooks lost the tmux pane variable and stamped nothing. They now find their window by walking up to the pane's shell.
+- **The terminal follows the software keyboard on a phone**: The input line no longer hides behind the keyboard, and the bottom bar clears the home indicator in the installed app.
+- **A notification for the window already on screen clears its pill**: The deep link used to skip the switch when the window was displayed, leaving the done pill lit.
+- **Removing a device from another device turns it off for real**: The removed device drops its own toggle and subscription on its next open and says **Turned off from another device** once.
+- **The Working tree shortcut stays greyed out on a clean tree**: It used to open an empty comparison. It now reads `no uncommitted changes`.
+
 ## v0.35.0 (2026-09-08)
 
 ### Added
