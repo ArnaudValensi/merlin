@@ -633,6 +633,78 @@ class TestPushIcon:
         assert build_payload(event())["icon"] == "/static/icons/orange/icon-192.png"
         assert (ROOT / "static/icons/orange/icon-192.png").is_file()
 
+    def test_deliver_resolves_the_icon_off_the_event_loop(self, tmp_path):
+        # build_payload reads config.env for the icon: deliver must build it
+        # in the worker thread with the send, never on the loop.
+        import asyncio
+        import threading
+
+        from notifications import push as push_mod
+        from tests.unit.test_notifications_push import SUB, Recorder, event, make_sender
+
+        seen = []
+        real = push_mod.current_icon
+        push_mod.current_icon = lambda: (seen.append(threading.get_ident()), real())[1]
+        try:
+            rec = Recorder()
+            sender, store = make_sender(tmp_path, rec)
+            store.add(SUB, "a")
+            loop_thread = []
+
+            async def run():
+                loop_thread.append(threading.get_ident())
+                return await sender.deliver(event())
+
+            assert asyncio.run(run()).sent == 1
+        finally:
+            push_mod.current_icon = real
+        assert len(seen) == 1
+        assert seen[0] != loop_thread[0]
+        assert '"icon":"/static/icons/green/icon-192.png"' in rec.calls[0]["data"]
+
+    def test_send_a_test_carries_the_color_icon_without_restart(self, tmp_path):
+        from tests.unit.test_notifications_push import SUB, Recorder, make_sender
+
+        rec = Recorder()
+        sender, store = make_sender(tmp_path / "s", rec)
+        store.add(SUB, "a")
+        payload = {"title": "Merlin · test", "body": "Push works", "url": "/terminal"}
+        write_config(tmp_path, "MERLIN_ENV_COLOR=red\n")
+        sender.test_sync(payload)
+        assert '"icon":"/static/icons/red/icon-192.png"' in rec.calls[0]["data"]
+        write_config(tmp_path, "MERLIN_ENV_COLOR=blue\n")
+        sender.test_sync(payload, SUB["endpoint"])
+        assert '"icon":"/static/icons/blue/icon-192.png"' in rec.calls[1]["data"]
+        # The route's payload is untouched otherwise.
+        assert '"title":"Merlin · test"' in rec.calls[1]["data"]
+
+    def test_send_a_test_route_resolves_the_icon_off_the_event_loop(
+        self, client, tmp_path, monkeypatch
+    ):
+        import threading
+
+        from notifications import push as push_mod
+        from notifications import routes as routes_mod
+        from tests.unit.test_notifications_push import SUB, Recorder, make_sender
+
+        rec = Recorder()
+        sender, store = make_sender(tmp_path / "s", rec)
+        store.add(SUB, "a")
+        monkeypatch.setattr(routes_mod, "get_sender", lambda: sender)
+        write_config(tmp_path, "MERLIN_ENV_COLOR=cyan\n")
+        seen = []
+        real = push_mod.current_icon
+        monkeypatch.setattr(
+            push_mod,
+            "current_icon",
+            lambda: (seen.append(threading.current_thread().name), real())[1],
+        )
+        r = client.post("/api/notifications/test", json={})
+        assert r.status_code == 200, r.text
+        assert '"icon":"/static/icons/cyan/icon-192.png"' in rec.calls[0]["data"]
+        # asyncio.to_thread runs on the default executor's worker threads.
+        assert seen and all(name.startswith("asyncio_") for name in seen), seen
+
     def test_worker_default_is_a_committed_file(self):
         src = (ROOT / "notifications/static/sw.js").read_text()
         assert "data.icon || '/static/icons/green/icon-192.png'" in src

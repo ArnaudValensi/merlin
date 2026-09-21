@@ -367,12 +367,21 @@ def deep_link(target: str) -> str:
     return "/terminal?target=" + quote(target, safe="")
 
 
-def build_payload(event: Event) -> dict:
+def current_icon() -> str:
+    """The icon a push shows: the environment color's ``icon-192.png``,
+    resolved at send time so a color change shows on the next push. Reads
+    ``config.env``, so it is called off the event loop, in the send thread,
+    like every other file access of the sender."""
+    return env_color.icon_url(env_color.current(), "icon-192.png")
+
+
+def build_payload(event: Event, icon: str | None = None) -> dict:
     """The push payload the service worker shows: the event's own ``title``
     and ``body`` (composed once by the watcher, shown verbatim), and the
     icon of the environment color of the moment, so the notification is
     told apart by color like the tab and the app. Complete JSON, strictly
-    under 3 KB once encoded (``encode_payload`` checks)."""
+    under 3 KB once encoded (``encode_payload`` checks). ``icon`` defaults
+    to ``current_icon()``, a file read: build the payload in a thread."""
     return {
         "title": _clip(event.title, _TITLE_MAX),
         "body": _clip(event.body, _BODY_MAX),
@@ -380,7 +389,7 @@ def build_payload(event: Event) -> dict:
         "url": deep_link(event.target),
         "sid": _clip(event.sid, _TAG_MAX),
         "state": event.state,
-        "icon": env_color.icon_url(env_color.current(), "icon-192.png"),
+        "icon": current_icon() if icon is None else icon,
     }
 
 
@@ -525,18 +534,23 @@ class PushSender:
     def _has_subscriptions(self) -> bool:
         return bool(self.store.all())
 
+    def _deliver_sync(self, event: Event) -> SendResult:
+        """The payload (its icon reads ``config.env``) and the send, both in
+        the worker thread."""
+        return self.send_all_sync(build_payload(event))
+
     async def deliver(self, event: Event) -> SendResult:
         """Push one attention event, unless someone is looking at its window.
         The entry point the watcher's listener uses. Never raises.
 
-        The store is read in a thread."""
+        The store, the payload's icon and the send all run in a thread."""
         try:
             if not await asyncio.to_thread(self._has_subscriptions):
                 return SendResult(skipped="no subscriptions")
             reason = self.suppression_reason(event)
             if reason:
                 return SendResult(skipped=reason)
-            return await self.send_all(build_payload(event))
+            return await asyncio.to_thread(self._deliver_sync, event)
         except Exception:
             logger.exception("Push delivery failed")
             return SendResult(skipped="error")
@@ -544,9 +558,12 @@ class PushSender:
     def test_sync(self, payload: dict, endpoint: str = "") -> SendResult | str:
         """A test push to one device or to all, bypassing suppression. Returns
         the result, or ``"unknown"`` / ``"none"`` when there is nothing to
-        send to. Runs off the loop like every other store access."""
+        send to. Runs off the loop like every other store access. The
+        payload gets the environment color's icon here, in the thread, so
+        a test push shows the same identity as an attention push."""
         if endpoint and self.store.get(endpoint) is None:
             return "unknown"
         if not self.store.all():
             return "none"
+        payload = {**payload, "icon": payload.get("icon") or current_icon()}
         return self.send_all_sync(payload, [endpoint] if endpoint else None)

@@ -674,9 +674,10 @@ static mount, so it takes the path over the file on disk: the SVG with its accen
 links it as `/static/favicon.svg?c=<color>`: the query is a cache key the route ignores,
 so a browser refetches after a change. The static middleware marks it `no-store` like the
 rest of `/static/`. The file on disk keeps the default green, and so does
-`favicon.ico`, the fallback for browsers without SVG favicons, listed first with
-`sizes="32x32"` so Chrome and Firefox prefer the SVG (Safari shows the green ICO in its
-tab strip). The in-tab notification icon is the same URL, so it is colored too.
+`favicon.ico`, the fallback for browsers without SVG favicon support (Safari before
+26.0 among them), listed first with `sizes="32x32"` so the browsers that read SVG prefer
+the SVG. A browser that falls back to the ICO shows the green hat in its tab strip. The
+in-tab notification icon is the same URL, so it is colored too.
 
 **The app icons are committed.** `uv run scripts.py render-icons` renders, with
 `rsvg-convert`, four PNGs per color under `static/icons/<color>/`: `icon-192.png`,
