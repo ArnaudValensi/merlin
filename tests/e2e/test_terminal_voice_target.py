@@ -4,8 +4,8 @@ The cross-window / cross-device bug was that the server wrote a transcription
 into whatever window was current when the upload landed. The fix: the page
 reads the current tmux window the instant the recording stops and sends it as
 the multipart `target` field, so the server injects into that window and
-nothing else. tests/unit/test_terminal.py checks the server honours `target`;
-this file checks the page actually sends it, by driving a real recording in a
+nothing else. tests/unit/test_terminal.py checks the server honours `target`.
+This file checks the page actually sends it, by driving a real recording in a
 headless Chromium (fake mic) and asserting the intercepted upload body carries
 `target=<session>:<window_id>` matching the window the page was showing.
 
@@ -26,8 +26,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 # Voice needs a transcription backend for the mic button to record at all. A
-# dummy OpenAI key satisfies the availability check; the upload is intercepted
-# before it reaches the server, so the key is never actually used.
+# dummy OpenAI key satisfies the availability check, and the upload is
+# intercepted before it reaches the server, so the key is never actually used.
 MERLIN_OPTIONS = {"extra_env": {"OPENAI_API_KEY": "sk-e2e-test"}}
 
 

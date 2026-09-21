@@ -325,8 +325,8 @@ def test_send_enter_submits_the_line(tmux_server):
 
 
 def test_send_false_for_a_vanished_window(tmux_server):
-    """A window that closed between capture and injection yields False; nothing
-    is written elsewhere."""
+    """A window that closed between capture and injection yields False, and
+    nothing is written elsewhere."""
     wid = sweep.new_window("alpha")
     assert wid
     assert _tmux("kill-window", "-t", f"alpha:{wid}").returncode == 0

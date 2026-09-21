@@ -40,7 +40,7 @@ pytestmark = pytest.mark.skipif(
 
 MARKER = "VOICEMARK42"
 
-# OPENAI_API_KEY makes the mic button available; MERLIN_TRANSCRIBE_FAKE short
+# OPENAI_API_KEY makes the mic button available. MERLIN_TRANSCRIBE_FAKE short
 # circuits the backend to return MARKER after MERLIN_TRANSCRIBE_DELAY, giving the
 # test a window to switch or kill before the delayed injection fires.
 MERLIN_OPTIONS = {
