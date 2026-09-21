@@ -335,9 +335,11 @@ def _unlink_safe(path: str) -> None:
 
 
 # A well-formed injection target is ``session:window_id``. Session names never
-# contain a space or a colon (see board.sweep.sanitize_session_name) and a tmux
-# window id is ``@`` plus digits. Anything else takes the 200 fallback.
-_TARGET_RE = re.compile(r"^[^:\s]+:@\d+$")
+# contain a colon (see board.sweep.sanitize_session_name), a window id is ``@``
+# plus digits, and neither part carries whitespace. The whole value must match
+# with ``fullmatch``: a value with surrounding whitespace is not normalised into
+# a match, it takes the 200 fallback, so the address is never silently rewritten.
+_TARGET_RE = re.compile(r"[^:\s]+:@\d+")
 
 
 async def _transcribe_and_inject(
@@ -380,7 +382,15 @@ async def _transcribe_and_inject(
                 # Enter as a newline inside the pasted blob instead of a submit.
                 # Letting the text flush first makes the standalone Enter submit.
                 await asyncio.sleep(0.15)
-                await loop.run_in_executor(None, board_sweep.send_enter, target)
+                if not await loop.run_in_executor(None, board_sweep.send_enter, target):
+                    # The window vanished during the gap, or tmux failed: the
+                    # text landed but auto-submit was lost. Log it, do not retry
+                    # against any other destination.
+                    logger.warning(
+                        "Transcription auto-enter failed: target=%s text_len=%d",
+                        target,
+                        len(text),
+                    )
     except Exception:
         logger.exception("Background transcription failed")
     finally:
@@ -418,10 +428,10 @@ async def transcribe_audio(
     tmp.write(content)
     tmp.close()
 
-    target = target.strip()
-    if _TARGET_RE.match(target):
+    if _TARGET_RE.fullmatch(target):
         # Server-side injection: return immediately, transcribe in background
-        # and send the text straight to the target window.
+        # and send the text straight to the target window. The target is passed
+        # through exactly as received, never trimmed or otherwise rewritten.
         should_enter = auto_enter.lower() in ("true", "1")
         asyncio.create_task(
             _transcribe_and_inject(tmp.name, lang, target, should_enter)

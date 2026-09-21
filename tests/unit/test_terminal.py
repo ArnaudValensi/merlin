@@ -311,7 +311,7 @@ class TestTerminalWebSocket:
 
 
 class TestTranscribeEndpoint:
-    """POST /api/transcribe endpoint (fallback 200 path — no target)."""
+    """POST /api/transcribe endpoint (fallback 200 path, no target)."""
 
     def _make_file(self, data=b"fake audio data", filename="recording.webm"):
         f = mock.AsyncMock()
@@ -518,10 +518,26 @@ class TestTranscribeServerSideInjection:
         assert captured["args"] == ("fr", "merlin:@12", True)
         assert captured["existed"] is True
 
-    @pytest.mark.parametrize("bad", ["", "merlin", "merlin:12", "mer lin:@1", ":@1"])
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "",
+            "merlin",
+            "merlin:12",
+            "mer lin:@1",
+            ":@1",
+            # Surrounding whitespace must NOT be normalised into a match: the
+            # value is taken verbatim, so these fall back rather than being
+            # trimmed to merlin:@12 and injected somewhere the page did not name.
+            " merlin:@12",
+            "merlin:@12 ",
+            "merlin:@12\n",
+            "\tmerlin:@12",
+        ],
+    )
     def test_missing_or_malformed_target_falls_back(self, bad):
-        """No target, or one that is not session:@id, takes the 200 path and
-        schedules no injection."""
+        """No target, or one that is not exactly session:@id, takes the 200 path
+        and schedules no injection."""
         with (
             mock.patch("transcribe.transcribe", return_value="hello"),
             mock.patch("os.unlink"),
@@ -539,6 +555,35 @@ class TestTranscribeServerSideInjection:
         assert json.loads(result.body)["text"] == "hello"
         inject.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "good", ["merlin:@12", "my-proj:@3", "proj_x:@10", "projé:@1"]
+    )
+    def test_accepted_target_shapes_schedule_injection(self, good):
+        """Real session names (hyphen, underscore, Unicode) with a window id
+        answer 202 and schedule with the exact value, unchanged."""
+        captured = {}
+
+        async def fake_inject(tmp_path, language, target, auto_enter):
+            captured["target"] = target
+            os.unlink(tmp_path)
+
+        async def run():
+            with mock.patch(
+                "terminal.routes._transcribe_and_inject", side_effect=fake_inject
+            ):
+                result = await tr.transcribe_audio(
+                    file=self._make_file(),
+                    language="en",
+                    auto_enter="false",
+                    target=good,
+                )
+                await self._drain()
+                return result
+
+        result = asyncio.run(run())
+        assert result.status_code == 202
+        assert captured["target"] == good
+
 
 class TestTranscribeAndInject:
     """_transcribe_and_inject drives board.sweep to reach the target window,
@@ -551,6 +596,7 @@ class TestTranscribeAndInject:
         target="merlin:@12",
         auto_enter=False,
         send_ok=True,
+        enter_ok=True,
         transcribe_exc=None,
     ):
         if transcribe_exc is not None:
@@ -559,11 +605,16 @@ class TestTranscribeAndInject:
             )
         else:
             cm_transcribe = mock.patch("transcribe.transcribe", return_value=text)
+        # One parent records the order of the tmux steps across all three helpers.
+        parent = mock.Mock()
+        parent.exit_cm.return_value = None
+        parent.send_lit.return_value = send_ok
+        parent.send_enter.return_value = enter_ok
         with (
             cm_transcribe,
-            mock.patch("board.sweep.exit_copy_mode") as exit_cm,
-            mock.patch("board.sweep.send_literal", return_value=send_ok) as send_lit,
-            mock.patch("board.sweep.send_enter", return_value=True) as send_enter,
+            mock.patch("board.sweep.exit_copy_mode", parent.exit_cm),
+            mock.patch("board.sweep.send_literal", parent.send_lit),
+            mock.patch("board.sweep.send_enter", parent.send_enter),
             mock.patch("terminal.routes._unlink_safe") as unlink,
             mock.patch.object(tr.logger, "warning") as warn,
         ):
@@ -571,9 +622,10 @@ class TestTranscribeAndInject:
                 tr._transcribe_and_inject("/tmp/audio.webm", "en", target, auto_enter)
             )
         return {
-            "exit_cm": exit_cm,
-            "send_lit": send_lit,
-            "send_enter": send_enter,
+            "exit_cm": parent.exit_cm,
+            "send_lit": parent.send_lit,
+            "send_enter": parent.send_enter,
+            "order": [c[0] for c in parent.mock_calls],
             "unlink": unlink,
             "warn": warn,
         }
@@ -585,18 +637,36 @@ class TestTranscribeAndInject:
         r["send_enter"].assert_not_called()
         r["warn"].assert_not_called()
         r["unlink"].assert_called_once_with("/tmp/audio.webm")
+        # Copy-mode is left before the text is sent.
+        assert r["order"] == ["exit_cm", "send_lit"]
 
     def test_auto_enter_sends_enter_after_text(self):
-        r = self._run(auto_enter=True)
-        r["send_lit"].assert_called_once()
+        r = self._run(text="ls", auto_enter=True)
+        r["send_lit"].assert_called_once_with("merlin:@12", "ls")
         r["send_enter"].assert_called_once_with("merlin:@12")
         r["warn"].assert_not_called()
+        # Exact order: leave copy-mode, send the text, then the standalone Enter
+        # (after the gap, which the code sleeps between send_lit and send_enter).
+        assert r["order"] == ["exit_cm", "send_lit", "send_enter"]
 
     def test_failed_send_logs_and_skips_enter(self):
         r = self._run(auto_enter=True, send_ok=False)
         r["send_lit"].assert_called_once()
         r["send_enter"].assert_not_called()
         r["warn"].assert_called_once()
+        r["unlink"].assert_called_once_with("/tmp/audio.webm")
+
+    def test_failed_enter_is_logged(self):
+        """The text landed but the standalone Enter failed (window vanished in
+        the gap): warn, do not retry, still clean up."""
+        r = self._run(text="deploy", auto_enter=True, send_ok=True, enter_ok=False)
+        r["send_lit"].assert_called_once_with("merlin:@12", "deploy")
+        r["send_enter"].assert_called_once_with("merlin:@12")
+        r["warn"].assert_called_once()
+        # The warning names the target and the text length.
+        args = r["warn"].call_args[0]
+        assert "merlin:@12" in args
+        assert len("deploy") in args
         r["unlink"].assert_called_once_with("/tmp/audio.webm")
 
     def test_empty_transcription_writes_nothing(self):

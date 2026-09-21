@@ -1755,7 +1755,7 @@ document.addEventListener('DOMContentLoaded', () => {
             formData.append('auto_enter', autoEnter ? 'true' : 'false');
             // The window the recording stopped in (decision: capture at stop).
             // Empty for a pre-target recording or before the first session
-            // frame; the server then takes the 200 fallback.
+            // frame, in which case the server takes the 200 fallback.
             if (target) formData.append('target', target);
 
             const xhr = new XMLHttpRequest();
@@ -1936,8 +1936,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 // before any await: the text belongs in the window current at
                 // this instant, however long the upload takes and whatever
                 // window or device is current when it lands. Empty until the
-                // first session frame arrives; the server then falls back to
-                // writing into this page's own socket.
+                // first session frame arrives, in which case the server falls
+                // back to writing into this page's own socket.
                 const target = (currentSession && currentWindowId)
                     ? currentSession + ':' + currentWindowId
                     : '';

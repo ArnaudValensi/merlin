@@ -19,6 +19,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 logger = logging.getLogger("merlin.transcribe")
@@ -123,6 +124,18 @@ def transcribe(audio_path: str | Path, language: str = LANGUAGE) -> str:
         The transcribed text.
     """
     global _backend_logged
+
+    # Test-only backend. When MERLIN_TRANSCRIBE_FAKE is set, return that exact
+    # text instead of calling a real backend, after an optional
+    # MERLIN_TRANSCRIBE_DELAY (seconds). It exists so an end-to-end test can
+    # supply a known transcription while keeping the real HTTP, background-task
+    # and tmux injection paths intact. It never runs in production, where none
+    # of these variables is set.
+    if (fake := os.getenv("MERLIN_TRANSCRIBE_FAKE")) is not None:
+        delay = float(os.getenv("MERLIN_TRANSCRIBE_DELAY", "0") or "0")
+        if delay > 0:
+            time.sleep(delay)
+        return fake
 
     if saas_token := os.getenv("MERLIN_SAAS_TOKEN"):
         if not _backend_logged:
