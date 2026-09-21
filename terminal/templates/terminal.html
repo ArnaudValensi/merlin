@@ -1693,12 +1693,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    async function saveVoiceToDB(blob, language, autoEnter) {
+    async function saveVoiceToDB(blob, language, autoEnter, target) {
         const db = await openVoiceDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction('audio', 'readwrite');
             tx.objectStore('audio').put(
-                { blob, language, autoEnter, timestamp: Date.now() },
+                { blob, language, autoEnter, target, timestamp: Date.now() },
                 VOICE_DB_KEY
             );
             tx.oncomplete = () => { db.close(); resolve(); };
@@ -1746,13 +1746,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // Upload with retry
     // -------------------------------------------------------------------
 
-    function uploadVoice(blob, language, autoEnter) {
+    function uploadVoice(blob, language, autoEnter, target) {
         return new Promise((resolve, reject) => {
             const ext = blob.type.includes('mp4') ? '.mp4' : blob.type.includes('wav') ? '.wav' : '.webm';
             const formData = new FormData();
             formData.append('file', blob, 'recording' + ext);
             formData.append('language', language);
             formData.append('auto_enter', autoEnter ? 'true' : 'false');
+            // The window the recording stopped in (decision: capture at stop).
+            // Empty for a pre-target recording or before the first session
+            // frame; the server then takes the 200 fallback.
+            if (target) formData.append('target', target);
 
             const xhr = new XMLHttpRequest();
             xhr.open('POST', '/api/terminal/transcribe');
@@ -1802,13 +1806,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-    async function uploadWithRetry(blob, language, autoEnter) {
+    async function uploadWithRetry(blob, language, autoEnter, target) {
         micBtn.classList.add('uploading');
         micBtn.style.setProperty('--upload-progress', '0');
 
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
-                await uploadVoice(blob, language, autoEnter);
+                await uploadVoice(blob, language, autoEnter, target);
                 // Success — clean up
                 micBtn.classList.remove('uploading');
                 await deleteVoiceFromDB();
@@ -1853,7 +1857,9 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         exitRetryState();
-        await uploadWithRetry(pending.blob, pending.language, pending.autoEnter);
+        // Reuse the stored target, never the window current at retry time. A
+        // record saved before this change has none, so it uploads without one.
+        await uploadWithRetry(pending.blob, pending.language, pending.autoEnter, pending.target || '');
     }
 
     // -------------------------------------------------------------------
@@ -1926,17 +1932,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 const language = document.getElementById('mic-lang').value;
                 const autoEnter = autoEnterBtn.classList.contains('active');
 
+                // Capture the target window synchronously, now, at the stop tap,
+                // before any await: the text belongs in the window current at
+                // this instant, however long the upload takes and whatever
+                // window or device is current when it lands. Empty until the
+                // first session frame arrives; the server then falls back to
+                // writing into this page's own socket.
+                const target = (currentSession && currentWindowId)
+                    ? currentSession + ':' + currentWindowId
+                    : '';
+
                 // Exit retry state if active (new recording replaces old)
                 if (voiceRetryPending) exitRetryState();
 
                 // Save to IndexedDB before uploading (survives network failure)
                 try {
-                    await saveVoiceToDB(blob, language, autoEnter);
+                    await saveVoiceToDB(blob, language, autoEnter, target);
                 } catch (e) {
                     // IndexedDB unavailable — proceed without persistence
                 }
 
-                await uploadWithRetry(blob, language, autoEnter);
+                await uploadWithRetry(blob, language, autoEnter, target);
             };
 
             mediaRecorder.start();

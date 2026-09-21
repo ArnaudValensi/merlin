@@ -228,3 +228,90 @@ class TestCheckedSessionSweep:
         )
 
         assert sweep.run_session_sweep_checked() == sweep.parse_sessions(sline())
+
+
+class TestInjectionHelpers:
+    """send_literal / send_enter build the exact tmux argv and stay best-effort."""
+
+    def _patch_run(self, monkeypatch, rc=0, exc=None):
+        calls = []
+
+        def fake_run(cmd, *a, **kw):
+            calls.append(cmd)
+            if exc is not None:
+                raise exc
+            return subprocess.CompletedProcess(cmd, rc, "", "")
+
+        monkeypatch.setattr(sweep.shutil, "which", lambda _name: "/usr/bin/tmux")
+        monkeypatch.setattr(sweep.subprocess, "run", fake_run)
+        return calls
+
+    def test_send_literal_argv(self, monkeypatch):
+        # A transcription that starts with a dash must survive the -- guard.
+        calls = self._patch_run(monkeypatch)
+        assert sweep.send_literal("merlin:@12", "-rf everything") is True
+        assert calls == [
+            ["tmux", "send-keys", "-t", "merlin:@12", "-l", "--", "-rf everything"]
+        ]
+
+    def test_send_enter_argv(self, monkeypatch):
+        calls = self._patch_run(monkeypatch)
+        assert sweep.send_enter("merlin:@12") is True
+        assert calls == [["tmux", "send-keys", "-t", "merlin:@12", "Enter"]]
+
+    def test_false_on_nonzero_exit(self, monkeypatch):
+        self._patch_run(monkeypatch, rc=1)
+        assert sweep.send_literal("merlin:@12", "hi") is False
+        assert sweep.send_enter("merlin:@12") is False
+
+    def test_false_on_timeout(self, monkeypatch):
+        self._patch_run(monkeypatch, exc=subprocess.TimeoutExpired(["tmux"], 5))
+        assert sweep.send_literal("merlin:@12", "hi") is False
+        assert sweep.send_enter("merlin:@12") is False
+
+    def test_false_without_tmux(self, monkeypatch):
+        monkeypatch.setattr(sweep.shutil, "which", lambda _name: None)
+        assert sweep.send_literal("merlin:@12", "hi") is False
+        assert sweep.send_enter("merlin:@12") is False
+
+    def test_false_without_target(self, monkeypatch):
+        monkeypatch.setattr(sweep.shutil, "which", lambda _name: "/usr/bin/tmux")
+        assert sweep.send_literal("", "hi") is False
+        assert sweep.send_enter("") is False
+
+
+class TestExitCopyModeTarget:
+    """exit_copy_mode reads the target's active pane and cancels its mode."""
+
+    def test_cancels_on_a_window_target(self, monkeypatch):
+        seen = {}
+
+        def fake_capture(args):
+            seen["cap"] = args
+            return "1\t%3\n"
+
+        def fake_run_ok(args):
+            seen["run"] = args
+            return True
+
+        monkeypatch.setattr(sweep, "_tmux_capture", fake_capture)
+        monkeypatch.setattr(sweep, "_run_ok", fake_run_ok)
+        assert sweep.exit_copy_mode("merlin:@12") is True
+        assert seen["cap"] == [
+            "display-message",
+            "-p",
+            "-t",
+            "merlin:@12",
+            "#{pane_in_mode}\t#{pane_id}",
+        ]
+        assert seen["run"] == ["send-keys", "-t", "%3", "-X", "cancel"]
+
+    def test_noop_when_not_in_mode(self, monkeypatch):
+        called = []
+        monkeypatch.setattr(sweep, "_tmux_capture", lambda args: "0\t%3\n")
+        monkeypatch.setattr(sweep, "_run_ok", lambda args: called.append(args) or True)
+        assert sweep.exit_copy_mode("merlin:@12") is False
+        assert called == []
+
+    def test_false_on_empty_target(self):
+        assert sweep.exit_copy_mode("") is False

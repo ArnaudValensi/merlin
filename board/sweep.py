@@ -348,24 +348,25 @@ def switch_client(tty: str, target: str) -> bool:
     return True
 
 
-def exit_copy_mode(tty: str) -> bool:
-    """Leave copy-mode in a client's active pane, if it is in a mode.
+def exit_copy_mode(target: str) -> bool:
+    """Leave copy-mode in the active pane at ``target``, if it is in a mode.
 
-    Server-side text injection writes bytes to the tmux client as if typed.
-    While a pane is scrolled it is in copy-mode, a modal keyboard grab: those
-    bytes are then read as copy-mode key bindings (``q`` cancels, letters jump
-    the cursor, some sequences kill the pane) instead of reaching the program.
+    Server-side text injection writes text into a pane as if typed. While a
+    pane is scrolled it is in copy-mode, a modal keyboard grab: those bytes are
+    then read as copy-mode key bindings (``q`` cancels, letters jump the
+    cursor, some sequences kill the pane) instead of reaching the program.
     Cancelling the mode first makes injected text land at the prompt.
 
-    Targets the pane the client (by tty) is currently viewing, so it never
-    disturbs another browser tab. Returns True when a mode was cancelled,
-    False otherwise (not in a mode, unknown client, or tmux unavailable).
+    ``target`` is any tmux ``-t`` target that resolves to a pane: a client tty
+    or a ``session:window_id``. It reads that target's active pane, so it never
+    disturbs another window. Returns True when a mode was cancelled, False
+    otherwise (not in a mode, unknown target, or tmux unavailable).
     Best-effort: any failure just yields False.
     """
-    if not tty:
+    if not target:
         return False
     out = _tmux_capture(
-        ["display-message", "-p", "-t", tty, "#{pane_in_mode}\t#{pane_id}"]
+        ["display-message", "-p", "-t", target, "#{pane_in_mode}\t#{pane_id}"]
     )
     if not out:
         return False
@@ -373,6 +374,33 @@ def exit_copy_mode(tty: str) -> bool:
     if len(parts) != 2 or parts[0] != "1" or not parts[1]:
         return False
     return _run_ok(["send-keys", "-t", parts[1], "-X", "cancel"])
+
+
+def send_literal(target: str, text: str) -> bool:
+    """Send ``text`` to the active pane of ``target`` (``session:window_id``)
+    as literal keystrokes.
+
+    ``-l`` sends the argument literally rather than as key names, and ``--``
+    ends option parsing so a transcription that begins with a dash is still
+    sent as text, not read as a flag. Addresses the window's active pane: it
+    moves no client and selects no window, so a user who has switched away sees
+    nothing move and the text waits in the window they left. Best-effort:
+    returns False when tmux is missing, the window is gone, or the call fails
+    or overruns the timeout."""
+    if not target:
+        return False
+    return _run_ok(["send-keys", "-t", target, "-l", "--", text])
+
+
+def send_enter(target: str) -> bool:
+    """Send a standalone Enter to the active pane of ``target``
+    (``session:window_id``).
+
+    A separate keystroke after the literal text, so a TUI treats the Enter as a
+    submit rather than a newline inside a pasted blob. Best-effort bool."""
+    if not target:
+        return False
+    return _run_ok(["send-keys", "-t", target, "Enter"])
 
 
 def rename_session(old: str, new: str) -> bool:

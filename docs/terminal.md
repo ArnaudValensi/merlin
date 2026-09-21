@@ -190,12 +190,18 @@ Outside Merlin, NeoVim falls back to the OS clipboard as usual.
 
 ## Dictate instead of typing
 
-Tap the mic button to record, tap again to stop; the audio uploads and
+Tap the mic button to record, tap again to stop, and the audio uploads and
 the transcribed text appears in the terminal. The server injects the text
 itself, so you can lock your phone right after the upload finishes.
 Toggle the `↵` auto-enter button to submit transcriptions automatically,
-hands-free. The EN/FR selector picks the language; both choices persist
+hands-free. The EN/FR selector picks the language, and both choices persist
 in the browser. Recordings are capped at 25 MB.
+
+The text lands in the window you were on when you stopped the recording, even
+if you switch window or switch device while the upload is still going. Dictate
+from your phone into the window your phone is showing and it stays there, whatever
+your desktop is doing. The one catch: if you close that window before the text
+arrives, the text is lost rather than sent somewhere else.
 
 ![Voice transcription with the microphone button](terminal/phone-speak.jpg)
 

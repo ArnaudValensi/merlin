@@ -283,3 +283,52 @@ def test_create_or_get_starts_a_configured_server(monkeypatch, tmp_path, request
         assert "agent-state-switch.sh" in tmux("show-hooks", "-g")
     finally:
         tmux("kill-server")
+
+
+def _window_ids(session: str) -> list[str]:
+    return _tmux("list-windows", "-t", session, "-F", "#{window_id}").stdout.split()
+
+
+def test_send_literal_lands_in_the_target_window(tmux_server):
+    """Text sent to a window's active pane lands there and nowhere else."""
+    wid_a = _window_ids("alpha")[0]
+    wid_b = sweep.new_window("alpha")
+    assert wid_b
+    marker = "MERLIN_TARGET_MARK"
+    assert sweep.send_literal(f"alpha:{wid_a}", marker) is True
+    time.sleep(0.3)
+    pane_a = _tmux("capture-pane", "-p", "-t", f"alpha:{wid_a}").stdout
+    pane_b = _tmux("capture-pane", "-p", "-t", f"alpha:{wid_b}").stdout
+    assert marker in pane_a
+    assert marker not in pane_b
+
+
+def test_send_literal_keeps_a_leading_dash(tmux_server):
+    """A transcription that starts with a dash is sent as text, not a flag."""
+    wid = _window_ids("alpha")[0]
+    assert sweep.send_literal(f"alpha:{wid}", "-not-a-flag MARKD") is True
+    time.sleep(0.3)
+    pane = _tmux("capture-pane", "-p", "-t", f"alpha:{wid}").stdout
+    assert "-not-a-flag MARKD" in pane
+
+
+def test_send_enter_submits_the_line(tmux_server):
+    """send_literal then send_enter runs the line in the shell (the Enter is a
+    real submit, not a newline inside the paste)."""
+    wid = _window_ids("alpha")[0]
+    assert sweep.send_literal(f"alpha:{wid}", "echo MERLIN_ENTER_OK") is True
+    assert sweep.send_enter(f"alpha:{wid}") is True
+    time.sleep(0.6)
+    pane = _tmux("capture-pane", "-p", "-t", f"alpha:{wid}").stdout
+    # The typed line AND its output line both carry the marker: it ran.
+    assert pane.count("MERLIN_ENTER_OK") >= 2
+
+
+def test_send_false_for_a_vanished_window(tmux_server):
+    """A window that closed between capture and injection yields False; nothing
+    is written elsewhere."""
+    wid = sweep.new_window("alpha")
+    assert wid
+    assert _tmux("kill-window", "-t", f"alpha:{wid}").returncode == 0
+    assert sweep.send_literal(f"alpha:{wid}", "ghost text") is False
+    assert sweep.send_enter(f"alpha:{wid}") is False

@@ -270,12 +270,13 @@ reconnect rule after a phone suspension are documented in
 ### Transcription API
 
 `POST /api/terminal/transcribe`:
-- Accepts multipart form: `file` (audio), `language`, `auto_enter` (`true`/`false`)
+- Accepts multipart form: `file` (audio), `language`, `auto_enter` (`true`/`false`), `target` (`session:window_id`)
 - Transcribes via `transcribe.py` (SaaS proxy → OpenAI Whisper → local faster-whisper)
-- **With PTY registered**: returns `202 Accepted`, transcribes in background, writes text to the PTY through `bridge.write()` via `_transcribe_and_inject()`
-- **Without PTY**: returns `200` with `{"text": "..."}` for client-side injection (fallback)
-- PTY registry: `register_pty()` / `unregister_pty()` / `get_pty_bridge()` / `get_pty_client_tty()` in `routes.py`. Registration records the tmux client tty alongside the bridge.
-- **Copy-mode guard**: a `bridge.write()` feeds bytes to the tmux client as if typed. If the pane is scrolled it is in tmux copy-mode, a modal keyboard grab, so those bytes would fire copy-mode key bindings (navigation, and some that kill the pane) instead of landing at the prompt. Before writing, `_transcribe_and_inject()` calls `board.sweep.exit_copy_mode(client_tty)`, which cancels the mode on the client's active pane only if it is in one. Leaving copy-mode returns the view to the bottom; that tradeoff is deliberate (dictation belongs at the prompt). The `200` fallback path injects client-side and is not covered by this guard.
+- **`target` is captured at stop time.** The page reads the current tmux window the instant the recording stops (`currentSession:currentWindowId`, e.g. `merlin:@12`) and sends it with the audio. It is the window the text belongs in, whatever window or device is current when the upload finally lands. The pending IndexedDB record keeps the target so a retry uses the same one, never the window current at retry time.
+- **With a valid `target`** (matching `^[^:\s]+:@\d+$`): returns `202 Accepted`, transcribes in the background, and injects the text straight into that tmux window with `board.sweep.send_literal(target, text)` (`tmux send-keys -t <session:window_id> -l -- <text>`), then, when `auto_enter`, `board.sweep.send_enter(target)` after a 150 ms gap. This addresses the window's active pane through tmux only: it moves no client and selects no window, so a user who switched away sees nothing move and the text waits in the window they left. It needs no open WebSocket. `_transcribe_and_inject()` runs every tmux call off the event loop.
+- **Without a target, or a malformed one**: returns `200` with `{"text": "..."}` and the page writes the text into its own WebSocket (`sendToTerminal`). That socket already reaches the right device; only the "lock the phone while it transcribes" convenience is lost. This is the right path for the first second after connect (before the first session frame) and for a pending record saved before this feature existed. The server never rewrites a missing target to some other window.
+- **A vanished target is a logged loss.** If `send-keys` fails (the window closed between the stop tap and the injection, the session or tmux is gone), `_transcribe_and_inject()` logs a warning with the target and text length and writes nothing anywhere else. Recovery is the transcription-history epic's job, not this path's.
+- **Copy-mode guard**: injected text lands in a pane as if typed. If the pane is scrolled it is in tmux copy-mode, a modal keyboard grab, so those bytes would fire copy-mode key bindings (navigation, and some that kill the pane) instead of landing at the prompt. Before sending, `_transcribe_and_inject()` calls `board.sweep.exit_copy_mode(target)`, which reads that window's active pane and cancels the mode only if it is in one. Leaving copy-mode returns the view to the bottom; that tradeoff is deliberate (dictation belongs at the prompt). The `200` fallback path injects client-side and is not covered by this guard.
 
 ## Authentication
 
@@ -285,7 +286,7 @@ Terminal access requires the same cookie auth as the rest of the dashboard. WebS
 
 | File | Purpose |
 |------|---------|
-| `terminal/routes.py` | WebSocket endpoint, PTY registry, transcription API |
+| `terminal/routes.py` | WebSocket endpoint, transcription API (target-window injection) |
 | `terminal/pty_bridge.py` | Non-blocking PTY I/O, tmux client termination |
 | `templates/terminal.html` | xterm.js frontend, toolbar, clipboard, voice input |
 | `transcribe.py` | Audio transcription (faster-whisper) |

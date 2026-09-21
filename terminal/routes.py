@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import pty
+import re
 import secrets
 import struct
 import tempfile
@@ -259,44 +260,6 @@ def _voice_available() -> bool:
         return False
 
 
-# ---------------------------------------------------------------------------
-# PTY registry — allows transcribe endpoint to write directly to the terminal
-# ---------------------------------------------------------------------------
-
-_pty_registry: dict[str, PtyBridge] = {}
-_pty_client_tty: dict[str, str] = {}
-
-
-def register_pty(
-    session_key: str, bridge: PtyBridge, client_tty: str | None = None
-) -> None:
-    """Register a PTY bridge for server-side text injection.
-
-    ``client_tty`` is the tmux client this bridge writes to. It lets an
-    injection leave copy-mode on that client's active pane first, so scrolled
-    panes do not turn injected text into copy-mode key bindings.
-    """
-    _pty_registry[session_key] = bridge
-    if client_tty:
-        _pty_client_tty[session_key] = client_tty
-
-
-def unregister_pty(session_key: str) -> None:
-    """Unregister a PTY bridge."""
-    _pty_registry.pop(session_key, None)
-    _pty_client_tty.pop(session_key, None)
-
-
-def get_pty_bridge(session_key: str) -> PtyBridge | None:
-    """Get the PTY bridge for a session, or None if not registered."""
-    return _pty_registry.get(session_key)
-
-
-def get_pty_client_tty(session_key: str) -> str | None:
-    """Get the tmux client tty for a registered PTY, or None if unknown."""
-    return _pty_client_tty.get(session_key)
-
-
 def set_cwd(cwd: str) -> None:
     """Set the terminal starting directory."""
     global _cwd
@@ -371,40 +334,53 @@ def _unlink_safe(path: str) -> None:
         pass
 
 
+# A well-formed injection target is ``session:window_id``. Session names never
+# contain a space or a colon (see board.sweep.sanitize_session_name) and a tmux
+# window id is ``@`` plus digits. Anything else takes the 200 fallback.
+_TARGET_RE = re.compile(r"^[^:\s]+:@\d+$")
+
+
 async def _transcribe_and_inject(
     tmp_path: str,
     language: str,
-    bridge: PtyBridge,
+    target: str,
     auto_enter: bool,
-    client_tty: str | None = None,
 ) -> None:
-    """Transcribe audio and write result directly to the PTY."""
+    """Transcribe audio and inject the text into the target tmux window.
+
+    ``target`` is ``session:window_id`` (the window the page showed when the
+    recording stopped). The text is sent to that window's active pane through
+    tmux ``send-keys``, independent of any client, WebSocket or current window:
+    a user who switched away sees nothing move and the text waits in the window
+    they left. A window that no longer exists is a logged loss, not a redirect
+    to somewhere else. Runs off the event loop: every call shells out to tmux.
+    """
     from transcribe import transcribe
 
+    loop = asyncio.get_event_loop()
     try:
-        text = await asyncio.get_event_loop().run_in_executor(
-            None, transcribe, tmp_path, language
-        )
+        text = await loop.run_in_executor(None, transcribe, tmp_path, language)
         if text:
-            if client_tty:
-                # If the pane is scrolled it is in tmux copy-mode, and the
-                # bytes below would be read as copy-mode key bindings instead
-                # of landing at the prompt (some can even kill the pane). Leave
-                # the mode first. Off the event loop: it shells out to tmux.
-                await asyncio.get_event_loop().run_in_executor(
-                    None, board_sweep.exit_copy_mode, client_tty
+            # If the target window's pane is scrolled it is in tmux copy-mode, a
+            # modal keyboard grab, and the injected text would fire copy-mode key
+            # bindings (some kill the pane) instead of landing at the prompt.
+            # Cancel the mode on that window first.
+            await loop.run_in_executor(None, board_sweep.exit_copy_mode, target)
+            if not await loop.run_in_executor(
+                None, board_sweep.send_literal, target, text
+            ):
+                logger.warning(
+                    "Transcription injection failed: target=%s text_len=%d",
+                    target,
+                    len(text),
                 )
-            if not await bridge.write(text.encode("utf-8")):
-                logger.warning("PTY write failed (terminal may be closed)")
             elif auto_enter:
                 # Send Enter as a separate keystroke, after a brief gap.
-                # Concatenating text + "\r" in a single write makes Claude
-                # Code's TUI treat the trailing CR as a newline inside the
-                # pasted blob instead of a submit. Letting the text flush
-                # first makes the CR land as a standalone Enter.
+                # Concatenating text + Enter in one send makes a TUI treat the
+                # Enter as a newline inside the pasted blob instead of a submit.
+                # Letting the text flush first makes the standalone Enter submit.
                 await asyncio.sleep(0.15)
-                if not await bridge.write(b"\r"):
-                    logger.warning("PTY write failed (terminal may be closed)")
+                await loop.run_in_executor(None, board_sweep.send_enter, target)
     except Exception:
         logger.exception("Background transcription failed")
     finally:
@@ -416,12 +392,15 @@ async def transcribe_audio(
     file: UploadFile,
     language: str = Form("en"),
     auto_enter: str = Form("false"),
+    target: str = Form(""),
 ):
     """Transcribe an uploaded audio file.
 
-    If a PTY is registered (WebSocket active), returns 202 and injects
-    text server-side. Otherwise falls back to returning the text in the
-    response body (200).
+    With a valid ``target`` (``session:window_id``, captured by the page when
+    the recording stopped), returns 202 and injects the text into that tmux
+    window in the background. Without a target, or with a malformed one, falls
+    back to returning the text in the response body (200) for the page to write
+    into its own WebSocket, which already reaches the right device.
     """
     # Validate language
     lang = language.strip().lower()[:5]
@@ -439,18 +418,17 @@ async def transcribe_audio(
     tmp.write(content)
     tmp.close()
 
-    bridge = get_pty_bridge("terminal")
-
-    if bridge is not None:
+    target = target.strip()
+    if _TARGET_RE.match(target):
         # Server-side injection: return immediately, transcribe in background
+        # and send the text straight to the target window.
         should_enter = auto_enter.lower() in ("true", "1")
-        client_tty = get_pty_client_tty("terminal")
         asyncio.create_task(
-            _transcribe_and_inject(tmp.name, lang, bridge, should_enter, client_tty)
+            _transcribe_and_inject(tmp.name, lang, target, should_enter)
         )
         return JSONResponse({"status": "accepted"}, status_code=202)
 
-    # Fallback: synchronous transcription (phone must stay connected)
+    # Fallback: synchronous transcription (page writes into its own socket)
     from transcribe import transcribe
 
     try:
@@ -625,7 +603,6 @@ async def terminal_ws(websocket: WebSocket):
         await terminate_client(pid)
         await websocket.close(code=1011, reason="PTY setup failed")
         return
-    register_pty("terminal", bridge, client_tty)
     session_report_state = SessionReportState()
     session_report_state.agent = short_agent(websocket.headers.get("user-agent", ""))
     _client_views.add(session_report_state)
@@ -732,7 +709,6 @@ async def terminal_ws(websocket: WebSocket):
         # Sync teardown first, so hooks and fds are gone even if this
         # handler is itself cancelled (server shutdown).
         _client_views.discard(session_report_state)
-        unregister_pty("terminal")
         bridge.close()
         for task in (pty_reader, ws_reader, session_watcher):
             task.cancel()

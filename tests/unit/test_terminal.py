@@ -4,7 +4,6 @@ import asyncio
 import json
 import os
 import struct
-import tempfile
 from unittest import mock
 
 import pytest
@@ -225,7 +224,7 @@ class TestTerminalWebSocket:
             os.close(slave)
 
     def test_cleanup_on_disconnect(self, mock_websocket_with_cookie):
-        """PTY bridge is closed, registry cleared, tmux client terminated."""
+        """On disconnect the PTY bridge is closed and the tmux client terminated."""
         import pty as _pty
 
         ws = mock_websocket_with_cookie
@@ -233,17 +232,18 @@ class TestTerminalWebSocket:
         master, slave = _pty.openpty()
 
         captured = {}
-        orig_register = tr.register_pty
+        orig_bridge_cls = tr.PtyBridge
 
-        def capture_register(key, bridge, client_tty=None):
+        def capture_bridge(fd):
+            bridge = orig_bridge_cls(fd)
             captured["bridge"] = bridge
-            orig_register(key, bridge, client_tty)
+            return bridge
 
         try:
             with (
                 mock.patch("pty.fork", return_value=(child_pid, master)),
                 mock.patch("os.waitpid", return_value=(0, 0)),
-                mock.patch("terminal.routes.register_pty", capture_register),
+                mock.patch("terminal.routes.PtyBridge", side_effect=capture_bridge),
                 mock.patch(
                     "terminal.routes.terminate_client", new_callable=mock.AsyncMock
                 ) as mock_terminate,
@@ -253,9 +253,8 @@ class TestTerminalWebSocket:
                 ws.receive_text.side_effect = WebSocketDisconnect()
                 asyncio.run(tr.terminal_ws(ws))
 
-            # Verify cleanup: bridge closed, registry empty, client terminated
+            # Verify cleanup: bridge closed, client terminated
             assert captured["bridge"].closed is True
-            assert tr.get_pty_bridge("terminal") is None
             mock_terminate.assert_awaited_once_with(child_pid)
         finally:
             os.close(slave)
@@ -307,79 +306,12 @@ class TestTerminalWebSocket:
 
 
 # ---------------------------------------------------------------------------
-# PTY Registry
-# ---------------------------------------------------------------------------
-
-
-class _StubBridge:
-    """Minimal PtyBridge stand-in that writes to a plain fd."""
-
-    def __init__(self, fd):
-        self.fd = fd
-
-    async def write(self, data: bytes) -> bool:
-        try:
-            os.write(self.fd, data)
-            return True
-        except OSError:
-            return False
-
-
-class TestPtyRegistry:
-    """PTY registry for server-side text injection."""
-
-    def setup_method(self):
-        """Clear registry before each test."""
-        tr._pty_registry.clear()
-        tr._pty_client_tty.clear()
-
-    def test_register_pty_stores_bridge(self):
-        bridge = _StubBridge(42)
-        tr.register_pty("terminal", bridge)
-        assert tr.get_pty_bridge("terminal") is bridge
-
-    def test_register_pty_stores_client_tty(self):
-        tr.register_pty("terminal", _StubBridge(42), "/dev/pts/7")
-        assert tr.get_pty_client_tty("terminal") == "/dev/pts/7"
-
-    def test_get_pty_client_tty_none_without_tty(self):
-        tr.register_pty("terminal", _StubBridge(42))
-        assert tr.get_pty_client_tty("terminal") is None
-
-    def test_unregister_pty_clears_client_tty(self):
-        tr.register_pty("terminal", _StubBridge(42), "/dev/pts/7")
-        tr.unregister_pty("terminal")
-        assert tr.get_pty_client_tty("terminal") is None
-
-    def test_get_pty_bridge_returns_none_when_empty(self):
-        assert tr.get_pty_bridge("terminal") is None
-
-    def test_unregister_pty_removes_entry(self):
-        tr.register_pty("terminal", _StubBridge(42))
-        tr.unregister_pty("terminal")
-        assert tr.get_pty_bridge("terminal") is None
-
-    def test_unregister_pty_noop_when_missing(self):
-        tr.unregister_pty("nonexistent")  # should not raise
-
-    def test_register_pty_overwrites(self):
-        second = _StubBridge(99)
-        tr.register_pty("terminal", _StubBridge(42))
-        tr.register_pty("terminal", second)
-        assert tr.get_pty_bridge("terminal") is second
-
-
-# ---------------------------------------------------------------------------
 # Transcription API
 # ---------------------------------------------------------------------------
 
 
 class TestTranscribeEndpoint:
-    """POST /api/transcribe endpoint."""
-
-    def setup_method(self):
-        """Clear PTY registry so tests get fallback (200) path by default."""
-        tr._pty_registry.clear()
+    """POST /api/transcribe endpoint (fallback 200 path — no target)."""
 
     def _make_file(self, data=b"fake audio data", filename="recording.webm"):
         f = mock.AsyncMock()
@@ -398,6 +330,7 @@ class TestTranscribeEndpoint:
                     file=self._make_file(),
                     language="en",
                     auto_enter="false",
+                    target="",
                 )
             )
 
@@ -416,6 +349,7 @@ class TestTranscribeEndpoint:
                     file=self._make_file(),
                     language="en",
                     auto_enter="false",
+                    target="",
                 )
             )
 
@@ -434,6 +368,7 @@ class TestTranscribeEndpoint:
                     file=self._make_file(),
                     language="en",
                     auto_enter="false",
+                    target="",
                 )
             )
 
@@ -454,6 +389,7 @@ class TestTranscribeEndpoint:
                     file=self._make_file(),
                     language="fr",
                     auto_enter="false",
+                    target="",
                 )
             )
 
@@ -472,6 +408,7 @@ class TestTranscribeEndpoint:
                     file=self._make_file(),
                     language="en",
                     auto_enter="false",
+                    target="",
                 )
             )
 
@@ -490,6 +427,7 @@ class TestTranscribeEndpoint:
                     file=self._make_file(),
                     language="xx",
                     auto_enter="false",
+                    target="",
                 )
             )
 
@@ -498,9 +436,6 @@ class TestTranscribeEndpoint:
 
 class TestTranscribeSizeLimit:
     """POST /api/transcribe rejects audio exceeding 100 MB."""
-
-    def setup_method(self):
-        tr._pty_registry.clear()
 
     def _make_file(self, data=b"fake audio data", filename="recording.webm"):
         f = mock.AsyncMock()
@@ -534,16 +469,14 @@ class TestTranscribeSizeLimit:
                     file=self._make_file(data=data),
                     language="en",
                     auto_enter="false",
+                    target="",
                 )
             )
         assert result.status_code == 200
 
 
 class TestTranscribeServerSideInjection:
-    """POST /api/transcribe with PTY registered (202 path)."""
-
-    def setup_method(self):
-        tr._pty_registry.clear()
+    """POST /api/transcribe with a valid target (202 path) and the fallback."""
 
     def _make_file(self, data=b"fake audio", filename="recording.webm"):
         f = mock.AsyncMock()
@@ -551,292 +484,132 @@ class TestTranscribeServerSideInjection:
         f.read = mock.AsyncMock(return_value=data)
         return f
 
-    def test_returns_202_when_pty_registered(self):
-        """With PTY registered, returns 202 and schedules background task."""
-        r_fd, w_fd = os.pipe()
-        tr.register_pty("terminal", _StubBridge(w_fd))
-        try:
-            with mock.patch("transcribe.transcribe", return_value="hello from server"):
-                result = asyncio.run(
-                    self._run_with_tasks(
-                        self._make_file(),
-                        "en",
-                        "false",
-                    )
-                )
+    async def _drain(self):
+        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-            assert result.status_code == 202
-            body = json.loads(result.body)
-            assert body["status"] == "accepted"
+    def test_valid_target_returns_202_and_schedules(self):
+        """A valid target answers 202 and schedules the injection with that
+        exact target, language and auto_enter, on the saved audio file."""
+        captured = {}
 
-            # Read what was written to the PTY
-            os.close(w_fd)
-            w_fd = -1
-            data = os.read(r_fd, 4096)
-            assert data == b"hello from server"
-        finally:
-            tr._pty_registry.clear()
-            if w_fd != -1:
-                os.close(w_fd)
-            os.close(r_fd)
+        async def fake_inject(tmp_path, language, target, auto_enter):
+            captured["args"] = (language, target, auto_enter)
+            captured["existed"] = os.path.exists(tmp_path)
+            os.unlink(tmp_path)
 
-    def test_auto_enter_appends_newline(self):
-        """auto_enter=true writes text + newline to PTY."""
-        r_fd, w_fd = os.pipe()
-        tr.register_pty("terminal", _StubBridge(w_fd))
-        try:
-            with mock.patch("transcribe.transcribe", return_value="git status"):
-                result = asyncio.run(
-                    self._run_with_tasks(
-                        self._make_file(),
-                        "en",
-                        "true",
-                    )
-                )
-
-            assert result.status_code == 202
-            os.close(w_fd)
-            w_fd = -1
-            data = os.read(r_fd, 4096)
-            assert data == b"git status\r"
-        finally:
-            tr._pty_registry.clear()
-            if w_fd != -1:
-                os.close(w_fd)
-            os.close(r_fd)
-
-    def test_no_enter_by_default(self):
-        """auto_enter=false writes text without newline."""
-        r_fd, w_fd = os.pipe()
-        tr.register_pty("terminal", _StubBridge(w_fd))
-        try:
-            with mock.patch("transcribe.transcribe", return_value="hello"):
-                result = asyncio.run(
-                    self._run_with_tasks(
-                        self._make_file(),
-                        "en",
-                        "false",
-                    )
-                )
-
-            assert result.status_code == 202
-            os.close(w_fd)
-            w_fd = -1
-            data = os.read(r_fd, 4096)
-            assert data == b"hello"
-        finally:
-            tr._pty_registry.clear()
-            if w_fd != -1:
-                os.close(w_fd)
-            os.close(r_fd)
-
-    def test_closed_fd_no_crash(self):
-        """Closed PTY fd logs a warning but doesn't crash."""
-        r_fd, w_fd = os.pipe()
-        os.close(w_fd)
-        os.close(r_fd)
-        tr.register_pty("terminal", _StubBridge(w_fd))
-        try:
-            with mock.patch("transcribe.transcribe", return_value="hello"):
-                # Should not raise
-                result = asyncio.run(
-                    self._run_with_tasks(
-                        self._make_file(),
-                        "en",
-                        "false",
-                    )
-                )
-            assert result.status_code == 202
-        finally:
-            tr._pty_registry.clear()
-
-    def test_temp_file_cleanup(self):
-        """Temp file is cleaned up after background transcription."""
-        r_fd, w_fd = os.pipe()
-        tr.register_pty("terminal", _StubBridge(w_fd))
-        created_files = []
-        orig_named_temp = tempfile.NamedTemporaryFile
-
-        def tracking_temp(**kwargs):
-            tmp = orig_named_temp(**kwargs)
-            created_files.append(tmp.name)
-            return tmp
-
-        try:
-            with (
-                mock.patch("transcribe.transcribe", return_value="text"),
-                mock.patch("tempfile.NamedTemporaryFile", side_effect=tracking_temp),
+        async def run():
+            with mock.patch(
+                "terminal.routes._transcribe_and_inject", side_effect=fake_inject
             ):
-                asyncio.run(
-                    self._run_with_tasks(
-                        self._make_file(),
-                        "en",
-                        "false",
-                    )
+                result = await tr.transcribe_audio(
+                    file=self._make_file(),
+                    language="fr",
+                    auto_enter="true",
+                    target="merlin:@12",
                 )
+                await self._drain()
+                return result
 
-            os.close(w_fd)
-            w_fd = -1
-            os.close(r_fd)
-            r_fd = -1
+        result = asyncio.run(run())
+        assert result.status_code == 202
+        assert json.loads(result.body)["status"] == "accepted"
+        assert captured["args"] == ("fr", "merlin:@12", True)
+        assert captured["existed"] is True
 
-            # Temp file should have been cleaned up
-            assert len(created_files) == 1
-            assert not os.path.exists(created_files[0])
-        finally:
-            tr._pty_registry.clear()
-            if w_fd != -1:
-                os.close(w_fd)
-            if r_fd != -1:
-                os.close(r_fd)
-
-    def test_transcription_exception_cleanup(self):
-        """Temp file is cleaned up even when transcription raises."""
-        r_fd, w_fd = os.pipe()
-        tr.register_pty("terminal", _StubBridge(w_fd))
-        created_files = []
-        orig_named_temp = tempfile.NamedTemporaryFile
-
-        def tracking_temp(**kwargs):
-            tmp = orig_named_temp(**kwargs)
-            created_files.append(tmp.name)
-            return tmp
-
-        try:
-            with (
-                mock.patch("transcribe.transcribe", side_effect=RuntimeError("fail")),
-                mock.patch("tempfile.NamedTemporaryFile", side_effect=tracking_temp),
-            ):
-                asyncio.run(
-                    self._run_with_tasks(
-                        self._make_file(),
-                        "en",
-                        "false",
-                    )
-                )
-
-            os.close(w_fd)
-            w_fd = -1
-            os.close(r_fd)
-            r_fd = -1
-
-            assert len(created_files) == 1
-            assert not os.path.exists(created_files[0])
-        finally:
-            tr._pty_registry.clear()
-            if w_fd != -1:
-                os.close(w_fd)
-            if r_fd != -1:
-                os.close(r_fd)
-
-    def test_200_fallback_when_no_pty(self):
-        """Without PTY registered, returns 200 with text (fallback)."""
+    @pytest.mark.parametrize("bad", ["", "merlin", "merlin:12", "mer lin:@1", ":@1"])
+    def test_missing_or_malformed_target_falls_back(self, bad):
+        """No target, or one that is not session:@id, takes the 200 path and
+        schedules no injection."""
         with (
-            mock.patch("transcribe.transcribe", return_value="fallback text"),
+            mock.patch("transcribe.transcribe", return_value="hello"),
             mock.patch("os.unlink"),
+            mock.patch("terminal.routes._transcribe_and_inject") as inject,
         ):
             result = asyncio.run(
                 tr.transcribe_audio(
                     file=self._make_file(),
                     language="en",
                     auto_enter="false",
+                    target=bad,
                 )
             )
-
         assert result.status_code == 200
-        body = json.loads(result.body)
-        assert body["text"] == "fallback text"
+        assert json.loads(result.body)["text"] == "hello"
+        inject.assert_not_called()
 
-    def test_concurrent_requests_no_corruption(self):
-        """Two concurrent transcriptions don't corrupt each other."""
-        r_fd, w_fd = os.pipe()
-        tr.register_pty("terminal", _StubBridge(w_fd))
 
-        call_count = 0
+class TestTranscribeAndInject:
+    """_transcribe_and_inject drives board.sweep to reach the target window,
+    with the tmux helpers patched (their argv is checked in test_board_sweep)."""
 
-        def mock_transcribe(path, lang):
-            nonlocal call_count
-            call_count += 1
-            return f"result-{call_count}"
+    def _run(
+        self,
+        *,
+        text="hello",
+        target="merlin:@12",
+        auto_enter=False,
+        send_ok=True,
+        transcribe_exc=None,
+    ):
+        if transcribe_exc is not None:
+            cm_transcribe = mock.patch(
+                "transcribe.transcribe", side_effect=transcribe_exc
+            )
+        else:
+            cm_transcribe = mock.patch("transcribe.transcribe", return_value=text)
+        with (
+            cm_transcribe,
+            mock.patch("board.sweep.exit_copy_mode") as exit_cm,
+            mock.patch("board.sweep.send_literal", return_value=send_ok) as send_lit,
+            mock.patch("board.sweep.send_enter", return_value=True) as send_enter,
+            mock.patch("terminal.routes._unlink_safe") as unlink,
+            mock.patch.object(tr.logger, "warning") as warn,
+        ):
+            asyncio.run(
+                tr._transcribe_and_inject("/tmp/audio.webm", "en", target, auto_enter)
+            )
+        return {
+            "exit_cm": exit_cm,
+            "send_lit": send_lit,
+            "send_enter": send_enter,
+            "unlink": unlink,
+            "warn": warn,
+        }
 
-        try:
-            with mock.patch("transcribe.transcribe", side_effect=mock_transcribe):
+    def test_sends_text_to_target_window(self):
+        r = self._run(text="git status", target="merlin:@7")
+        r["exit_cm"].assert_called_once_with("merlin:@7")
+        r["send_lit"].assert_called_once_with("merlin:@7", "git status")
+        r["send_enter"].assert_not_called()
+        r["warn"].assert_not_called()
+        r["unlink"].assert_called_once_with("/tmp/audio.webm")
 
-                async def run():
-                    r1 = await tr.transcribe_audio(
-                        file=self._make_file(b"audio1"),
-                        language="en",
-                        auto_enter="false",
-                    )
-                    r2 = await tr.transcribe_audio(
-                        file=self._make_file(b"audio2"),
-                        language="fr",
-                        auto_enter="false",
-                    )
-                    # Drain background tasks
-                    tasks = [
-                        t
-                        for t in asyncio.all_tasks()
-                        if t is not asyncio.current_task()
-                    ]
-                    if tasks:
-                        await asyncio.gather(*tasks, return_exceptions=True)
-                    return r1, r2
+    def test_auto_enter_sends_enter_after_text(self):
+        r = self._run(auto_enter=True)
+        r["send_lit"].assert_called_once()
+        r["send_enter"].assert_called_once_with("merlin:@12")
+        r["warn"].assert_not_called()
 
-                r1, r2 = asyncio.run(run())
+    def test_failed_send_logs_and_skips_enter(self):
+        r = self._run(auto_enter=True, send_ok=False)
+        r["send_lit"].assert_called_once()
+        r["send_enter"].assert_not_called()
+        r["warn"].assert_called_once()
+        r["unlink"].assert_called_once_with("/tmp/audio.webm")
 
-            assert r1.status_code == 202
-            assert r2.status_code == 202
+    def test_empty_transcription_writes_nothing(self):
+        r = self._run(text="", auto_enter=True)
+        r["exit_cm"].assert_not_called()
+        r["send_lit"].assert_not_called()
+        r["send_enter"].assert_not_called()
+        r["unlink"].assert_called_once_with("/tmp/audio.webm")
 
-            # Both results should have been written to the pipe
-            os.close(w_fd)
-            w_fd = -1
-            data = os.read(r_fd, 4096)
-            assert b"result-1" in data
-            assert b"result-2" in data
-        finally:
-            tr._pty_registry.clear()
-            if w_fd != -1:
-                os.close(w_fd)
-            os.close(r_fd)
-
-    def test_empty_transcription_no_write(self):
-        """Empty transcription result doesn't write to PTY."""
-        r_fd, w_fd = os.pipe()
-        tr.register_pty("terminal", _StubBridge(w_fd))
-        try:
-            with mock.patch("transcribe.transcribe", return_value=""):
-                result = asyncio.run(
-                    self._run_with_tasks(
-                        self._make_file(),
-                        "en",
-                        "true",
-                    )
-                )
-
-            assert result.status_code == 202
-            os.close(w_fd)
-            w_fd = -1
-            data = os.read(r_fd, 4096)
-            assert data == b""  # Nothing written, not even \r
-        finally:
-            tr._pty_registry.clear()
-            if w_fd != -1:
-                os.close(w_fd)
-            os.close(r_fd)
-
-    async def _run_with_tasks(self, file, language, auto_enter):
-        """Run transcribe_audio and then drain pending tasks."""
-        result = await tr.transcribe_audio(
-            file=file,
-            language=language,
-            auto_enter=auto_enter,
-        )
-        # Let the background task complete
-        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        return result
+    def test_temp_file_cleaned_on_transcribe_error(self):
+        r = self._run(transcribe_exc=RuntimeError("boom"))
+        r["send_lit"].assert_not_called()
+        r["unlink"].assert_called_once_with("/tmp/audio.webm")
 
 
 # ---------------------------------------------------------------------------
