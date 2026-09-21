@@ -141,9 +141,12 @@ body {
     align-items: center;
     justify-content: center;
     background: #1e2035;
-    border: 1px solid var(--accent-green);
+    /* The brand mark carries the environment color (set inline by base.html
+       from the palette), the one in-page place the color shows. Every other
+       control keeps the design system's green. */
+    border: 1px solid var(--env-color, var(--accent-green));
     border-radius: 2px;
-    color: var(--accent-green);
+    color: var(--env-color, var(--accent-green));
 }
 
 .sidebar-logo svg {

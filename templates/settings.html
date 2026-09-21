@@ -27,6 +27,36 @@
     </div>
 </div>
 
+<div class="settings-section">
+    <div class="settings-section-title">Environment</div>
+    <div class="settings-card">
+        <div class="settings-field">
+            <label class="settings-label">Environment name</label>
+            <div class="settings-env-name">{{ machine_name or "Merlin" }}</div>
+        </div>
+        <div class="settings-field">
+            <label class="settings-label" id="env-color-label">Environment color</label>
+            <div class="settings-swatches" id="env-color" role="radiogroup" aria-labelledby="env-color-label">
+                {% for color in env_palette %}
+                <button class="settings-swatch{% if color.name == env_color_name %} active{% endif %}" type="button"
+                    role="radio" aria-checked="{{ 'true' if color.name == env_color_name else 'false' }}"
+                    data-color="{{ color.name }}" data-hex="{{ color.hex }}" style="--swatch: {{ color.hex }}"
+                    onclick="Settings.setEnvColor('{{ color.name }}')">
+                    <span class="settings-swatch-dot" aria-hidden="true"></span>
+                    <span class="settings-swatch-name">{{ color.name }}</span>
+                </button>
+                {% endfor %}
+            </div>
+            <span class="settings-toast" id="toast-env-color"></span>
+            <div class="settings-help">
+                Tells this environment apart from your others: the tab's favicon, the installed
+                app's icon, the push notification icon and the mark in the sidebar take this
+                color. A phone shows the new app icon after you reinstall Merlin on the home screen.
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="restart-banner" id="restart-banner">
     <span class="restart-banner-text">Password changed — restart required to take effect.</span>
     <button class="restart-btn" onclick="Settings.restart()">Restart</button>

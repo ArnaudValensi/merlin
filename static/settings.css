@@ -325,6 +325,71 @@
     .settings-seg-btn { flex: 1; padding: 12px 8px; }
 }
 
+/* Environment: the read-only name and the color swatches. Each swatch
+   carries its palette hex as --swatch (set inline from the Python palette,
+   the one source), the design system's variables are untouched. */
+.settings-env-name {
+    font-size: 13px;
+    font-family: 'Geist Mono', monospace;
+    color: var(--text-primary);
+    padding: 2px 0;
+}
+
+.settings-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.settings-swatch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 6px 12px 6px 8px;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.settings-swatch-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    background: var(--swatch);
+    flex-shrink: 0;
+}
+
+.settings-swatch:not(.active):hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.settings-swatch.active {
+    border-color: var(--swatch);
+    color: var(--text-primary);
+    box-shadow: inset 0 0 0 1px var(--swatch);
+}
+
+.settings-swatch:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
+}
+
+@media (max-width: 768px) {
+    .settings-swatch {
+        flex: 1 1 calc(50% - 4px);
+        justify-content: flex-start;
+    }
+}
+
 /* Read-only runtime-mode line under Version (supervised vs self-managed). */
 .update-mode {
     margin-top: 10px;

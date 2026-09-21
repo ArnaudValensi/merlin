@@ -64,6 +64,52 @@ const Settings = {
         this._save({ AGENT_STATE_HOOKS: mode }, 'toast-agent-state-hooks');
     },
 
+    // ── Environment color (a palette name) ──
+    _highlightEnvColor(name) {
+        const group = document.getElementById('env-color');
+        if (!group) return;
+        group.querySelectorAll('.settings-swatch').forEach(btn => {
+            const on = btn.dataset.color === name;
+            btn.classList.toggle('active', on);
+            btn.setAttribute('aria-checked', on ? 'true' : 'false');
+        });
+    },
+
+    // The page reflects a saved color on its next load (the favicon link and
+    // the sidebar mark are rendered from the setting). The two are also
+    // updated in place here so the choice is seen at once.
+    _applyEnvColor(name, hex) {
+        const logo = document.getElementById('sidebar-logo');
+        if (logo) {
+            logo.style.setProperty('--env-color', hex);
+            logo.dataset.envColor = name;
+        }
+        const icon = document.querySelector('link[rel="icon"][type="image/svg+xml"]');
+        if (icon) icon.href = '/static/favicon.svg?c=' + encodeURIComponent(name);
+    },
+
+    async setEnvColor(name) {
+        this._highlightEnvColor(name);   // optimistic
+        try {
+            const resp = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ MERLIN_ENV_COLOR: name }),
+            });
+            if (!resp.ok) {
+                const data = await resp.json().catch(() => ({}));
+                alert('Save failed' + (data.detail ? ': ' + data.detail : ''));
+                return;
+            }
+            const data = await resp.json();
+            this._highlightEnvColor(data.env_color);
+            this._applyEnvColor(data.env_color, data.env_color_hex);
+            this._toast('toast-env-color', 'Saved');
+        } catch (e) {
+            console.error('Settings save error:', e);
+        }
+    },
+
     // ── Public URL ──
     async savePublicUrl() {
         const val = document.getElementById('public-url-input').value.trim();

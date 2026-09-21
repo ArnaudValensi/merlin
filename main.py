@@ -36,6 +36,7 @@ from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
+    Response,
 )
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -55,6 +56,7 @@ MERLIN_BOT_DIR = PROJECT_ROOT / "merlin-bot"
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "lib"))
 
+import env_color
 from merlin_ext import make_templates, register_template_globals
 
 # ---------------------------------------------------------------------------
@@ -422,6 +424,24 @@ def web_manifest():
     )
 
 
+_FAVICON_PATH = Path(__file__).parent / "static" / "favicon.svg"
+
+
+@app.get("/static/favicon.svg")
+def favicon_svg():
+    """The favicon, served with the environment color as its accent. Declared
+    before the static mount, so it takes the path over the file on disk (which
+    keeps the default green for the tools that read it directly). The color is
+    read on every request; the page's link carries it as a query string so a
+    browser refetches after a change, and the route ignores that query: the
+    setting is the one source. The static middleware marks it no-store like
+    the rest of /static/."""
+    return Response(
+        env_color.favicon_svg(_FAVICON_PATH.read_text(), env_color.current()),
+        media_type="image/svg+xml",
+    )
+
+
 _SW_PATH = Path(__file__).parent / "notifications" / "static" / "sw.js"
 
 
@@ -717,6 +737,8 @@ def settings_page(request: Request, _auth=Depends(require_auth)):
             "openai_key_set": bool(cfg.get("OPENAI_API_KEY")),
             "default_public_url": job_webhook.discovered_public_base()[0],
             "supervised": paths.is_supervised(),
+            "env_palette": env_color.palette(),
+            "env_color_name": env_color.normalize(cfg.get(env_color.KEY)),
         },
     )
 
@@ -752,7 +774,19 @@ def api_get_settings(_auth=Depends(require_auth)):
         "public_url_source": public_source,
         "default_public_url": job_webhook.discovered_public_base()[0],
         "agent_state_hooks": skills.agent_state_hooks_mode(),
+        "env_color": env_color.normalize(cfg.get(env_color.KEY)),
+        "env_palette": env_color.palette(),
     }
+
+
+def _normalize_env_color(value: str) -> str:
+    """Normalize an environment color from the settings form: a palette name
+    in any case, or empty to go back to the default. Anything else is
+    rejected, so a typo never lands in ``config.env``."""
+    value = (value or "").strip().lower()
+    if value and not env_color.is_valid(value):
+        raise HTTPException(status_code=422, detail="Unknown environment color")
+    return value
 
 
 def _normalize_public_url(value: str) -> str:
@@ -788,10 +822,13 @@ def api_save_settings(body: dict = Body(...), _auth=Depends(require_auth)):
             "OPENAI_API_KEY",
             "AGENT_ENGINE",
             "MERLIN_DASHBOARD_URL",
+            env_color.KEY,
         ):
             continue
         if key == "MERLIN_DASHBOARD_URL":
             value = _normalize_public_url(value or "")
+        if key == env_color.KEY:
+            value = _normalize_env_color(value or "")
         if value:
             if key == "DASHBOARD_PASS" and cfg.get(key) != value:
                 password_changed = True
@@ -835,6 +872,15 @@ def api_save_settings(body: dict = Body(...), _auth=Depends(require_auth)):
         else:
             os.environ.pop("MERLIN_DASHBOARD_URL", None)
 
+    # Same for the environment color: config.env is read at request time, but
+    # the process environment is its fallback, so a color cleared here must
+    # leave the environment too or the boot-time value would come back.
+    if env_color.KEY in body:
+        if cfg.get(env_color.KEY):
+            os.environ[env_color.KEY] = cfg[env_color.KEY]
+        else:
+            os.environ.pop(env_color.KEY, None)
+
     public_base, public_source = job_webhook.resolve_public_base()
 
     return {
@@ -846,6 +892,8 @@ def api_save_settings(body: dict = Body(...), _auth=Depends(require_auth)):
         "effective_public_url": public_base,
         "public_url_source": public_source,
         "default_public_url": job_webhook.discovered_public_base()[0],
+        "env_color": env_color.normalize(cfg.get(env_color.KEY)),
+        "env_color_hex": env_color.accent(cfg.get(env_color.KEY)),
     }
 
 
@@ -1389,6 +1437,10 @@ register_template_globals(
     saas_api_url=MERLIN_SAAS_API,
     extensions_error_count=_extensions_with_errors,
     merlin_version=_merlin_version(),  # versions the service worker URL
+    # A callable, not a value: the environment color is read at render time,
+    # so a save in Settings shows on the next page load with no restart.
+    env_color=env_color.current,
+    env_color_accent=env_color.current_accent,
 )
 
 
