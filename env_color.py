@@ -66,30 +66,33 @@ def accent(name: str | None) -> str:
 def _read_setting(config_path=None) -> str:
     """The raw setting: ``config.env`` first (what the settings API writes),
     then the process environment (a value set by whoever started Merlin),
-    then nothing. Read on every call so a save shows on the next request."""
+    then nothing. Read on every call so a save shows on the next request.
+    The file is parsed as the settings API parses it (``_read_config_env``
+    in ``main.py``): the last occurrence of a key wins."""
     path = paths.config_path() if config_path is None else config_path
     try:
         text = path.read_text()
     except OSError:
         text = ""
+    found = None
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
         if key.strip() == KEY:
-            return value.strip()
+            found = value.strip()
+    if found is not None:
+        return found
     return os.environ.get(KEY, "")
 
 
 def current(config_path=None) -> str:
-    """The instance's color name, read at request time."""
+    """The instance's effective color name, read at request time. The one
+    resolver: the settings API, the favicon route, the manifest, the push
+    payload and the page all report this name, and derive the hex from it
+    with ``accent``."""
     return normalize(_read_setting(config_path))
-
-
-def current_accent(config_path=None) -> str:
-    """The instance's accent hex, read at request time."""
-    return accent(current(config_path))
 
 
 def palette() -> list[dict[str, str]]:

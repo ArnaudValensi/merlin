@@ -80,7 +80,7 @@ class TestSetting:
         assert env_color.current() == "green"
         write_config(tmp_path, "DASHBOARD_PASS=x\nMERLIN_ENV_COLOR=violet\n")
         assert env_color.current() == "violet"
-        assert env_color.current_accent() == "#a78bfa"
+        assert env_color.accent(env_color.current()) == "#a78bfa"
         write_config(tmp_path, "MERLIN_ENV_COLOR=Red\n")
         assert env_color.current() == "red"
 
@@ -103,6 +103,11 @@ class TestSetting:
     def test_comments_and_other_keys_are_ignored(self, tmp_path):
         write_config(tmp_path, "# MERLIN_ENV_COLOR=red\nOTHER=blue\n")
         assert env_color.current() == "green"
+
+    def test_last_occurrence_wins_like_the_settings_api(self, tmp_path):
+        write_config(tmp_path, "MERLIN_ENV_COLOR=blue\nMERLIN_ENV_COLOR=red\n")
+        assert env_color.current() == "red"
+        assert app_mod._read_config_env()[env_color.KEY] == "red"
 
 
 class TestFaviconSvg:
@@ -233,6 +238,66 @@ class TestSettingsApi:
         write_config(tmp_path, "MERLIN_ENV_COLOR=teal\n")
         assert client.get("/api/settings").json()["env_color"] == "green"
 
+    def test_api_reports_the_effective_color_from_the_environment(
+        self, client, tmp_path, monkeypatch
+    ):
+        # The one resolver: what the favicon shows is what the API says.
+        monkeypatch.setenv(env_color.KEY, "orange")
+        assert client.get("/api/settings").json()["env_color"] == "orange"
+        assert "#fb923c" in client.get("/static/favicon.svg").text
+        # A save of an unrelated setting reports the same effective color.
+        write_config(tmp_path, "")
+        r = client.post("/api/settings", json={"OPENAI_API_KEY": "sk-x"})
+        assert r.json()["env_color"] == "orange"
+        assert r.json()["env_color_hex"] == "#fb923c"
+
+    def test_api_and_favicon_agree_on_duplicate_keys(self, client, tmp_path):
+        write_config(tmp_path, "MERLIN_ENV_COLOR=blue\nMERLIN_ENV_COLOR=red\n")
+        assert client.get("/api/settings").json()["env_color"] == "red"
+        assert "#f87171" in client.get("/static/favicon.svg").text
+        html = client.get("/settings").text
+        checked = re.findall(r'aria-checked="true"[^>]*data-color="(\w+)"', html)
+        assert checked == ["red"]
+
+    @pytest.mark.parametrize(
+        "bad", [1, 1.5, True, False, 0, ["blue"], [], {"name": "blue"}, {}]
+    )
+    def test_rejects_non_string_values_and_keeps_the_saved_one(
+        self, client, tmp_path, bad
+    ):
+        write_config(tmp_path, "MERLIN_ENV_COLOR=blue\n")
+        r = client.post("/api/settings", json={"MERLIN_ENV_COLOR": bad})
+        assert r.status_code == 422
+        assert "MERLIN_ENV_COLOR=blue" in (tmp_path / "config.env").read_text()
+
+    def test_null_clears_like_the_empty_string(self, client, tmp_path):
+        write_config(tmp_path, "MERLIN_ENV_COLOR=blue\nOTHER=val\n")
+        r = client.post("/api/settings", json={"MERLIN_ENV_COLOR": None})
+        assert r.status_code == 200
+        assert r.json()["env_color"] == "green"
+        content = (tmp_path / "config.env").read_text()
+        assert "MERLIN_ENV_COLOR" not in content
+        assert "OTHER=val" in content
+
+    def test_config_write_is_atomic(self, client, tmp_path, monkeypatch):
+        # A reader that opens config.env during a save (the favicon route, a
+        # page render) must see the old file or the new one, never a
+        # truncated one: the writer fills a sibling temp file and replaces it.
+        write_config(tmp_path, "MERLIN_ENV_COLOR=blue\n")
+        seen = []
+        real_replace = os.replace
+
+        def spying_replace(src, dst):
+            seen.append(((tmp_path / "config.env").read_text(), Path(src).parent))
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", spying_replace)
+        client.post("/api/settings", json={"MERLIN_ENV_COLOR": "red"})
+        assert seen == [("MERLIN_ENV_COLOR=blue\n", tmp_path)]
+        assert (tmp_path / "config.env").read_text() == "MERLIN_ENV_COLOR=red\n"
+        assert (tmp_path / "config.env").stat().st_mode & 0o777 == 0o600
+        assert list(tmp_path.glob("config.env.*")) == []
+
 
 class TestPageShell:
     def test_favicon_link_carries_the_color(self, client, tmp_path):
@@ -272,6 +337,21 @@ class TestPageShell:
         block = css[css.index(".sidebar-logo {") : css.index(".sidebar-logo svg")]
         assert block.count("var(--env-color") == 2
         assert "--accent-green: #4ade80" in css
+
+    def test_link_and_mark_come_from_one_resolution(self, client, monkeypatch):
+        # The favicon link and the sidebar mark are derived from a single
+        # read of the setting per render, so a save landing between two reads
+        # can never publish a page whose link and mark disagree.
+        original = env_color.current
+        answers = iter(["blue", "red", "cyan", "pink"])
+        monkeypatch.setattr(env_color, "current", lambda *a: next(answers))
+        app_mod.register_template_globals(env_color=env_color.current)
+        try:
+            html = client.get("/terminal").text
+        finally:
+            app_mod.register_template_globals(env_color=original)
+        assert 'href="/static/favicon.svg?c=blue"' in html
+        assert 'data-env-color="blue" style="--env-color: #60a5fa"' in html
 
     def test_theme_color_stays_the_page_background(self, client, tmp_path):
         write_config(tmp_path, "MERLIN_ENV_COLOR=red\n")

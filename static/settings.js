@@ -65,6 +65,11 @@ const Settings = {
     },
 
     // ── Environment color (a palette name) ──
+    // Saves go through MerlinEnvColorSave (static/env-color-save.js): one
+    // save in flight, the latest click queued behind it, the confirmed
+    // selection restored with a visible message when a save fails.
+    _envColorSaver: null,
+
     _highlightEnvColor(name) {
         const group = document.getElementById('env-color');
         if (!group) return;
@@ -88,26 +93,45 @@ const Settings = {
         if (icon) icon.href = '/static/favicon.svg?c=' + encodeURIComponent(name);
     },
 
-    async setEnvColor(name) {
-        this._highlightEnvColor(name);   // optimistic
+    async _postEnvColor(name) {
+        let resp;
         try {
-            const resp = await fetch('/api/settings', {
+            resp = await fetch('/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ MERLIN_ENV_COLOR: name }),
             });
-            if (!resp.ok) {
-                const data = await resp.json().catch(() => ({}));
-                alert('Save failed' + (data.detail ? ': ' + data.detail : ''));
-                return;
-            }
-            const data = await resp.json();
-            this._highlightEnvColor(data.env_color);
-            this._applyEnvColor(data.env_color, data.env_color_hex);
-            this._toast('toast-env-color', 'Saved');
         } catch (e) {
-            console.error('Settings save error:', e);
+            throw new Error('Save failed: no connection');
         }
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            throw new Error('Save failed' + (data.detail ? ': ' + data.detail : ''));
+        }
+        const data = await resp.json();
+        return { name: data.env_color, hex: data.env_color_hex };
+    },
+
+    _envColorSaverInstance() {
+        if (this._envColorSaver) return this._envColorSaver;
+        const group = document.getElementById('env-color');
+        const current = group ? group.querySelector('.settings-swatch[aria-checked="true"]') : null;
+        this._envColorSaver = MerlinEnvColorSave.createEnvColorSaver({
+            confirmed: {
+                name: current ? current.dataset.color : 'green',
+                hex: current ? current.dataset.hex : '#4ade80',
+            },
+            save: (name) => this._postEnvColor(name),
+            onSelect: (name) => this._highlightEnvColor(name),
+            onApply: (name, hex) => this._applyEnvColor(name, hex),
+            onSaved: () => this._toast('toast-env-color', 'Saved'),
+            onError: (message) => this._toast('toast-env-color', message, 'error'),
+        });
+        return this._envColorSaver;
+    },
+
+    setEnvColor(name) {
+        return this._envColorSaverInstance().choose(name);
     },
 
     // ── Public URL ──
@@ -199,12 +223,14 @@ const Settings = {
         window.location.reload();
     },
 
-    _toast(id, msg) {
+    _toast(id, msg, kind) {
         const el = document.getElementById(id);
         if (!el) return;
         el.textContent = msg;
+        el.classList.toggle('error', kind === 'error');
         el.classList.add('visible');
-        setTimeout(() => { el.classList.remove('visible'); }, 2000);
+        clearTimeout(el._toastTimer);
+        el._toastTimer = setTimeout(() => { el.classList.remove('visible'); }, kind === 'error' ? 5000 : 2000);
     }
 };
 

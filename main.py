@@ -16,12 +16,14 @@ Usage:
 
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import secrets
 import shutil
 import sys
+import tempfile
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -432,7 +434,7 @@ def favicon_svg():
     """The favicon, served with the environment color as its accent. Declared
     before the static mount, so it takes the path over the file on disk (which
     keeps the default green for the tools that read it directly). The color is
-    read on every request; the page's link carries it as a query string so a
+    read on every request. The page's link carries it as a query string so a
     browser refetches after a change, and the route ignores that query: the
     setting is the one source. The static middleware marks it no-store like
     the rest of /static/."""
@@ -552,11 +554,27 @@ def _read_config_env() -> dict[str, str]:
 
 
 def _write_config_env(data: dict[str, str]) -> None:
-    """Write dict to config.env with 0600 permissions."""
+    """Write dict to config.env with 0600 permissions, atomically: a sibling
+    temp file replaced into place, so a reader that opens the file during a
+    save (the favicon route, a page render) sees the old file or the new one,
+    never a truncated one."""
     cfg_path = paths.config_path()
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text("\n".join(f"{k}={v}" for k, v in data.items()) + "\n")
-    cfg_path.chmod(0o600)
+    text = "\n".join(f"{k}={v}" for k, v in data.items()) + "\n"
+    fd, tmp_name = tempfile.mkstemp(
+        dir=cfg_path.parent, prefix=cfg_path.name + ".", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp_name, 0o600)
+        os.replace(tmp_name, cfg_path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
 
 
 @app.post("/api/extensions/{ext_id}/config")
@@ -738,7 +756,7 @@ def settings_page(request: Request, _auth=Depends(require_auth)):
             "default_public_url": job_webhook.discovered_public_base()[0],
             "supervised": paths.is_supervised(),
             "env_palette": env_color.palette(),
-            "env_color_name": env_color.normalize(cfg.get(env_color.KEY)),
+            "env_color_name": env_color.current(),
         },
     )
 
@@ -774,16 +792,26 @@ def api_get_settings(_auth=Depends(require_auth)):
         "public_url_source": public_source,
         "default_public_url": job_webhook.discovered_public_base()[0],
         "agent_state_hooks": skills.agent_state_hooks_mode(),
-        "env_color": env_color.normalize(cfg.get(env_color.KEY)),
+        # The effective color, through the one resolver the favicon route and
+        # the page use (config.env, then the process environment).
+        "env_color": env_color.current(),
         "env_palette": env_color.palette(),
     }
 
 
-def _normalize_env_color(value: str) -> str:
-    """Normalize an environment color from the settings form: a palette name
-    in any case, or empty to go back to the default. Anything else is
-    rejected, so a typo never lands in ``config.env``."""
-    value = (value or "").strip().lower()
+def _normalize_env_color(value: object) -> str:
+    """Normalize an environment color from the settings JSON: a palette name
+    as a string in any case, or an empty string or null to go back to the
+    default. Any other JSON type, and any other string, is rejected with 422
+    and leaves the saved value alone, so a typo never lands in ``config.env``.
+    The body is an untyped dict, so the type is checked here."""
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise HTTPException(
+            status_code=422, detail="Environment color must be a palette name"
+        )
+    value = value.strip().lower()
     if value and not env_color.is_valid(value):
         raise HTTPException(status_code=422, detail="Unknown environment color")
     return value
@@ -828,7 +856,7 @@ def api_save_settings(body: dict = Body(...), _auth=Depends(require_auth)):
         if key == "MERLIN_DASHBOARD_URL":
             value = _normalize_public_url(value or "")
         if key == env_color.KEY:
-            value = _normalize_env_color(value or "")
+            value = _normalize_env_color(value)
         if value:
             if key == "DASHBOARD_PASS" and cfg.get(key) != value:
                 password_changed = True
@@ -892,8 +920,8 @@ def api_save_settings(body: dict = Body(...), _auth=Depends(require_auth)):
         "effective_public_url": public_base,
         "public_url_source": public_source,
         "default_public_url": job_webhook.discovered_public_base()[0],
-        "env_color": env_color.normalize(cfg.get(env_color.KEY)),
-        "env_color_hex": env_color.accent(cfg.get(env_color.KEY)),
+        "env_color": env_color.current(),
+        "env_color_hex": env_color.accent(env_color.current()),
     }
 
 
@@ -1440,7 +1468,7 @@ register_template_globals(
     # A callable, not a value: the environment color is read at render time,
     # so a save in Settings shows on the next page load with no restart.
     env_color=env_color.current,
-    env_color_accent=env_color.current_accent,
+    env_accent=env_color.accent,  # the hex of the name a render resolved once
 )
 
 

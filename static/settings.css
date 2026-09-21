@@ -126,6 +126,10 @@
     opacity: 1;
 }
 
+.settings-toast.error {
+    color: var(--accent-red);
+}
+
 /* Reuse restart banner from extensions */
 .restart-banner {
     display: none;
