@@ -1,17 +1,20 @@
 ---
-name: self-awareness
-description: Understand your own architecture, source code, configuration, and runtime behavior. Use when you need to inspect how you work, review your logs, debug your own behavior, or answer questions about your capabilities.
+name: merlin
+description: How Merlin works under the hood. Its architecture, source code, configuration, skills, jobs and logs. Use when the user asks how Merlin works, wants its logs or source inspected, debugs a job, a channel or a dashboard behavior, or asks what Merlin can do.
 user-invocable: false
 allowed-tools: Bash, Read, Glob, Grep
 ---
 
-# Self-Awareness Skill
+# Merlin Skill
 
-You can introspect on your own architecture, configuration, and runtime behavior.
+Merlin is the suite of tools you operate: one process on the user's machine
+with a web dashboard, chat integrations, scheduled jobs and a shared notes
+memory. This skill is how you inspect Merlin itself: its code, its
+configuration and its runtime behavior.
 
-## Where You're Documented
+## Where Merlin Is Documented
 
-- **`agent/MERLIN.md`** — Your operating guide (the agent brain doc); print it with `merlin agent`
+- **`agent/MERLIN.md`** — The operating guide for the agent (the brain doc); print it with `merlin agent`
 - **`CLAUDE.md`** (project root) — Development doc: project architecture, script inventory, data flow, logging, conventions
 - Every script: `uv run <script>.py --help`
 
@@ -21,7 +24,7 @@ Resolve the source root first: `APP=$(merlin config app-dir)`. All paths
 below are relative to it (e.g. `cat "$APP/agent/MERLIN.md"`, or just run
 `merlin agent`).
 
-Your source code spans several directories from the project root:
+Merlin's source code spans several directories from the project root:
 
 - **`main.py`**, **`cli.py`**, **`auth.py`**, **`tunnel.py`**, **`paths.py`** — Core entry points and utilities
 - **`lib/`** — Shared libraries (`engine.py`, `claude.py`, `session.py`, `structured_log.py`)
@@ -32,13 +35,13 @@ Your source code spans several directories from the project root:
 
 ## What You Can Inspect
 
-- **Your source code** — read any `.py` file in the project root, `lib/`, `job/`, or `merlin-bot/`
-- **Your skills** — core skills ship in `skills/*/SKILL.md`; bot-gated skills in `merlin-bot/skills/*/SKILL.md`; personal skills in `$(merlin config skills-user-dir)/*/SKILL.md`. All are aggregated into `~/.merlin/skills/`
-- **Your jobs** — `merlin job list` and `~/.merlin/jobs/*.json`
-- **Your notes** — `$(merlin config notes-dir)/user.md`, `kb/`, `logs/`
-- **Your config** — `~/.merlin/config.env`
+- **Merlin's source code** — read any `.py` file in the project root, `lib/`, `job/`, or `merlin-bot/`
+- **Merlin's skills** — core skills ship in `skills/*/SKILL.md`; bot-gated skills in `merlin-bot/skills/*/SKILL.md`; personal skills in `$(merlin config skills-user-dir)/*/SKILL.md`. All are aggregated into `~/.merlin/skills/`
+- **Merlin's jobs** — `merlin job list` and `~/.merlin/jobs/*.json`
+- **Merlin's notes** — `$(merlin config notes-dir)/user.md`, `kb/`, `logs/`
+- **Merlin's config** — `~/.merlin/config.env`
 
-## Your Logs
+## Merlin's Logs
 
 All logs live under `~/.merlin/logs/`.
 

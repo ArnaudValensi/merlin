@@ -161,7 +161,7 @@ class TestRunSkills:
 
         # Core skills are listed under the core source.
         assert "core" in out
-        assert "self-awareness" in out
+        assert "merlin" in out
         # The user's uniquely named skill is listed under the user source.
         assert "piano" in out
         assert "skills-user" in out

@@ -258,7 +258,7 @@ class TestAuditSection:
         # always-active core repo skills/ source, so they no longer appear
         # under the bot extension row (the audit is per-extension).
         assert "discord" in names
-        assert names.isdisjoint({"jobs", "dashboard", "notes", "self-awareness"})
+        assert names.isdisjoint({"jobs", "dashboard", "notes", "merlin"})
         del extension_registry, _build_extensions_list  # imported for context
 
     def test_notes_builtin_lists_commands(self):

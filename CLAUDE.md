@@ -50,7 +50,7 @@ merlin/
 │   └── commands/              # merlin notes search / kb / remember commands
 ├── timeline/                  # Built-in private agent-activity Timeline extension
 │   └── commands/emit.py       # Provider-neutral, server-independent emitter
-├── skills/                    # Core operational skills (jobs/, notes/, dashboard/, self-awareness/) — always active, aggregated regardless of the bot
+├── skills/                    # Core operational skills (jobs/, notes/, dashboard/, merlin/) — always active, aggregated regardless of the bot
 ├── tests/                     # Tests for core modules
 ├── agent/
 │   └── MERLIN.md              # Agent brain doc (printed by `merlin agent`)
