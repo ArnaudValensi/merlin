@@ -2,6 +2,11 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.39.1 (2026-09-22)
+
+### Fixed
+- **Tapping a notification clears its pill, even with several Merlin tabs open** — A tapped notification could take you to the window yet leave its green done pill lit, when the same browser held more than one Merlin open. The tap now reliably switches to the window through the tab already open, which clears the pill, instead of relying on a navigation that quietly did nothing on a tab the notification worker did not control.
+
 ## v0.39.0 (2026-09-22)
 
 ### Changed
