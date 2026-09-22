@@ -2,6 +2,14 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.38.0 (2026-09-22)
+
+### Changed
+- **The self-awareness skill is now called merlin**: The skill that lets your agent inspect how Merlin works (its source, configuration, jobs and logs) is named after what it covers, like the jobs, notes and dashboard skills. Your agents see it as `merlin` in their skill list after the next Merlin restart, which swaps the old link for the new one on its own.
+
+### Fixed
+- **The terminal pill resets when you interrupt an agent with Esc**: Interrupting a Claude Code turn left the window pill on the amber working state until your next prompt. Esc now puts a busy or asking window back to idle, and a still-working agent restamps its real state on its next step.
+
 ## v0.37.1 (2026-09-22)
 
 ### Fixed
