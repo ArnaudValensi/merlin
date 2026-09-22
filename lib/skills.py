@@ -515,6 +515,11 @@ _CLAUDE_ASK_TOOLS = "AskUserQuestion|ExitPlanMode"
 # Notification/permission_prompt after it, so a matcher-less PreToolUse -> busy
 # would stomp the 'ask' state. Do not add one.
 #
+# Interrupt gap: Esc mid-turn ends the turn but fires NO hook (Stop is for a
+# completed turn only, and idle_prompt stays silent after an interrupt, checked
+# on 2.1.278). There is nothing to register here for it: terminal/tmux.conf
+# binds Esc itself to write idle on a busy/ask window.
+#
 # Reset is PostToolBatch (once per resolved batch, any tool) rather than a
 # matcher-less PostToolUse (once per tool call): a permission prompt can attach
 # to any tool, so the reset cannot be tool-matched, and the batch event costs one

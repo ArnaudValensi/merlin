@@ -89,6 +89,12 @@ several approaches, when it presents a plan for approval, or when it
 needs permission to run something. Looking at the window does **not**
 clear it, because the question is still unanswered. Answering does.
 
+Pressing `Esc` in a window that is working or asking interrupts the agent's
+turn and sets its pill back to the grey `○` at once. Claude Code reports
+nothing when a turn is interrupted, so the pill takes that from the keypress
+itself. If the agent was in fact still working, its next tool call or the
+end of its turn corrects the pill.
+
 Windows that are not running Claude Code or Codex (a plain shell, or another
 agent) keep the classic `●` active / `○` inactive dots, so nothing changes for
 them.

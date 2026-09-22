@@ -437,3 +437,99 @@ class TestWindowFallback:
                 break
             time.sleep(0.1)
         assert s.tmux("show-option", "-wv", "-t", "t:c", "@agent_state") == ""
+
+
+# ---------------------------------------------------------------------------
+# Integration: the REAL terminal/tmux.conf Esc binding. An interrupt (Esc
+# mid-turn) fires no Claude Code hook, so the conf marks a busy/ask window idle
+# from the keypress itself. Key bindings only run for a real client, so the
+# server is driven through a client attached on a pty, not send-keys.
+# ---------------------------------------------------------------------------
+class TestEscapeBinding:
+    @pytest.fixture
+    def attached(self, tmp_path):
+        import pty
+        import select
+
+        home = tmp_path / "home"
+        home.mkdir()
+        sock = tmp_path / "s.sock"
+        env = TestSetHookIntegration._conf_env(home)
+
+        def t(*args):
+            r = subprocess.run(
+                ["tmux", "-S", str(sock), "-f", str(TMUX_CONF), *args],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+            return r.stdout.rstrip("\n")
+
+        t("kill-server")
+        # `cat -v` echoes every byte it receives: an Esc shows up as ^[.
+        t("new-session", "-d", "-s", "t", "-x", "80", "-y", "24", "cat -v")
+        pid, fd = pty.fork()
+        if pid == 0:  # pragma: no cover - child
+            os.execvpe("tmux", ["tmux", "-S", str(sock), "attach", "-t", "t"], env)
+
+        def drain(seconds):
+            end = time.time() + seconds
+            while time.time() < end:
+                ready, _, _ = select.select([fd], [], [], 0.05)
+                if ready:
+                    try:
+                        os.read(fd, 65536)
+                    except OSError:
+                        return
+
+        drain(1.0)
+
+        def press(raw: bytes):
+            os.write(fd, raw)
+            drain(0.5)
+
+        def pane_bytes() -> str:
+            return "".join(t("capture-pane", "-p", "-t", "t").split())
+
+        def state() -> str:
+            return t("show-option", "-wv", "-t", "t", "@agent_state")
+
+        yield t, press, pane_bytes, state
+        t("kill-server")
+        os.close(fd)
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
+
+    @pytest.mark.parametrize("initial", ["busy", "ask"])
+    def test_esc_marks_a_working_or_asking_window_idle(self, attached, initial):
+        t, press, pane_bytes, state = attached
+        t("set-option", "-w", "-t", "t", "@agent_state", initial)
+        press(b"\x1b")
+        assert state() == "idle"
+        assert pane_bytes().endswith("^["), "Esc must still reach the pane"
+
+    @pytest.mark.parametrize("initial", ["done", "idle"])
+    def test_esc_leaves_other_states_alone(self, attached, initial):
+        t, press, pane_bytes, state = attached
+        t("set-option", "-w", "-t", "t", "@agent_state", initial)
+        press(b"\x1b")
+        assert state() == initial
+        assert pane_bytes().endswith("^[")
+
+    def test_esc_in_a_plain_window_stays_unset(self, attached):
+        t, press, pane_bytes, state = attached
+        press(b"\x1b")
+        assert state() == ""
+        assert pane_bytes().endswith("^[")
+
+    def test_meta_chord_is_not_an_interrupt(self, attached):
+        # Esc followed at once by a key is M-x to tmux: a different key, which
+        # the pane receives intact and which never touches the pill.
+        t, press, pane_bytes, state = attached
+        t("set-option", "-w", "-t", "t", "@agent_state", "busy")
+        press(b"\x1bx")
+        assert state() == "busy"
+        assert pane_bytes().endswith("^[x")

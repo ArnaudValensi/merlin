@@ -11,6 +11,8 @@
 # drivers wire it through their user hook files (installed by lib/skills.py):
 #   UserPromptSubmit -> busy   Stop -> done   SessionStart -> idle
 #   blocking question / permission -> ask   resolved tool -> busy
+# An interrupt (Esc mid-turn) fires no hook at all in Claude Code, so
+# terminal/tmux.conf binds Esc to write idle on a busy/ask window itself.
 
 # Drain stdin (the hooks pipe JSON we don't need here) so the writer never
 # blocks waiting on a pipe that no one closes.
