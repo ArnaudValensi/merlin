@@ -2,6 +2,11 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.37.1 (2026-09-22)
+
+### Fixed
+- **Voice dictation lands in the window you stopped recording in**: The text now goes to the tmux window that was current when you tapped stop, even if you switch window or switch device while the audio uploads, instead of sometimes landing on the other device or in a window you had moved to. A window closed before the text arrives loses it rather than sending it somewhere else.
+
 ## v0.37.0 (2026-09-21)
 
 ### Added
