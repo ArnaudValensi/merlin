@@ -2,6 +2,11 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.39.0 (2026-09-22)
+
+### Changed
+- **Merlin's core skills carry a merlin- prefix**: The jobs, notes, dashboard and review skills your agents load are now `merlin-jobs`, `merlin-notes`, `merlin-dashboard` and `merlin-review`, next to `merlin` for introspection. A skill of your own named `notes` or `review` no longer hides Merlin's, and the name says where the skill comes from. The switch happens on the next Merlin restart.
+
 ## v0.38.0 (2026-09-22)
 
 ### Changed
