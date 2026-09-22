@@ -108,6 +108,21 @@ class TestServiceWorker:
         assert "caches" not in src
         assert "respondWith" not in src
 
+    def test_click_messages_the_open_window_with_the_target(self):
+        # navigate() is unreliable on a window this worker does not control, so
+        # a click on the push must post the raw target to the open page, which
+        # switches to it (running select-window, which clears the done pill).
+        # navigate/openWindow stay only as the fallback when no page can be
+        # messaged. See notifications/static/sw.js.
+        src = (ROOT / "notifications/static/sw.js").read_text()
+        assert "postMessage({ type: 'deep-link', target: target })" in src
+        assert "data.target" in src  # the click reads the raw target
+        # The page must carry the raw target for the worker to relay.
+        page = (ROOT / "terminal/templates/terminal.html").read_text()
+        assert "navigator.serviceWorker.addEventListener('message'" in page
+        assert "d.type !== 'deep-link'" in page
+        assert "window.MerlinTerminal.switchSession(t)" in page
+
 
 class TestPageShell:
     def test_base_links_manifest_and_registers_the_worker(self, client):

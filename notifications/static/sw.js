@@ -17,7 +17,12 @@ self.addEventListener('push', function (e) {
   var options = {
     body: data.body || '',
     icon: data.icon || '/static/icons/green/icon-192.png',
-    data: { url: data.url || '/terminal', sid: data.sid || '', state: data.state || '' },
+    data: {
+      url: data.url || '/terminal',
+      target: data.target || '',
+      sid: data.sid || '',
+      state: data.state || '',
+    },
   };
   if (data.tag) options.tag = data.tag;
   e.waitUntil(self.registration.showNotification(title, options));
@@ -25,8 +30,9 @@ self.addEventListener('push', function (e) {
 
 self.addEventListener('notificationclick', function (e) {
   e.notification.close();
-  var url = (e.notification.data && e.notification.data.url) || '/terminal';
-  var target = new URL(url, self.location.origin).href;
+  var data = e.notification.data || {};
+  var abs = new URL(data.url || '/terminal', self.location.origin).href;
+  var target = data.target || '';
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
       for (var i = 0; i < list.length; i++) {
@@ -35,10 +41,25 @@ self.addEventListener('notificationclick', function (e) {
         var focused = c.focus ? c.focus() : Promise.resolve(c);
         return focused.then(function (w) {
           var win = w || c;
-          return win.navigate ? win.navigate(target) : win;
+          // Send the open page straight to the target by message. navigate()
+          // only acts on a client this worker controls, which is not
+          // guaranteed: a tab loaded before the worker claimed it, or a
+          // browser that keeps it uncontrolled (Brave), fails the navigation
+          // silently, leaving the window focused but never switched, so the
+          // done pill never clears. postMessage reaches controlled and
+          // uncontrolled clients alike; the page's switchSession runs tmux's
+          // select-window, whose hook clears the pill on arrival.
+          if (target && win.postMessage) {
+            try { win.postMessage({ type: 'deep-link', target: target }); return win; }
+            catch (x) { /* fall through to navigate */ }
+          }
+          if (win.navigate) { try { return win.navigate(abs); } catch (x) { /* focus only */ } }
+          return win;
         });
       }
-      return self.clients.openWindow(target);
+      // No open window to message: open one on the deep-link URL, whose
+      // ?target= is read and switched to once the socket confirms.
+      return self.clients.openWindow(abs);
     })
   );
 });

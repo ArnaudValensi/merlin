@@ -387,6 +387,7 @@ def build_payload(event: Event, icon: str | None = None) -> dict:
         "body": _clip(event.body, _BODY_MAX),
         "tag": _clip(event.sid, _TAG_MAX),
         "url": deep_link(event.target),
+        "target": event.target,
         "sid": _clip(event.sid, _TAG_MAX),
         "state": event.state,
         "icon": current_icon() if icon is None else icon,

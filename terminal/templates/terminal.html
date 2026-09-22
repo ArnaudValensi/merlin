@@ -1207,6 +1207,24 @@ document.addEventListener('DOMContentLoaded', () => {
         lastPasteResult: function () { return lastPasteResult; },
     };
 
+    // A tapped push notification reaches an already-open page as a message
+    // from the service worker (notifications/static/sw.js), not as a reload:
+    // navigate() is unreliable on a window the worker does not control, so it
+    // posts the target instead. Switching runs tmux's select-window, whose
+    // hook clears the done pill on arrival — the same visit a deep-link URL
+    // makes on a fresh load. A plain focus with no target leaves the pill.
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.addEventListener('message', (e) => {
+            const d = e.data || {};
+            if (d.type !== 'deep-link') return;
+            const t = d.target;
+            if (t && /^[^:]+:@\d+$/.test(t)
+                && window.MerlinTerminal && window.MerlinTerminal.switchSession) {
+                window.MerlinTerminal.switchSession(t);
+            }
+        });
+    }
+
     function sendToTerminal(data) {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(data);

@@ -183,6 +183,7 @@ class TestPayload:
             "body": "Finished",
             "tag": "s1",
             "url": "/terminal?target=alpha%3A%401",
+            "target": "alpha:@1",
             "sid": "s1",
             "state": "done",
             "icon": "/static/icons/green/icon-192.png",

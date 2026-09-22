@@ -91,7 +91,7 @@ window.MerlinNotifications = (function () {
       if (!reg) return;
       return reg.showNotification(ev.title || 'Merlin', {
         body: ev.body || '', tag: ev.sid || ev.target, icon: ICON,
-        data: { url: deepLink(ev), sid: ev.sid, state: ev.state },
+        data: { url: deepLink(ev), target: ev.target, sid: ev.sid, state: ev.state },
       });
     }).catch(function () { /* no worker, no notification */ });
   }
