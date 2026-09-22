@@ -37,7 +37,7 @@ def make_skill(base: Path, dir_name: str, **kwargs) -> Path:
     return make_skill_in(base / "skills", dir_name, **kwargs)
 
 
-# The core repo skills/ source (jobs, notes, merlin, dashboard) is
+# The core repo skills/ source (merlin, merlin-jobs, merlin-notes, merlin-dashboard, merlin-review) is
 # always active and resolves to the *real* repo via paths.app_dir(). That is
 # deliberate: core skills are shipped repo data, so tests exercise the real
 # thing (unlike the notes/canonical homes, which are redirected to a tmp
@@ -304,7 +304,13 @@ class TestRealRepoSkills:
         specs = {
             s.name: s for s in skills.list_source_skills("core", repo_root / "skills")
         }
-        for name in ("jobs", "dashboard", "notes", "merlin"):
+        for name in (
+            "merlin",
+            "merlin-jobs",
+            "merlin-dashboard",
+            "merlin-notes",
+            "merlin-review",
+        ):
             assert name in specs, f"missing {name}"
             assert specs[name].description
         # discord is bot-gated, not a core skill.
@@ -343,7 +349,13 @@ class TestRealRepoSkills:
         assert paths.app_dir() == current
 
         registry = skills.build_registry({})  # bot off, no user skills
-        for name in ("jobs", "dashboard", "notes", "merlin"):
+        for name in (
+            "merlin",
+            "merlin-jobs",
+            "merlin-dashboard",
+            "merlin-notes",
+            "merlin-review",
+        ):
             assert registry[name].source == "core"
 
 

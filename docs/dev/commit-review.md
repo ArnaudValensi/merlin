@@ -413,6 +413,6 @@ last visit" panel survives it. Its refs line names the merge base only when
 it differs from the base, like the page header.
 
 The agent learns the loop from the "Code reviews" section of
-`agent/MERLIN.md` and the core `skills/review/SKILL.md` operating card, which
+`agent/MERLIN.md` and the core `skills/merlin-review/SKILL.md` operating card, which
 triggers on review comments, a review id or a pasted `merlin review show`
 line.

@@ -1,6 +1,6 @@
 # Notes System
 
-Reference documentation for Merlin's 3-layer notes architecture: user profile, daily logs, and knowledge base. This file is the complete spec; the notes skill (`skills/notes/SKILL.md`) is the thin operating card agents load per session, and `merlin kb check` is the executable subset of these rules.
+Reference documentation for Merlin's 3-layer notes architecture: user profile, daily logs, and knowledge base. This file is the complete spec; the notes skill (`skills/merlin-notes/SKILL.md`) is the thin operating card agents load per session, and `merlin kb check` is the executable subset of these rules.
 
 ## Overview
 

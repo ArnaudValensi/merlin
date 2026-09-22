@@ -1,5 +1,5 @@
 ---
-name: notes
+name: merlin-notes
 description: Search and manage Merlin's notes — knowledge base (typed OKF-style notes), daily logs, and user facts. Use this to recall past conversations, add knowledge, or look up stored information.
 user-invocable: false
 allowed-tools: Bash, Read

@@ -169,7 +169,7 @@ the list, the page shows the resolved state.
 
 The agent's `show` does not count as a visit: the **Since your last visit**
 panel is yours. Your Merlin agent learns all of this from its
-brain doc and the `review` skill, so pasting the `show` line is enough.
+brain doc and the `merlin-review` skill, so pasting the `show` line is enough.
 
 ## Read a diff
 

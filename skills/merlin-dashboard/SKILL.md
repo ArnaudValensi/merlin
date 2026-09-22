@@ -1,5 +1,5 @@
 ---
-name: dashboard
+name: merlin-dashboard
 description: Give the user the link to the monitoring dashboard. Use this when the user asks for the dashboard URL or wants to see the dashboard.
 user-invocable: false
 allowed-tools: Bash

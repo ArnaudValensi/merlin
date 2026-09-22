@@ -1,5 +1,5 @@
 ---
-name: review
+name: merlin-review
 description: Work the code reviews the user leaves on Merlin's Commits page. Use when the user mentions review comments, a review id, or pastes a `merlin review show` line, or asks whether their remarks were addressed.
 user-invocable: false
 allowed-tools: Bash, Read

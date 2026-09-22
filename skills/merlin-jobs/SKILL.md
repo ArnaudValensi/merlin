@@ -1,5 +1,5 @@
 ---
-name: jobs
+name: merlin-jobs
 description: Manage Merlin jobs — add, list, edit, enable/disable, remove scheduled jobs and view run history.
 user-invocable: false
 allowed-tools: Bash

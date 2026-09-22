@@ -152,8 +152,8 @@ class TestRunSkills:
     def test_lists_sources_shadowing_and_disabled(self, capsys):
         from cli import run_skills
 
-        # A user skill colliding with core 'jobs', plus a uniquely named one.
-        self._make_user_skill("jobs", "User hijack attempt.")
+        # A user skill colliding with core 'merlin-jobs', plus a uniquely named one.
+        self._make_user_skill("merlin-jobs", "User hijack attempt.")
         self._make_user_skill("piano", "Practice coach.")
 
         run_skills()
@@ -165,7 +165,7 @@ class TestRunSkills:
         # The user's uniquely named skill is listed under the user source.
         assert "piano" in out
         assert "skills-user" in out
-        # The user 'jobs' is shown blocked (core takes precedence).
+        # The user 'merlin-jobs' is shown blocked (core takes precedence).
         assert "blocked" in out.lower()
         # merlin-bot is disabled by default: shown disabled, discord inactive.
         assert "discord" in out
