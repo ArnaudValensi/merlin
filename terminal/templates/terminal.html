@@ -1812,9 +1812,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         term.write(`\r\n\x1b[31m[Voice error: bad response]\x1b[0m\r\n`);
                     }
                     resolve('fallback');
-                } else if (xhr.status === 402) {
-                    // No active subscription: retrying the same audio cannot
-                    // succeed, so say why and let the caller drop it.
+                } else if (xhr.status === 402 || xhr.status === 422) {
+                    // A final refusal (no active subscription, unreadable
+                    // audio): retrying the same audio cannot succeed, so say
+                    // why and let the caller drop it.
                     let message = '';
                     try { message = JSON.parse(xhr.responseText).error; } catch (e) { /* keep default */ }
                     showVoiceRefused(message);

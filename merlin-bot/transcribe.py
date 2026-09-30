@@ -85,16 +85,33 @@ def _transcribe_openai(audio_path: str | Path, language: str, api_key: str) -> s
 MERLIN_CLOUD_API = "https://merlincloud.dev"
 
 
-class SubscriptionRequired(RuntimeError):
-    """Merlin Cloud refused transcription: the account has no active access.
-
-    The portal answers 402 when no rig is trialing or active (a lapsed or
-    grace-period account). Retrying the same audio cannot succeed, so callers
-    surface it to the user instead of treating it as a transient failure.
+class TranscriptionRefused(RuntimeError):
+    """Merlin Cloud gave a final answer that retrying the same audio cannot
+    change. Callers show the reason to the user instead of treating it as a
+    transient failure. ``status`` is the HTTP status to relay to the page.
     """
+
+    status = 400
+
+
+class SubscriptionRequired(TranscriptionRefused):
+    """The account has no active access: the portal answers 402 when no rig
+    is trialing or active (a lapsed or grace-period account)."""
+
+    status = 402
 
     def __init__(self) -> None:
         super().__init__("Voice input needs an active Merlin Cloud subscription")
+
+
+class AudioUnreadable(TranscriptionRefused):
+    """The transcription provider could not decode the recording: the portal
+    answers 422 (typically an empty capture from a quick tap)."""
+
+    status = 422
+
+    def __init__(self) -> None:
+        super().__init__("Voice recording could not be processed, try again")
 
 
 def _transcribe_saas(audio_path: str | Path, language: str, token: str) -> str:
@@ -113,6 +130,8 @@ def _transcribe_saas(audio_path: str | Path, language: str, token: str) -> str:
         )
     if response.status_code == 402:
         raise SubscriptionRequired()
+    if response.status_code == 422:
+        raise AudioUnreadable()
     response.raise_for_status()
     return response.json()["text"]
 

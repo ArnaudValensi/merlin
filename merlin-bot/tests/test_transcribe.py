@@ -112,6 +112,18 @@ class TestSaaSBackend:
                 transcribe._transcribe_saas("/tmp/test.ogg", "en", "test-token")
         mock_response.raise_for_status.assert_not_called()
 
+    @patch("httpx.post")
+    def test_422_raises_audio_unreadable(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.status_code = 422
+        mock_post.return_value = mock_response
+
+        with patch("builtins.open", mock_open(read_data=b"audio data")):
+            with pytest.raises(transcribe.AudioUnreadable) as exc:
+                transcribe._transcribe_saas("/tmp/test.ogg", "en", "test-token")
+        assert exc.value.status == 422
+        mock_response.raise_for_status.assert_not_called()
+
 
 class TestBackendSelection:
     def setup_method(self):

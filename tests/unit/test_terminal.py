@@ -397,6 +397,26 @@ class TestTranscribeEndpoint:
         assert result.status_code == 402
         assert "subscription" in json.loads(result.body)["error"]
 
+    def test_unreadable_audio_returns_422(self):
+        """Unreadable audio is final too: relayed as 422, not a retried 500."""
+        from transcribe import AudioUnreadable
+
+        with (
+            mock.patch("transcribe.transcribe", side_effect=AudioUnreadable()),
+            mock.patch("os.unlink"),
+        ):
+            result = asyncio.run(
+                tr.transcribe_audio(
+                    file=self._make_file(),
+                    language="en",
+                    auto_enter="false",
+                    target="",
+                )
+            )
+
+        assert result.status_code == 422
+        assert "could not be processed" in json.loads(result.body)["error"]
+
     def test_transcribe_passes_language(self):
         """Language parameter is forwarded to transcribe()."""
         with (
