@@ -2,6 +2,11 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.39.2 (2026-09-30)
+
+### Fixed
+- **Voice dictation says why it failed**: When your Merlin Cloud subscription is inactive, or a recording cannot be processed, the terminal now prints the reason instead of turning the mic orange and retrying for nothing, or appearing to send while no text ever arrives.
+
 ## v0.39.1 (2026-09-22)
 
 ### Fixed
