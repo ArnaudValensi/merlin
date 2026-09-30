@@ -1688,6 +1688,10 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('auto-enter', autoEnterBtn.classList.contains('active') ? 'true' : 'false');
     });
 
+    function showVoiceRefused(message) {
+        term.write(`\r\n\x1b[33m[${message || 'Voice input unavailable'}]\x1b[0m\r\n`);
+    }
+
     function showUploadDone() {
         micBtn.classList.add('upload-done');
         setTimeout(() => micBtn.classList.remove('upload-done'), 500);
@@ -1808,6 +1812,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         term.write(`\r\n\x1b[31m[Voice error: bad response]\x1b[0m\r\n`);
                     }
                     resolve('fallback');
+                } else if (xhr.status === 402) {
+                    // No active subscription: retrying the same audio cannot
+                    // succeed, so say why and let the caller drop it.
+                    let message = '';
+                    try { message = JSON.parse(xhr.responseText).error; } catch (e) { /* keep default */ }
+                    showVoiceRefused(message);
+                    resolve('refused');
                 } else {
                     reject(new Error(`server ${xhr.status}`));
                 }
@@ -1830,11 +1841,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
-                await uploadVoice(blob, language, autoEnter, target);
-                // Success — clean up
+                const outcome = await uploadVoice(blob, language, autoEnter, target);
+                // Success or a final refusal: clean up either way
                 micBtn.classList.remove('uploading');
                 await deleteVoiceFromDB();
-                showUploadDone();
+                if (outcome !== 'refused') showUploadDone();
                 term.focus();
                 return;
             } catch (err) {
@@ -2039,6 +2050,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                     var ctl = JSON.parse(d.slice(1));
                     if (ctl && ctl.type === 'pong') { onPong(); return; }
+                    // A background transcription (the 202 path) was lost after
+                    // the page was told it was accepted.
+                    if (ctl && ctl.type === 'voice_error') { showVoiceRefused(ctl.message); return; }
                     if (ctl && ctl.type === 'session') {
                         currentSession = ctl.name || '';
                         currentWindowId = ctl.window_id || '';

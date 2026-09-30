@@ -376,6 +376,27 @@ class TestTranscribeEndpoint:
         body = json.loads(result.body)
         assert "error" in body
 
+    def test_subscription_required_returns_402(self):
+        """A lapsed Merlin Cloud account is a final refusal, not a 500 the
+        page would retry: 402 with the reason for the page to show."""
+        from transcribe import SubscriptionRequired
+
+        with (
+            mock.patch("transcribe.transcribe", side_effect=SubscriptionRequired()),
+            mock.patch("os.unlink"),
+        ):
+            result = asyncio.run(
+                tr.transcribe_audio(
+                    file=self._make_file(),
+                    language="en",
+                    auto_enter="false",
+                    target="",
+                )
+            )
+
+        assert result.status_code == 402
+        assert "subscription" in json.loads(result.body)["error"]
+
     def test_transcribe_passes_language(self):
         """Language parameter is forwarded to transcribe()."""
         with (
@@ -612,6 +633,9 @@ class TestTranscribeAndInject:
         parent.send_enter.return_value = enter_ok
         with (
             cm_transcribe,
+            mock.patch(
+                "terminal.routes._broadcast_voice_error", mock.AsyncMock()
+            ) as broadcast,
             mock.patch("board.sweep.exit_copy_mode", parent.exit_cm),
             mock.patch("board.sweep.send_literal", parent.send_lit),
             mock.patch("board.sweep.send_enter", parent.send_enter),
@@ -628,6 +652,7 @@ class TestTranscribeAndInject:
             "order": [c[0] for c in parent.mock_calls],
             "unlink": unlink,
             "warn": warn,
+            "broadcast": broadcast,
         }
 
     def test_sends_text_to_target_window(self):
@@ -680,6 +705,43 @@ class TestTranscribeAndInject:
         r = self._run(transcribe_exc=RuntimeError("boom"))
         r["send_lit"].assert_not_called()
         r["unlink"].assert_called_once_with("/tmp/audio.webm")
+
+    def test_transcribe_error_is_broadcast_to_pages(self):
+        """The page got a 202, so a later failure must reach it another way."""
+        r = self._run(transcribe_exc=RuntimeError("boom"))
+        r["broadcast"].assert_awaited_once()
+
+    def test_subscription_refusal_is_broadcast_with_its_reason(self):
+        from transcribe import SubscriptionRequired
+
+        r = self._run(transcribe_exc=SubscriptionRequired())
+        r["send_lit"].assert_not_called()
+        (message,) = r["broadcast"].await_args.args
+        assert "subscription" in message
+        r["unlink"].assert_called_once_with("/tmp/audio.webm")
+
+    def test_success_broadcasts_nothing(self):
+        r = self._run(text="ls")
+        r["broadcast"].assert_not_awaited()
+
+
+class TestBroadcastVoiceError:
+    """_broadcast_voice_error sends one control frame to every connected page."""
+
+    def test_sends_frame_to_every_page_and_survives_a_dead_socket(self):
+        live = tr.SessionReportState()
+        live.websocket = mock.AsyncMock()
+        dead = tr.SessionReportState()
+        dead.websocket = mock.AsyncMock()
+        dead.websocket.send_text.side_effect = RuntimeError("closed")
+        unbound = tr.SessionReportState()
+        with mock.patch.object(tr, "_client_views", {dead, live, unbound}):
+            asyncio.run(tr._broadcast_voice_error("no sub"))
+
+        frame = live.websocket.send_text.await_args.args[0]
+        assert frame.startswith("\x00")
+        assert json.loads(frame[1:]) == {"type": "voice_error", "message": "no sub"}
+        dead.websocket.send_text.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

@@ -109,6 +109,9 @@ class SessionReportState:
         # A short name for the browser, from its user agent, so a routing
         # record can say which page was looking.
         self.agent = ""
+        # The page's socket, for control frames not tied to its own tmux
+        # client (a background voice failure). Set on connect.
+        self.websocket: WebSocket | None = None
 
 
 # One entry per connected terminal socket: what its tmux client displays, as
@@ -342,6 +345,25 @@ def _unlink_safe(path: str) -> None:
 _TARGET_RE = re.compile(r"[^:\s]+:@\d+")
 
 
+async def _broadcast_voice_error(message: str) -> None:
+    """Tell every connected terminal page that a background transcription
+    was lost. The 202 already told the recording page it was accepted, and the
+    tmux target has no way to show an error, so the pages are the only place
+    the user can learn about it. Every page, not only the recording one: the
+    user may have moved to another device while the audio was in flight.
+    """
+    frame = "\x00" + json.dumps({"type": "voice_error", "message": message})
+    for state in list(_client_views):
+        if state.websocket is None:
+            continue
+        try:
+            await state.websocket.send_text(frame)
+        except Exception:
+            # A socket closing under us is not this function's problem: its
+            # own handler tears it down.
+            pass
+
+
 async def _transcribe_and_inject(
     tmp_path: str,
     language: str,
@@ -357,7 +379,7 @@ async def _transcribe_and_inject(
     they left. A window that no longer exists is a logged loss, not a redirect
     to somewhere else. Runs off the event loop: every call shells out to tmux.
     """
-    from transcribe import transcribe
+    from transcribe import SubscriptionRequired, transcribe
 
     loop = asyncio.get_event_loop()
     try:
@@ -391,8 +413,12 @@ async def _transcribe_and_inject(
                         target,
                         len(text),
                     )
+    except SubscriptionRequired as e:
+        logger.warning("Background transcription refused: %s", e)
+        await _broadcast_voice_error(str(e))
     except Exception:
         logger.exception("Background transcription failed")
+        await _broadcast_voice_error("Voice transcription failed, see Merlin logs")
     finally:
         _unlink_safe(tmp_path)
 
@@ -439,13 +465,18 @@ async def transcribe_audio(
         return JSONResponse({"status": "accepted"}, status_code=202)
 
     # Fallback: synchronous transcription (page writes into its own socket)
-    from transcribe import transcribe
+    from transcribe import SubscriptionRequired, transcribe
 
     try:
         text = await asyncio.get_event_loop().run_in_executor(
             None, transcribe, tmp.name, lang
         )
         return JSONResponse({"text": text})
+    except SubscriptionRequired as e:
+        # Not transient: the page shows the reason and drops the audio
+        # instead of retrying it.
+        logger.warning("Transcription refused: %s", e)
+        return JSONResponse({"error": str(e)}, status_code=402)
     except Exception as e:
         logger.exception("Transcription failed")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -615,6 +646,7 @@ async def terminal_ws(websocket: WebSocket):
         return
     session_report_state = SessionReportState()
     session_report_state.agent = short_agent(websocket.headers.get("user-agent", ""))
+    session_report_state.websocket = websocket
     _client_views.add(session_report_state)
 
     # Check if child is still alive

@@ -85,6 +85,18 @@ def _transcribe_openai(audio_path: str | Path, language: str, api_key: str) -> s
 MERLIN_CLOUD_API = "https://merlincloud.dev"
 
 
+class SubscriptionRequired(RuntimeError):
+    """Merlin Cloud refused transcription: the account has no active access.
+
+    The portal answers 402 when no rig is trialing or active (a lapsed or
+    grace-period account). Retrying the same audio cannot succeed, so callers
+    surface it to the user instead of treating it as a transient failure.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("Voice input needs an active Merlin Cloud subscription")
+
+
 def _transcribe_saas(audio_path: str | Path, language: str, token: str) -> str:
     """Transcribe via the Merlin Cloud SaaS proxy."""
     import httpx
@@ -99,6 +111,8 @@ def _transcribe_saas(audio_path: str | Path, language: str, token: str) -> str:
             data={"language": language},
             timeout=60.0,
         )
+    if response.status_code == 402:
+        raise SubscriptionRequired()
     response.raise_for_status()
     return response.json()["text"]
 

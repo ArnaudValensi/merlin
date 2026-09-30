@@ -101,6 +101,17 @@ class TestSaaSBackend:
         assert call_kwargs.kwargs["headers"]["Authorization"] == "Bearer test-token"
         assert call_kwargs.kwargs["data"]["language"] == "en"
 
+    @patch("httpx.post")
+    def test_402_raises_subscription_required(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.status_code = 402
+        mock_post.return_value = mock_response
+
+        with patch("builtins.open", mock_open(read_data=b"audio data")):
+            with pytest.raises(transcribe.SubscriptionRequired):
+                transcribe._transcribe_saas("/tmp/test.ogg", "en", "test-token")
+        mock_response.raise_for_status.assert_not_called()
+
 
 class TestBackendSelection:
     def setup_method(self):
