@@ -41,6 +41,21 @@ def tmp_merlin_home(tmp_path):
         os.environ.pop("MERLIN_HOME", None)
 
 
+async def _start_on_a_free_port():
+    """Start the SSH server, retrying on a fresh port if the one we picked was
+    taken before we bound it (other servers start in parallel on a busy
+    machine, the E2E suite among them)."""
+    for _ in range(5):
+        port = _free_port()
+        try:
+            acceptor = await ssh_server.start_ssh_server(port=port)
+        except OSError:
+            acceptor = None
+        if acceptor is not None:
+            return port
+    raise AssertionError("could not start the SSH server on any free port")
+
+
 def _free_port() -> int:
     """Find a free port for testing."""
     import socket
@@ -309,11 +324,9 @@ class TestInteractiveSessionRunsAShell:
         monkeypatch.delenv("TMUX", raising=False)
 
         async def _test():
-            port = _free_port()
             conn = None
             try:
-                acceptor = await ssh_server.start_ssh_server(port=port)
-                assert acceptor is not None
+                port = await _start_on_a_free_port()
                 conn = await asyncssh.connect(
                     "127.0.0.1",
                     port=port,
@@ -329,7 +342,7 @@ class TestInteractiveSessionRunsAShell:
                 # that ran the line prints the expanded `READY:[]`.
                 text = ""
                 loop = asyncio.get_running_loop()
-                deadline = loop.time() + 20
+                deadline = loop.time() + 60  # a real login shell, maybe loaded
                 while "READY:[]" not in text and loop.time() < deadline:
                     client.stdin.write('echo "READY:[$TMUX]"\n')
                     resend_at = loop.time() + 2
@@ -341,7 +354,7 @@ class TestInteractiveSessionRunsAShell:
                         except TimeoutError:
                             pass
                 client.stdin.write("exit\n")
-                result = await asyncio.wait_for(client.wait(), timeout=10)
+                result = await asyncio.wait_for(client.wait(), timeout=60)
                 text += str(result.stdout or "")
             finally:
                 if conn is not None:
@@ -365,11 +378,9 @@ class TestInteractiveSessionRunsAShell:
         """`ssh host "cmd"` is what tooling (VS Code Remote) uses; unchanged."""
 
         async def _test():
-            port = _free_port()
             conn = None
             try:
-                acceptor = await ssh_server.start_ssh_server(port=port)
-                assert acceptor is not None
+                port = await _start_on_a_free_port()
                 conn = await asyncssh.connect(
                     "127.0.0.1",
                     port=port,
@@ -377,7 +388,9 @@ class TestInteractiveSessionRunsAShell:
                     username="test",
                     password="",
                 )
-                result = await conn.run("echo command-mode-ok", check=False)
+                result = await asyncio.wait_for(
+                    conn.run("echo command-mode-ok", check=False), timeout=60
+                )
                 return str(result.stdout)
             finally:
                 if conn is not None:
