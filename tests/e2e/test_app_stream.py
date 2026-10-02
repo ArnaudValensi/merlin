@@ -4,7 +4,9 @@ The browser picks the codec (H.264 when it can decode it, NVENC on an NVIDIA
 machine); a page that only advertises VP8 exercises the software fallback.
 """
 
+import os
 import shutil
+import signal
 import time
 from pathlib import Path
 
@@ -365,3 +367,63 @@ def test_a_long_paste_stops_with_its_viewer(browser, server, probe):
         first_ctx.close()
         if second_ctx:
             second_ctx.close()
+
+
+def test_keys_after_a_paste_wait_for_it(browser, server, probe):
+    """A paste then Enter: Enter must arrive after the whole paste."""
+    _, log = probe
+    context, page = _player(browser, server)
+    try:
+        wait_live(page)
+        seen = len(_text(log).splitlines())
+        page.evaluate(
+            """() => {
+                const s = window.MerlinPlayer.stream;
+                s.send({t: 'text', s: 'hello'});
+                s.send({t: 'key', k: 'Return', d: true});
+                s.send({t: 'key', k: 'Return', d: false});
+            }"""
+        )
+        deadline = time.monotonic() + 10
+        lines: list[str] = []
+        while time.monotonic() < deadline:
+            lines = _text(log).splitlines()[seen:]
+            if "keyup Return" in lines:
+                break
+            time.sleep(0.05)
+        typed = [line.split()[1] for line in lines if line.startswith("keydown ")]
+        assert typed == ["h", "e", "l", "l", "o", "Return"], typed
+    finally:
+        context.close()
+
+
+def test_a_killed_streamer_takes_its_typist_with_it(browser, server, probe):
+    handle, log = probe
+    context, page = _player(browser, server)
+    try:
+        wait_live(page)
+        page.evaluate(
+            "window.MerlinPlayer.stream.send({t: 'text', s: 'w'.repeat(400)})"
+        )
+        deadline = time.monotonic() + 10
+        while _text(log).count("keydown w") < 20:
+            assert time.monotonic() < deadline, "typing never started"
+            time.sleep(0.05)
+        assert _xdotool_typing_on(handle["display"])
+        [streamer] = streamer_pids(handle["display"])
+        os.kill(streamer, signal.SIGKILL)  # no cleanup code runs
+        deadline = time.monotonic() + 5
+        while _xdotool_typing_on(handle["display"]):
+            assert time.monotonic() < deadline, "the typist outlived its streamer"
+            time.sleep(0.05)
+        deadline = time.monotonic() + 15
+        typed = -1
+        while time.monotonic() < deadline:
+            now = _text(log).count("keydown w")
+            if now == typed:
+                break
+            typed = now
+            time.sleep(1)
+        assert typed < 400
+    finally:
+        context.close()

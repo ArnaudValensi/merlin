@@ -38,7 +38,7 @@ FIRST_DISPLAY = 100
 LAST_DISPLAY = 999
 XVFB_READY_TIMEOUT = 5.0
 WINDOW_TIMEOUT = 10.0
-STOP_GRACE = 5.0
+STOP_GRACE = 10.0  # the supervisor ends leftovers within ~3 s; this bounds a stuck one
 CONTROLS = ("gamepad", "trackpad", "touch")
 GPU_MODES = ("auto", "on", "off")
 

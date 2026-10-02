@@ -76,9 +76,13 @@ A session is one app on one private display, recorded as
 - **Supervisor**: leads the app's process group and is a child subreaper, so
   every orphan (and a `setsid` escapee) is re-parented to it. It writes the
   main process's exit code (128+N for a signal), then ends whatever is left
-  (SIGTERM, SIGKILL after 3 s) and exits last. A SIGTERM to it does the same.
-  While anything of the app lives, its leader does, so the group number cannot
-  be reused.
+  and exits last; a SIGTERM to it does the same. Ending is a loop of passes
+  (a killed process may leave children in another group, adopted next): new
+  processes get SIGTERM once, and after 3 s every pass sends SIGKILL. It
+  signals individual processes through pidfds, re-checked against /proc
+  after opening, never by bare PID. While anything of the app lives, its
+  leader does, so the group number cannot be reused. Merlin's stop waits up
+  to 10 s for it before signalling the group itself.
 - **Environment**: the caller's, minus `WAYLAND_DISPLAY`/`WAYLAND_SOCKET`,
   plus `DISPLAY=:N` and the X11 overrides for SDL, GTK and Qt. Without the
   scrub, an app launched from a Wayland desktop session opens on the real
@@ -129,8 +133,10 @@ terminal (`verify_ws_cookie`, close `4401`).
    the viewer to its `generation`, and starts `/usr/bin/python3
    app/streamer.py --display :N --codecs ... --fps 60 --bitrate K --xvfb-pid P
    --xvfb-start T` in its own process group (8 Mbit/s at 1080p, proportional,
-   1.5 to 12). The streamer refuses a display whose lock no longer names that
-   Xvfb.
+   1.5 to 12). The streamer takes the apps state lock (`--state-lock`, the
+   one launch and stop take) while it checks that the display's lock still
+   names that Xvfb and opens its input and capture connections, so the
+   display cannot be torn down and handed to another app in between.
 3. The streamer picks NVENC H.264 (after a one-frame test pipeline, since
    `nvh264enc` can exist and fail to open), else OpenH264, else VP8, builds
    `ximagesrc ! encoder ! payloader ! webrtcbin`, creates the `input` data
@@ -148,9 +154,13 @@ Input on the data channel: `key {k, d}` (X keysym names), `move {x, y}`,
 printable characters the streamer presses the keycode with the Shift level
 the display's keymap needs (adding or lifting Shift around the press), so a
 French `&` or Shift+`1` arrives as typed on a US keymap; other keys (arrows,
-Tab, F-keys) keep the user's modifiers. Text goes through `xdotool type`, one
-at a time and asynchronously, so a long paste never blocks shutdown. The
-streamer releases any held key or button when it stops.
+Tab, F-keys) keep the user's modifiers. Input is applied strictly in arrival
+order: text goes through `xdotool type` asynchronously (a long paste never
+blocks the main loop or shutdown) and everything after it waits for it, so a
+paste then Enter submits the whole paste. The typist is started with
+`PR_SET_PDEATHSIG` (after checking its parent is still the streamer), so it
+dies even if the streamer is killed outright. The streamer releases any held
+key or button, and stops typing, when it stops.
 
 Client states (`client.js`): `connecting`, `live`, `unreachable`, `replaced`,
 `exited`, `paused` (hidden 30 s, except in picture-in-picture: entering and

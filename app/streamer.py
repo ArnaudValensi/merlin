@@ -21,11 +21,14 @@ releases any key or button still held.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
+import os
 import signal
 import subprocess
 import sys
 import threading
+from contextlib import contextmanager, redirect_stdout
 
 import gi
 
@@ -127,6 +130,17 @@ def choose_encoder(codecs: list[str]) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
+# Runs as `python3 -c TYPIST STREAMER_PID ARGV...`: ask the kernel to SIGKILL
+# it when its parent dies, check the parent is still the streamer, then exec.
+TYPIST = (
+    "import ctypes, os, sys\n"
+    "ctypes.CDLL(None).prctl(1, 9)  # PR_SET_PDEATHSIG, SIGKILL\n"
+    "if os.getppid() != int(sys.argv[1]):\n"
+    "    sys.exit(1)\n"
+    "os.execvp(sys.argv[2], sys.argv[2:])\n"
+)
+
+
 def _printable(keysym: int) -> bool:
     """Latin-1 printable characters: the keysyms whose Shift level matters."""
     return 0x20 <= keysym <= 0x7E or 0xA0 <= keysym <= 0xFF
@@ -137,14 +151,81 @@ class Injector:
 
     def __init__(self, display_name: str) -> None:
         self.display_name = display_name
-        self.disp = xdisplay.Display(display_name)
+        # python-xlib prints its xauthority warning on stdout, which is the
+        # JSON protocol to the server: send it to stderr instead.
+        with redirect_stdout(sys.stderr):
+            self.disp = xdisplay.Display(display_name)
         self.keys_down: set[int] = set()
         self.shift_held: set[int] = set()  # Shift keycodes the user holds
         self.buttons_down: set[int] = set()
         self.typing: subprocess.Popen | None = None
-        self.text_queue: list[str] = []
+        self.pending: list[dict] = []
 
-    def handle(self, msg: dict) -> None:
+    # Input is applied strictly in arrival order. Text goes through `xdotool
+    # type`, which runs asynchronously so the main loop (and shutdown) never
+    # blocks on a long paste; everything after it waits for it to finish, so
+    # a paste followed by Enter submits the whole paste.
+    def submit(self, msg: dict) -> None:
+        self.pending.append(msg)
+        self._drain()
+
+    def _drain(self) -> None:
+        while self.pending:
+            if self.typing is not None and self.typing.poll() is None:
+                return  # resumed by _watch_typing
+            self.typing = None
+            msg = self.pending.pop(0)
+            if msg.get("t") == "text":
+                if self._start_typing(str(msg.get("s", ""))):
+                    return
+                continue
+            try:
+                self._apply(msg)
+            except Exception as exc:  # a bad message must not end the stream
+                log(f"input error: {exc!r}")
+
+    def _start_typing(self, text: str) -> bool:
+        if not text:
+            return False
+        self.disp.sync()
+        # The typist dies with the streamer (PR_SET_PDEATHSIG, set before it
+        # execs xdotool; it exits at once if the streamer is already gone), so
+        # a streamer killed outright cannot leave it typing.
+        self.typing = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                TYPIST,
+                str(os.getpid()),
+                "xdotool",
+                "type",
+                "--delay",
+                "12",
+                "--",
+                text,
+            ],
+            env={"DISPLAY": self.display_name, "PATH": "/usr/bin:/bin"},
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+        )
+        GLib.timeout_add(20, self._watch_typing)
+        return True
+
+    def _watch_typing(self) -> bool:
+        if self.typing is not None and self.typing.poll() is None:
+            return True  # still typing: check again
+        self.typing = None
+        self._drain()
+        return False
+
+    def stop_typing(self) -> None:
+        self.pending.clear()
+        if self.typing is not None and self.typing.poll() is None:
+            self.typing.kill()
+            self.typing.wait()
+        self.typing = None
+
+    def _apply(self, msg: dict) -> None:
         kind = msg.get("t")
         if kind == "key":
             self.key(str(msg.get("k", "")), bool(msg.get("d")))
@@ -168,44 +249,7 @@ class Injector:
             for _ in range(min(abs(dy), 20)):
                 xtest.fake_input(self.disp, X.ButtonPress, button)
                 xtest.fake_input(self.disp, X.ButtonRelease, button)
-        elif kind == "text":
-            self.disp.sync()
-            self.type_text(str(msg.get("s", "")))
         self.disp.sync()
-
-    # Text goes through `xdotool type`, one at a time, never blocking the main
-    # loop: a long paste must not delay shutdown, and stop() kills it.
-    def type_text(self, text: str) -> None:
-        if text:
-            self.text_queue.append(text)
-            self._next_text()
-
-    def _next_text(self) -> None:
-        if self.typing is not None and self.typing.poll() is None:
-            return
-        self.typing = None
-        if not self.text_queue:
-            return
-        self.typing = subprocess.Popen(
-            ["xdotool", "type", "--delay", "12", "--", self.text_queue.pop(0)],
-            env={"DISPLAY": self.display_name, "PATH": "/usr/bin:/bin"},
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-        )
-        GLib.timeout_add(50, self._watch_typing)
-
-    def _watch_typing(self) -> bool:
-        if self.typing is not None and self.typing.poll() is None:
-            return True  # still typing: check again
-        self._next_text()
-        return False
-
-    def stop_typing(self) -> None:
-        self.text_queue.clear()
-        if self.typing is not None and self.typing.poll() is None:
-            self.typing.kill()
-            self.typing.wait()
-        self.typing = None
 
     def key(self, name: str, down: bool) -> None:
         """Press or release the key that produces keysym ``name``.
@@ -239,8 +283,11 @@ class Injector:
             self._fake(keycode, True)
             return
         if index > 1:
-            # Only reachable through AltGr levels: type it as text instead.
-            self.handle({"t": "text", "s": XK.keysym_to_string(keysym) or ""})
+            # Only reachable through AltGr levels: type it as text instead,
+            # in its place (before anything queued after it).
+            self.pending.insert(
+                0, {"t": "text", "s": XK.keysym_to_string(keysym) or ""}
+            )
             return
         needs_shift = index == 1
         if needs_shift == bool(self.shift_held):
@@ -320,18 +367,42 @@ def check_display_owner(display: str, pid: int, start: int) -> None:
         raise RuntimeError(f"display {display} now belongs to another X server")
 
 
+@contextmanager
+def state_lock(path: str):
+    """Hold Merlin's apps state lock (the one launch and stop take)."""
+    if not path:
+        yield
+        return
+    with open(path, "a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 class Streamer:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.loop = GLib.MainLoop()
-        self.injector = Injector(args.display)
-        if args.xvfb_pid:
-            check_display_owner(args.display, args.xvfb_pid, args.xvfb_start)
         self.skipped = skipped_addresses()
         self.offered = False
         self.channel = None
-
         encoder, codec = choose_encoder(args.codecs.split(","))
+        # Check the display and connect to it (input, then capture) under the
+        # lock that stop and launch take: the display cannot be torn down and
+        # given to another app between the check and the connections.
+        with state_lock(args.state_lock):
+            if args.xvfb_pid:
+                check_display_owner(args.display, args.xvfb_pid, args.xvfb_start)
+            self.injector = Injector(args.display)
+            self._build(encoder, codec)
+            # READY -> PAUSED starts ximagesrc, which opens its X connection.
+            self.pipe.set_state(Gst.State.PAUSED)
+        send({"type": "ready", "encoder": encoder, "codec": codec})
+
+    def _build(self, encoder: str, codec: str) -> None:
+        args = self.args
         description = (
             f"ximagesrc display-name={args.display} use-damage=false show-pointer=true ! "
             f"video/x-raw,framerate={args.fps}/1 ! "
@@ -354,7 +425,6 @@ class Streamer:
         bus = self.pipe.get_bus()
         bus.add_signal_watch()
         bus.connect("message::error", self.on_bus_error)
-        send({"type": "ready", "encoder": encoder, "codec": codec})
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -446,10 +516,7 @@ class Streamer:
         GLib.idle_add(self.inject, msg)
 
     def inject(self, msg: dict) -> bool:
-        try:
-            self.injector.handle(msg)
-        except Exception as exc:  # a bad message must not end the stream
-            log(f"input error: {exc!r}")
+        self.injector.submit(msg)
         return False
 
     def on_bus_error(self, _bus, message) -> None:
@@ -467,6 +534,7 @@ def main() -> int:
     parser.add_argument("--bitrate", type=int, default=8000, help="kbit/s")
     parser.add_argument("--xvfb-pid", type=int, default=0, help="expected X server")
     parser.add_argument("--xvfb-start", type=int, default=0, help="its start time")
+    parser.add_argument("--state-lock", default="", help="Merlin's apps state lock")
     args = parser.parse_args()
     Gst.init(None)
     try:

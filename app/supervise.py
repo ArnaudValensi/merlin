@@ -12,8 +12,16 @@ proves ownership by the leader's PID *and* start time, and never signals a
 group whose leader is gone.
 
 When the app's main process exits, its exit code (shell style: 128+N for a
-signal) goes to EXIT_FILE and everything left is ended: SIGTERM, then SIGKILL
-after a grace. A SIGTERM to the supervisor (Merlin's stop) does the same.
+signal) goes to EXIT_FILE and everything left is ended. A SIGTERM to the
+supervisor (Merlin's stop) does the same. Ending is a loop, not one pass: a
+process killed in a pass may leave children of its own (in another group,
+say) that the subreaper adopts next; each pass finds the current ones.
+Processes that appear get SIGTERM once; after GRACE every pass sends SIGKILL.
+
+Individual processes are signalled through pidfds, never bare PIDs: a PID
+read from /proc may be reused before the signal is sent, a pidfd may not. Each
+pidfd is checked against /proc after opening (still in our group, or still
+our child) before it is used.
 """
 
 from __future__ import annotations
@@ -26,40 +34,70 @@ import sys
 import time
 
 PR_SET_CHILD_SUBREAPER = 36
-GRACE = 3.0  # below Merlin's STOP_GRACE, so the supervisor cleans up first
+GRACE = 3.0
 POLL = 0.05
 
 
 def _stat_fields(pid: int) -> list[str] | None:
     try:
-        stat = open(f"/proc/{pid}/stat").read()
+        with open(f"/proc/{pid}/stat") as handle:
+            stat = handle.read()
     except OSError:
         return None
     return stat[stat.rfind(")") + 2 :].split() or None
 
 
-def _ours() -> list[int]:
-    """Live processes to end: our group's members and our own children."""
+def _is_ours(pid: int, me: int, group: int) -> bool:
+    """Live, and in our group or our direct child (an adopted orphan)."""
+    fields = _stat_fields(pid)
+    if not fields or fields[0] == "Z":
+        return False
+    return int(fields[2]) == group or int(fields[1]) == me
+
+
+def _targets() -> list[int]:
     me = os.getpid()
     group = os.getpgid(0)
-    out = []
-    for entry in os.scandir("/proc"):
-        if not entry.name.isdigit() or int(entry.name) == me:
-            continue
-        fields = _stat_fields(int(entry.name))
-        if not fields or fields[0] == "Z":
-            continue
-        if int(fields[2]) == group or int(fields[1]) == me:
-            out.append(int(entry.name))
-    return out
+    return [
+        int(entry.name)
+        for entry in os.scandir("/proc")
+        if entry.name.isdigit()
+        and int(entry.name) != me
+        and _is_ours(int(entry.name), me, group)
+    ]
 
 
-def _signal_all(sig: int) -> None:
-    for pid in _ours():
+def signal_ours(sig: int, already: set[tuple[int, int]] | None = None) -> int:
+    """Signal every process that is ours right now; return how many.
+
+    With ``already``, a process (PID plus start time) signalled before is
+    skipped, so each gets SIGTERM once.
+    """
+    me = os.getpid()
+    group = os.getpgid(0)
+    sent = 0
+    for pid in _targets():
         try:
-            os.kill(pid, sig)
+            fd = os.pidfd_open(pid)
+        except OSError:
+            continue  # gone already
+        try:
+            # The pidfd pins one process: check *that* one is still ours.
+            fields = _stat_fields(pid)
+            if not fields or not _is_ours(pid, me, group):
+                continue
+            identity = (pid, int(fields[19]))
+            if already is not None:
+                if identity in already:
+                    continue
+                already.add(identity)
+            signal.pidfd_send_signal(fd, sig)
+            sent += 1
         except OSError:
             pass
+        finally:
+            os.close(fd)
+    return sent
 
 
 def main() -> int:
@@ -91,7 +129,7 @@ def main() -> int:
 
     code: int | None = None
     ending_since: float | None = None
-    killed = False
+    termed: set[tuple[int, int]] = set()
     while True:
         while True:
             try:
@@ -109,11 +147,11 @@ def main() -> int:
                     handle.write(f"{code}\n")
         if (stopping or code is not None) and ending_since is None:
             ending_since = time.monotonic()
-            _signal_all(signal.SIGTERM)
-        elif ending_since is not None and not killed:
-            if time.monotonic() - ending_since > GRACE:
-                _signal_all(signal.SIGKILL)
-                killed = True
+        if ending_since is not None:
+            if time.monotonic() - ending_since < GRACE:
+                signal_ours(signal.SIGTERM, termed)  # newcomers get theirs too
+            else:
+                signal_ours(signal.SIGKILL)  # every pass: adopted ones included
         time.sleep(POLL)
 
 

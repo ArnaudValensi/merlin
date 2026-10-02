@@ -7,6 +7,7 @@ other machines). On a machine with the prerequisites they must run.
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -492,3 +493,143 @@ class TestDisplays:
         finally:
             other.terminate()
             other.wait()
+
+
+NESTED_ESCAPEES = """
+import subprocess, sys, time
+# B leaves the group (setsid), ignores SIGTERM, and has a child C of its own.
+b = subprocess.Popen([sys.executable, '-c',
+    'import os, signal, subprocess, sys, time; '
+    'signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+    'c = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"]); '
+    'print("nested", os.getpid(), c.pid, flush=True); time.sleep(600)'],
+    start_new_session=True)
+time.sleep(float(sys.argv[1]))
+"""
+
+
+def _nested_pids(session_id: str) -> tuple[int, int]:
+    _wait_log(session_id, "nested ")
+    words = sessions.read_log(session_id).split("nested ")[1].split()
+    return int(words[0]), int(words[1])
+
+
+def _all_gone(pids, timeout: float = 20) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if all(sessions._start_time(pid) is None for pid in pids):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+class TestSupervisor:
+    def test_nested_escapees_end_when_the_app_exits(self):
+        record = sessions.launch(
+            [sys.executable, "-c", NESTED_ESCAPEES, "0.5"],
+            name="nested",
+            gpu="off",
+            wait=0,
+        )
+        b, c = _nested_pids("nested")
+        assert _all_gone([b, c]), "an escaped descendant survived the app's exit"
+        deadline = time.monotonic() + 15
+        while sessions.get("nested")["status"] != "exited":
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
+        stored = sessions._read_record("nested")
+        assert stored is not None
+        assert _all_gone([stored["app_pid"]])
+        assert record["id"] == "nested"
+
+    def test_nested_escapees_end_on_stop(self):
+        sessions.launch(
+            [sys.executable, "-c", NESTED_ESCAPEES, "600"],
+            name="nested",
+            gpu="off",
+            wait=0,
+        )
+        b, c = _nested_pids("nested")
+        record = sessions._read_record("nested")
+        assert record is not None
+        sessions.stop("nested")
+        assert _all_gone([b, c, record["app_pid"], record["xvfb_pid"]])
+
+    def test_a_pid_that_stopped_being_ours_is_not_signalled(self, monkeypatch):
+        """Between the scan and the signal a PID can be reused: the pidfd is
+        re-checked against /proc and an unrelated process is left alone."""
+        from app import supervise
+
+        out = subprocess.run(
+            ["sh", "-c", "sleep 60 >/dev/null 2>&1 & echo $!"],
+            capture_output=True,
+            text=True,
+            check=True,
+            start_new_session=True,
+        )
+        stranger = int(out.stdout.strip())  # reparented away: not ours
+        try:
+            monkeypatch.setattr(supervise, "_targets", lambda: [stranger])
+            assert supervise.signal_ours(signal.SIGKILL) == 0
+            time.sleep(0.2)
+            assert sessions._start_time(stranger) is not None
+        finally:
+            os.kill(stranger, signal.SIGKILL)
+
+
+def _system_gst() -> bool:
+    probe = "import gi; gi.require_version('GstWebRTC', '1.0'); from gi.repository import GstWebRTC"
+    return (
+        subprocess.run(
+            ["/usr/bin/python3", "-c", probe], capture_output=True
+        ).returncode
+        == 0
+    )
+
+
+@pytest.mark.skipif(
+    not _system_gst(), reason="needs GStreamer WebRTC in the system Python"
+)
+def test_the_streamer_attaches_under_the_state_lock():
+    record = sessions._read_record(_launch()["id"])
+    assert record is not None
+    streamer = Path(sessions.__file__).with_name("streamer.py")
+    lock_path = sessions.apps_dir() / ".lock"
+    with sessions._launch_lock():
+        proc = subprocess.Popen(
+            [
+                "/usr/bin/python3",
+                str(streamer),
+                "--display",
+                record["display"],
+                "--codecs",
+                "VP8",
+                "--xvfb-pid",
+                str(record["xvfb_pid"]),
+                "--xvfb-start",
+                str(record["xvfb_start"]),
+                "--state-lock",
+                str(lock_path),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        try:
+            time.sleep(3)
+            assert proc.poll() is None
+            assert os.get_blocking(proc.stdout.fileno())
+            import select
+
+            ready, _, _ = select.select([proc.stdout], [], [], 0)
+            assert not ready, "the streamer attached while the lock was held"
+        except BaseException:
+            proc.kill()
+            raise
+    try:
+        line = proc.stdout.readline()
+        assert '"ready"' in line, line
+    finally:
+        proc.stdin.close()
+        proc.wait(timeout=10)

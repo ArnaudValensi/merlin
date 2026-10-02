@@ -397,6 +397,8 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
             str(record.get("xvfb_pid") or 0),
             "--xvfb-start",
             str(record.get("xvfb_start") or 0),
+            "--state-lock",
+            str(sessions.apps_dir() / ".lock"),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
