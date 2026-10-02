@@ -17,6 +17,7 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 
 from app_stream_support import (  # noqa: E402
     APP_OPTIONS,
+    cli,
     close_to,
     launch_probe,
     pixel,
@@ -441,3 +442,36 @@ def test_characters_the_keymap_lacks_are_typed(browser, server, probe):
         assert typed == ["a", "eacute", "b"], typed
     finally:
         context.close()
+
+
+def test_late_readers_still_get_the_typed_characters(merlin, browser, server, tmp_path):
+    """Characters the keymap lacks are typed through extra keycodes. An app
+    that reads its events late must still decode each one as typed: the
+    keycodes are not remapped behind its back."""
+    log = tmp_path / "late.log"
+    pause = tmp_path / "pause"
+    launch_probe(merlin, log, "late", env={"X_PROBE_PAUSE": str(pause)})
+    context = browser.new_context(viewport={"width": 1280, "height": 720})
+    page = context.new_page()
+    try:
+        page.goto(f"{server}/apps/late/play")
+        wait_live(page)
+        pause.write_text("")  # the app stops reading events
+        page.evaluate("window.MerlinPlayer.stream.send({t: 'text', s: 'éñü'})")
+        time.sleep(2)  # all typed (and any remapping done) before it reads
+        pause.unlink()
+        deadline = time.monotonic() + 10
+        typed: list[str] = []
+        while time.monotonic() < deadline:
+            typed = [
+                line.split()[1]
+                for line in _text(log).splitlines()
+                if line.startswith("keydown ")
+            ]
+            if len(typed) >= 3:
+                break
+            time.sleep(0.05)
+        assert typed == ["eacute", "ntilde", "udiaeresis"], typed
+    finally:
+        context.close()
+        cli(merlin, "stop", "late")

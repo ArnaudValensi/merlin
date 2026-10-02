@@ -3,7 +3,8 @@
 
 Fills its window with #00ff88 and a 50 px magenta (#ff00ff) square at the
 top-left, appends every key and button event to the file named by
-``X_PROBE_LOG`` (``keydown x``, ``keyup x``, ``btndown 1 120 80``, ...), and
+``X_PROBE_LOG`` (and does not read events at all while the file named by
+``X_PROBE_PAUSE`` exists, like a busy app) (``keydown x``, ``keyup x``, ``btndown 1 120 80``, ...), and
 dumps its environment as JSON to ``X_PROBE_ENV``.
 
     x_probe.py [--size WxH] [--exit-after SECONDS] [--exit-code N]
@@ -83,6 +84,10 @@ def main() -> int:
         if deadline is not None and time.monotonic() >= deadline:
             print("x_probe exiting", flush=True)
             return args.exit_code
+        pause = os.environ.get("X_PROBE_PAUSE")
+        if pause and os.path.exists(pause):
+            time.sleep(0.01)  # a busy app: events wait unread on the socket
+            continue
         if not disp.pending_events():
             time.sleep(0.01)
             continue

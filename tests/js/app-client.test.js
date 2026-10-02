@@ -289,3 +289,28 @@ test("an unauthorized socket is an error, not a retry", async () => {
     assert.equal(env.sockets.length, 1);
     assert.equal(states[states.length - 1], "error");
 });
+
+test("a slow server start is not 'unreachable'; ICE gets 8 s from the offer", async () => {
+    const env = makeEnv();
+    const { states } = connect(env);
+    env.sockets[0].deliver({ type: "welcome", host: "box", app: { id: "probe" } });
+    env.advance(30000);  // the server waits (another app's stop, say): no offer yet
+    assert.equal(states[states.length - 1], "connecting");
+    assert.equal(env.sockets.length, 1);
+
+    env.sockets[0].deliver({ type: "offer", sdp: "offer-sdp" });
+    await env.flush();
+    env.advance(7000);
+    assert.equal(states[states.length - 1], "connecting");
+    env.advance(2000);  // 8 s after the offer, still no ICE: not the same network
+    assert.equal(states[states.length - 1], "unreachable");
+});
+
+test("no offer at all within a minute is a failed start, retried", async () => {
+    const env = makeEnv();
+    const { states } = connect(env);
+    env.advance(61000);
+    assert.ok(states.includes("connecting"));
+    assert.ok(!states.includes("unreachable"));
+    assert.equal(env.sockets.length, 2, "one automatic retry");
+});

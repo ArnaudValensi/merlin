@@ -27,6 +27,7 @@ import signal
 import subprocess
 import sys
 import threading
+from collections import OrderedDict
 from contextlib import contextmanager, redirect_stdout
 
 import gi
@@ -151,7 +152,11 @@ class Injector:
         self.buttons_down: set[int] = set()
         self.typing: list[str] | None = None  # characters left of the text being typed
         self.pending: list[dict] = []
-        self.spare_keycode = self._find_spare_keycode()
+        # Characters the keymap lacks get a keycode of their own, kept for the
+        # display's lifetime: X key events carry keycodes, so remapping a slot
+        # an app has not read events for yet would change what it decodes.
+        self.spares = self._find_spare_keycodes()
+        self.mapped: OrderedDict[int, int] = OrderedDict()  # keysym -> keycode, LRU
 
     # Input is applied strictly in arrival order. Text is typed here, on this
     # connection (checked and opened under the state lock, so always the
@@ -191,14 +196,12 @@ class Injector:
                 log(f"cannot type {char!r}: {exc!r}")
             return True
         self.typing = None
-        self._restore_spare()
         self._drain()
         return False
 
     def stop_typing(self) -> None:
         self.pending.clear()
         self.typing = None
-        self._restore_spare()
 
     def type_char(self, char: str) -> None:
         """Press and release the key for one character, Shift as needed.
@@ -215,37 +218,42 @@ class Injector:
             keysym = ord(char)  # Latin-1 keysyms are their code points
         else:
             keysym = 0x01000000 | ord(char)  # Unicode keysym
-        entries = sorted(self.disp.keysym_to_keycodes(keysym), key=lambda e: e[1])
-        entries = [e for e in entries if e[1] <= 1]
-        if entries:
-            keycode, index = entries[0]
-        elif self.spare_keycode:
-            keycode, index = self.spare_keycode, 0
-            self.disp.change_keyboard_mapping(keycode, [(keysym, keysym)])
-            self.disp.sync()
+        if keysym in self.mapped:
+            self.mapped.move_to_end(keysym)
+            keycode, index = self.mapped[keysym], 0
         else:
-            return
+            entries = sorted(self.disp.keysym_to_keycodes(keysym), key=lambda e: e[1])
+            entries = [e for e in entries if e[1] <= 1]
+            if entries:
+                keycode, index = entries[0]
+            else:
+                keycode, index = self._map_spare(keysym), 0
+                if not keycode:
+                    return
         self._press_with_shift(keycode, index == 1)
         self._fake(keycode, False)
         self.disp.sync()
 
-    def _find_spare_keycode(self) -> int:
-        """A keycode with no symbol, to map characters the keymap lacks."""
+    def _map_spare(self, keysym: int) -> int:
+        """Give ``keysym`` a keycode of its own; when none is free, take the
+        least recently used one (its old character is long consumed)."""
+        if self.spares:
+            keycode = self.spares.pop()
+        elif self.mapped:
+            _old, keycode = self.mapped.popitem(last=False)
+        else:
+            return 0
+        self.disp.change_keyboard_mapping(keycode, [(keysym, keysym)])
+        self.disp.sync()
+        self.mapped[keysym] = keycode
+        return keycode
+
+    def _find_spare_keycodes(self) -> list[int]:
+        """Keycodes with no symbol, to map characters the keymap lacks."""
         first = self.disp.display.info.min_keycode
         last = self.disp.display.info.max_keycode
         mapping = self.disp.get_keyboard_mapping(first, last - first + 1)
-        for offset in range(len(mapping) - 1, -1, -1):
-            if not any(mapping[offset]):
-                return first + offset
-        return 0
-
-    def _restore_spare(self) -> None:
-        if self.spare_keycode:
-            try:
-                self.disp.change_keyboard_mapping(self.spare_keycode, [(0, 0)])
-                self.disp.sync()
-            except Exception:
-                pass
+        return [first + i for i, syms in enumerate(mapping) if not any(syms)]
 
     def _apply(self, msg: dict) -> None:
         kind = msg.get("t")

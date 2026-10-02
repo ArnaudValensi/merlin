@@ -278,6 +278,7 @@ class TestOrigin:
         sock = tmp_path / "t.sock"
         base = ["tmux", "-S", str(sock), "-f", "/dev/null"]
         env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+        env["SHELL"] = "/bin/sh"  # not the login shell: see test_board_tmux.py
         subprocess.run(
             [*base, "new-session", "-d", "-s", "alpha", "-n", "work"],
             env=env,
@@ -637,3 +638,33 @@ def test_the_streamer_attaches_under_the_state_lock():
     finally:
         proc.stdin.close()
         proc.wait(timeout=10)
+
+
+class TestAgentInputLocking:
+    def test_long_typing_leaves_the_lock_free_and_ends_with_a_stop(self, tmp_path):
+        _launch()
+        log = tmp_path / "probe.log"
+        outcome: list[BaseException] = []
+
+        def typist():
+            try:
+                sessions.type_text("probe", "a" * 600)  # ~7 s of typing
+            except (AppError, KeyError) as exc:
+                outcome.append(exc)
+
+        worker = threading.Thread(target=typist)
+        worker.start()
+        time.sleep(1.0)
+        asked = time.monotonic()
+        with sessions._launch_lock():
+            waited = time.monotonic() - asked
+        assert waited < 1.5, f"the lock was held {waited:.1f} s by agent typing"
+
+        asked = time.monotonic()
+        sessions.stop("probe")
+        assert time.monotonic() - asked < 8
+        worker.join(30)
+        assert not worker.is_alive()
+        assert outcome, "typing should end when the app stops"
+        typed = log.read_text().count("keydown a") if log.exists() else 0
+        assert typed < 600

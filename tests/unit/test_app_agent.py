@@ -59,10 +59,17 @@ def _size(png: Path) -> str:
 
 @pytest.mark.skipif(shutil.which("magick") is None, reason="needs ImageMagick")
 def test_screenshot_shows_the_app(probe, tmp_path):
-    path = sessions.screenshot("probe", tmp_path / "shot.png")
+    # The probe draws its square on Expose after the fill resize: on a busy
+    # machine that can trail the launch, so look until it is there.
+    deadline = time.monotonic() + 5
+    while True:
+        path = sessions.screenshot("probe", tmp_path / "shot.png")
+        corner, middle = _pixel(path, 10, 10), _pixel(path, 900, 600)
+        if (corner, middle) == ("srgb(255,0,255)", "srgb(0,255,136)"):
+            break
+        assert time.monotonic() < deadline, (corner, middle)
+        time.sleep(0.1)
     assert _size(path) == "1280x720"
-    assert _pixel(path, 10, 10) == "srgb(255,0,255)"  # the probe's square
-    assert _pixel(path, 900, 600) == "srgb(0,255,136)"  # filled to the display
 
 
 def test_screenshot_default_path(probe):

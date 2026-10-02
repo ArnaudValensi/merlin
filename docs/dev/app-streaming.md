@@ -116,7 +116,10 @@ A session is one app on one private display, recorded as
 
 Local, never streamed, and run under the state lock with the session
 re-checked (`_on_display`), so the display cannot change hands between the
-check and the connection: `import -display :N -window root` for screenshots,
+check and the connection. Long input is split into short locked steps (one
+key, or 24 characters of text; holds and delays wait outside the lock) with
+the launch generation re-checked each time, so other apps stay usable and a
+stop ends the input between two steps: `import -display :N -window root` for screenshots,
 `xdotool` for keys (`--hold` sends keydown, sleep, keyup for games that read
 key state once per frame), text, clicks and moves. Each input stamps
 `last_agent_input_at`, which the server pushes to the viewer as
@@ -161,15 +164,19 @@ order: text is typed by the streamer itself, one character per main-loop
 tick on its own XTEST connection (so never blocking, and on the display
 checked under the state lock), and everything after it waits for it, so a
 paste then Enter submits the whole paste. A character the keymap lacks (é on
-a US map) is typed through a spare keycode remapped for it, as `xdotool type`
-does. A failing character or a malformed message is logged and skipped; the
+a US map) gets a spare keycode of its own, mapped once and kept for the
+display's lifetime (least recently used reassigned only when none is left):
+X key events carry keycodes, so remapping a slot an app has not read yet
+would change what it decodes. A failing character or a malformed message is logged and skipped; the
 queue never stalls. The streamer stops typing and releases any held key or
 button when it stops.
 
 Client states (`client.js`): `connecting`, `live`, `unreachable`, `replaced`,
 `exited`, `paused` (hidden 30 s, except in picture-in-picture: entering and
 leaving it re-arms the timer; pausing cancels a pending reconnect), `error`,
-`closed`. A dead streamer gets one automatic retry per 20 s; a lost server
+`closed`. "Unreachable" means ICE did not connect within 8 s of the offer;
+before the offer the server may be busy (another app starting or stopping),
+bounded separately by 60 s. A dead streamer gets one automatic retry per 20 s; a lost server
 (a Merlin restart) gets seven, with backoff, before `closed`. Every
 connection carries a generation and the client a `destroyed` flag: callbacks
 of a superseded or destroyed connection (a late promise, a closing socket)

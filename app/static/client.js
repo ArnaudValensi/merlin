@@ -13,7 +13,8 @@
 (function () {
     'use strict';
 
-    var CONNECT_TIMEOUT_MS = 8000;
+    var CONNECT_TIMEOUT_MS = 8000;   // from the offer: ICE must connect by then
+    var SETUP_TIMEOUT_MS = 60000;    // from the socket: the server must offer by then
     var HIDDEN_CLOSE_MS = 30000;
 
     // Printable characters that are not their own X keysym name.
@@ -135,6 +136,13 @@
         function onOffer(sdp, g, socket) {
             var peer = new RTCPeerConnection({iceServers: []});
             pc = peer;
+            // "Not on the same network" is about ICE only: the clock starts at
+            // the offer. Before it, the server may be waiting on another app's
+            // start or stop, which is not a network problem.
+            clearTimeout(timer);
+            timer = setTimeout(function () {
+                if (current(g) && state === 'connecting') unreachable();
+            }, CONNECT_TIMEOUT_MS);
             function sendOn(message) {
                 if (current(g) && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
             }
@@ -267,8 +275,8 @@
                 setState('closed');
             };
             timer = setTimeout(function () {
-                if (current(g) && state === 'connecting') unreachable();
-            }, CONNECT_TIMEOUT_MS);
+                if (current(g) && state === 'connecting') fail('The stream did not start.');
+            }, SETUP_TIMEOUT_MS);
             reconcileHidden();
         }
 

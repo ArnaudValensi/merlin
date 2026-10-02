@@ -73,7 +73,9 @@ inj = streamer.Injector.__new__(streamer.Injector)
 inj.disp = FakeDisplay()
 inj.display_name = ":0"
 inj.keys_down, inj.shift_held, inj.buttons_down = set(), set(), set()
-inj.typing, inj.pending, inj.spare_keycode = None, [], 0
+inj.typing, inj.pending = None, []
+from collections import OrderedDict
+inj.spares, inj.mapped = [], OrderedDict()
 
 def run_until_idle(seconds=3):
     loop = GLib.MainLoop()

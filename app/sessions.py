@@ -38,6 +38,7 @@ FIRST_DISPLAY = 100
 LAST_DISPLAY = 999
 XVFB_READY_TIMEOUT = 5.0
 WINDOW_TIMEOUT = 10.0
+TYPE_CHUNK = 24  # characters per locked step of agent typing (~0.3 s)
 STOP_GRACE = 10.0  # the supervisor ends leftovers within ~3 s; this bounds a stuck one
 CONTROLS = ("gamepad", "trackpad", "touch")
 GPU_MODES = ("auto", "on", "off")
@@ -783,15 +784,21 @@ def _require_running(session_id: str) -> dict:
 
 
 @contextmanager
-def _on_display(session_id: str) -> Iterator[dict]:
+def _on_display(session_id: str, generation: str | None = None) -> Iterator[dict]:
     """Hold the state lock while acting on a running app's display.
 
     Screenshots and agent input connect to the display by its number; under
     the lock that stop and launch take, the app cannot be stopped and its
     display handed to another app between the check and the connection.
+    Long input is split into short steps, each under the lock with the same
+    ``generation`` re-checked, so the lock is never held for long: other apps
+    stay usable and a stop gets in between two steps (the input then ends).
     """
     with _launch_lock():
-        yield _require_running(session_id)
+        record = _require_running(session_id)
+        if generation is not None and record.get("generation") != generation:
+            raise AppError(f"'{session_id}' was relaunched; input stopped")
+        yield record
 
 
 def _note_agent_input(record: dict) -> None:
@@ -816,36 +823,51 @@ def send_keys(
 
     ``hold_ms`` keeps each key down that long: games that read the keyboard
     state once per frame miss a press and release that land in one frame.
+    One press at a time under the state lock; holds and delays wait outside.
     """
-    repeat = max(1, repeat)
-    delay = max(0, delay_ms)
-    if hold_ms > 0:
-        args: list[str] = []
-        for _ in range(repeat):
-            for key in keys:
-                args += ["keydown", key, "sleep", f"{hold_ms / 1000:g}"]
-                args += ["keyup", key, "sleep", f"{delay / 1000:g}"]
-    else:
-        args = ["key", "--repeat", str(repeat), "--delay", str(delay), *keys]
-    budget = repeat * len(keys) * (max(delay, 1) + max(hold_ms, 0)) / 1000
-    with _on_display(session_id) as record:
-        _focus_app(record)
-        _xdotool(record["display"], *args, timeout=30 + budget)
+    steps = [key for _ in range(max(1, repeat)) for key in keys]
+    generation: str | None = None
+    for i, key in enumerate(steps):
+        if hold_ms > 0:
+            with _on_display(session_id, generation) as record:
+                generation = record.get("generation")
+                if i == 0:
+                    _focus_app(record)
+                _xdotool(record["display"], "keydown", key)
+            time.sleep(hold_ms / 1000)
+            with _on_display(session_id, generation) as record:
+                _xdotool(record["display"], "keyup", key)
+        else:
+            with _on_display(session_id, generation) as record:
+                generation = record.get("generation")
+                if i == 0:
+                    _focus_app(record)
+                _xdotool(record["display"], "key", key)
+        if delay_ms > 0 and i < len(steps) - 1:
+            time.sleep(delay_ms / 1000)
+    with _on_display(session_id, generation) as record:
         _note_agent_input(record)
 
 
 def type_text(session_id: str, text: str) -> None:
-    with _on_display(session_id) as record:
-        _focus_app(record)
-        _xdotool(
-            record["display"],
-            "type",
-            "--delay",
-            "12",
-            "--",
-            text,
-            timeout=30 + len(text) * 0.05,
-        )
+    """Type ``text``, ``TYPE_CHUNK`` characters per step under the lock."""
+    generation: str | None = None
+    for start in range(0, len(text), TYPE_CHUNK):
+        with _on_display(session_id, generation) as record:
+            if generation is None:
+                generation = record.get("generation")
+                _focus_app(record)
+            chunk = text[start : start + TYPE_CHUNK]
+            _xdotool(
+                record["display"],
+                "type",
+                "--delay",
+                "12",
+                "--",
+                chunk,
+                timeout=30 + len(chunk) * 0.05,
+            )
+    with _on_display(session_id, generation) as record:
         _note_agent_input(record)
 
 
