@@ -164,10 +164,18 @@ order: text is typed by the streamer itself, one character per main-loop
 tick on its own XTEST connection (so never blocking, and on the display
 checked under the state lock), and everything after it waits for it, so a
 paste then Enter submits the whole paste. A character the keymap lacks (é on
-a US map) gets a spare keycode of its own, mapped once and kept for the
-display's lifetime (least recently used reassigned only when none is left):
-X key events carry keycodes, so remapping a slot an app has not read yet
-would change what it decodes. A failing character or a malformed message is logged and skipped; the
+a US map) gets a slot from `KeyAllocator`: X key events carry keycodes and an
+app decodes them with the keymap as it is when it reads them, so a slot keeps
+its character. A free keycode holds two (plain and Shift level; filling one
+never changes the other). Xvfb's default keymap has only 15 free keycodes,
+so 30 slots: when all are taken, the least recently used keycode is
+reassigned only after 2 s unused, typing waits until then, and the reuse is
+logged. (X cannot tell when an app has read an event: an app more than 2 s
+behind on its input while more than 30 distinct such characters are typed
+can still misread one.) Slots are recorded per Xvfb identity
+(`data/apps/keymaps/<xvfb pid>-<start>.json`, removed with the display); a
+later streamer adopts those whose keymap entry still matches. With no free
+keycode at all, the character is logged as not typable and skipped. A failing character or a malformed message is logged and skipped; the
 queue never stalls. The streamer stops typing and releases any held key or
 button when it stops.
 

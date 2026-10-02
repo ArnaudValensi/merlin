@@ -23,11 +23,11 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import os
 import signal
 import subprocess
 import sys
 import threading
-from collections import OrderedDict
 from contextlib import contextmanager, redirect_stdout
 
 import gi
@@ -138,10 +138,125 @@ def _printable(keysym: int) -> bool:
     return 0x20 <= keysym <= 0x7E or 0xA0 <= keysym <= 0xFF
 
 
+QUIESCENCE_S = 2.0  # a full slot is reused only after this long unused
+
+
+class KeyAllocator:
+    """Keycodes for the characters the display's keymap lacks (é on a US map).
+
+    X key events carry keycodes, and an app decodes them with the keymap as it
+    is when it reads them: a keycode remapped before the app has read an event
+    for it changes what that event means. So:
+
+    - each character gets a slot of its own and keeps it: a free keycode
+      holds two (plain and Shift level), and filling one level never changes
+      the other;
+    - when every slot is taken, the least recently used keycode is reassigned
+      only once it has gone QUIESCENCE_S unused; until then typing waits
+      (X cannot tell when an app has read an event, so this is the guarantee:
+      an app more than QUIESCENCE_S behind on its input while more distinct
+      characters than slots are typed can still misread one);
+    - ownership outlives the streamer: the slots are recorded in a registry
+      file per Xvfb identity, and a later streamer adopts those whose keymap
+      entry still matches, so reconnecting neither loses nor drops slots.
+    """
+
+    def __init__(self, disp, registry: str = "", clock=None) -> None:
+        import time as _time
+
+        self.disp = disp
+        self.registry = registry
+        self.clock = clock or _time.monotonic
+        self.slots: dict[int, list[int]] = {}  # keycode -> [plain, shift] keysyms
+        self.used: dict[int, float] = {}  # keycode -> last use
+        self.where: dict[int, tuple[int, int]] = {}  # keysym -> (keycode, level)
+        first = disp.display.info.min_keycode
+        last = disp.display.info.max_keycode
+        current = disp.get_keyboard_mapping(first, last - first + 1)
+        now = self.clock()
+        for keycode, syms in self._load().items():
+            index = keycode - first
+            if 0 <= index < len(current) and self._levels(current[index]) == syms:
+                self._own(keycode, syms, now)  # still ours: adopt it
+        for index, syms in enumerate(current):
+            if not any(syms) and first + index not in self.slots:
+                self._own(first + index, [0, 0], now)
+
+    @staticmethod
+    def _levels(syms) -> list[int]:
+        levels = list(syms[:2]) + [0, 0]
+        return [int(levels[0]), int(levels[1])]
+
+    def _own(self, keycode: int, syms: list[int], now: float) -> None:
+        self.slots[keycode] = list(syms)
+        self.used[keycode] = now
+        for level, keysym in enumerate(syms):
+            if keysym:
+                self.where[keysym] = (keycode, level)
+
+    def find(self, keysym: int) -> tuple[int, int] | None:
+        slot = self.where.get(keysym)
+        if slot:
+            self.used[slot[0]] = self.clock()
+        return slot
+
+    @property
+    def capacity(self) -> int:
+        return 2 * len(self.slots)
+
+    def assign(self, keysym: int) -> tuple[int, int] | None:
+        """A slot for ``keysym``; None while every slot is busy (wait)."""
+        for keycode, syms in self.slots.items():
+            for level in (0, 1):
+                if not syms[level]:
+                    syms[level] = keysym
+                    return self._commit(keycode, level, keysym)
+        if not self.slots:
+            raise RuntimeError("no keycode is free for characters the keymap lacks")
+        keycode = min(self.used, key=lambda kc: self.used[kc])
+        if self.clock() - self.used[keycode] < QUIESCENCE_S:
+            return None
+        for old in self.slots[keycode]:
+            self.where.pop(old, None)
+        log(f"reusing keycode {keycode} after {QUIESCENCE_S:g} s unused")
+        self.slots[keycode] = [keysym, 0]
+        return self._commit(keycode, 0, keysym)
+
+    def _commit(self, keycode: int, level: int, keysym: int) -> tuple[int, int]:
+        self.disp.change_keyboard_mapping(keycode, [tuple(self.slots[keycode])])
+        self.disp.sync()
+        self.where[keysym] = (keycode, level)
+        self.used[keycode] = self.clock()
+        self._save()
+        return keycode, level
+
+    def _load(self) -> dict[int, list[int]]:
+        if not self.registry:
+            return {}
+        try:
+            with open(self.registry) as handle:
+                data = json.load(handle)
+            return {int(k): [int(v[0]), int(v[1])] for k, v in data["slots"].items()}
+        except (OSError, ValueError, KeyError, TypeError, IndexError):
+            return {}
+
+    def _save(self) -> None:
+        if not self.registry:
+            return
+        tmp = f"{self.registry}.{os.getpid()}.tmp"
+        try:
+            os.makedirs(os.path.dirname(self.registry), exist_ok=True)
+            with open(tmp, "w") as handle:
+                json.dump({"slots": {str(k): v for k, v in self.slots.items()}}, handle)
+            os.replace(tmp, self.registry)
+        except OSError as exc:
+            log(f"cannot save the keymap registry: {exc!r}")
+
+
 class Injector:
     """XTEST input on the app's display. Main-loop thread only."""
 
-    def __init__(self, display_name: str) -> None:
+    def __init__(self, display_name: str, keymap_registry: str = "") -> None:
         self.display_name = display_name
         # python-xlib prints its xauthority warning on stdout, which is the
         # JSON protocol to the server: send it to stderr instead.
@@ -152,11 +267,7 @@ class Injector:
         self.buttons_down: set[int] = set()
         self.typing: list[str] | None = None  # characters left of the text being typed
         self.pending: list[dict] = []
-        # Characters the keymap lacks get a keycode of their own, kept for the
-        # display's lifetime: X key events carry keycodes, so remapping a slot
-        # an app has not read events for yet would change what it decodes.
-        self.spares = self._find_spare_keycodes()
-        self.mapped: OrderedDict[int, int] = OrderedDict()  # keysym -> keycode, LRU
+        self.keys = KeyAllocator(self.disp, keymap_registry)
 
     # Input is applied strictly in arrival order. Text is typed here, on this
     # connection (checked and opened under the state lock, so always the
@@ -191,7 +302,8 @@ class Injector:
         if self.typing:
             char = self.typing.pop(0)
             try:
-                self.type_char(char)
+                if not self.type_char(char):
+                    self.typing.insert(0, char)  # every slot busy: retry next tick
             except Exception as exc:  # skip the character, keep typing
                 log(f"cannot type {char!r}: {exc!r}")
             return True
@@ -203,57 +315,33 @@ class Injector:
         self.pending.clear()
         self.typing = None
 
-    def type_char(self, char: str) -> None:
+    def type_char(self, char: str) -> bool:
         """Press and release the key for one character, Shift as needed.
 
-        A character the keymap lacks (é on a US map, an emoji) is typed by
-        mapping it on a spare keycode first, as `xdotool type` does.
+        A character the keymap lacks (é on a US map, an emoji) gets a slot
+        from the KeyAllocator. Returns False when it must wait for one.
         """
         special = {"\n": XK.XK_Return, "\r": XK.XK_Return, "\t": XK.XK_Tab}
         if not char:
-            return
+            return True
         if char in special:
             keysym = special[char]
         elif 0x20 <= ord(char) <= 0x7E or 0xA0 <= ord(char) <= 0xFF:
             keysym = ord(char)  # Latin-1 keysyms are their code points
         else:
             keysym = 0x01000000 | ord(char)  # Unicode keysym
-        if keysym in self.mapped:
-            self.mapped.move_to_end(keysym)
-            keycode, index = self.mapped[keysym], 0
-        else:
+        slot = self.keys.find(keysym)
+        if slot is None:
             entries = sorted(self.disp.keysym_to_keycodes(keysym), key=lambda e: e[1])
             entries = [e for e in entries if e[1] <= 1]
-            if entries:
-                keycode, index = entries[0]
-            else:
-                keycode, index = self._map_spare(keysym), 0
-                if not keycode:
-                    return
-        self._press_with_shift(keycode, index == 1)
+            slot = entries[0] if entries else self.keys.assign(keysym)
+            if slot is None:
+                return False
+        keycode, level = slot
+        self._press_with_shift(keycode, level == 1)
         self._fake(keycode, False)
         self.disp.sync()
-
-    def _map_spare(self, keysym: int) -> int:
-        """Give ``keysym`` a keycode of its own; when none is free, take the
-        least recently used one (its old character is long consumed)."""
-        if self.spares:
-            keycode = self.spares.pop()
-        elif self.mapped:
-            _old, keycode = self.mapped.popitem(last=False)
-        else:
-            return 0
-        self.disp.change_keyboard_mapping(keycode, [(keysym, keysym)])
-        self.disp.sync()
-        self.mapped[keysym] = keycode
-        return keycode
-
-    def _find_spare_keycodes(self) -> list[int]:
-        """Keycodes with no symbol, to map characters the keymap lacks."""
-        first = self.disp.display.info.min_keycode
-        last = self.disp.display.info.max_keycode
-        mapping = self.disp.get_keyboard_mapping(first, last - first + 1)
-        return [first + i for i, syms in enumerate(mapping) if not any(syms)]
+        return True
 
     def _apply(self, msg: dict) -> None:
         kind = msg.get("t")
@@ -313,9 +401,11 @@ class Injector:
             self._fake(keycode, True)
             return
         if index > 1:
-            # Only reachable through AltGr levels: type it as a character
-            # (through the spare keycode) in its place.
-            self.type_char(XK.keysym_to_string(keysym) or "")
+            # Only reachable through AltGr levels: type it as text instead, in
+            # its place (the queue takes it next, before later input).
+            self.pending.insert(
+                0, {"t": "text", "s": XK.keysym_to_string(keysym) or ""}
+            )
             return
         self._press_with_shift(keycode, index == 1)
 
@@ -426,7 +516,7 @@ class Streamer:
         with state_lock(args.state_lock):
             if args.xvfb_pid:
                 check_display_owner(args.display, args.xvfb_pid, args.xvfb_start)
-            self.injector = Injector(args.display)
+            self.injector = Injector(args.display, args.keymap_registry)
             self._build(encoder, codec)
             # READY -> PAUSED starts ximagesrc, which opens its X connection.
             self.pipe.set_state(Gst.State.PAUSED)
@@ -566,6 +656,9 @@ def main() -> int:
     parser.add_argument("--xvfb-pid", type=int, default=0, help="expected X server")
     parser.add_argument("--xvfb-start", type=int, default=0, help="its start time")
     parser.add_argument("--state-lock", default="", help="Merlin's apps state lock")
+    parser.add_argument(
+        "--keymap-registry", default="", help="keycode slots owned on this display"
+    )
     args = parser.parse_args()
     Gst.init(None)
     try:

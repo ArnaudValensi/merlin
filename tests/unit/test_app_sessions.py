@@ -652,19 +652,31 @@ class TestAgentInputLocking:
             except (AppError, KeyError) as exc:
                 outcome.append(exc)
 
+        def typed() -> int:
+            return log.read_text().count("keydown a") if log.exists() else 0
+
         worker = threading.Thread(target=typist)
         worker.start()
-        time.sleep(1.0)
-        asked = time.monotonic()
-        with sessions._launch_lock():
-            waited = time.monotonic() - asked
-        assert waited < 1.5, f"the lock was held {waited:.1f} s by agent typing"
+        try:
+            # Typing really started, and is still going.
+            deadline = time.monotonic() + 10
+            while typed() < 10:
+                assert time.monotonic() < deadline, f"typing never started: {outcome}"
+                time.sleep(0.05)
+            assert worker.is_alive() and not outcome
 
-        asked = time.monotonic()
-        sessions.stop("probe")
-        assert time.monotonic() - asked < 8
-        worker.join(30)
+            asked = time.monotonic()
+            with sessions._launch_lock():
+                waited = time.monotonic() - asked
+            assert waited < 1.5, f"the lock was held {waited:.1f} s by agent typing"
+            assert worker.is_alive(), "typing ended on its own before the stop"
+
+            asked = time.monotonic()
+            sessions.stop("probe")
+            assert time.monotonic() - asked < 8
+        finally:
+            worker.join(30)
         assert not worker.is_alive()
-        assert outcome, "typing should end when the app stops"
-        typed = log.read_text().count("keydown a") if log.exists() else 0
-        assert typed < 600
+        # The stop ended it: the next step found the app gone.
+        assert len(outcome) == 1 and isinstance(outcome[0], (KeyError, AppError))
+        assert 10 <= typed() < 600

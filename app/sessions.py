@@ -86,6 +86,15 @@ def _exit_path(session_id: str) -> Path:
     return apps_dir() / "exit" / session_id
 
 
+def keymap_registry(record: dict) -> Path:
+    """The streamer's keycode slots on this record's Xvfb (its identity)."""
+    return (
+        apps_dir()
+        / "keymaps"
+        / f"{record.get('xvfb_pid')}-{record.get('xvfb_start')}.json"
+    )
+
+
 def thumb_path(session_id: str) -> Path:
     return apps_dir() / "thumbs" / f"{session_id}.png"
 
@@ -528,6 +537,7 @@ def _refresh(record: dict) -> dict | None:
             pass
         _kill_group(current.get("app_pid"), current.get("app_start"))
         _kill_group(current.get("xvfb_pid"), current.get("xvfb_start"))
+        keymap_registry(current).unlink(missing_ok=True)
         current["status"] = "exited"
         current["exit_code"] = code
         current["exited_at"] = now_iso()
@@ -751,6 +761,7 @@ def _stop_record(record: dict, *, thumbnail: bool) -> None:
         _kill_group(record.get("xvfb_pid"), record.get("xvfb_start"))
         _record_path(record["id"]).unlink(missing_ok=True)
         _exit_path(record["id"]).unlink(missing_ok=True)
+        keymap_registry(record).unlink(missing_ok=True)
 
 
 def stop(session_id: str) -> dict:

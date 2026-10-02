@@ -463,10 +463,12 @@ def test_late_readers_still_get_the_typed_characters(merlin, browser, server, tm
         deadline = time.monotonic() + 10
         typed: list[str] = []
         while time.monotonic() < deadline:
+            # Two characters share a keycode (plain and Shift level): the
+            # Shift presses around the second are not characters.
             typed = [
                 line.split()[1]
                 for line in _text(log).splitlines()
-                if line.startswith("keydown ")
+                if line.startswith("keydown ") and "Shift" not in line
             ]
             if len(typed) >= 3:
                 break

@@ -61,21 +61,47 @@ events = []
 streamer.xtest.fake_input = lambda d, kind, detail=0, **kw: events.append([kind, detail])
 streamer.log = lambda text: events.append(["log", text])
 
-class FakeDisplay:
-    def sync(self): pass
-    def keysym_to_keycodes(self, keysym):
-        return [(keysym % 200 + 8, 0)]
-    def keysym_to_keycode(self, keysym):
-        return keysym % 200 + 8
-    def change_keyboard_mapping(self, *args): pass
+class Clock:
+    now = 1000.0
+    def __call__(self):
+        return self.now
+clock = Clock()
 
-inj = streamer.Injector.__new__(streamer.Injector)
-inj.disp = FakeDisplay()
-inj.display_name = ":0"
-inj.keys_down, inj.shift_held, inj.buttons_down = set(), set(), set()
-inj.typing, inj.pending = None, []
-from collections import OrderedDict
-inj.spares, inj.mapped = [], OrderedDict()
+class FakeDisplay:
+    \"\"\"A tiny X server keymap: natives a b c d e x Return Shift_L, then
+    ``free`` keycodes with no symbol.\"\"\"
+    def __init__(self, free=2):
+        natives = [ord(c) for c in "abcdex"] + [0xFF0D, 0xFFE1]
+        count = len(natives) + free
+        info = type("info", (), {"min_keycode": 8, "max_keycode": 8 + count - 1})
+        self.display = type("display", (), {"info": info})
+        self.server = {8 + i: [ks, 0] for i, ks in enumerate(natives)}
+        for kc in range(8 + len(natives), 8 + count):
+            self.server[kc] = [0, 0]
+        self.snapshot = {kc: list(v) for kc, v in self.server.items()}  # stale cache
+        self.history = []
+    def sync(self): pass
+    def get_keyboard_mapping(self, first, count):
+        return [list(self.server[kc]) for kc in range(first, first + count)]
+    def change_keyboard_mapping(self, keycode, rows):
+        self.server[keycode] = [int(rows[0][0]), int(rows[0][1])]
+        self.history.append([keycode, list(self.server[keycode])])
+    def keysym_to_keycodes(self, keysym):
+        return [(kc, lvl) for kc, v in self.snapshot.items() for lvl, ks in enumerate(v) if ks == keysym]
+    def keysym_to_keycode(self, keysym):
+        hits = self.keysym_to_keycodes(keysym)
+        return hits[0][0] if hits else 0
+
+def make_injector(free=2, registry=""):
+    inj = streamer.Injector.__new__(streamer.Injector)
+    inj.disp = FakeDisplay(free)
+    inj.display_name = ":0"
+    inj.keys_down, inj.shift_held, inj.buttons_down = set(), set(), set()
+    inj.typing, inj.pending = None, []
+    inj.keys = streamer.KeyAllocator(inj.disp, registry, clock=clock)
+    return inj
+
+inj = make_injector()
 
 def run_until_idle(seconds=3):
     loop = GLib.MainLoop()
@@ -87,12 +113,26 @@ def run_until_idle(seconds=3):
     GLib.timeout_add(10, check)
     GLib.timeout_add(int(seconds * 1000), loop.quit)
     loop.run()
+
+def keycode_of(char):
+    return inj.disp.keysym_to_keycode(ord(char))
+
+def decode_late(disp, presses):
+    \"\"\"What a reader that only now processes the queued presses decodes:
+    the current keymap, at the level the press's Shift state selects.\"\"\"
+    out, shift = [], False
+    for kind, detail in presses:
+        if detail == disp.keysym_to_keycode(0xFFE1) and detail:
+            shift = kind == X.KeyPress
+        elif kind == X.KeyPress:
+            out.append(disp.server[detail][1 if shift else 0])
+    return out
 """
 
 
 def test_a_failing_character_or_message_does_not_strand_the_queue():
     """Typing 'a' fails and a move message is malformed: the rest of the
-    queue (b, then Return down and up) still goes through, in order."""
+    queue (b, then x down and up) still goes through, in order."""
     out = _run(
         QUEUE_FAKES
         + """
@@ -100,15 +140,15 @@ real_type_char = inj.type_char
 def flaky(char):
     if char == "a":
         raise OSError("cannot type")
-    real_type_char(char)
+    return real_type_char(char)
 inj.type_char = flaky
 inj.submit({"t": "text", "s": "ab"})
 inj.submit({"t": "move"})  # no coordinates: an input error
-inj.submit({"t": "key", "k": "Return", "d": True})
-inj.submit({"t": "key", "k": "Return", "d": False})
+inj.submit({"t": "key", "k": "x", "d": True})
+inj.submit({"t": "key", "k": "x", "d": False})
 run_until_idle()
-b = ord("b") % 200 + 8
-ret = streamer.XK.XK_Return % 200 + 8
+b = keycode_of("b")
+ret = keycode_of("x")
 presses = [e for e in events if e[0] in (X.KeyPress, X.KeyRelease)]
 print(json.dumps({"presses": presses, "pending": len(inj.pending),
                   "typing": inj.typing is not None,
@@ -131,14 +171,14 @@ def test_keys_wait_for_the_text_before_them():
     out = _run(
         QUEUE_FAKES
         + """
-inj.submit({"t": "text", "s": "hi"})
-inj.submit({"t": "key", "k": "Return", "d": True})
+inj.submit({"t": "text", "s": "ab"})
+inj.submit({"t": "key", "k": "x", "d": True})
 first = [e for e in events if e[0] == X.KeyPress]  # before the loop runs
 run_until_idle()
 order = [e[1] for e in events if e[0] == X.KeyPress]
 print(json.dumps({"before_loop": first, "order": order,
-                  "h": ord("h") % 200 + 8, "i": ord("i") % 200 + 8,
-                  "ret": streamer.XK.XK_Return % 200 + 8}))
+                  "h": keycode_of("a"), "i": keycode_of("b"),
+                  "ret": keycode_of("x")}))
 """
     )
     assert out["before_loop"] == []  # Return did not jump the queue
@@ -169,7 +209,7 @@ class FakePipe:
         trace.append(["set_state", state.value_nick, held["v"]])
 
 class FakeInjector:
-    def __init__(self, display):
+    def __init__(self, display, registry=""):
         trace.append(["injector", display, held["v"]])
 
 def fake_build(self, encoder, codec):
@@ -184,7 +224,8 @@ streamer.skipped_addresses = lambda: set()
 streamer.Streamer._build = fake_build
 streamer.send = lambda message: trace.append(["send", message["type"], held["v"]])
 streamer.Streamer(Namespace(display=":100", codecs="VP8", fps=60, bitrate=8000,
-                            xvfb_pid=1, xvfb_start=2, state_lock="/tmp/lock"))
+                            xvfb_pid=1, xvfb_start=2, state_lock="/tmp/lock",
+                            keymap_registry=""))
 print(json.dumps(trace))
 """
     )
@@ -195,3 +236,109 @@ print(json.dumps(trace))
         ["set_state", "paused", True],
         ["send", "ready", False],
     ]
+
+
+def test_distinct_characters_keep_their_meaning_for_a_late_reader():
+    """Four characters the keymap lacks, two free keycodes (two levels each):
+    a reader that reads everything only afterwards decodes all four."""
+    out = _run(
+        QUEUE_FAKES
+        + """
+inj.submit({"t": "text", "s": "éñüø"})
+run_until_idle()
+presses = [e for e in events if e[0] in (X.KeyPress, X.KeyRelease)]
+print(json.dumps({"decoded": decode_late(inj.disp, presses),
+                  "remaps": len(inj.disp.history)}))
+"""
+    )
+    assert out["decoded"] == [ord(c) for c in "éñüø"]
+    assert out["remaps"] == 4  # each slot filled once, nothing reassigned
+
+
+def test_when_every_slot_is_busy_typing_waits_then_reuses_the_oldest():
+    out = _run(
+        QUEUE_FAKES
+        + """
+for char in "éñüø":
+    assert inj.type_char(char)
+before = len(inj.disp.history)
+waited = inj.type_char("ß")          # all four slots used just now
+still = len(inj.disp.history)
+clock.now += streamer.QUIESCENCE_S + 0.1
+reused = inj.type_char("ß")
+print(json.dumps({"waited": waited, "remapped_while_busy": still - before,
+                  "reused": reused, "logs": [e[1] for e in events if e[0] == "log"],
+                  "last": inj.disp.history[-1]}))
+"""
+    )
+    assert out["waited"] is False
+    assert out["remapped_while_busy"] == 0
+    assert out["reused"] is True
+    assert any("reusing keycode" in line for line in out["logs"])
+    assert out["last"][1][0] == ord("ß")
+
+
+def test_a_new_streamer_adopts_the_slots_and_keeps_typing(tmp_path):
+    registry = tmp_path / "keymap.json"
+    out = _run(
+        QUEUE_FAKES
+        + f"""
+first = make_injector(registry={str(registry)!r})
+for char in "éñüø":
+    assert first.type_char(char)
+server = first.disp.server
+second = streamer.Injector.__new__(streamer.Injector)
+second.disp = FakeDisplay()
+second.disp.server = server               # same Xvfb, mappings kept
+second.display_name = ":0"
+second.keys_down, second.shift_held, second.buttons_down = set(), set(), set()
+second.typing, second.pending = None, []
+second.keys = streamer.KeyAllocator(second.disp, {str(registry)!r}, clock=clock)
+adopted = {{k: v for k, v in second.keys.where.items()}}
+known = second.type_char("é")              # an adopted slot: no remap
+remaps_after_known = len(second.disp.history)
+clock.now += streamer.QUIESCENCE_S + 0.1
+new = second.type_char("ß")                # pool full: reused, not dropped
+print(json.dumps({{"adopted": len(adopted), "known": known,
+                  "remaps_after_known": remaps_after_known, "new": new,
+                  "remaps": len(second.disp.history)}}))
+"""
+    )
+    assert out["adopted"] == 4
+    assert out["known"] is True and out["remaps_after_known"] == 0
+    assert out["new"] is True and out["remaps"] == 1
+
+
+def test_a_registry_that_no_longer_matches_is_not_adopted(tmp_path):
+    registry = tmp_path / "keymap.json"
+    out = _run(
+        QUEUE_FAKES
+        + f"""
+first = make_injector(registry={str(registry)!r})
+assert first.type_char("é")
+kc = first.keys.where[ord("é")][0]
+first.disp.server[kc] = [ord("q"), 0]      # someone else remapped it since
+second = streamer.KeyAllocator(first.disp, {str(registry)!r}, clock=clock)
+print(json.dumps({{"adopted_e": ord("é") in second.where, "owns_kc": kc in second.slots}}))
+"""
+    )
+    assert out == {"adopted_e": False, "owns_kc": False}
+
+
+def test_no_free_keycode_is_reported_and_the_queue_goes_on():
+    out = _run(
+        QUEUE_FAKES
+        + """
+inj = make_injector(free=0)
+inj.submit({"t": "text", "s": "é"})
+inj.submit({"t": "key", "k": "x", "d": True})
+inj.submit({"t": "key", "k": "x", "d": False})
+run_until_idle()
+x = inj.disp.keysym_to_keycode(ord("x"))
+presses = [e for e in events if e[0] in (X.KeyPress, X.KeyRelease)]
+print(json.dumps({"presses": presses, "x": x,
+                  "logs": [e[1] for e in events if e[0] == "log"]}))
+"""
+    )
+    assert out["presses"] == [[2, out["x"]], [3, out["x"]]]
+    assert any("no keycode is free" in line for line in out["logs"])
