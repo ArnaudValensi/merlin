@@ -429,3 +429,140 @@ print(json.dumps({{"decoded": decode_late(second.disp, presses)}}))
 """
     )
     assert out["decoded"] == [0xE9]
+
+
+DROP = """
+from argparse import Namespace
+from contextlib import contextmanager
+
+streamer.Gst.init(None)  # _start builds a Gst.Structure
+
+held = {"v": False}
+trace = []
+FAIL_PLAYING_WITH_AUDIO = %s
+
+@contextmanager
+def fake_lock(path):
+    held["v"] = True
+    try:
+        yield
+    finally:
+        held["v"] = False
+
+class FakeWebrtc:
+    def emit(self, *args):
+        return None
+
+class FakePipe:
+    def __init__(self, audio):
+        self.audio = audio
+    def set_state(self, state):
+        trace.append(["set_state", state.value_nick, self.audio, held["v"]])
+        if FAIL_PLAYING_WITH_AUDIO and self.audio and state == streamer.Gst.State.PLAYING:
+            return streamer.Gst.StateChangeReturn.FAILURE
+        return streamer.Gst.StateChangeReturn.SUCCESS
+
+class FakeInjector:
+    def __init__(self, display, registry=""):
+        pass
+    def release_all(self):
+        pass
+
+def fake_build(self, encoder, audio):
+    trace.append(["build", audio, held["v"]])
+    self.pipe = FakePipe(audio)
+    self.webrtc = FakeWebrtc()
+    self.audio_elements = streamer.AUDIO_NAMES if audio else frozenset()
+
+class Src:
+    def __init__(self, name):
+        self.name = name
+    def get_name(self):
+        return self.name
+
+class Message:
+    def __init__(self, name):
+        self.src = Src(name)
+    def parse_error(self):
+        return streamer.GLib.Error("boom"), "debug"
+
+streamer.state_lock = fake_lock
+streamer.check_display_owner = lambda *a: trace.append(["check", held["v"]])
+streamer.Injector = FakeInjector
+streamer.choose_encoder = lambda codecs: ("vp8enc", "VP8")
+streamer.missing_audio_elements = lambda: []
+streamer.sink_exists = lambda name: True
+streamer.skipped_addresses = lambda: set()
+streamer.Streamer._build = fake_build
+streamer.Streamer._discard = lambda self: trace.append(["discard"])
+streamer.Streamer.stop = lambda self: trace.append(["stop"])
+streamer.GLib.idle_add = lambda fn, *args: fn(*args)
+streamer.GLib.timeout_add_seconds = lambda *a: trace.append(["watchdog"])
+streamer.send = lambda message: trace.append(
+    ["send", message["type"], message.get("audio")])
+s = streamer.Streamer(Namespace(display=":100", codecs="VP8", fps=60, bitrate=8000,
+                                xvfb_pid=1, xvfb_start=2, state_lock="/tmp/lock",
+                                keymap_registry="", audio_sink="merlin_app_x"))
+%s
+print(json.dumps(trace))
+"""
+
+
+def test_sound_that_does_not_play_restarts_the_picture_alone():
+    script = """
+s.loop = type("L", (), {"run": lambda self: trace.append(["loop"])})()
+s.read_stdin = lambda: None
+s.run()
+"""
+    trace = _run(DROP % ("True", script))
+    after_ready = trace[trace.index(["send", "ready", True]) + 1 :]
+    assert after_ready == [
+        ["set_state", "playing", True, False],
+        ["discard"],
+        ["check", True],  # the display's owner, checked again
+        ["build", False, True],  # rebuilt under the state lock
+        ["set_state", "paused", False, True],
+        ["send", "ready", False],
+        ["set_state", "playing", False, False],
+        ["loop"],
+        ["set_state", "null", False, False],
+    ]
+
+
+def test_a_sound_error_before_the_offer_drops_the_sound():
+    script = """
+s.on_bus_error(None, Message("audiosrc"))
+"""
+    trace = _run(DROP % ("False", script))
+    tail = trace[trace.index(["send", "ready", True]) + 1 :]
+    assert ["discard"] in tail
+    assert tail[-2:] == [
+        ["send", "ready", False],
+        ["set_state", "playing", False, False],
+    ]
+
+
+def test_after_the_offer_a_sound_error_only_silences():
+    script = """
+s.negotiated = True
+s.on_bus_error(None, Message("audiosrc"))
+trace.append(["video error"])
+s.on_bus_error(None, Message("enc"))
+"""
+    trace = _run(DROP % ("False", script))
+    tail = trace[trace.index(["send", "ready", True]) + 1 :]
+    assert tail == [["video error"], ["send", "error", None], ["stop"]]
+
+
+def test_a_dropped_pipeline_never_speaks_to_the_browser():
+    script = """
+old = s.webrtc
+s.webrtc = FakeWebrtc()
+s.on_ice_candidate(old, 0, "candidate:1 1 UDP 1 192.168.1.2 5000 typ host")
+s.on_negotiation_needed(old)
+s.on_offer_created(None, old)
+trace.append(["negotiated", s.negotiated, s.offered])
+"""
+    trace = _run(DROP % ("False", script))
+    assert trace[-1] == ["negotiated", False, False]
+    assert not [t for t in trace if t[:2] in (["send", "ice"], ["send", "offer"])]

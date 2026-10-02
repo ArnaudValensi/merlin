@@ -6,6 +6,8 @@ tone is a 440 Hz sine the probe plays through ``pulsesink``.
 """
 
 import json
+import os
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -106,14 +108,14 @@ def _clean(merlin):
     stop_all(merlin)
 
 
-def _tone(merlin, tmp_path, name="tone", *extra, env=None) -> dict:
+def _tone(merlin, tmp_path, name="tone", *extra, env=None, volume="0.5") -> dict:
     return launch_probe(
         merlin,
         tmp_path / f"{name}.log",
         name,
         *extra,
         env=env,
-        probe_args=("--tone", "440"),
+        probe_args=("--tone", "440", "--tone-volume", volume),
     )
 
 
@@ -123,8 +125,38 @@ def _record(merlin, name: str) -> dict:
     return json.loads(path.read_text())
 
 
-def _unload_sink(record: dict) -> None:
-    subprocess.run(["pactl", "unload-module", str(record["audio_module"])], check=True)
+def _kill_sink_owner(record: dict) -> None:
+    """End the pw-cli connection that owns the app's sinks (the sinks go with
+    it), as if the sound server lost them."""
+    group = record["app_pid"]
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            argv = (entry / "cmdline").read_bytes().split(b"\0")[0]
+            stat = (entry / "stat").read_text()
+        except OSError:
+            continue
+        if argv == b"pw-cli" and int(stat[stat.rfind(")") + 2 :].split()[2]) == group:
+            os.kill(int(entry.name), signal.SIGKILL)
+            return
+    raise AssertionError("no sink owner")
+
+
+def _sink_node_exists(name: str) -> bool:
+    dump = json.loads(
+        subprocess.run(["pw-dump"], capture_output=True, text=True, check=True).stdout
+    )
+    return any(
+        o.get("type") == "PipeWire:Interface:Node"
+        and o.get("info", {}).get("props", {}).get("node.name") == name
+        for o in dump
+    )
+
+
+FRAMES = (
+    "document.getElementById('player-video').getVideoPlaybackQuality().totalVideoFrames"
+)
 
 
 def _capture_links() -> list[str]:
@@ -307,21 +339,24 @@ def test_the_mini_player_stays_quiet_until_asked(
 
 
 def test_the_picture_outlives_a_lost_sink(merlin, browser, server, tmp_path):
-    _tone(merlin, tmp_path)
+    # Silent: once its sinks are gone the app's tone goes to the real output.
+    _tone(merlin, tmp_path, volume="0")
     context, page = _open_player(browser, server, "tone")
     try:
         page.wait_for_selector("#player[data-audio='1']")
+        page.wait_for_function(f"{FRAMES} > 0")
         record = _record(merlin, "tone")
-        _unload_sink(record)
-        before = page.evaluate("document.getElementById('player-video').currentTime")
+        _kill_sink_owner(record)
+        before = page.evaluate(FRAMES)
         time.sleep(3)
         assert (
             page.evaluate("document.getElementById('player').dataset.streamState")
             == "live"
         )
-        after = page.evaluate("document.getElementById('player-video').currentTime")
-        assert after - before > 2, "the picture kept playing"
+        after = page.evaluate(FRAMES)
+        assert after - before > 30, f"new pictures kept coming ({before} -> {after})"
         # The capture was not moved to another device (microphone, speakers).
+        assert not _sink_node_exists(record["audio_sink"])
         assert _capture_links() == []
     finally:
         context.close()
@@ -330,11 +365,12 @@ def test_the_picture_outlives_a_lost_sink(merlin, browser, server, tmp_path):
 def test_a_sink_gone_before_the_viewer_gives_a_silent_stream(
     merlin, browser, server, tmp_path
 ):
-    _tone(merlin, tmp_path)
-    _unload_sink(_record(merlin, "tone"))
+    _tone(merlin, tmp_path, volume="0")
+    _kill_sink_owner(_record(merlin, "tone"))
     context, page = _open_player(browser, server, "tone")
     try:
         page.wait_for_selector("#player[data-audio='0']")
+        page.wait_for_function(f"{FRAMES} > 0")
         assert _capture_links() == []
     finally:
         context.close()
@@ -344,7 +380,7 @@ def test_stop_and_exit_leave_no_sink(merlin, tmp_path):
     _tone(merlin, tmp_path)
     sink = _record(merlin, "tone")["audio_sink"]
     assert cli(merlin, "stop", "tone").returncode == 0
-    sinks = subprocess.run(
-        ["pactl", "list", "short", "sinks"], capture_output=True, text=True, check=True
-    ).stdout
-    assert sink not in sinks
+    deadline = time.monotonic() + 5
+    while _sink_node_exists(sink) or _sink_node_exists(f"{sink}_in"):
+        assert time.monotonic() < deadline, "a sink outlived stop"
+        time.sleep(0.1)

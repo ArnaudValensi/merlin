@@ -26,10 +26,11 @@ help line, skill, or terminal button. Changing it needs `merlin restart`.
                                        ▼                                      ▼
                                Xvfb :N (WxHx24)                     app: [vglrun -d egl] CMD
                                        ▲                              DISPLAY=:N, x11-only env,
-                                       │ ximagesrc + XTEST            PULSE_SINK=merlin_app_…
+                                       │ ximagesrc + XTEST            PULSE_SINK=merlin_app_…_in
                                        │                                      │ plays into
-                                       │            PipeWire null sink ◄──────┘
-                                       │            (its monitor) ──► pipewiresrc
+                                       │      landing sink ──(sound.py moves)──► private sink
+                                       │      (never captured)              (its monitor)
+                                       │                                         ▼ pipewiresrc
  Browser ⇄ WS /ws/apps/{id}/stream ⇄ Merlin ⇄ stdin/stdout JSON ⇄ app/streamer.py
    ▲      (signaling only, authed,     (relay)                     (/usr/bin/python3,
    │       works through the proxy)                                 webrtcbin, encoders)
@@ -50,7 +51,8 @@ times out after 8 s and says so.
 | `main.py` | `_load_flagged_builtins()` loads `app` only with its flag |
 | `app/__init__.py` | Extension exports, routes loaded lazily so CLI imports stay light |
 | `app/sessions.py` | The one library behind the CLI and the API: displays, sound sinks, lifecycle, registry, input, screenshots, saved apps. **Stdlib only** |
-| `app/supervise.py` | Per-app supervisor: group leader and child subreaper, exit code, ends leftovers, keeps the app's sound on its sink. **Stdlib only** |
+| `app/supervise.py` | Per-app supervisor: group leader and child subreaper, exit code, ends leftovers, starts the sound helper. **Stdlib only** |
+| `app/sound.py` | Per-app sound helper: owns the app's private and landing sinks (a `pw-cli` connection), keeps the app's streams on the private one. **Stdlib only** |
 | `app/deps.py` | Prerequisite checks (runs a probe in the system Python) |
 | `app/cli_support.py`, `app/commands/*.py` | `merlin app run/list/stop/logs/screenshot/input`, `#!/usr/bin/env python3` |
 | `app/routes.py` | `/apps`, `/apps/{id}/play`, `/api/apps/*`, the signaling WebSocket |
@@ -206,39 +208,62 @@ Each app's sound streams with its picture, in the same WebRTC connection (one
 connection keeps them in sync: both tracks share the stream id and CNAME, and
 the browser's jitter buffer aligns them).
 
-- **One sink per app.** With `audio: stream` (the default; CLI `--audio`,
-  saved apps' `audio` field), launch creates a PulseAudio `module-null-sink`
-  through `pactl` (served by PipeWire), under the state lock after Xvfb and
-  before the app. Its name is `merlin_app_<home tag>_<id>_<generation[:8]>`:
-  the home tag (6 hex of a UUID5 of the apps dir) keeps every Merlin home on
-  the machine (the live one, a test server) to its own sinks. The record keeps
-  `audio` (effective mode), `audio_requested`, `audio_sink` and
-  `audio_module` (the module index).
-- **Routing by environment**: `PULSE_SINK` (libpulse), `PIPEWIRE_NODE` (native
-  PipeWire and its ALSA plugin), `SDL_AUDIO_DRIVER` / `SDL_AUDIODRIVER=pulseaudio`
-  (SDL3 / SDL2 pick their pulse backend). That covers apps that open "the
-  default output" without naming it. SDL3 (and SDL2 through sdl2-compat)
-  names it, past `PULSE_SINK`, so the supervisor (`supervise.py
-  --audio-sink`) also follows `pactl subscribe` and moves every playback
-  stream whose process is the app's (in its group, or descended from the
-  supervisor) to the sink, with a rescan every 5 s for a missed event. It
-  never moves anything once the sink is gone, and stops (killing its
-  subscriber) when the app ends. With `stream` the app is silent on the
-  machine even when nobody watches; moving its sound elsewhere by hand is
-  undone (use `local`).
-- **Removal is checked**: stop and the exit transition unload the module only
-  while `pactl -f json list sinks` still shows a sink with exactly that name
-  owned by that module (indexes are reused after a sound-server restart). The
-  start-up sweep (under the state lock) unloads this home's sinks that no
-  starting or running record owns.
-- **Capture**: the streamer gets `--audio-sink`, checks under the state lock
-  that the sink still exists (Merlin removes sinks under that lock), and adds
-  `pipewiresrc target-object=<sink>` (capturing the sink's monitor) `!
+- **Two sinks per app, owned by its sound helper.** With `audio: stream` (the
+  default; CLI `--audio`, saved apps' `audio` field) launch names a sink
+  `merlin_app_<id>_<generation[:12]>` and passes it to the supervisor
+  (`--audio-sink`, `--audio-status`). Before starting the app the supervisor
+  starts `app/sound.py` (in the app's group), which opens one `pw-cli`
+  connection and creates two PipeWire null nodes on it, both
+  `object.linger=false` (they die with the connection) and
+  `state.restore-*=false` (WirePlumber keeps no state for them):
+  - the **private sink** `<sink>`, class `Audio/Sink/Virtual`: the only node
+    the streamer captures. WirePlumber picks default outputs among
+    `Audio/Sink` and `Audio/Duplex` nodes only, so it is never a default, and
+    no other program's sound lands in it when the real outputs go away;
+  - the **landing sink** `<sink>_in`, class `Audio/Sink`, where the app's
+    environment points (`PULSE_SINK`, `PIPEWIRE_NODE`; SDL is sent to its
+    pulse backend). PipeWire's pulse server only starts a stream on a sink
+    pulse lists, and it lists only `Audio/Sink` nodes, hence this node. It is
+    never captured: should it become the default, what lands there is only
+    silenced.
+  The helper prints `ok` once both exist (3 s at most), the supervisor writes
+  `stream` or `local` to the status file (on `local` it drops the routing
+  variables: the app plays on the machine) and only then starts the app;
+  launch waits for that file and records the effective mode (`audio`,
+  `audio_requested`, `audio_sink`).
+- **Ownership is lifetime.** `pw-cli` has a parent-death signal (SIGKILL) and
+  the helper one too (SIGTERM), so the sinks live exactly as long as the
+  app's supervisor: stop, exit, a killed supervisor all remove them. Nothing
+  unloads a module by number and there is nothing to sweep.
+- **The helper keeps the app's streams on the private sink.** On each stream
+  event (`pactl subscribe`, a 5 s safety rescan, `pw-dump` for the graph) it
+  moves every playback stream of a process of the app (in its group, or
+  descended from the supervisor) that is not on the private sink there, with
+  `pw-metadata <stream> target.object <sink name>`: from the landing sink,
+  and from an output an app named (SDL3, and SDL2 through sdl2-compat, open
+  the default output by name, past `PULSE_SINK`). Named rather than by serial,
+  WirePlumber stores no target it could restore onto another program's
+  stream with the same name. A stream's first ~0.1 s, before the move, are
+  not streamed. It never moves anything once the sink is gone. On SIGTERM it
+  waits (1.5 s at most) for the app's streams to close before closing the
+  sinks, so a stopping app does not blip on the speakers. All its children
+  are its own (it is no subreaper): the supervisor's `waitpid(-1)` loop never
+  reaps a process a helper thread could then signal. With `stream` the app is
+  silent on the machine even when nobody watches; moving its sound elsewhere
+  by hand is undone (use `local`).
+- **Capture**: the streamer gets `--audio-sink`, checks the private sink is
+  there (`pw-dump`), and adds `pipewiresrc target-object=<sink>` (the sink's
+  monitor, never falling back, reconnecting or moving: see Gotchas) `!
   opusenc` (96 kbit/s, 20 ms frames, `restricted-lowdelay`) `! rtpopuspay
   pt=97 ! webrtcbin`, a second send-only transceiver. `ready` carries
   `audio: true|false`; the UI shows the sound toggles only when it is true.
-  An audio branch that cannot start is dropped (the pipeline is rebuilt
-  video-only); an error from an audio element later (the sink went away) is
+  Until the offer exists the sound can hold up the whole stream (webrtcbin
+  offers once every track has data), so a sound failure before it (PAUSED or
+  PLAYING refused, an error from an audio element, or no offer within 5 s)
+  restarts the pipeline without sound, under the state lock with the
+  display's owner checked again, and sends `ready` again with `audio: false`;
+  callbacks of the dropped webrtcbin are ignored and the client closes a
+  replaced peer. After the offer, an audio error (the sinks went away) is
   logged and the picture goes on.
 - **Browser**: the `<video>` element carries both tracks (one `MediaStream`
   per connection collects them). Its answer adds `stereo=1` to the Opus fmtp
@@ -253,7 +278,8 @@ the browser's jitter buffer aligns them).
   playback (the picture never waits for a gesture) and the next gesture
   retries.
 - **PipeWire only.** `audio_available()` requires `pactl info` to name
-  PipeWire; plain PulseAudio falls back to `local` (see Gotchas).
+  PipeWire and `pw-cli`, `pw-dump`, `pw-metadata`; anything else, or sinks
+  that cannot be made, falls back to `local` (see Gotchas).
 
 ## UI
 
@@ -298,8 +324,21 @@ the browser's jitter buffer aligns them).
   PulseAudio moves a capture to the default source when its sink goes away,
   so sound streaming is PipeWire only.
 - **SDL3 opens the default output by name**, so `PULSE_SINK` alone leaves
-  oob (SDL2 on sdl2-compat) on the speakers. Hence the supervisor's mover.
-  The probe's `--tone-device` reproduces it in the tests.
+  oob (SDL2 on sdl2-compat) on the speakers. Hence the helper's mover. The
+  probe's `--tone-device` reproduces it in the tests.
+- **A pulse stream aimed at a node pulse cannot list never starts** (it stays
+  suspended, its links paused); moved there once started, it plays. Hence the
+  landing sink.
+- **WirePlumber remembers moves.** A `target.object` written as a serial (what
+  `pactl move-sink-input` and pavucontrol do) is stored per application name
+  and restored onto the next stream of that name while the node exists: a
+  user's own browser could follow an agent's into the stream. Written as a
+  name, nothing restorable is stored.
+- **`application.process.id` is what the client says.** For pulse clients it
+  is the only process id PipeWire has (`pipewire.sec.pid` is the pulse
+  server's). A sandboxed client reports a PID from its own namespace; one
+  equal to an app process's host PID would be moved too. Such PIDs are small
+  and an app's are not.
 - **The pipeline runs on the system clock** (`use_clock`): `pipewiresrc`
   provides a clock, and one that stops with a lost sink would stop the
   picture.
@@ -312,7 +351,11 @@ the browser's jitter buffer aligns them).
   (lifecycle on real Xvfb), `test_app_agent.py` (screenshots, input, skill),
   `test_app_routes.py` (API, auth, saved apps, missing prerequisites),
   `test_app_audio.py` (sinks on the real PipeWire: routing, the tone reaches
-  the app's sink, removal, ownership, the sweep, local mode, degradation),
+  the private sink and nothing else, stop, exit and a killed supervisor
+  remove the sinks, never a default even at the top priority, the mover moves
+  only the app's streams and leaves no WirePlumber state, local mode,
+  degradation), `test_app_streamer.py` (attachment under the lock, the
+  restart without sound, stale webrtcbin callbacks),
   `tests/js/app-client.test.js` (client states, stereo answer, sound choices).
 - E2E (`uv run scripts.py test-e2e`): `test_app_stream.py` (pixels, input,
   codecs, single viewer, cleanup), `test_app_terminal.py`,
@@ -320,7 +363,8 @@ the browser's jitter buffer aligns them).
   `test_app_page.py`, `test_app_hardening.py` (crash, streamer death, restart,
   no Xvfb), `test_app_audio.py` (a WebAudio analyser hears the probe's
   440 Hz; local mode is picture only; each surface's sound default and
-  toggle under Chromium's real autoplay rule; a lost sink keeps the picture
-  and never moves the capture).
+  toggle under Chromium's real autoplay rule; sinks lost mid-stream keep the
+  picture coming (decoded frames) and never move the capture; sinks gone
+  before the viewer give a silent stream).
 - Tests needing Xvfb or GStreamer skip with a reason on machines without
   them.

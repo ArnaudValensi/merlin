@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Supervise one app: the process that leads its process group.
 
-    supervise.py EXIT_FILE [--audio-sink SINK] -- ARGV...
+    supervise.py EXIT_FILE [--audio-sink SINK --audio-status FILE] -- ARGV...
 
 Standard library only. It becomes a child subreaper, starts ARGV, and stays
 alive until every process the app started is gone: orphans (a parent that
@@ -23,21 +23,21 @@ read from /proc may be reused before the signal is sent, a pidfd may not. Each
 pidfd is checked against /proc after opening (still in our group, or still
 our child) before it is used.
 
-With ``--audio-sink``, the app's sound streams also go to that sink while it
-runs: the environment (PULSE_SINK...) routes most apps there, but some open
-the machine's default output by name (SDL3, and SDL2 through sdl2-compat),
-so every playback stream a process of the app opens is moved to the sink.
+With ``--audio-sink``, the app gets a private sink first: the sound helper
+(sound.py, in the group) owns it and keeps the app's streams on it. The
+effective mode, ``stream`` or ``local`` (no sink: the routing variables are
+dropped and the app plays on the machine), goes to the ``--audio-status``
+file before the app starts.
 """
 
 from __future__ import annotations
 
 import ctypes
-import json
 import os
+import select
 import signal
 import subprocess
 import sys
-import threading
 import time
 
 PR_SET_CHILD_SUBREAPER = 36
@@ -107,138 +107,61 @@ def signal_ours(sig: int, already: set[tuple[int, int]] | None = None) -> int:
     return sent
 
 
-def _belongs(pid: int, me: int, group: int) -> bool:
-    """``pid`` is the app's: in our group, or descended from us (a process
-    that left the group with setsid is still our descendant, or adopted)."""
-    for _ in range(64):
-        if pid == me:
-            return True
-        fields = _stat_fields(pid)
-        if not fields:
-            return False
-        if int(fields[2]) == group:
-            return True
-        pid = int(fields[1])
-        if pid <= 1:
-            return False
-    return False
+AUDIO_ENV = ("PULSE_SINK", "PIPEWIRE_NODE", "SDL_AUDIO_DRIVER", "SDL_AUDIODRIVER")
+SOUND = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sound.py")
+SOUND_TIMEOUT = 5.0  # sound.py gives up on its sink after 3 s
 
 
-class SoundMover:
-    """Keep the app's playback streams on its sink (``pactl subscribe``)."""
+def start_sound(sink: str, description: str) -> subprocess.Popen | None:
+    """Start the app's sound helper (sound.py) and wait for its sink; None
+    when there is no sink (the app then plays on the machine).
 
-    SAFETY_SCAN = 5.0  # a rescan even without events (a missed one)
-
-    def __init__(self, sink: str) -> None:
-        self.sink = sink
-        self.stopped = threading.Event()
-        self.dirty = threading.Event()
-        self.env = {**os.environ, "LC_ALL": "C"}
-        self.lock = threading.Lock()
-        self.proc: subprocess.Popen | None = None
-
-    def start(self) -> None:
-        threading.Thread(target=self._listen, daemon=True).start()
-        threading.Thread(target=self._mover, daemon=True).start()
-
-    def stop(self) -> None:
-        with self.lock:
-            self.stopped.set()
-            self.dirty.set()
-            if self.proc is not None:
-                try:
-                    self.proc.kill()
-                except OSError:
-                    pass
-
-    def _pactl(self, *args: str) -> str:
-        # Our own waitpid(-1) may reap this child first: subprocess then
-        # reports status 0, and the output, read to EOF, is complete anyway.
-        try:
-            return subprocess.run(
-                ["pactl", *args],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                env=self.env,
-                check=False,
-            ).stdout
-        except (OSError, subprocess.SubprocessError):
-            return ""
-
-    def _listen(self) -> None:
-        while True:
-            with self.lock:  # never a new subscriber after stop()
-                if self.stopped.is_set():
-                    return
-                try:
-                    proc = self.proc = subprocess.Popen(
-                        ["pactl", "subscribe"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL,
-                        text=True,
-                        env=self.env,
-                    )
-                except OSError:
-                    return
-            self.dirty.set()  # a scan once connected: streams opened before
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                if "sink-input" in line:
-                    self.dirty.set()
-                if self.stopped.is_set():
-                    break
-            try:
-                proc.kill()
-                proc.wait(timeout=1)
-            except (OSError, subprocess.SubprocessError):
-                pass
-            self.stopped.wait(1.0)  # the sound server went away: retry
-
-    def _mover(self) -> None:
-        me, group = os.getpid(), os.getpgid(0)
-        while not self.stopped.is_set():
-            self.dirty.wait(self.SAFETY_SCAN)
-            if self.stopped.is_set():
-                return
-            self.dirty.clear()
-            time.sleep(0.05)  # coalesce a burst of events
-            self.scan(me, group)
-
-    def scan(self, me: int, group: int) -> None:
-        try:
-            sinks = json.loads(self._pactl("-f", "json", "list", "sinks") or "[]")
-            inputs = json.loads(
-                self._pactl("-f", "json", "list", "sink-inputs") or "[]"
-            )
-        except ValueError:
-            return
-        target = next(
-            (s.get("index") for s in sinks if s.get("name") == self.sink), None
+    Runs before the app and before the reaping loop: nothing else reaps
+    here yet, so killing a helper that failed is safe by PID."""
+    try:
+        helper = subprocess.Popen(
+            [sys.executable, SOUND, sink, description], stdout=subprocess.PIPE
         )
-        if target is None:
-            return  # gone (the app is ending): never move anything elsewhere
-        for stream in inputs:
-            if self.stopped.is_set() or stream.get("sink") == target:
-                continue
-            pid = str(stream.get("properties", {}).get("application.process.id", ""))
-            if pid.isdigit() and _belongs(int(pid), me, group):
-                self._pactl("move-sink-input", str(stream.get("index")), self.sink)
+    except OSError:
+        return None
+    assert helper.stdout is not None
+    verdict = b""
+    deadline = time.monotonic() + SOUND_TIMEOUT
+    while b"\n" not in verdict and time.monotonic() < deadline:
+        ready, _, _ = select.select(
+            [helper.stdout], [], [], deadline - time.monotonic()
+        )
+        if not ready:
+            break
+        chunk = os.read(helper.stdout.fileno(), 64)
+        if not chunk:
+            break
+        verdict += chunk
+    if verdict.strip() == b"ok":
+        return helper
+    if helper.poll() is None:
+        helper.kill()
+    helper.wait()
+    return None
 
 
 def main() -> int:
     args = sys.argv[1:]
-    sink = ""
-    if len(args) >= 3 and args[1] == "--audio-sink":
-        sink = args[2]
-        args = [args[0], *args[3:]]
-    if len(args) < 3 or args[1] != "--":
+    options: dict[str, str] = {}
+    exit_file = args.pop(0) if args else ""
+    while len(args) >= 2 and args[0] in ("--audio-sink", "--audio-status"):
+        options[args[0]] = args[1]
+        del args[:2]
+    if not exit_file or not args or args[0] != "--" or len(args) < 2:
         print(
-            "usage: supervise.py EXIT_FILE [--audio-sink SINK] -- ARGV...",
+            "usage: supervise.py EXIT_FILE [--audio-sink SINK --audio-status FILE]"
+            " -- ARGV...",
             file=sys.stderr,
         )
         return 2
-    exit_file, argv = args[0], args[2:]
+    argv = args[1:]
+    sink = options.get("--audio-sink", "")
+    status_file = options.get("--audio-status", "")
 
     libc = ctypes.CDLL(None, use_errno=True)
     libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0)
@@ -253,18 +176,23 @@ def main() -> int:
     signal.signal(signal.SIGINT, on_stop)
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
+    env = dict(os.environ)
+    sound = start_sound(sink, f"Merlin app {sink}") if sink else None
+    if sink and sound is None:
+        for name in AUDIO_ENV:
+            env.pop(name, None)
+    if status_file:
+        with open(status_file + ".tmp", "w") as handle:
+            handle.write("stream\n" if sound else "local\n")
+        os.replace(status_file + ".tmp", status_file)
+
     try:
-        main_child = subprocess.Popen(argv)
+        main_child = subprocess.Popen(argv, env=env)
     except OSError as exc:
         print(f"supervise: cannot start {argv[0]}: {exc}", file=sys.stderr, flush=True)
         with open(exit_file, "w") as handle:
             handle.write("127\n")
         return 127
-
-    # Its first scan, once subscribed, catches a stream opened before it.
-    mover = SoundMover(sink) if sink else None
-    if mover:
-        mover.start()
 
     code: int | None = None
     ending_since: float | None = None
@@ -286,8 +214,6 @@ def main() -> int:
                     handle.write(f"{code}\n")
         if (stopping or code is not None) and ending_since is None:
             ending_since = time.monotonic()
-            if mover:
-                mover.stop()  # its pactl children end with the passes below
         if ending_since is not None:
             if time.monotonic() - ending_since < GRACE:
                 signal_ours(signal.SIGTERM, termed)  # newcomers get theirs too

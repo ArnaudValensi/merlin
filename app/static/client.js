@@ -212,6 +212,9 @@
         }
 
         function onOffer(sdp, g, socket) {
+            // A new offer replaces the connection (the streamer restarted
+            // its pipeline, without sound): the previous peer is closed.
+            if (pc) { try { pc.close(); } catch (e) {} }
             var peer = new RTCPeerConnection({iceServers: []});
             pc = peer;
             // "Not on the same network" is about ICE only: the clock starts at

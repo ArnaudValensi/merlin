@@ -153,18 +153,24 @@ def missing_audio_elements() -> list[str]:
     return [name for name in AUDIO_ELEMENTS if Gst.ElementFactory.find(name) is None]
 
 
+SINK_CLASS = "Audio/Sink/Virtual"  # the class sound.py gives the app's sink
+OFFER_WAIT_S = 5  # with sound, for the offer; then the picture goes alone
+
+
 def sink_exists(name: str) -> bool:
-    """The app's sink is loaded (checked under the state lock: Merlin removes
-    sinks under it, so it cannot vanish between this check and the build)."""
+    """The app's sink is there (pw-dump). It can still vanish right after
+    (the app exiting): the capture then fails, and the stream goes on without
+    sound."""
     try:
         out = subprocess.run(
-            ["pactl", "-f", "json", "list", "sinks"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
+            ["pw-dump"], capture_output=True, text=True, timeout=5, check=False
         ).stdout
-        return any(sink.get("name") == name for sink in json.loads(out or "[]"))
+        return any(
+            obj.get("type") == "PipeWire:Interface:Node"
+            and obj.get("info", {}).get("props", {}).get("node.name") == name
+            and obj.get("info", {}).get("props", {}).get("media.class") == SINK_CLASS
+            for obj in json.loads(out or "[]")
+        )
     except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
         return False
 
@@ -592,8 +598,10 @@ class Streamer:
         self.loop = GLib.MainLoop()
         self.skipped = skipped_addresses()
         self.offered = False
+        self.negotiated = False  # an offer exists: sound can no longer hold it up
+        self.dropping = False
         self.channel = None
-        encoder, codec = choose_encoder(args.codecs.split(","))
+        self.encoder, self.codec = choose_encoder(args.codecs.split(","))
         audio = bool(args.audio_sink)
         if audio and (missing := missing_audio_elements()):
             log(f"no sound in the stream: missing GStreamer {', '.join(missing)}")
@@ -605,25 +613,38 @@ class Streamer:
             if args.xvfb_pid:
                 check_display_owner(args.display, args.xvfb_pid, args.xvfb_start)
             self.injector = Injector(args.display, args.keymap_registry)
-            if audio and not sink_exists(args.audio_sink):
-                log("no sound in the stream: the app's sink is gone")
-                audio = False
-            self._build(encoder, audio)
-            # READY -> PAUSED starts ximagesrc, which opens its X connection,
-            # and connects pipewiresrc to the sink's monitor.
-            if self.pipe.set_state(Gst.State.PAUSED) == Gst.StateChangeReturn.FAILURE:
-                if not audio:
-                    raise RuntimeError("the capture pipeline did not start")
-                log("no sound in the stream: the app's sink did not open")
-                self._discard()
-                audio = False
-                self._build(encoder, audio)
-                if (
-                    self.pipe.set_state(Gst.State.PAUSED)
-                    == Gst.StateChangeReturn.FAILURE
-                ):
-                    raise RuntimeError("the capture pipeline did not start")
-        send({"type": "ready", "encoder": encoder, "codec": codec, "audio": audio})
+            self.audio = self._attach(audio)
+        self._ready()
+
+    def _ready(self) -> None:
+        send(
+            {
+                "type": "ready",
+                "encoder": self.encoder,
+                "codec": self.codec,
+                "audio": self.audio,
+            }
+        )
+
+    def _attach(self, audio: bool) -> bool:
+        """Build the pipeline and start its capture (PAUSED); with sound unless
+        it cannot start. Runs under the state lock. Returns whether the stream
+        has sound."""
+        if audio and not sink_exists(self.args.audio_sink):
+            log("no sound in the stream: the app's sink is gone")
+            audio = False
+        self._build(self.encoder, audio)
+        # READY -> PAUSED starts ximagesrc, which opens its X connection.
+        if self.pipe.set_state(Gst.State.PAUSED) != Gst.StateChangeReturn.FAILURE:
+            return audio
+        if not audio:
+            raise RuntimeError("the capture pipeline did not start")
+        log("no sound in the stream: its capture did not start")
+        self._discard()
+        self._build(self.encoder, False)
+        if self.pipe.set_state(Gst.State.PAUSED) == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError("the capture pipeline did not start")
+        return False
 
     def _build(self, encoder: str, audio: bool) -> None:
         args = self.args
@@ -664,10 +685,10 @@ class Streamer:
         self.pipe.set_state(Gst.State.NULL)
         self.bus.set_flushing(True)
 
-    # -- lifecycle ---------------------------------------------------------
-
-    def run(self) -> None:
-        self.pipe.set_state(Gst.State.PLAYING)
+    def _start(self) -> bool:
+        """PLAYING, and the input channel. False if the pipeline failed."""
+        if self.pipe.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
+            return False
         self.channel = self.webrtc.emit(
             "create-data-channel",
             "input",
@@ -675,6 +696,60 @@ class Streamer:
         )
         if self.channel is not None:
             self.channel.connect("on-message-string", self.on_channel_message)
+        if self.audio:
+            GLib.timeout_add_seconds(OFFER_WAIT_S, self._offer_watchdog)
+        return True
+
+    def _offer_watchdog(self) -> bool:
+        if self.audio and not self.negotiated:
+            self._drop_audio("no offer while waiting for the sound")
+        return False
+
+    def _drop_audio_later(self, why: str) -> bool:
+        self._drop_audio(why)
+        return False  # GLib: once
+
+    def _drop_audio(self, why: str) -> bool:
+        """Start over without sound. Until the offer exists, a sound branch
+        that failed (or never linked) holds up the whole stream: webrtcbin
+        offers only once every track has data. Re-attaches under the state
+        lock with the display's owner checked again, like the first time."""
+        if self.dropping or not self.audio or self.negotiated:
+            return False
+        self.dropping = True
+        ok = False
+        log(f"no sound in the stream: {why}")
+        self._discard()
+        self.offered = False
+        try:
+            with state_lock(self.args.state_lock):
+                if self.args.xvfb_pid:
+                    check_display_owner(
+                        self.args.display, self.args.xvfb_pid, self.args.xvfb_start
+                    )
+                self.audio = self._attach(False)
+            self._ready()
+            if not self._start():
+                raise RuntimeError("the capture pipeline did not play")
+            ok = True
+        except Exception as exc:
+            log(f"restart without sound failed: {exc!r}")
+            send({"type": "error", "message": str(exc)})
+            self.stop()
+        finally:
+            self.dropping = False
+        return ok
+
+    # -- lifecycle ---------------------------------------------------------
+
+    def run(self) -> None:
+        if not self._start():
+            if not self.audio:
+                send({"type": "error", "message": "the capture pipeline did not play"})
+            if not self.audio or not self._drop_audio("its capture did not play"):
+                self.injector.release_all()
+                self.pipe.set_state(Gst.State.NULL)
+                return
         threading.Thread(target=self.read_stdin, daemon=True).start()
         for sig in (signal.SIGTERM, signal.SIGINT):
             GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, self.stop)
@@ -699,14 +774,20 @@ class Streamer:
 
     # -- signaling ---------------------------------------------------------
 
+    # A pipeline dropped for its sound may still call back late: only the
+    # current webrtcbin speaks to the browser.
+
     def on_negotiation_needed(self, element) -> None:
-        if self.offered:
+        if element is not self.webrtc or self.offered:
             return
         self.offered = True
         promise = Gst.Promise.new_with_change_func(self.on_offer_created, element)
         element.emit("create-offer", None, promise)
 
     def on_offer_created(self, promise, element) -> None:
+        if element is not self.webrtc:
+            return
+        self.negotiated = True
         promise.wait()
         # Keep the reply referenced: the offer lives inside it, and letting
         # the binding drop it first frees the SDP under webrtcbin (segfault).
@@ -716,13 +797,17 @@ class Streamer:
         send({"type": "offer", "sdp": offer.sdp.as_text()})
         del reply
 
-    def on_ice_candidate(self, _element, mline: int, candidate: str) -> None:
+    def on_ice_candidate(self, element, mline: int, candidate: str) -> None:
+        if element is not self.webrtc:
+            return
         parts = candidate.split()
         if len(parts) > 4 and parts[4] in self.skipped:
             return
         send({"type": "ice", "candidate": candidate, "sdpMLineIndex": mline})
 
     def on_ice_connection_state(self, element, _pspec) -> None:
+        if element is not self.webrtc:
+            return
         state = element.get_property("ice-connection-state")
         send({"type": "state", "ice": state.value_nick})
 
@@ -760,6 +845,10 @@ class Streamer:
     def on_bus_error(self, _bus, message) -> None:
         error, debug = message.parse_error()
         if message.src is not None and message.src.get_name() in self.audio_elements:
+            if not self.negotiated:
+                # Before the offer: start over without sound (see _drop_audio).
+                GLib.idle_add(self._drop_audio_later, error.message)
+                return
             # The sink went away (the app exited, the sound server restarted):
             # the sound stops, the picture goes on.
             log(f"sound lost: {error.message} ({debug})")

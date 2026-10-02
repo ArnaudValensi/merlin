@@ -11,7 +11,7 @@ plays a sine at that frequency through PulseAudio (``pulsesink``, which honors
 by name instead, ignoring ``PULSE_SINK`` (as SDL3 does with the default one).
 
     x_probe.py [--size WxH] [--exit-after SECONDS] [--exit-code N]
-               [--tone HZ [--tone-device NAME]]
+               [--tone HZ [--tone-device NAME] [--tone-volume V]]
 """
 
 import argparse
@@ -48,6 +48,7 @@ def main() -> int:
     parser.add_argument("--exit-code", type=int, default=0)
     parser.add_argument("--tone", type=int, help="play a sine at this frequency")
     parser.add_argument("--tone-device", help="open this sink by name")
+    parser.add_argument("--tone-volume", default="0.5", help="0 for a silent tone")
     args = parser.parse_args()
     width, height = (int(v) for v in args.size.split("x"))
 
@@ -63,7 +64,7 @@ def main() -> int:
                 "-q",
                 "audiotestsrc",
                 f"freq={args.tone}",
-                "volume=0.5",
+                f"volume={args.tone_volume}",
                 "is-live=true",
                 "!",
                 "audioconvert",
