@@ -136,6 +136,7 @@
                 if (!pc) return;
                 if (pc.connectionState === 'connected') {
                     clearTimeout(timer);
+                    reconnects = 0;
                     setState('live');
                 } else if (pc.connectionState === 'failed') {
                     unreachable();
@@ -157,9 +158,23 @@
             setState('unreachable', {host: info.host});
         }
 
+        // A streamer that dies gets one automatic retry (per 20 s); a lost
+        // server (a Merlin restart) gets a few, with backoff, before giving up.
+        var lastAutoRetry = 0;
+        var reconnects = 0;
+        var retryTimer = null;
+        var RECONNECT_DELAYS = [1000, 2000, 3000, 4000, 5000, 5000, 5000];
+
         function fail(message) {
             closedByUs = true;
             teardown();
+            if (Date.now() - lastAutoRetry > 20000) {
+                lastAutoRetry = Date.now();
+                setState('connecting');
+                clearTimeout(retryTimer);
+                retryTimer = setTimeout(open, 1000);
+                return;
+            }
             setState('error', {message: message});
         }
 
@@ -221,8 +236,14 @@
                 ws = null;
                 if (closedByUs) return;
                 teardown();
-                if (event.code === 4401) setState('error', {message: 'Not signed in'});
-                else setState('closed');
+                if (event.code === 4401) { setState('error', {message: 'Not signed in'}); return; }
+                if (reconnects < RECONNECT_DELAYS.length) {
+                    setState('connecting');
+                    clearTimeout(retryTimer);
+                    retryTimer = setTimeout(open, RECONNECT_DELAYS[reconnects++]);
+                    return;
+                }
+                setState('closed');
             };
             timer = setTimeout(function () {
                 if (state === 'connecting') unreachable();
@@ -231,6 +252,7 @@
 
         function close() {
             closedByUs = true;
+            clearTimeout(retryTimer);
             teardown();
             setState('closed');
         }
@@ -293,7 +315,7 @@
                 return false;
             },
             close: close,
-            reconnect: open,
+            reconnect: function () { reconnects = 0; clearTimeout(retryTimer); open(); },
             stats: stats,
             get state() { return state; },
             get info() { return info; },

@@ -26,6 +26,29 @@ Key property: **Merlin always starts.** A broken extension is recorded in the re
 
 An extension cannot declare itself as core or built-in. The tier is inferred from where it lives.
 
+## Feature flags
+
+An experimental built-in can ship behind a feature flag and not exist for
+anyone who has not opted in. `features.enabled(name)` reads `MERLIN_FEATURES`
+(comma- or space-separated, case-insensitive) from the environment first,
+then `config.env`:
+
+```bash
+MERLIN_FEATURES=app
+```
+
+`ext_commands.FLAGGED_BUILTINS` maps a built-in's id to its feature name.
+With the flag off, `builtin_extension_dirs()` omits it (no CLI namespace, no
+help line, no skills) and `main.py` never loads it (no registry entry,
+Extensions card, nav item, routes or `start()`). Its id stays in
+`BUILTIN_IDS` either way, so an installed extension can never claim it. With
+the flag on it is an ordinary built-in, and its Extensions toggle still
+works. A flag change takes effect on the next start (`merlin restart`).
+
+| Flagged built-in | Feature | Doc |
+|---|---|---|
+| `app` | `app` | [`app-streaming.md`](app-streaming.md) |
+
 ## Extension Interface
 
 Every extension can export the following. The framework owns URL namespacing
@@ -376,6 +399,8 @@ Note: merlin-bot is **Discord-only** in scope. It handles message listening, thr
 | File | Role |
 |------|------|
 | `main.py` | ExtensionInfo, registry, loader, state mgmt, API routes |
+| `features.py` | `enabled(name)`: feature flags from `MERLIN_FEATURES` |
+| `ext_commands.py` | Built-in ids, defaults, `FLAGGED_BUILTINS`, command discovery and dispatch |
 | `paths.py` | `extensions_dir()`, `extensions_state_path()` |
 | `templates/extensions.html` | Extensions management page |
 | `templates/settings.html` | Settings page |

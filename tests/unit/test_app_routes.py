@@ -125,3 +125,30 @@ def test_launch_needs_saved_id_or_argv(client):
         ).status_code
         == 400
     )
+
+
+def test_missing_tools_are_named_with_their_package(monkeypatch):
+    import shutil as real_shutil
+
+    from app import deps, sessions
+
+    real_which = real_shutil.which
+
+    def which(name, *args, **kwargs):
+        return None if name == "Xvfb" else real_which(name, *args, **kwargs)
+
+    monkeypatch.setattr(deps.shutil, "which", which)
+    message = deps.missing_message(["Xvfb", "sh"])
+    assert message.startswith("Missing Xvfb (package: xorg-server-xvfb)")
+    report = deps.report()
+    assert report["ok"] is False
+    [xvfb] = [c for c in report["checks"] if c["name"] == "Xvfb"]
+    assert xvfb == {
+        "name": "Xvfb",
+        "ok": False,
+        "required": True,
+        "hint": "xorg-server-xvfb",
+    }
+    monkeypatch.setattr(sessions.shutil, "which", which)
+    with pytest.raises(sessions.AppError, match="Missing Xvfb"):
+        sessions.launch(["true"], gpu="off")

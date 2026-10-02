@@ -87,7 +87,8 @@ New to the codebase? Read `architecture.md` first, then `extension-system.md` an
 | [`docs/dev/session-viewer.md`](docs/dev/session-viewer.md) | Session transcripts, stream-json format, timeline rendering |
 | [`docs/dev/notes-editor.md`](docs/dev/notes-editor.md) | Notes routes, command palette, git ops, media upload, content search |
 | [`docs/dev/agent-activity-timeline.md`](docs/dev/agent-activity-timeline.md) | Timeline schema, consent, hooks, emitter, store, query API, and live UI |
-| [`docs/dev/extension-system.md`](docs/dev/extension-system.md) | Extension tiers, interface, state, registry, Extensions/Settings pages |
+| [`docs/dev/extension-system.md`](docs/dev/extension-system.md) | Extension tiers, interface, feature flags, state, registry, Extensions/Settings pages |
+| [`docs/dev/app-streaming.md`](docs/dev/app-streaming.md) | Flagged Apps built-in: Xvfb sessions, `merlin app` CLI, WebRTC streamer, terminal panel, player, Apps page |
 | [`docs/dev/skill-system.md`](docs/dev/skill-system.md) | Skill registry: sources, precedence (core > extension > user), canonical aggregation, engine adapters, shims, `merlin skills` |
 | [`docs/dev/dashboard-architecture.md`](docs/dev/dashboard-architecture.md) | Dashboard theme, CSS variables, JS patterns, API endpoints |
 | [`docs/dev/commit-review.md`](docs/dev/commit-review.md) | Commits page comparisons (`base..head`, ref safety, routes, the sticky header), saved reviews, comments, `merlin review` |
@@ -176,6 +177,8 @@ When creating new scripts:
 | `commits/` | Commit browser module | [`dashboard-architecture`](docs/dev/dashboard-architecture.md) |
 | `notes/` | Notes editor module | [`notes-editor`](docs/dev/notes-editor.md) |
 | `timeline/` | Built-in private activity-history extension | [`agent-activity-timeline`](docs/dev/agent-activity-timeline.md) |
+| `app/` | Built-in app streaming (GUI apps on Xvfb, `merlin app`, WebRTC), only with `MERLIN_FEATURES=app` | [`app-streaming`](docs/dev/app-streaming.md) |
+| `features.py` | Feature flags (`MERLIN_FEATURES`) for experimental built-ins | [`extension-system`](docs/dev/extension-system.md#feature-flags) |
 
 **Merlin Bot extension (merlin-bot/) — Discord-only scope:**
 

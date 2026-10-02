@@ -740,3 +740,22 @@ uv run .claude/skills/screenshot/screenshot.py --all http://localhost:3123 --use
 ```
 
 This captures 18 screenshots (3 pages x 6 viewports). Read the PNGs to verify layout, responsiveness, and rendering.
+
+## Apps (flagged)
+
+Behind `MERLIN_FEATURES=app`; full reference in
+[`app-streaming.md`](app-streaming.md).
+
+- **Terminal**: `terminal.html` renders `#app-btn`, `#app-divider` and
+  `#app-panel` and includes `app/static/terminal-panel.*` and `client.js` only
+  when `app_enabled` (flag on and the extension loaded). The page dispatches a
+  generic `merlin:terminal-window` event (`session`, `windowId`, `window`)
+  whenever its tmux window changes. On desktop the app panel takes the
+  Sessions panel's docked slot (`.main.app-open` plus `panel-collapsed`) and
+  gives it back on close; opening Sessions closes it. On mobile it is a
+  floating mini-player placed above `#terminal-toolbar` and the status bar.
+- **Player** (`/apps/{id}/play`) is a standalone page, not `base.html`: black
+  stage, ⋯ sheet, status chip, touch controls, `(pointer: fine)` hides the
+  touch-only parts.
+- **Apps page** (`/apps`) extends `base.html`: cards, a modal form that
+  becomes a bottom sheet under 768px, and the shared folder picker.
