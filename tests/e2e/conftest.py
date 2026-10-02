@@ -1,11 +1,14 @@
 """One way to start a throwaway Merlin for the E2E suite.
 
 Every server the suite starts runs on its own home (``MERLIN_HOME`` in a temp
-dir with a one-line ``config.env``), its own tmux server (a private
-``TMUX_TMPDIR``, ``$TMUX`` unset so the spawned ``tmux new-session`` never
-refuses to nest), a random port, auth off unless a password is given, and no
-SaaS or Discord token unless given. Nothing a test does can reach ``~/.merlin``
-(config, jobs, logs, the live server's state file) or the real tmux server.
+dir with a one-line ``config.env``), its own user ``HOME`` (Merlin syncs skill
+links into ``~/.claude/skills``, ``~/.agents/skills`` and ``$CODEX_HOME/skills``
+on start; with the real ``HOME`` a throwaway server would leave links into its
+temp dir there), its own tmux server (a private ``TMUX_TMPDIR``, ``$TMUX``
+unset so the spawned ``tmux new-session`` never refuses to nest), a random
+port, auth off unless a password is given, and no SaaS or Discord token unless
+given. Nothing a test does can reach ``~/.merlin`` (config, jobs, logs, the
+live server's state file), the user's agent configs, or the real tmux server.
 
 Use the ``server`` fixture (the URL) and ``tmux_env`` (an environment for
 ``tmux`` commands against that server's private socket). A module that needs
@@ -26,6 +29,15 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _uv_cache_dir() -> str:
+    """The real uv cache, kept when HOME moves so nothing is re-downloaded."""
+    if os.environ.get("UV_CACHE_DIR"):
+        return os.environ["UV_CACHE_DIR"]
+    return subprocess.run(
+        ["uv", "cache", "dir"], capture_output=True, text=True, check=True
+    ).stdout.strip()
 
 
 def free_port() -> int:
@@ -56,8 +68,15 @@ def start_merlin(
     to the login page counts, so the probe works with auth on)."""
     home = tmp_path_factory.mktemp(f"{name}-home")
     (home / "config.env").write_text(f"DASHBOARD_PASS={password}\n{config}")
+    user_home = tmp_path_factory.mktemp(f"{name}-userhome")
+    # An empty .zshrc keeps zsh's first-run wizard out of the terminal.
+    (user_home / ".zshrc").write_text("")
     env = os.environ.copy()
     env.pop("TMUX", None)
+    env.pop("CODEX_HOME", None)
+    env.pop("CLAUDE_CONFIG_DIR", None)
+    env["UV_CACHE_DIR"] = _uv_cache_dir()
+    env["HOME"] = str(user_home)
     env["TMUX_TMPDIR"] = str(tmp_path_factory.mktemp(f"{name}-tmux"))
     env.update(
         {
