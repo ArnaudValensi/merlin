@@ -1,0 +1,227 @@
+/* Apps in the web terminal: status-bar button, toast, chooser, docked panel
+   (desktop) and floating mini-player (mobile). Same vocabulary as the
+   Sessions panel (board.css). */
+
+#app-btn {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+    max-width: 140px;
+    padding: 2px 6px;
+    background: none;
+    border: 1px solid rgba(52, 211, 153, 0.4);
+    border-radius: 4px;
+    color: var(--accent-green);
+    font: 12px var(--font-mono, monospace);
+    cursor: pointer;
+}
+#app-btn[hidden] { display: none; }
+#app-btn:hover { border-color: var(--accent-green); }
+#app-btn.active { background: rgba(52, 211, 153, 0.12); }
+#app-btn-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#app-btn-count {
+    min-width: 14px; height: 14px; padding: 0 3px;
+    border-radius: 999px; background: var(--accent-green); color: #0b1411;
+    font-size: 9px; font-weight: 700; line-height: 14px; text-align: center;
+}
+
+.app-chooser {
+    position: fixed;
+    z-index: 260;
+    display: flex;
+    flex-direction: column;
+    min-width: 160px;
+    padding: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.app-chooser button {
+    padding: 8px 10px;
+    min-height: 36px;
+    background: none;
+    border: 0;
+    border-radius: 4px;
+    color: var(--text-primary);
+    font: 13px var(--font-sans, system-ui);
+    text-align: left;
+    cursor: pointer;
+}
+.app-chooser button:hover { background: var(--bg-hover); }
+
+.app-toast {
+    position: fixed;
+    right: 16px;
+    z-index: 260;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: calc(100vw - 32px);
+    padding: 10px 12px;
+    background: rgba(52, 211, 153, 0.15);
+    border: 1px solid rgba(52, 211, 153, 0.3);
+    border-radius: 6px;
+    color: var(--accent-green);
+    font: 13px var(--font-sans, system-ui);
+    backdrop-filter: blur(6px);
+    opacity: 0;
+    transform: translateY(8px);
+    pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+}
+.app-toast.show { opacity: 1; transform: none; pointer-events: auto; }
+.app-toast button {
+    min-height: 32px;
+    padding: 4px 12px;
+    background: var(--accent-green);
+    border: 0;
+    border-radius: 4px;
+    color: #0b1411;
+    font: 600 13px var(--font-sans, system-ui);
+    cursor: pointer;
+}
+
+/* ---- Panel (shared) ---------------------------------------------------- */
+
+.app-panel[hidden], .app-divider[hidden] { display: none !important; }
+.app-panel {
+    display: flex;
+    flex-direction: column;
+    background: #000;
+    overflow: hidden;
+}
+.app-panel-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 6px 0 10px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+}
+.app-panel-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+    font: 600 12px var(--font-sans, system-ui);
+}
+.app-chip {
+    flex: 0 0 auto;
+    padding: 1px 7px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font: 11px var(--font-mono, monospace);
+    white-space: nowrap;
+}
+.app-chip.live { color: var(--accent-green); border-color: rgba(52, 211, 153, 0.35); }
+.app-chip.agent { color: var(--accent-blue); border-color: rgba(74, 158, 255, 0.45); }
+.app-icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.app-icon-btn[hidden] { display: none; }
+.app-icon-btn:hover { color: var(--text-primary); border-color: var(--border); }
+.app-panel-body {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    outline: none;
+}
+.app-panel-body:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-blue); }
+.app-panel-video {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+}
+.app-panel-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 16px;
+    background: rgba(15, 17, 23, 0.82);
+    color: var(--text-primary);
+    font: 13px/1.5 var(--font-sans, system-ui);
+    text-align: center;
+}
+.app-panel-overlay[hidden] { display: none; }
+.app-panel-overlay p { margin: 0; max-width: 340px; }
+.app-panel-overlay button {
+    min-height: 32px;
+    padding: 4px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font: 13px var(--font-sans, system-ui);
+    cursor: pointer;
+}
+
+/* ---- Mobile: floating mini-player -------------------------------------- */
+
+.app-panel.mini {
+    position: fixed;
+    z-index: 205;
+    width: max(160px, 42vw);
+    aspect-ratio: 16 / 9;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+    touch-action: none;
+}
+.app-panel.mini .app-panel-head {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 2;
+    height: auto;
+    padding: 2px;
+    background: rgba(15, 17, 23, 0.6);
+    border: 0;
+    border-bottom-left-radius: 6px;
+}
+.app-panel.mini .app-panel-name,
+.app-panel.mini .app-chip { display: none; }
+.app-panel.mini .app-icon-btn { width: 28px; height: 28px; color: var(--text-primary); }
+.app-panel.mini .app-panel-overlay { font-size: 11px; gap: 6px; padding: 8px; }
+.app-panel.mini .app-panel-overlay button { min-height: 28px; font-size: 12px; }
+.app-divider { display: none; }
+
+/* ---- Desktop: docked panel beside the terminal ------------------------- */
+
+@media (min-width: 769px) {
+    .main.app-open .app-panel {
+        position: static;
+        flex: 0 0 var(--app-w, 480px);
+        border-left: 1px solid var(--border);
+    }
+    .main.app-open .app-divider {
+        display: block;
+        flex: 0 0 4px;
+        cursor: col-resize;
+        background: var(--border);
+    }
+    .main.app-open .app-divider:hover { background: var(--accent-blue); }
+}

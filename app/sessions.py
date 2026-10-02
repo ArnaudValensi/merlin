@@ -19,6 +19,7 @@ import re
 import shutil
 import signal
 import subprocess
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -111,16 +112,32 @@ def _save_record(record: dict) -> None:
     _write_json(_record_path(record["id"]), record)
 
 
+_lock_state = threading.local()
+
+
 @contextmanager
 def _launch_lock() -> Iterator[None]:
-    """Serialize display allocation and id claims across processes."""
+    """Serialize state changes (launch, stop, exit) across processes.
+
+    Re-entrant within a thread: launch() stops a replaced session while
+    holding it. Other threads and processes wait.
+    """
+    if getattr(_lock_state, "depth", 0):
+        _lock_state.depth += 1
+        try:
+            yield
+        finally:
+            _lock_state.depth -= 1
+        return
     lock = apps_dir() / ".lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
     with lock.open("w") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
+        _lock_state.depth = 1
         try:
             yield
         finally:
+            _lock_state.depth = 0
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
@@ -394,8 +411,11 @@ def missing_message(tools: list[str]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _refresh(record: dict) -> dict:
-    """Detect an app that exited (or a display that died) and tear down."""
+def _refresh(record: dict) -> dict | None:
+    """Detect an app that exited (or a display that died) and tear down.
+
+    Returns the current record, or None when it is gone (stopped meanwhile).
+    """
     status = record.get("status")
     if status not in ("starting", "running"):
         return record
@@ -410,25 +430,36 @@ def _refresh(record: dict) -> dict:
             except (AppError, OSError, subprocess.SubprocessError):
                 pass
         return record
-    code: int | None = None
-    try:
-        code = int(_exit_path(record["id"]).read_text().strip())
-    except (OSError, ValueError):
-        pass
-    _kill_group(record.get("app_pid"), record.get("app_start"))
-    _kill_group(record.get("xvfb_pid"), record.get("xvfb_start"))
-    record["status"] = "exited"
-    record["exit_code"] = code
-    record["exited_at"] = now_iso()
-    _save_record(record)
-    return record
+    with _launch_lock():
+        # Re-read under the lock: a concurrent stop kills the app first and
+        # deletes the record after; saving "exited" now would resurrect it.
+        current = _read_record(record["id"])
+        if current is None:
+            return None
+        if current.get("status") not in ("starting", "running") or (
+            current.get("app_pid") != record.get("app_pid")
+        ):
+            return current
+        code: int | None = None
+        try:
+            code = int(_exit_path(record["id"]).read_text().strip())
+        except (OSError, ValueError):
+            pass
+        _kill_group(current.get("app_pid"), current.get("app_start"))
+        _kill_group(current.get("xvfb_pid"), current.get("xvfb_start"))
+        current["status"] = "exited"
+        current["exit_code"] = code
+        current["exited_at"] = now_iso()
+        _save_record(current)
+        return current
 
 
 def get(session_id: str) -> dict:
     record = _read_record(session_id)
-    if record is None:
+    refreshed = _refresh(record) if record is not None else None
+    if refreshed is None or refreshed.get("status") == "stopping":
         raise KeyError(session_id)
-    return _refresh(record)
+    return refreshed
 
 
 def list_sessions() -> list[dict]:
@@ -438,8 +469,9 @@ def list_sessions() -> list[dict]:
     records = []
     for path in sorted(directory.glob("*.json")):
         record = _read_record(path.stem)
-        if record is not None:
-            records.append(_refresh(record))
+        refreshed = _refresh(record) if record is not None else None
+        if refreshed is not None and refreshed.get("status") != "stopping":
+            records.append(refreshed)
     records.sort(key=lambda r: r.get("started_at", ""))
     return records
 
@@ -479,7 +511,7 @@ def launch(
     with _launch_lock():
         existing = _read_record(session_id)
         if existing is not None:
-            existing = _refresh(existing)
+            existing = _refresh(existing) or existing
             if existing["status"] != "exited" and not replace:
                 raise AppError(
                     f"'{session_id}' is already running. Stop it first, use "
@@ -617,12 +649,17 @@ def capture_thumbnail(session_id: str) -> Path | None:
 
 
 def _stop_record(record: dict, *, thumbnail: bool) -> None:
-    if thumbnail:
-        capture_thumbnail(record["id"])
-    _kill_group(record.get("app_pid"), record.get("app_start"))
-    _kill_group(record.get("xvfb_pid"), record.get("xvfb_start"))
-    _record_path(record["id"]).unlink(missing_ok=True)
-    _exit_path(record["id"]).unlink(missing_ok=True)
+    with _launch_lock():
+        if thumbnail:
+            capture_thumbnail(record["id"])
+        # Readers skip a "stopping" record, and a concurrent exit check sees
+        # it is no longer running, so nothing reports the kill as a crash.
+        record["status"] = "stopping"
+        _save_record(record)
+        _kill_group(record.get("app_pid"), record.get("app_start"))
+        _kill_group(record.get("xvfb_pid"), record.get("xvfb_start"))
+        _record_path(record["id"]).unlink(missing_ok=True)
+        _exit_path(record["id"]).unlink(missing_ok=True)
 
 
 def stop(session_id: str) -> dict:

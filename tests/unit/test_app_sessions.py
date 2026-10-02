@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -180,6 +181,26 @@ class TestLifecycle:
         assert sessions.list_sessions() == []
         with pytest.raises(KeyError):
             sessions.stop("probe")
+
+    def test_stop_racing_an_exit_check_never_resurrects(self):
+        for _ in range(3):
+            _launch()
+            done = threading.Event()
+
+            def poll():
+                while not done.is_set():
+                    sessions.list_sessions()
+
+            poller = threading.Thread(target=poll)
+            poller.start()
+            try:
+                sessions.stop("probe")
+                time.sleep(0.3)
+            finally:
+                done.set()
+                poller.join()
+            assert sessions.list_sessions() == []
+            assert sessions._read_record("probe") is None
 
     def test_same_id_needs_replace(self):
         first = sessions._read_record(_launch()["id"])

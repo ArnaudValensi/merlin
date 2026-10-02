@@ -134,6 +134,11 @@
 <script src="/static/vendor/sortable.min.js"></script>
 <script src="/static/board/board.js"></script>
 <script src="/static/notifications/notifications.js"></script>
+{% if app_enabled %}
+<link rel="stylesheet" href="/static/app/terminal-panel.css">
+<script src="/static/app/client.js"></script>
+<script defer src="/static/app/terminal-panel.js"></script>
+{% endif %}
 {# Shared clipboard ladder — the same partial /clipboard-test includes, so the
    diagnostic page and the terminal can never disagree about what a paste does. #}
 <script>{% include "clipboard-core.js" %}</script>
@@ -2091,6 +2096,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (window.SessionsBoard && window.SessionsBoard.setCurrentSession) {
                             window.SessionsBoard.setCurrentSession(currentSession);
                         }
+                        // For page features that follow the current window
+                        // (the Apps panel's button).
+                        document.dispatchEvent(new CustomEvent('merlin:terminal-window', {
+                            detail: {session: currentSession, windowId: currentWindowId, window: ctl.window || ''},
+                        }));
                     }
                 } catch (x) { /* ignore malformed control frame */ }
                 return;
