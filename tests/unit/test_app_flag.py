@@ -137,3 +137,38 @@ class TestServer:
             assert "reserved" in (info.error or "")
         finally:
             app_mod.extension_registry.pop("app", None)
+
+
+def test_flag_on_routes_require_auth(monkeypatch):
+    """Through the real app (not a bare router): no cookie, no access."""
+    import auth
+    from starlette.websockets import WebSocketDisconnect
+
+    monkeypatch.setenv("MERLIN_FEATURES", "app")
+    routes = list(app_mod.app.router.routes)
+    nav = list(app_mod.nav_items)
+    try:
+        app_mod._load_flagged_builtins()
+        auth.configure("secret")
+        monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "secret")
+        with TestClient(app_mod.app) as client:
+            for path in (
+                "/apps",
+                "/apps/probe/play",
+                "/api/apps/sessions",
+                "/api/apps/saved",
+            ):
+                response = client.get(path, follow_redirects=False)
+                assert response.status_code in (303, 401), (path, response.status_code)
+            assert client.post(
+                "/api/apps/sessions", json={"argv": ["true"]}, follow_redirects=False
+            ).status_code in (303, 401)
+            with pytest.raises(WebSocketDisconnect) as exc:
+                with client.websocket_connect("/ws/apps/probe/stream") as ws:
+                    ws.receive_text()
+            assert exc.value.code == 4401
+    finally:
+        auth.configure("")
+        app_mod.extension_registry.pop("app", None)
+        app_mod.nav_items[:] = nav
+        app_mod.app.router.routes[:] = routes

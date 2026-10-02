@@ -22,6 +22,7 @@ import signal
 import subprocess
 import threading
 import time
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -96,7 +97,7 @@ def _record_path(session_id: str) -> Path:
 
 def _write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     tmp.write_text(json.dumps(data, indent=2) + "\n")
     os.replace(tmp, path)
 
@@ -151,14 +152,19 @@ def now_iso() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _start_time(pid: int) -> int | None:
-    """Kernel start time of ``pid`` (clock ticks), None if gone or a zombie."""
+def _stat_fields(pid: int) -> list[str] | None:
+    """Fields of /proc/<pid>/stat after the command name, None if gone."""
     try:
         stat = Path(f"/proc/{pid}/stat").read_text()
     except OSError:
         return None
     # The command name (field 2) may contain spaces: split after its ')'.
-    fields = stat[stat.rfind(")") + 2 :].split()
+    return stat[stat.rfind(")") + 2 :].split() or None
+
+
+def _start_time(pid: int) -> int | None:
+    """Kernel start time of ``pid`` (clock ticks), None if gone or a zombie."""
+    fields = _stat_fields(pid)
     if not fields or fields[0] == "Z":
         return None
     return int(fields[19])
@@ -179,28 +185,55 @@ def process_alive(pid: int | None, start_time: int | None) -> bool:
     return _start_time(pid) == start_time
 
 
-def _kill_group(pid: int | None, start_time: int | None) -> None:
-    """SIGTERM the process group led by ``pid``, then SIGKILL after a grace.
+def _group_members(pgid: int) -> list[int]:
+    """Live (non-zombie) processes whose process group is ``pgid``."""
+    members = []
+    for entry in os.scandir("/proc"):
+        if not entry.name.isdigit():
+            continue
+        fields = _stat_fields(int(entry.name))
+        if fields and fields[0] != "Z" and int(fields[2]) == pgid:
+            members.append(int(entry.name))
+    return members
 
-    Only a group whose leader is still the process we recorded is touched.
+
+def _owns_group(pid: int, start_time: int) -> bool:
+    """Whether process group ``pid`` is still the one we started.
+
+    Its leader is the process we recorded, or the leader is gone: Linux never
+    reuses a PID while a process group with that ID still has members, so the
+    members left are the leader's descendants. A live leader with another
+    start time means the number was reused after the group emptied.
     """
-    if not process_alive(pid, start_time):
+    leader_start = _start_time(pid)
+    return leader_start is None or leader_start == start_time
+
+
+def _kill_group(pid: int | None, start_time: int | None) -> None:
+    """End the whole process group we started: SIGTERM, then SIGKILL.
+
+    Waits for every member, not just the leader: a wrapper shell dies on
+    SIGTERM while a child that ignores it keeps running. Members that left the
+    group (setsid) are out of reach by design.
+    """
+    if not pid or start_time is None:
         return
-    assert pid is not None
-    try:
-        os.killpg(pid, signal.SIGTERM)
-    except OSError:
-        return
-    deadline = time.monotonic() + STOP_GRACE
-    while time.monotonic() < deadline:
-        if not process_alive(pid, start_time):
-            return
-        time.sleep(0.05)
-    try:
-        os.killpg(pid, signal.SIGKILL)
-    except OSError:
-        pass
     _reap(pid)
+    if not _owns_group(pid, start_time) or not _group_members(pid):
+        return
+    for sig, grace in ((signal.SIGTERM, STOP_GRACE), (signal.SIGKILL, 2.0)):
+        try:
+            os.killpg(pid, sig)
+        except OSError:
+            return
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline:
+            _reap(pid)
+            if not _group_members(pid):
+                return
+            time.sleep(0.05)
+        if not _owns_group(pid, start_time):
+            return
 
 
 def _spawn(argv: list[str], **kwargs: Any) -> subprocess.Popen:
@@ -221,6 +254,14 @@ def _spawn(argv: list[str], **kwargs: Any) -> subprocess.Popen:
 
 def _display_paths(number: int) -> tuple[Path, Path]:
     return Path(f"/tmp/.X{number}-lock"), Path(f"/tmp/.X11-unix/X{number}")
+
+
+def _lock_owner(number: int) -> int | None:
+    """PID written in the display's lock file, None if absent or unreadable."""
+    try:
+        return int(_display_paths(number)[0].read_text().strip())
+    except (OSError, ValueError):
+        return None
 
 
 def _display_free(number: int) -> bool:
@@ -270,17 +311,26 @@ def _start_xvfb(width: int, height: int, log: Path) -> tuple[int, int, int]:
             )
         sock = _display_paths(number)[1]
         deadline = time.monotonic() + XVFB_READY_TIMEOUT
+        lost = False
         while time.monotonic() < deadline:
             if proc.poll() is not None:
-                break  # lost a race for this display: try the next one
-            if sock.exists():
+                lost = True  # lost a race for this display: try the next one
+                break
+            owner = _lock_owner(number)
+            if owner is not None and owner != proc.pid:
+                # Another X server (another Merlin home, another launcher)
+                # took this display between our check and our start.
+                lost = True
+                break
+            if owner == proc.pid and sock.exists():
                 start = _start_time(proc.pid)
                 if start is not None:
                     return number, proc.pid, start
             time.sleep(0.02)
         if proc.poll() is None:
             proc.kill()
-            proc.wait()
+        proc.wait()
+        if not lost:
             raise AppError(f"Xvfb did not start on :{number} (see {log})")
     raise AppError("No free X display number")
 
@@ -412,6 +462,27 @@ def missing_message(tools: list[str]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _update_record(
+    record: dict, changes: dict, *, only_status: tuple[str, ...] | None = None
+) -> dict | None:
+    """Apply ``changes`` to the stored record of the same launch, atomically.
+
+    Under the state lock, re-reads the record and checks its generation: a
+    record deleted meanwhile (stopped) is never recreated, and a replacement
+    (``run --replace``) is never touched. Returns the stored record, or None
+    when it is gone or no longer the same launch.
+    """
+    with _launch_lock():
+        current = _read_record(record["id"])
+        if current is None or current.get("generation") != record.get("generation"):
+            return None
+        if only_status is not None and current.get("status") not in only_status:
+            return current
+        current.update(changes)
+        _save_record(current)
+        return current
+
+
 def _refresh(record: dict) -> dict | None:
     """Detect an app that exited (or a display that died) and tear down.
 
@@ -426,8 +497,10 @@ def _refresh(record: dict) -> dict | None:
         if status == "starting":
             try:
                 if _app_windows(record):
-                    record["status"] = "running"
-                    _save_record(record)
+                    updated = _update_record(
+                        record, {"status": "running"}, only_status=("starting",)
+                    )
+                    return updated
             except (AppError, OSError, subprocess.SubprocessError):
                 pass
         return record
@@ -438,7 +511,7 @@ def _refresh(record: dict) -> dict | None:
         if current is None:
             return None
         if current.get("status") not in ("starting", "running") or (
-            current.get("app_pid") != record.get("app_pid")
+            current.get("generation") != record.get("generation")
         ):
             return current
         code: int | None = None
@@ -533,6 +606,8 @@ def launch(
         display = f":{number}"
         record: dict[str, Any] = {
             "id": session_id,
+            # Identifies this launch: guarded updates never touch a replacement.
+            "generation": uuid.uuid4().hex,
             "name": name or Path(argv[0]).name,
             "argv": list(argv),
             "cwd": str(workdir),
@@ -580,7 +655,11 @@ def launch(
             raise
 
     _wait_for_window(record, wait)
-    return get(session_id)
+    try:
+        return get(session_id)
+    except KeyError:
+        # Stopped while starting (a concurrent stop): report it, do not fail.
+        return {**record, "status": "stopped"}
 
 
 def _wait_for_window(record: dict, timeout: float) -> None:
@@ -606,9 +685,7 @@ def _wait_for_window(record: dict, timeout: float) -> None:
                     str(height),
                 )
             _xdotool(record["display"], "windowfocus", window)
-            current = _read_record(record["id"]) or record
-            current["status"] = "running"
-            _save_record(current)
+            _update_record(record, {"status": "running"}, only_status=("starting",))
             return
         time.sleep(0.1)
 
@@ -664,10 +741,13 @@ def _stop_record(record: dict, *, thumbnail: bool) -> None:
 
 
 def stop(session_id: str) -> dict:
-    record = _read_record(session_id)
-    if record is None:
-        raise KeyError(session_id)
-    _stop_record(record, thumbnail=True)
+    # Read under the lock: a `run --replace` finishing first must be the
+    # session this stop ends, not overwritten by a stale copy.
+    with _launch_lock():
+        record = _read_record(session_id)
+        if record is None:
+            raise KeyError(session_id)
+        _stop_record(record, thumbnail=True)
     record["status"] = "stopped"
     return record
 
@@ -691,10 +771,7 @@ def _require_running(session_id: str) -> dict:
 
 
 def _note_agent_input(record: dict) -> None:
-    current = _read_record(record["id"])
-    if current is not None:
-        current["last_agent_input_at"] = now_iso()
-        _save_record(current)
+    _update_record(record, {"last_agent_input_at": now_iso()})
 
 
 def _focus_app(record: dict) -> None:

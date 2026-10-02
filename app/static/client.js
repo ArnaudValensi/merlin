@@ -89,12 +89,25 @@
         var video = opts.video;
         var ws = null, pc = null, channel = null;
         var state = 'closed';
-        var timer = null, hiddenTimer = null;
-        var closedByUs = false;
+        var timer = null, hiddenTimer = null, retryTimer = null;
         var lastBytes = null;
         var info = {host: '', app: null, encoder: '', codec: ''};
+        // Every open() and teardown() starts a new generation. Callbacks of an
+        // older connection (a late promise, a closing socket) check theirs and
+        // do nothing, and nothing runs at all once the client is destroyed.
+        var gen = 0;
+        var destroyed = false;
+
+        // A streamer that dies gets one automatic retry (per 20 s); a lost
+        // server (a Merlin restart) gets a few, with backoff, before giving up.
+        var lastAutoRetry = 0;
+        var reconnects = 0;
+        var RECONNECT_DELAYS = [1000, 2000, 3000, 4000, 5000, 5000, 5000];
+
+        function current(g) { return !destroyed && g === gen; }
 
         function setState(next, detail) {
+            if (destroyed) return;
             if (state === next && !detail) return;
             state = next;
             if (video && video.parentElement) video.parentElement.setAttribute('data-stream-state', next);
@@ -102,91 +115,90 @@
         }
 
         function teardown() {
+            gen++;
             clearTimeout(timer);
             if (channel) { try { channel.close(); } catch (e) {} channel = null; }
             if (pc) { try { pc.close(); } catch (e) {} pc = null; }
             if (ws) {
                 ws.onclose = null;
+                ws.onmessage = null;
                 try { ws.close(); } catch (e) {}
                 ws = null;
             }
         }
 
-        function send(message) {
-            if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
+        function schedule(fn, delay) {
+            clearTimeout(retryTimer);
+            retryTimer = setTimeout(function () { if (!destroyed) fn(); }, delay);
         }
 
-        function onOffer(sdp) {
-            pc = new RTCPeerConnection({iceServers: []});
-            pc.ontrack = function (event) {
+        function onOffer(sdp, g, socket) {
+            var peer = new RTCPeerConnection({iceServers: []});
+            pc = peer;
+            function sendOn(message) {
+                if (current(g) && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+            }
+            peer.ontrack = function (event) {
+                if (!current(g)) return;
                 var stream = event.streams && event.streams[0];
                 if (!stream) stream = new MediaStream([event.track]);
                 if (video.srcObject !== stream) video.srcObject = stream;
                 var playing = video.play();
                 if (playing && playing.catch) playing.catch(function () {});
             };
-            pc.ondatachannel = function (event) { channel = event.channel; };
-            pc.onicecandidate = function (event) {
+            peer.ondatachannel = function (event) { if (current(g)) channel = event.channel; };
+            peer.onicecandidate = function (event) {
                 if (event.candidate) {
-                    send({type: 'ice', candidate: event.candidate.candidate,
-                          sdpMLineIndex: event.candidate.sdpMLineIndex});
+                    sendOn({type: 'ice', candidate: event.candidate.candidate,
+                            sdpMLineIndex: event.candidate.sdpMLineIndex});
                 }
             };
-            pc.onconnectionstatechange = function () {
-                if (!pc) return;
-                if (pc.connectionState === 'connected') {
+            peer.onconnectionstatechange = function () {
+                if (!current(g)) return;
+                if (peer.connectionState === 'connected') {
                     clearTimeout(timer);
                     reconnects = 0;
                     setState('live');
-                } else if (pc.connectionState === 'failed') {
+                } else if (peer.connectionState === 'failed') {
                     unreachable();
                 }
             };
-            pc.setRemoteDescription({type: 'offer', sdp: sdp})
-                .then(function () { return pc.createAnswer(); })
+            peer.setRemoteDescription({type: 'offer', sdp: sdp})
+                .then(function () { return peer.createAnswer(); })
                 .then(function (answer) {
-                    return pc.setLocalDescription(answer).then(function () {
-                        send({type: 'answer', sdp: answer.sdp});
+                    return peer.setLocalDescription(answer).then(function () {
+                        sendOn({type: 'answer', sdp: answer.sdp});
                     });
                 })
-                .catch(function (err) { fail('Could not start the stream: ' + err); });
+                .catch(function (err) {
+                    if (current(g)) fail('Could not start the stream: ' + err);
+                });
         }
 
         function unreachable() {
-            closedByUs = true;
             teardown();
             setState('unreachable', {host: info.host});
         }
 
-        // A streamer that dies gets one automatic retry (per 20 s); a lost
-        // server (a Merlin restart) gets a few, with backoff, before giving up.
-        var lastAutoRetry = 0;
-        var reconnects = 0;
-        var retryTimer = null;
-        var RECONNECT_DELAYS = [1000, 2000, 3000, 4000, 5000, 5000, 5000];
-
         function fail(message) {
-            closedByUs = true;
             teardown();
+            if (destroyed) return;
             if (Date.now() - lastAutoRetry > 20000) {
                 lastAutoRetry = Date.now();
                 setState('connecting');
-                clearTimeout(retryTimer);
-                retryTimer = setTimeout(open, 1000);
+                schedule(open, 1000);
                 return;
             }
             setState('error', {message: message});
         }
 
-        function onMessage(event) {
-            var msg;
-            try { msg = JSON.parse(event.data); } catch (e) { return; }
+        function onMessage(msg, g, socket) {
             switch (msg.type) {
                 case 'welcome':
                     info.host = msg.host || '';
                     info.app = msg.app || null;
                     if (opts.onWelcome) opts.onWelcome(info);
-                    send({type: 'hello', codecs: browserCodecs()});
+                    socket.send(JSON.stringify({type: 'hello', codecs: browserCodecs()}));
                     break;
                 case 'ready':
                     info.encoder = msg.encoder || '';
@@ -198,7 +210,7 @@
                     if (opts.onReady) opts.onReady(info);
                     break;
                 case 'offer':
-                    onOffer(msg.sdp);
+                    onOffer(msg.sdp, g, socket);
                     break;
                 case 'ice':
                     if (pc && msg.candidate) {
@@ -210,12 +222,10 @@
                     if (opts.onAgentInput) opts.onAgentInput(msg.at);
                     break;
                 case 'replaced':
-                    closedByUs = true;
                     teardown();
                     setState('replaced');
                     break;
                 case 'exited':
-                    closedByUs = true;
                     teardown();
                     setState('exited', {reason: msg.reason, code: msg.code});
                     break;
@@ -226,59 +236,85 @@
         }
 
         function open() {
+            if (destroyed) return;
             teardown();
-            closedByUs = false;
+            clearTimeout(retryTimer);
+            var g = gen;
             lastBytes = null;
             setState('connecting');
-            ws = new WebSocket(wsUrl(opts.id));
-            ws.onmessage = onMessage;
-            ws.onclose = function (event) {
+            var socket = new WebSocket(wsUrl(opts.id));
+            ws = socket;
+            socket.onmessage = function (event) {
+                if (!current(g)) return;
+                var msg;
+                try { msg = JSON.parse(event.data); } catch (e) { return; }
+                onMessage(msg, g, socket);
+            };
+            socket.onclose = function (event) {
+                if (!current(g)) return;
                 ws = null;
-                if (closedByUs) return;
                 teardown();
                 if (event.code === 4401) { setState('error', {message: 'Not signed in'}); return; }
                 if (reconnects < RECONNECT_DELAYS.length) {
                     setState('connecting');
-                    clearTimeout(retryTimer);
-                    retryTimer = setTimeout(open, RECONNECT_DELAYS[reconnects++]);
+                    schedule(open, RECONNECT_DELAYS[reconnects++]);
                     return;
                 }
                 setState('closed');
             };
             timer = setTimeout(function () {
-                if (state === 'connecting') unreachable();
+                if (current(g) && state === 'connecting') unreachable();
             }, CONNECT_TIMEOUT_MS);
+            reconcileHidden();
         }
 
         function close() {
-            closedByUs = true;
             clearTimeout(retryTimer);
             teardown();
             setState('closed');
         }
 
-        function onVisibility() {
-            if (document.hidden) {
-                clearTimeout(hiddenTimer);
-                hiddenTimer = setTimeout(function () {
-                    // Picture-in-picture hides the page but is still watched.
-                    if (document.pictureInPictureElement === video) return;
-                    if (state === 'live' || state === 'connecting') {
-                        closedByUs = true;
-                        teardown();
-                        setState('paused');
-                    }
-                }, HIDDEN_CLOSE_MS);
-            } else {
-                clearTimeout(hiddenTimer);
-                if (state === 'paused') open();
+        // ---- hidden pages pause the stream; picture-in-picture still watches ----
+
+        function inPip() { return !!video && document.pictureInPictureElement === video; }
+
+        function pause() {
+            clearTimeout(retryTimer);
+            if (state === 'live' || state === 'connecting') {
+                teardown();
+                setState('paused');
             }
         }
-        if (opts.pauseWhenHidden !== false) document.addEventListener('visibilitychange', onVisibility);
+
+        /** Arm the pause timer when the stream is truly unwatched, else disarm. */
+        function reconcileHidden() {
+            if (destroyed || opts.pauseWhenHidden === false) return;
+            if (document.hidden && !inPip()) {
+                if (!hiddenTimer) {
+                    hiddenTimer = setTimeout(function () {
+                        hiddenTimer = null;
+                        if (document.hidden && !inPip()) pause();
+                    }, HIDDEN_CLOSE_MS);
+                }
+            } else {
+                clearTimeout(hiddenTimer);
+                hiddenTimer = null;
+                if (!document.hidden && state === 'paused') open();
+            }
+        }
+
+        if (opts.pauseWhenHidden !== false) {
+            document.addEventListener('visibilitychange', reconcileHidden);
+            if (video) {
+                video.addEventListener('enterpictureinpicture', reconcileHidden);
+                video.addEventListener('leavepictureinpicture', reconcileHidden);
+            }
+        }
 
         function stats() {
-            if (!pc) return Promise.resolve(null);
-            return pc.getStats().then(function (report) {
+            var peer = pc;
+            if (!peer) return Promise.resolve(null);
+            return peer.getStats().then(function (report) {
                 var out = {rttMs: null, fps: null, kbps: null, codec: info.codec, encoder: info.encoder};
                 var codecs = {};
                 report.forEach(function (s) { if (s.type === 'codec') codecs[s.id] = s; });
@@ -315,14 +351,21 @@
                 return false;
             },
             close: close,
-            reconnect: function () { reconnects = 0; clearTimeout(retryTimer); open(); },
+            reconnect: function () { reconnects = 0; open(); },
             stats: stats,
             get state() { return state; },
             get info() { return info; },
             destroy: function () {
-                document.removeEventListener('visibilitychange', onVisibility);
+                if (destroyed) return;
+                document.removeEventListener('visibilitychange', reconcileHidden);
+                if (video) {
+                    video.removeEventListener('enterpictureinpicture', reconcileHidden);
+                    video.removeEventListener('leavepictureinpicture', reconcileHidden);
+                }
                 clearTimeout(hiddenTimer);
+                clearTimeout(retryTimer);
                 close();
+                destroyed = true;
             }
         };
     }
@@ -364,6 +407,7 @@
                 if (s) s.send({t: 'key', k: held[code], d: false});
             });
             held = {};
+            releaseButtons();
         });
 
         function flushMove() {
@@ -372,23 +416,56 @@
             if (s && pendingMove) s.send({t: 'move', x: pendingMove.x, y: pendingMove.y});
             pendingMove = null;
         }
-        target.addEventListener('mousemove', function (event) {
+        target.addEventListener('pointermove', function (event) {
+            if (event.pointerType === 'touch') return;
             var point = toDisplay(video, event.clientX, event.clientY);
             if (!point) return;
             pendingMove = point;
             if (!moveQueued) { moveQueued = true; requestAnimationFrame(flushMove); }
         });
-        function button(event, down) {
+        // Buttons: pointer capture keeps the release coming to us when the drag
+        // ends outside the video (over the terminal); whatever is still held
+        // when capture or focus is lost is released, never left pressed.
+        var buttonsHeld = {};
+        function releaseButtons() {
+            var s = stream();
+            Object.keys(buttonsHeld).forEach(function (b) {
+                if (s) s.send({t: 'btn', b: +b, d: false});
+            });
+            buttonsHeld = {};
+        }
+        // Overlays on the video (Retry, Logs) keep their own clicks: capturing
+        // the pointer would retarget the click away from them.
+        function onControl(event) {
+            return !!(event.target && event.target.closest &&
+                event.target.closest('button, a, input, select, textarea, [role="button"]'));
+        }
+        target.addEventListener('pointerdown', function (event) {
+            if (event.pointerType === 'touch' || onControl(event)) return;
             var point = toDisplay(video, event.clientX, event.clientY);
             var s = stream();
-            if (!s) return;
-            if (down) target.focus({preventScroll: true});
-            if (point) s.send({t: 'move', x: point.x, y: point.y});
-            if (point || !down) s.send({t: 'btn', b: event.button + 1, d: down});
+            target.focus({preventScroll: true});
             event.preventDefault();
-        }
-        target.addEventListener('mousedown', function (event) { button(event, true); });
-        target.addEventListener('mouseup', function (event) { button(event, false); });
+            if (!s || !point) return;
+            try { target.setPointerCapture(event.pointerId); } catch (e) {}
+            var b = event.button + 1;
+            s.send({t: 'move', x: point.x, y: point.y});
+            s.send({t: 'btn', b: b, d: true});
+            buttonsHeld[b] = true;
+        });
+        target.addEventListener('pointerup', function (event) {
+            if (event.pointerType === 'touch') return;
+            var b = event.button + 1;
+            if (!buttonsHeld[b]) return;
+            delete buttonsHeld[b];
+            var s = stream();
+            var point = toDisplay(video, event.clientX, event.clientY);
+            if (s && point) s.send({t: 'move', x: point.x, y: point.y});
+            if (s) s.send({t: 'btn', b: b, d: false});
+            event.preventDefault();
+        });
+        target.addEventListener('lostpointercapture', releaseButtons);
+        target.addEventListener('pointercancel', releaseButtons);
         target.addEventListener('contextmenu', function (event) { event.preventDefault(); });
         target.addEventListener('wheel', function (event) {
             var s = stream();

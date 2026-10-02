@@ -226,6 +226,9 @@ class Viewer:
 
 
 _viewers: dict[str, Viewer] = {}
+# Viewer replacement and streamer start-up are serialized per app, so two
+# connections arriving together still end with exactly one viewer: the last.
+_viewer_locks: dict[str, asyncio.Lock] = {}
 
 
 async def _end_viewer(session_id: str, message: dict) -> None:
@@ -236,12 +239,22 @@ async def _end_viewer(session_id: str, message: dict) -> None:
 
 
 async def _kill(process: asyncio.subprocess.Process | None) -> None:
+    """Stop a streamer gracefully: closing its stdin makes it release any key
+    or button the viewer held, then quit. Signals only if it does not."""
     if process is None or process.returncode is not None:
         return
+    if process.stdin is not None:
+        with contextlib.suppress(Exception):
+            process.stdin.close()
+    try:
+        await asyncio.wait_for(process.wait(), timeout=3)
+        return
+    except TimeoutError:
+        pass
     with contextlib.suppress(ProcessLookupError):
         process.terminate()
     try:
-        await asyncio.wait_for(process.wait(), timeout=3)
+        await asyncio.wait_for(process.wait(), timeout=2)
     except TimeoutError:
         with contextlib.suppress(ProcessLookupError):
             process.kill()
@@ -332,29 +345,31 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
         return
     codecs = [str(c) for c in hello.get("codecs") or ["VP8"]]
 
-    previous = _viewers.get(session_id)
-    if previous is not None:
-        await previous.send({"type": "replaced"})
-        previous.done.set()
-        await _kill(previous.process)
-    _viewers[session_id] = viewer
-
     width, height = record["size"]
-    viewer.process = await asyncio.create_subprocess_exec(
-        deps.SYSTEM_PYTHON,
-        str(STREAMER),
-        "--display",
-        record["display"],
-        "--codecs",
-        ",".join(codecs),
-        "--fps",
-        str(FPS),
-        "--bitrate",
-        str(bitrate_kbps(width, height)),
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    async with _viewer_locks.setdefault(session_id, asyncio.Lock()):
+        if websocket.application_state != WebSocketState.CONNECTED:
+            return
+        previous = _viewers.get(session_id)
+        if previous is not None:
+            await previous.send({"type": "replaced"})
+            previous.done.set()
+            await _kill(previous.process)
+        _viewers[session_id] = viewer
+        viewer.process = await asyncio.create_subprocess_exec(
+            deps.SYSTEM_PYTHON,
+            str(STREAMER),
+            "--display",
+            record["display"],
+            "--codecs",
+            ",".join(codecs),
+            "--fps",
+            str(FPS),
+            "--bitrate",
+            str(bitrate_kbps(width, height)),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
     logger.info(
         "viewer connected to %s (streamer pid %s)", session_id, viewer.process.pid
     )

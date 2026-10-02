@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import subprocess
 import sys
 import threading
@@ -133,6 +134,7 @@ class Injector:
         self.display_name = display_name
         self.disp = xdisplay.Display(display_name)
         self.keys_down: set[int] = set()
+        self.shift_held: set[int] = set()  # Shift keycodes the user holds
         self.buttons_down: set[int] = set()
 
     def handle(self, msg: dict) -> None:
@@ -170,12 +172,51 @@ class Injector:
         self.disp.sync()
 
     def key(self, name: str, down: bool) -> None:
+        """Press or release the key that produces keysym ``name``.
+
+        The browser sends the character the user's layout produced, which may
+        sit at another Shift level on the display's keymap (a French ``&`` is
+        Shift+7 on the US map, a French Shift+1 is an unshifted ``1``). So the
+        key is pressed with Shift added or lifted around the press, and the
+        KeyPress carries the right modifiers whatever the user holds.
+        """
         keysym = XK.string_to_keysym(name)
         if not keysym:
             return
-        keycode = self.disp.keysym_to_keycode(keysym)
-        if not keycode:
+        if keysym in (XK.XK_Shift_L, XK.XK_Shift_R):
+            keycode = self.disp.keysym_to_keycode(keysym)
+            if keycode:
+                self._fake(keycode, down)
+                (self.shift_held.add if down else self.shift_held.discard)(keycode)
             return
+        entries = sorted(self.disp.keysym_to_keycodes(keysym), key=lambda e: e[1])
+        if not entries:
+            return
+        keycode, index = entries[0]
+        if not down:
+            if keycode in self.keys_down:
+                self._fake(keycode, False)
+            return
+        if index > 1:
+            # Only reachable through AltGr levels: type it as text instead.
+            self.handle({"t": "text", "s": XK.keysym_to_string(keysym) or ""})
+            return
+        needs_shift = index == 1
+        if needs_shift == bool(self.shift_held):
+            self._fake(keycode, True)
+        elif needs_shift:
+            shift = self.disp.keysym_to_keycode(XK.XK_Shift_L)
+            xtest.fake_input(self.disp, X.KeyPress, shift)
+            self._fake(keycode, True)
+            xtest.fake_input(self.disp, X.KeyRelease, shift)
+        else:
+            for held in self.shift_held:
+                xtest.fake_input(self.disp, X.KeyRelease, held)
+            self._fake(keycode, True)
+            for held in self.shift_held:
+                xtest.fake_input(self.disp, X.KeyPress, held)
+
+    def _fake(self, keycode: int, down: bool) -> None:
         xtest.fake_input(self.disp, X.KeyPress if down else X.KeyRelease, keycode)
         (self.keys_down.add if down else self.keys_down.discard)(keycode)
 
@@ -186,8 +227,9 @@ class Injector:
         (self.buttons_down.add if down else self.buttons_down.discard)(button)
 
     def release_all(self) -> None:
-        for keycode in list(self.keys_down):
+        for keycode in list(self.keys_down | self.shift_held):
             xtest.fake_input(self.disp, X.KeyRelease, keycode)
+        self.shift_held.clear()
         for button in list(self.buttons_down):
             xtest.fake_input(self.disp, X.ButtonRelease, button)
         self.keys_down.clear()
@@ -268,6 +310,8 @@ class Streamer:
         if self.channel is not None:
             self.channel.connect("on-message-string", self.on_channel_message)
         threading.Thread(target=self.read_stdin, daemon=True).start()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, self.stop)
         try:
             self.loop.run()
         finally:

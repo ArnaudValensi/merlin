@@ -112,24 +112,27 @@ def test_gamepad_buttons_and_dpad(phone):
             "keydown x",
             "keyup x",
             "keydown Escape",
+            "keyup Escape",
             "keydown Right",
             "keyup Right",
             "keydown Up",
+            "keyup Up",
         ],
     )
-    assert "keyup Up" in wait_for_lines(log, ["keyup Up"])
     assert lines.index("keydown x") < lines.index("keyup x")
 
 
-def _lines_with(log, prefix, timeout=5.0):
-    lines = []
-    for _ in range(int(timeout * 10)):
+def _lines_with(log, prefix, count=1, timeout=5.0):
+    """Wait for at least ``count`` probe lines starting with ``prefix``."""
+    deadline = time.monotonic() + timeout
+    hits = []
+    while time.monotonic() < deadline:
         lines = log.read_text().splitlines() if log.exists() else []
         hits = [line for line in lines if line.startswith(prefix)]
-        if hits:
+        if len(hits) >= count:
             return hits
         time.sleep(0.1)
-    return []
+    raise AssertionError(f"wanted {count} '{prefix}' lines, got {hits}")
 
 
 def test_trackpad_tap_and_two_finger_tap(phone):
@@ -138,10 +141,10 @@ def test_trackpad_tap_and_two_finger_tap(phone):
     assert page.locator(".player-pad-btn").count() == 0
     x, y = _center(page, "#player")
     page.touchscreen.tap(x, y)
-    assert _lines_with(log, "btndown 1 ")
+    _lines_with(log, "btnup 1 ")
     page.wait_for_timeout(400)  # past the double-tap-drag window
     _touch(page, [(x - 40, y), (x + 40, y)])
-    assert _lines_with(log, "btndown 3 ")
+    _lines_with(log, "btnup 3 ")
 
 
 def test_trackpad_drag_moves_the_cursor(phone):
@@ -154,14 +157,7 @@ def test_trackpad_drag_moves_the_cursor(phone):
     _touch(page, [(x, y)], [(x + 60, y + 30)])
     page.wait_for_timeout(300)
     page.touchscreen.tap(x, y)
-    deadline = time.monotonic() + 5
-    clicks = []
-    while time.monotonic() < deadline:
-        clicks = _lines_with(log, "btndown 1 ")
-        if len(clicks) >= 2:
-            break
-        time.sleep(0.1)
-    second = clicks[1].split()
+    second = _lines_with(log, "btndown 1 ", count=2)[1].split()
     assert int(second[2]) > int(first[2]) + 20  # moved right
     assert int(second[3]) > int(first[3]) + 10  # and down
 
@@ -171,8 +167,8 @@ def test_touch_profile_clicks_where_you_tap(phone):
     page.evaluate("window.MerlinPlayer.setProfile('touch')")
     px, py = _display_point(page, 300, 200)
     page.touchscreen.tap(px, py)
+    _lines_with(log, "btnup 1 ")
     hits = _lines_with(log, "btndown 1 ")
-    assert hits
     _, _, bx, by = hits[0].split()
     assert abs(int(bx) - 300) <= 3 and abs(int(by) - 200) <= 3
 
@@ -194,8 +190,7 @@ def test_key_row_sends_special_keys(phone):
     page.wait_for_selector("#player-keys:not([hidden])")
     page.tap("#player-keys [data-key='Escape']")
     page.tap("#player-keys [data-key='Tab']")
-    lines = wait_for_lines(log, ["keydown Escape", "keydown Tab"])
-    assert "keydown Tab" in lines
+    wait_for_lines(log, ["keydown Escape", "keyup Escape", "keydown Tab", "keyup Tab"])
     page.tap("#player-keys [data-action='keyboard-close']")
     page.wait_for_selector("#player-keys", state="hidden")
 
@@ -238,3 +233,29 @@ def test_portrait_screenshot(playwright, browser, server, probe):
         page.screenshot(path=str(SHOTS / "player-portrait-sheet.png"))
     finally:
         context.close()
+
+
+def test_second_finger_during_a_trackpad_drag_releases_the_button(phone):
+    page, log = phone
+    page.evaluate("window.MerlinPlayer.setProfile('trackpad')")
+    x, y = _center(page, "#player")
+    page.touchscreen.tap(x, y)
+    _lines_with(log, "btnup 1 ")
+    # Double-tap-and-hold starts a drag (button down)...
+    cdp = page.context.new_cdp_session(page)
+    cdp.send(
+        "Input.dispatchTouchEvent",
+        {"type": "touchStart", "touchPoints": [{"x": x, "y": y, "id": 0}]},
+    )
+    _lines_with(log, "btndown 1 ", count=2)
+    # ...then a second finger lands: the drag must let go of the button.
+    cdp.send(
+        "Input.dispatchTouchEvent",
+        {
+            "type": "touchStart",
+            "touchPoints": [{"x": x, "y": y, "id": 0}, {"x": x + 80, "y": y, "id": 1}],
+        },
+    )
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    cdp.detach()
+    _lines_with(log, "btnup 1 ", count=2)

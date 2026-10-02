@@ -214,3 +214,78 @@ def test_stopping_the_app_tells_the_panel(merlin, browser, server, tmp_path):
         time.sleep(0.2)
     finally:
         context.close()
+
+
+def test_dragging_out_of_the_panel_releases_the_button(
+    merlin, browser, server, tmp_path
+):
+    context, page = _terminal(browser, server, viewport={"width": 1400, "height": 820})
+    try:
+        _launch_from(merlin, page, tmp_path)
+        page.wait_for_selector("#app-btn:not([hidden])", timeout=10000)
+        page.click("#app-btn")
+        wait_live(page, ".app-panel-body")
+        box = page.locator(".app-panel-body").bounding_box()
+        assert box
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.mouse.down()
+        page.mouse.move(300, 300, steps=6)  # over the terminal
+        page.mouse.up()
+        log = tmp_path / "probe.log"
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            lines = log.read_text().splitlines() if log.exists() else []
+            if any(line.startswith("btnup 1 ") for line in lines):
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError(f"button never released: {lines}")
+    finally:
+        context.close()
+
+
+def test_crossing_the_breakpoint_rebuilds_the_panel(merlin, browser, server, tmp_path):
+    context, page = _terminal(browser, server, viewport={"width": 1400, "height": 820})
+    try:
+        _launch_from(merlin, page, tmp_path)
+        page.wait_for_selector("#app-btn:not([hidden])", timeout=10000)
+        page.click("#app-btn")
+        wait_live(page, ".app-panel-body")
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.wait_for_selector(".app-panel.mini", timeout=10000)
+        wait_live(page, ".app-panel-body")
+        assert page.get_attribute("#app-panel", "data-corner")
+        page.set_viewport_size({"width": 1400, "height": 820})
+        page.wait_for_selector("#app-panel:not(.mini)", timeout=10000)
+        wait_live(page, ".app-panel-body")
+        assert page.get_attribute("#app-panel", "style") in (None, "")
+        box = page.locator("#app-panel").bounding_box()
+        assert box and box["x"] > 600 and box["height"] > 400
+    finally:
+        context.close()
+
+
+def test_buttons_over_the_video_still_click(merlin, browser, server, tmp_path):
+    """The overlay's buttons (Watch here, Retry) must get their clicks even
+    though the panel captures the mouse for the app."""
+    context, page = _terminal(browser, server, viewport={"width": 1400, "height": 820})
+    other = browser.new_context()
+    try:
+        _launch_from(merlin, page, tmp_path)
+        page.wait_for_selector("#app-btn:not([hidden])", timeout=10000)
+        page.click("#app-btn")
+        wait_live(page, ".app-panel-body")
+        elsewhere = other.new_page()
+        elsewhere.goto(f"{server}/apps/probe/play")
+        page.wait_for_selector(
+            ".app-panel-overlay button:has-text('Watch here')", timeout=10000
+        )
+        page.click(".app-panel-overlay button:has-text('Watch here')")
+        wait_live(page, ".app-panel-body")
+        elsewhere.wait_for_function(
+            "document.getElementById('player').dataset.streamState === 'replaced'",
+            timeout=10000,
+        )
+    finally:
+        other.close()
+        context.close()

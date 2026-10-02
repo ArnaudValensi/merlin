@@ -83,6 +83,8 @@ def stop_all(merlin) -> None:
 
 
 def wait_for_lines(log: Path, expected: list[str], timeout: float = 10) -> list[str]:
+    """Wait until every expected line is in the probe log; fail naming the
+    missing ones otherwise (a timeout must never pass silently)."""
     deadline = time.monotonic() + timeout
     lines: list[str] = []
     while time.monotonic() < deadline:
@@ -90,7 +92,8 @@ def wait_for_lines(log: Path, expected: list[str], timeout: float = 10) -> list[
         if all(line in lines for line in expected):
             return lines
         time.sleep(0.05)
-    return lines
+    missing = [line for line in expected if line not in lines]
+    raise AssertionError(f"probe never logged {missing}; got {lines[-20:]}")
 
 
 def streamer_pids(display: str) -> list[int]:

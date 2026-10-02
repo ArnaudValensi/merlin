@@ -195,6 +195,15 @@
     function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
     function mid(a, b) { return {x: (a.x + b.x) / 2, y: (a.y + b.y) / 2}; }
 
+    /** Release whatever a gesture holds (a drag's button, a long-press timer). */
+    function releaseGesture(g) {
+        if (!g) return;
+        if (g.longTimer) clearTimeout(g.longTimer);
+        if (g.holding || g.touchDrag) send({t: 'btn', b: 1, d: false});
+        g.holding = false;
+        g.touchDrag = false;
+    }
+
     function onDown(e) {
         if (e.pointerType !== 'touch' || !profile) return;
         if (e.target.closest('.player-dpad, .player-pad-btn')) return;
@@ -216,8 +225,7 @@
             }
             if (dragHold) { send({t: 'btn', b: 1, d: true}); gesture.holding = true; }
         } else if (count() === 2) {
-            if (gesture && gesture.longTimer) clearTimeout(gesture.longTimer);
-            if (gesture && gesture.touchDrag) { send({t: 'btn', b: 1, d: false}); }
+            releaseGesture(gesture);
             var p = pair();
             gesture = {kind: 'two', t: Date.now(), startDist: dist(p[0], p[1]), lastDist: dist(p[0], p[1]),
                 lastMid: mid(p[0], p[1]), mode: null, scrollAcc: 0, moved: false};
@@ -443,6 +451,9 @@
     // ---- profiles -------------------------------------------------------------------
 
     function setProfile(next) {
+        releaseGesture(gesture);
+        gesture = null;
+        touches = {};
         profile = next;
         writeFlag('app-controls:' + id, next);
         controlsEl.innerHTML = '';

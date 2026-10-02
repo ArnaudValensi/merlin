@@ -93,9 +93,9 @@ def test_stream_shows_the_app_and_takes_input(browser, server, probe):
 
         page.mouse.click(300, 200)
         page.keyboard.press("x")
-        lines = wait_for_lines(log, ["btndown 1 300 200", "keydown x", "keyup x"])
-        assert "btndown 1 300 200" in lines
-        assert "keydown x" in lines
+        wait_for_lines(
+            log, ["btndown 1 300 200", "btnup 1 300 200", "keydown x", "keyup x"]
+        )
     finally:
         context.close()
 
@@ -124,6 +124,7 @@ def test_new_viewer_replaces_the_old_and_cleanup(browser, server, probe):
 
 def test_viewer_disconnect_captures_a_thumbnail(merlin, browser, server, probe):
     thumb = Path(merlin.home) / "data" / "apps" / "thumbs" / "probe.png"
+    thumb.unlink(missing_ok=True)  # earlier tests' viewers already left one
     context, page = _player(browser, server)
     wait_live(page)
     context.close()
@@ -184,3 +185,77 @@ def test_system_chromium(playwright, server, probe):
         context.close()
     finally:
         browser.close()
+
+
+def test_concurrent_viewers_end_with_exactly_one(browser, server, probe):
+    handle, _ = probe
+    contexts = []
+    try:
+        first_ctx, first = _player(browser, server)
+        contexts.append(first_ctx)
+        wait_live(first)
+        pages = [first]
+        for _ in range(2):  # two more arrive together
+            ctx = browser.new_context(viewport={"width": 1280, "height": 720})
+            contexts.append(ctx)
+            page = ctx.new_page()
+            page.goto(f"{server}/apps/probe/play", wait_until="commit")
+            pages.append(page)
+        deadline = time.monotonic() + 30
+        states = []
+        while time.monotonic() < deadline:
+            states = [p.get_attribute("#player", "data-stream-state") for p in pages]
+            if states.count("live") == 1 and states.count("replaced") == 2:
+                break
+            time.sleep(0.2)
+        assert sorted(states) == ["live", "replaced", "replaced"], states
+        assert len(streamer_pids(handle["display"])) == 1
+    finally:
+        for ctx in contexts:
+            ctx.close()
+
+
+def test_a_held_key_is_released_when_the_viewer_is_replaced(browser, server, probe):
+    _, log = probe
+    first_ctx, first = _player(browser, server)
+    second_ctx = None
+    try:
+        wait_live(first)
+        first.keyboard.down("z")
+        wait_for_lines(log, ["keydown z"])
+        second_ctx, second = _player(browser, server)
+        wait_live(second)
+        wait_for_lines(log, ["keydown z", "keyup z"])
+    finally:
+        first_ctx.close()
+        if second_ctx:
+            second_ctx.close()
+
+
+def _key(page, kind, key, code, shift=False):
+    page.evaluate(
+        """([kind, key, code, shift]) => document.getElementById('player').dispatchEvent(
+            new KeyboardEvent(kind, {key, code, shiftKey: shift, bubbles: true}))""",
+        [kind, key, code, shift],
+    )
+
+
+def test_layout_symbols_arrive_as_typed(browser, server, probe):
+    """A French keyboard: unshifted '&' and Shift+'1' on a US display keymap."""
+    _, log = probe
+    context, page = _player(browser, server)
+    try:
+        wait_live(page)
+        _key(page, "keydown", "&", "Digit1")
+        _key(page, "keyup", "&", "Digit1")
+        # The press carries Shift (it is Shift+7 on the US keymap); the
+        # release is the same physical key, seen without Shift.
+        wait_for_lines(log, ["keydown ampersand", "keyup 7"])
+        _key(page, "keydown", "Shift", "ShiftLeft", shift=True)
+        _key(page, "keydown", "1", "Digit1", shift=True)
+        _key(page, "keyup", "1", "Digit1", shift=True)
+        _key(page, "keyup", "Shift", "ShiftLeft")
+        lines = wait_for_lines(log, ["keydown 1", "keyup Shift_L"])
+        assert "keydown exclam" not in lines
+    finally:
+        context.close()

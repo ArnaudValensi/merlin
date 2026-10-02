@@ -319,6 +319,9 @@
         els = {};
         panel.innerHTML = '';
         panel.hidden = true;
+        panel.classList.remove('mini');
+        panel.removeAttribute('style');     // mini-player positions
+        panel.removeAttribute('data-corner');
         if (divider) divider.hidden = true;
         if (!keepLayout && main.classList.contains('app-open')) {
             main.classList.remove('app-open');
@@ -336,7 +339,15 @@
         }
     }).observe(main, {attributes: true, attributeFilter: ['class']});
 
-    mq.addEventListener('change', function () { if (openId) open(openId); });
+    // Crossing the breakpoint (rotation, resize) rebuilds the panel: docked
+    // with keyboard and mouse on desktop, a view-only mini-player on mobile.
+    mq.addEventListener('change', function () {
+        if (!openId) return;
+        var id = openId, keep = restoreSessions;
+        close(true);
+        open(id);
+        restoreSessions = keep;
+    });
 
     // ---- desktop divider -----------------------------------------------------
 

@@ -27,14 +27,16 @@ def probe(monkeypatch, tmp_path):
 
 
 def _events(log: Path, expected: list[str], timeout: float = 10) -> list[str]:
+    """Wait for every expected probe line; fail naming the missing ones."""
     deadline = time.monotonic() + timeout
     lines: list[str] = []
     while time.monotonic() < deadline:
         lines = log.read_text().splitlines() if log.exists() else []
         if all(line in lines for line in expected):
-            break
+            return lines
         time.sleep(0.05)
-    return lines
+    missing = [line for line in expected if line not in lines]
+    raise AssertionError(f"probe never logged {missing}; got {lines[-20:]}")
 
 
 def _pixel(png: Path, x: int, y: int) -> str:
@@ -71,7 +73,7 @@ def test_screenshot_default_path(probe):
 
 def test_keys_reach_the_app(probe):
     sessions.send_keys("probe", ["x", "Right"], delay_ms=20)
-    lines = _events(probe, ["keydown x", "keyup x", "keydown Right"])
+    lines = _events(probe, ["keydown x", "keyup x", "keydown Right", "keyup Right"])
     assert lines.index("keydown x") < lines.index("keydown Right")
 
 
@@ -89,10 +91,19 @@ def test_type_click_and_move(probe):
     sessions.type_text("probe", "ab")
     sessions.click("probe", 300, 200)
     sessions.click("probe", 310, 210, button=3)
-    lines = _events(
-        probe, ["keydown a", "keydown b", "btndown 1 300 200", "btndown 3 310 210"]
+    _events(
+        probe,
+        [
+            "keydown a",
+            "keyup a",
+            "keydown b",
+            "keyup b",
+            "btndown 1 300 200",
+            "btnup 1 300 200",
+            "btndown 3 310 210",
+            "btnup 3 310 210",
+        ],
     )
-    assert "btnup 1 300 200" in lines
 
 
 def test_agent_input_is_recorded(probe):
@@ -142,7 +153,7 @@ def test_cli_screenshot_and_input(probe, tmp_path):
         check=False,
     )
     assert key.returncode == 0, key.stderr
-    assert "keydown Escape" in _events(probe, ["keydown Escape"])
+    _events(probe, ["keydown Escape", "keyup Escape"])
 
 
 class TestSkill:

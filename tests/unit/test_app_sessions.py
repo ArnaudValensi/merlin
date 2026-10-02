@@ -313,3 +313,147 @@ class TestOrigin:
     def test_no_tmux_is_cli(self, monkeypatch):
         monkeypatch.delenv("TMUX_PANE", raising=False)
         assert sessions.tmux_origin() == {"kind": "cli"}
+
+
+IGNORES_TERM = """
+import subprocess, sys, time
+subprocess.Popen([sys.executable, '-c',
+    'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+    'print("child up", flush=True); time.sleep(600)'])
+time.sleep(600)
+"""
+
+LEAVES_A_CHILD = """
+import subprocess, sys
+subprocess.Popen([sys.executable, '-c',
+    'import time; print("orphan up", flush=True); time.sleep(600)'])
+"""
+
+
+def _wait_log(session_id: str, text: str, timeout: float = 10) -> None:
+    deadline = time.monotonic() + timeout
+    while text not in sessions.read_log(session_id):
+        assert time.monotonic() < deadline, sessions.read_log(session_id)
+        time.sleep(0.05)
+
+
+def _wait_group_empty(pgid: int, timeout: float = 15) -> list[int]:
+    deadline = time.monotonic() + timeout
+    while sessions._group_members(pgid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return sessions._group_members(pgid)
+
+
+class TestProcessTree:
+    def test_stop_kills_a_child_that_ignores_sigterm(self, monkeypatch):
+        monkeypatch.setattr(sessions, "STOP_GRACE", 1.0)
+        sessions.launch(
+            [sys.executable, "-c", IGNORES_TERM], name="stubborn", gpu="off", wait=0
+        )
+        _wait_log("stubborn", "child up")
+        record = sessions._read_record("stubborn")
+        assert record is not None
+        pgid = record["app_pid"]
+        assert len(sessions._group_members(pgid)) >= 2  # wrapper, parent, child
+        sessions.stop("stubborn")
+        assert _wait_group_empty(pgid) == []
+
+    def test_exit_cleanup_kills_what_the_dead_wrapper_left(self):
+        sessions.launch(
+            [sys.executable, "-c", LEAVES_A_CHILD], name="leaver", gpu="off", wait=0
+        )
+        _wait_log("leaver", "orphan up")
+        record = sessions._read_record("leaver")
+        assert record is not None
+        pgid = record["app_pid"]
+        deadline = time.monotonic() + 10
+        while sessions.get("leaver")["status"] != "exited":
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
+        assert _wait_group_empty(pgid) == []
+
+    def test_a_reused_group_number_is_never_signalled(self):
+        # A live leader with another start time: the number was reused.
+        me = os.getpid()
+        start = sessions._start_time(me)
+        assert start is not None
+        assert sessions._owns_group(me, start)
+        assert not sessions._owns_group(me, start - 1)
+        sessions._kill_group(me, start - 1)  # must be a no-op on ourselves
+
+
+class TestStateRaces:
+    def test_stop_waiting_on_a_replace_stops_the_replacement(self):
+        first = sessions._read_record(_launch()["id"])
+        assert first is not None
+        locked = threading.Event()
+        stop_called = threading.Event()
+        replaced: dict = {}
+
+        def replace_while_holding_the_lock():
+            with sessions._launch_lock():
+                locked.set()
+                stop_called.wait(5)
+                time.sleep(0.3)  # let stop read what it reads
+                replaced.update(
+                    sessions._read_record(_launch(replace=True, wait=0)["id"]) or {}
+                )
+
+        worker = threading.Thread(target=replace_while_holding_the_lock)
+        worker.start()
+        assert locked.wait(5)
+        stop_called.set()
+        sessions.stop("probe")
+        worker.join()
+        assert replaced["generation"] != first["generation"]
+        assert sessions._read_record("probe") is None
+        assert _gone(replaced["app_pid"]) and _gone(replaced["xvfb_pid"])
+        assert _gone(first["app_pid"])
+
+    def test_updates_never_recreate_a_stopped_record(self):
+        record = sessions._read_record(_launch()["id"])
+        assert record is not None
+        sessions.stop("probe")
+        assert sessions._update_record(record, {"status": "running"}) is None
+        sessions._note_agent_input(record)
+        assert sessions._read_record("probe") is None
+
+    def test_updates_never_touch_a_replacement(self):
+        first = sessions._read_record(_launch()["id"])
+        assert first is not None
+        _launch(replace=True)
+        assert sessions._update_record(first, {"last_agent_input_at": "x"}) is None
+        current = sessions._read_record("probe")
+        assert current is not None
+        assert current["last_agent_input_at"] is None
+
+
+class TestDisplays:
+    def test_a_display_taken_by_another_server_is_not_adopted(self, monkeypatch):
+        number = next(
+            n
+            for n in range(sessions.FIRST_DISPLAY, sessions.LAST_DISPLAY)
+            if sessions._display_free(n)
+        )
+        other = subprocess.Popen(
+            ["Xvfb", f":{number}", "-nolisten", "tcp"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            sock = Path(f"/tmp/.X11-unix/X{number}")
+            deadline = time.monotonic() + 5
+            while not sock.exists():
+                assert time.monotonic() < deadline
+                time.sleep(0.02)
+            # Both "see" it free: the race between two registries.
+            real_free = sessions._display_free
+            monkeypatch.setattr(
+                sessions, "_display_free", lambda n: n == number or real_free(n)
+            )
+            record = _launch()
+            assert record["display"] != f":{number}"
+            assert sessions._lock_owner(number) == other.pid
+        finally:
+            other.terminate()
+            other.wait()

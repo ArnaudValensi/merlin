@@ -90,7 +90,11 @@ def main() -> int:
             window.fill_rectangle(gc, 0, 0, 50, 50)
             disp.flush()
         elif event.type in (X.KeyPress, X.KeyRelease):
-            keysym = disp.keycode_to_keysym(event.detail, 0)
+            # The symbol the app would see: level 1 when Shift is down.
+            level = 1 if event.state & X.ShiftMask else 0
+            keysym = disp.keycode_to_keysym(event.detail, level) or (
+                disp.keycode_to_keysym(event.detail, 0)
+            )
             name = KEYSYM_NAMES.get(keysym, str(keysym))
             log(f"{'keydown' if event.type == X.KeyPress else 'keyup'} {name}")
         elif event.type in (X.ButtonPress, X.ButtonRelease):
