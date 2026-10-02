@@ -1,11 +1,14 @@
 """Apps page, REST API, and the WebRTC signaling WebSocket."""
 
+import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import HTMLResponse
 
 from merlin_ext import make_templates
+
+from . import sessions
 
 APP_DIR = Path(__file__).parent.resolve()
 templates = make_templates(APP_DIR / "templates")
@@ -25,3 +28,4 @@ def register_routes(app: FastAPI) -> None:
 
 async def start() -> None:
     """Sweep sessions whose app died while Merlin was down."""
+    await asyncio.to_thread(sessions.sweep)
