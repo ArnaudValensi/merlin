@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>{{ session_id }} · apps</title>
+    <link rel="icon" href="/static/favicon.ico" sizes="32x32">
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?c={{ env_color_name }}">
+    <link rel="apple-touch-icon" href="/static/icons/{{ env_color_name }}/apple-touch-icon.png">
+    <link rel="manifest" href="/manifest.webmanifest?c={{ env_color_name }}">
+    <meta name="theme-color" content="#000000">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/static/vendor/geist-fonts.css">
+    <link rel="stylesheet" href="/static/dashboard.css">
+    <link rel="stylesheet" href="/static/app/player.css">
+</head>
+<body class="player-body">
+<main id="player" class="player" data-id="{{ session_id }}" data-stream-state="connecting" tabindex="0">
+    <video id="player-video" class="player-video" playsinline muted autoplay></video>
+    <div id="player-status" class="player-status" role="status"></div>
+</main>
+<script src="/static/app/client.js"></script>
+<script src="/static/app/player.js"></script>
+</body>
+</html>

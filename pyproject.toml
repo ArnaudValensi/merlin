@@ -44,6 +44,9 @@ ignore = [
 exclude = [
     "tests",
     "merlin-bot/tests",
+    # Runs under the system Python (PyGObject + python-xlib), which the
+    # project environment does not have: see app/deps.py.
+    "app/streamer.py",
 ]
 
 [tool.ty.environment]

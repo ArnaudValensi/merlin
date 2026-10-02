@@ -1,0 +1,6 @@
+/* Full-screen app player */
+html, body.player-body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+.player { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; outline: none; touch-action: none; user-select: none; -webkit-user-select: none; }
+.player-video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+.player-status { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: min(420px, calc(100% - 32px)); color: var(--text-primary); font: 14px/1.5 var(--font-sans, system-ui), sans-serif; text-align: center; background: rgba(15, 17, 23, 0.85); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; }
+.player-status:empty { display: none; }
