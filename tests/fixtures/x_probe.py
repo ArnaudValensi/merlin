@@ -20,6 +20,12 @@ from Xlib import X, XK, Xatom, display
 BACKGROUND = 0x00FF88
 SQUARE = 0xFF00FF
 
+# keysym -> X keysym name (Escape, Right, x), the names xdotool takes.
+KEYSYM_NAMES: dict[int, str] = {}
+for _attr in dir(XK):
+    if _attr.startswith("XK_"):
+        KEYSYM_NAMES.setdefault(getattr(XK, _attr), _attr[3:])
+
 
 def log(line: str) -> None:
     path = os.environ.get("X_PROBE_LOG")
@@ -85,7 +91,7 @@ def main() -> int:
             disp.flush()
         elif event.type in (X.KeyPress, X.KeyRelease):
             keysym = disp.keycode_to_keysym(event.detail, 0)
-            name = XK.keysym_to_string(keysym) or str(keysym)
+            name = KEYSYM_NAMES.get(keysym, str(keysym))
             log(f"{'keydown' if event.type == X.KeyPress else 'keyup'} {name}")
         elif event.type in (X.ButtonPress, X.ButtonRelease):
             kind = "btndown" if event.type == X.ButtonPress else "btnup"

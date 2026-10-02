@@ -666,20 +666,32 @@ def _focus_app(record: dict) -> None:
 
 
 def send_keys(
-    session_id: str, keys: list[str], *, repeat: int = 1, delay_ms: int = 50
+    session_id: str,
+    keys: list[str],
+    *,
+    repeat: int = 1,
+    delay_ms: int = 50,
+    hold_ms: int = 0,
 ) -> None:
+    """Press and release ``keys`` in order, ``repeat`` times.
+
+    ``hold_ms`` keeps each key down that long: games that read the keyboard
+    state once per frame miss a press and release that land in one frame.
+    """
     record = _require_running(session_id)
     _focus_app(record)
-    _xdotool(
-        record["display"],
-        "key",
-        "--repeat",
-        str(max(1, repeat)),
-        "--delay",
-        str(max(0, delay_ms)),
-        *keys,
-        timeout=30 + repeat * len(keys) * max(delay_ms, 1) / 1000,
-    )
+    repeat = max(1, repeat)
+    delay = max(0, delay_ms)
+    if hold_ms > 0:
+        args: list[str] = []
+        for _ in range(repeat):
+            for key in keys:
+                args += ["keydown", key, "sleep", f"{hold_ms / 1000:g}"]
+                args += ["keyup", key, "sleep", f"{delay / 1000:g}"]
+    else:
+        args = ["key", "--repeat", str(repeat), "--delay", str(delay), *keys]
+    budget = repeat * len(keys) * (max(delay, 1) + max(hold_ms, 0)) / 1000
+    _xdotool(record["display"], *args, timeout=30 + budget)
     _note_agent_input(record)
 
 
