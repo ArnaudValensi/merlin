@@ -59,7 +59,9 @@ def _record_or_404(session_id: str) -> dict:
 
 @page_router.get("", response_class=HTMLResponse)
 def apps_page(request: Request):
-    return templates.TemplateResponse(request, "apps.html", {})
+    return templates.TemplateResponse(
+        request, "apps.html", {"home_dir": str(Path.home())}
+    )
 
 
 @page_router.get("/{session_id}/play", response_class=HTMLResponse)
@@ -122,6 +124,83 @@ async def session_thumb(session_id: str):
     return FileResponse(
         path, media_type="image/png", headers={"Cache-Control": "no-cache"}
     )
+
+
+@api_router.post("/sessions")
+async def launch_session(request: Request):
+    """Launch a saved app (``saved_id``) or a command (``argv``, ``cwd``)."""
+    body = await request.json()
+    size = None
+    if body.get("size"):
+        try:
+            size = sessions.parse_size(str(body["size"]))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        if body.get("saved_id"):
+            record = await asyncio.to_thread(
+                sessions.launch_saved, str(body["saved_id"]), size
+            )
+        else:
+            argv = body.get("argv")
+            if not isinstance(argv, list) or not argv:
+                raise HTTPException(status_code=400, detail="saved_id or argv required")
+            record = await asyncio.to_thread(
+                lambda: sessions.launch(
+                    [str(a) for a in argv],
+                    name=body.get("name"),
+                    cwd=body.get("cwd"),
+                    size=size or sessions.DEFAULT_SIZE,
+                    gpu=body.get("gpu") or "auto",
+                    controls=body.get("controls"),
+                    keys=body.get("keys") or {},
+                    origin={"kind": "dashboard"},
+                )
+            )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No saved app with that id")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except sessions.AppError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    out = sessions.public(record)
+    if record["status"] == "exited":
+        out["log_tail"] = await asyncio.to_thread(sessions.read_log, record["id"], 20)
+    return out
+
+
+@api_router.get("/saved")
+async def list_saved():
+    return await asyncio.to_thread(sessions.list_saved)
+
+
+@api_router.post("/saved")
+async def create_saved(request: Request):
+    try:
+        return await asyncio.to_thread(sessions.save_saved, await request.json())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@api_router.put("/saved/{saved_id}")
+async def update_saved(saved_id: str, request: Request):
+    try:
+        return await asyncio.to_thread(
+            sessions.save_saved, await request.json(), saved_id
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No saved app with that id")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@api_router.delete("/saved/{saved_id}")
+async def delete_saved(saved_id: str):
+    try:
+        await asyncio.to_thread(sessions.delete_saved, saved_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No saved app with that id")
+    return {"ok": True}
 
 
 @api_router.get("/deps")

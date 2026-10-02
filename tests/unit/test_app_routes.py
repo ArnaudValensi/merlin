@@ -65,3 +65,63 @@ def test_player_page(client):
     html = client.get("/apps/Out Of Body/play").text
     assert 'data-id="out-of-body"' in html
     assert "/static/app/client.js" in html
+
+
+def test_saved_apps_crud(client, tmp_path):
+    body = {
+        "name": "Out of Body",
+        "command": "./build/OutOfBody --x 'a b'",
+        "cwd": str(tmp_path),
+        "controls": "gamepad",
+        "keys": "A=x,B=z",
+        "gpu": "auto",
+        "size": "fit",
+    }
+    created = client.post("/api/apps/saved", json=body).json()
+    assert created["id"] == "out-of-body"
+    assert created["keys"] == {"A": "x", "B": "z"}
+    assert client.get("/api/apps/saved").json() == [created]
+    assert client.post("/api/apps/saved", json=body).status_code == 400  # duplicate
+
+    body["size"] = "1281x721"
+    updated = client.put("/api/apps/saved/out-of-body", json=body).json()
+    assert updated["size"] == "1280x720"
+    assert client.put("/api/apps/saved/ghost", json=body).status_code == 404
+
+    assert client.delete("/api/apps/saved/out-of-body").json() == {"ok": True}
+    assert client.get("/api/apps/saved").json() == []
+    assert client.delete("/api/apps/saved/out-of-body").status_code == 404
+
+
+@pytest.mark.parametrize(
+    "patch, message",
+    [
+        ({"name": ""}, "name is required"),
+        ({"command": ""}, "command is required"),
+        ({"command": "'unclosed"}, "command"),
+        ({"cwd": "/nope/nowhere"}, "folder not found"),
+        ({"controls": "joystick"}, "controls"),
+        ({"gpu": "maybe"}, "gpu"),
+        ({"keys": "A"}, "key mapping"),
+        ({"size": "huge"}, "size"),
+    ],
+)
+def test_saved_app_validation(client, tmp_path, patch, message):
+    body = {"name": "x", "command": "true", "cwd": str(tmp_path)}
+    body.update(patch)
+    response = client.post("/api/apps/saved", json=body)
+    assert response.status_code == 400
+    assert message in response.json()["detail"]
+
+
+def test_launch_needs_saved_id_or_argv(client):
+    assert client.post("/api/apps/sessions", json={}).status_code == 400
+    assert (
+        client.post("/api/apps/sessions", json={"saved_id": "ghost"}).status_code == 404
+    )
+    assert (
+        client.post(
+            "/api/apps/sessions", json={"argv": ["true"], "size": "big"}
+        ).status_code
+        == 400
+    )

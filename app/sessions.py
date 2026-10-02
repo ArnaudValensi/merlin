@@ -16,6 +16,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -784,3 +785,124 @@ def public(record: dict) -> dict:
     out["pid"] = record.get("app_pid")
     out["url"] = f"/apps/{record['id']}/play"
     return out
+
+
+# ---------------------------------------------------------------------------
+# Saved apps (the Apps page's launchers)
+# ---------------------------------------------------------------------------
+
+
+def _saved_path() -> Path:
+    return apps_dir() / "saved.json"
+
+
+def list_saved() -> list[dict]:
+    try:
+        data = json.loads(_saved_path().read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    return (
+        [app for app in data if isinstance(app, dict)] if isinstance(data, list) else []
+    )
+
+
+def get_saved(saved_id: str) -> dict:
+    for app in list_saved():
+        if app.get("id") == saved_id:
+            return app
+    raise KeyError(saved_id)
+
+
+def _clean_saved(data: dict) -> dict:
+    """Validate and normalize a saved app; ValueError on bad input."""
+    name = str(data.get("name") or "").strip()
+    if not name:
+        raise ValueError("name is required")
+    command = str(data.get("command") or "").strip()
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        raise ValueError(f"command: {exc}") from exc
+    if not argv:
+        raise ValueError("command is required")
+    cwd = str(data.get("cwd") or "").strip() or str(Path.home())
+    if not Path(cwd).expanduser().is_dir():
+        raise ValueError(f"folder not found: {cwd}")
+    controls = data.get("controls") or None
+    if controls is not None and controls not in CONTROLS:
+        raise ValueError(f"controls must be one of {', '.join(CONTROLS)}")
+    gpu = data.get("gpu") or "auto"
+    if gpu not in GPU_MODES:
+        raise ValueError(f"gpu must be one of {', '.join(GPU_MODES)}")
+    keys = data.get("keys") or {}
+    if isinstance(keys, str):
+        keys = parse_keys(keys)
+    if not isinstance(keys, dict):
+        raise ValueError("keys must map buttons to keysyms")
+    size = str(data.get("size") or "fit").strip()
+    if size != "fit":
+        width, height = parse_size(size)
+        size = f"{width}x{height}"
+    return {
+        "id": slugify(name),
+        "name": name,
+        "command": command,
+        "cwd": str(Path(cwd).expanduser()),
+        "controls": controls,
+        "keys": {str(k): str(v) for k, v in keys.items()},
+        "gpu": gpu,
+        "size": size,
+    }
+
+
+def save_saved(data: dict, saved_id: str | None = None) -> dict:
+    """Create (``saved_id`` None) or replace a saved app; returns it."""
+    app = _clean_saved(data)
+    with _launch_lock():
+        apps = list_saved()
+        if saved_id is None:
+            if any(a.get("id") == app["id"] for a in apps):
+                raise ValueError(f"an app named '{app['name']}' already exists")
+            apps.append(app)
+        else:
+            index = next(
+                (i for i, a in enumerate(apps) if a.get("id") == saved_id), None
+            )
+            if index is None:
+                raise KeyError(saved_id)
+            if app["id"] != saved_id and any(a.get("id") == app["id"] for a in apps):
+                raise ValueError(f"an app named '{app['name']}' already exists")
+            apps[index] = app
+        _write_json(_saved_path(), apps)
+    return app
+
+
+def delete_saved(saved_id: str) -> None:
+    with _launch_lock():
+        apps = list_saved()
+        kept = [a for a in apps if a.get("id") != saved_id]
+        if len(kept) == len(apps):
+            raise KeyError(saved_id)
+        _write_json(_saved_path(), kept)
+
+
+def launch_saved(saved_id: str, size: tuple[int, int] | None = None) -> dict:
+    """Launch a saved app (the Apps page). ``size`` overrides its own."""
+    app = get_saved(saved_id)
+    if size is None:
+        size = (
+            parse_size(app["size"])
+            if app.get("size") not in (None, "fit")
+            else DEFAULT_SIZE
+        )
+    return launch(
+        shlex.split(app["command"]),
+        name=app["name"],
+        cwd=app["cwd"],
+        size=size,
+        gpu=app.get("gpu") or "auto",
+        controls=app.get("controls"),
+        keys=app.get("keys") or {},
+        origin={"kind": "dashboard"},
+        saved_id=app["id"],
+    )
