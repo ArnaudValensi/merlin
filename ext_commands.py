@@ -62,7 +62,15 @@ BUILTIN_IDS: tuple[str, ...] = (
     "terminal",
     "commits",
     "job",
+    "app",
 )
+
+# Built-ins behind a feature flag (extension id -> feature name, see
+# features.py). With the flag off the extension does not exist: no CLI
+# namespace, no help entry, no skills. Its id stays reserved either way.
+FLAGGED_BUILTINS: dict[str, str] = {
+    "app": "app",
+}
 
 
 # Curated top-level aliases — a built-in privilege only. Maps the alias to
@@ -78,6 +86,7 @@ BUILTIN_DEFAULT_ENABLED: dict[str, bool] = {
     "notes": True,
     "merlin-bot": False,
     "timeline": True,
+    "app": True,
 }
 
 
@@ -153,11 +162,19 @@ def list_commands(ext_dir: Path) -> dict[str, Path]:
 
 def builtin_extension_dirs() -> dict[str, Path]:
     """Built-in extensions that may ship ``commands/`` dirs (in app code)."""
+    import features
+
     app = paths.app_dir()
-    return {
+    dirs = {
         "notes": app / "notes",
         "merlin-bot": app / "merlin-bot",
         "timeline": app / "timeline",
+        "app": app / "app",
+    }
+    return {
+        ext_id: ext_dir
+        for ext_id, ext_dir in dirs.items()
+        if ext_id not in FLAGGED_BUILTINS or features.enabled(FLAGGED_BUILTINS[ext_id])
     }
 
 

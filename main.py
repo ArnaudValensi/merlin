@@ -1343,6 +1343,24 @@ def _load_timeline():
 
 _load_extension("timeline", "built-in", _load_timeline)
 
+
+# --- Built-in behind a feature flag: App streaming (MERLIN_FEATURES=app) ---
+def _load_app():
+    import app as _app
+
+    return _app
+
+
+def _load_flagged_builtins() -> None:
+    """Load the flagged built-ins whose feature is on; the rest never exist."""
+    import features
+
+    if features.enabled(_ext_commands.FLAGGED_BUILTINS["app"]):
+        _load_extension("app", "built-in", _load_app)
+
+
+_load_flagged_builtins()
+
 # --- Built-in: Merlin Bot ---
 # merlin-bot/ must be on sys.path regardless of enabled state (transcribe.py lives there)
 sys.path.insert(0, str(MERLIN_BOT_DIR))

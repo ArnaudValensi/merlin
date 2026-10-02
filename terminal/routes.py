@@ -297,6 +297,14 @@ def _sync_clipboard(text: str) -> None:
         pass
 
 
+def _app_enabled() -> bool:
+    """The flagged Apps extension is on and loaded (its panel may render)."""
+    import main as _main
+
+    info = _main.extension_registry.get("app")
+    return bool(info and info.loaded)
+
+
 @page_router.get("", response_class=HTMLResponse)
 def terminal_page(request: Request):
     # Check if tmux is available (set by main.py)
@@ -315,6 +323,7 @@ def terminal_page(request: Request):
         {
             "voice_available": _voice_available(),
             "home_dir": os.path.expanduser("~"),
+            "app_enabled": _app_enabled(),
         },
     )
 
