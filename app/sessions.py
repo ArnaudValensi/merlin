@@ -20,6 +20,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -31,6 +32,7 @@ from typing import Any
 
 import paths
 
+SUPERVISOR = Path(__file__).resolve().parent / "supervise.py"
 DEFAULT_SIZE = (1280, 720)
 FIRST_DISPLAY = 100
 LAST_DISPLAY = 999
@@ -170,6 +172,12 @@ def _start_time(pid: int) -> int | None:
     return int(fields[19])
 
 
+def _identity(pid: int) -> int | None:
+    """Start time of ``pid`` even as a zombie (its identity), None if gone."""
+    fields = _stat_fields(pid)
+    return int(fields[19]) if fields else None
+
+
 def _reap(pid: int) -> None:
     """Collect ``pid`` if it is our own exited child (the server launched it)."""
     try:
@@ -198,30 +206,30 @@ def _group_members(pgid: int) -> list[int]:
 
 
 def _owns_group(pid: int, start_time: int) -> bool:
-    """Whether process group ``pid`` is still the one we started.
+    """Whether process group ``pid`` is provably still the one we started.
 
-    Its leader is the process we recorded, or the leader is gone: Linux never
-    reuses a PID while a process group with that ID still has members, so the
-    members left are the leader's descendants. A live leader with another
-    start time means the number was reused after the group emptied.
+    Only when its leader is present (alive or a zombie) with the start time we
+    recorded. App groups are led by ``supervise.py``, which outlives every
+    process of the app, so nothing of ours is left once the leader is gone;
+    a group number seen without its leader may have been reused, and is
+    never signalled.
     """
-    leader_start = _start_time(pid)
-    return leader_start is None or leader_start == start_time
+    return _identity(pid) == start_time
 
 
 def _kill_group(pid: int | None, start_time: int | None) -> None:
-    """End the whole process group we started: SIGTERM, then SIGKILL.
+    """End the process group we started: SIGTERM, then SIGKILL after a grace.
 
-    Waits for every member, not just the leader: a wrapper shell dies on
-    SIGTERM while a child that ignores it keeps running. Members that left the
-    group (setsid) are out of reach by design.
+    For an app the leader is its supervisor: on SIGTERM it ends what is left
+    of the app (orphans and setsid escapees included) and exits last, so the
+    wait is on the leader. Ownership is re-checked before every signal.
     """
     if not pid or start_time is None:
         return
     _reap(pid)
-    if not _owns_group(pid, start_time) or not _group_members(pid):
-        return
     for sig, grace in ((signal.SIGTERM, STOP_GRACE), (signal.SIGKILL, 2.0)):
+        if not _owns_group(pid, start_time):
+            return
         try:
             os.killpg(pid, sig)
         except OSError:
@@ -229,11 +237,9 @@ def _kill_group(pid: int | None, start_time: int | None) -> None:
         deadline = time.monotonic() + grace
         while time.monotonic() < deadline:
             _reap(pid)
-            if not _group_members(pid):
+            if not process_alive(pid, start_time) and not _group_members(pid):
                 return
             time.sleep(0.05)
-        if not _owns_group(pid, start_time):
-            return
 
 
 def _spawn(argv: list[str], **kwargs: Any) -> subprocess.Popen:
@@ -632,16 +638,21 @@ def launch(
         try:
             record["baseline_windows"] = sorted(_visible_windows(display))
             prefix = ["vglrun", "-d", "egl"] if gpu_resolved == "on" else []
-            wrapper = 'trap "" HUP; "$@"; echo $? > "$MERLIN_APP_EXIT_FILE"'
             env = _xenv(display)
             if gpu_resolved == "off":
                 # Software for real: a desktop that pins the NVIDIA GLX vendor
                 # would otherwise still render on the GPU.
                 env.update(_SOFTWARE_GL_ENV)
-            env["MERLIN_APP_EXIT_FILE"] = str(exit_file)
             with log.open("ab") as out:
                 proc = _spawn(
-                    ["sh", "-c", wrapper, "sh", *prefix, *argv],
+                    [
+                        sys.executable,
+                        str(SUPERVISOR),
+                        str(exit_file),
+                        "--",
+                        *prefix,
+                        *argv,
+                    ],
                     cwd=str(workdir),
                     env=env,
                     stdout=out,

@@ -180,19 +180,59 @@ test("a destroyed client never reconnects, even when negotiation fails later", a
     assert.equal(env.sockets[0].closed, true);
 });
 
-test("a superseded negotiation does not answer on the new connection", async () => {
+for (const outcome of ["resolves", "rejects"]) {
+    test(`a superseded negotiation that ${outcome} never touches the new connection`, async () => {
+        const env = makeEnv();
+        const { stream, states } = connect(env);
+        await offer(env, env.sockets[0]);
+
+        stream.reconnect();
+        assert.equal(env.sockets.length, 2);
+        const fresh = env.sockets[1];
+        if (outcome === "resolves") env.peers[0].remote.resolve();
+        else env.peers[0].remote.reject(new Error("late failure"));
+        await env.flush();
+        await env.flush();
+        env.advance(5000);  // past any automatic retry it might have queued
+
+        assert.equal(fresh.closed, false, "the new socket stays open");
+        assert.deepEqual(fresh.sent, [], "nothing sent on the new socket");
+        assert.equal(env.sockets.length, 2, "no extra reconnect");
+        assert.notEqual(states[states.length - 1], "error");
+    });
+}
+
+test("an old negotiation settling while the new one is pending leaves it alone", async () => {
     const env = makeEnv();
-    const { stream, states } = connect(env);
+    const { stream } = connect(env);
     await offer(env, env.sockets[0]);
-
     stream.reconnect();
-    assert.equal(env.sockets.length, 2);
-    env.peers[0].remote.resolve();
-    await env.flush();
-    await env.flush();
+    await offer(env, env.sockets[1]);
+    assert.equal(env.peers.length, 2);
 
-    assert.deepEqual(env.sockets[1].sent, [], "nothing sent on the new socket");
-    assert.equal(states[states.length - 1], "connecting");
+    env.peers[0].remote.reject(new Error("late failure"));
+    await env.flush();
+    env.advance(5000);
+    assert.equal(env.peers[1].closed, false, "the new peer is untouched");
+    assert.equal(env.sockets.length, 2);
+
+    env.peers[1].remote.resolve();
+    await env.flush();
+    await env.flush();
+    assert.deepEqual(
+        env.sockets[1].sent.map((m) => m.type),
+        ["hello", "answer"],
+        "the new negotiation completes on its own socket",
+    );
+});
+
+test("a restarted app reconnects at once", async () => {
+    const env = makeEnv();
+    connect(env);
+    await goLive(env, env.sockets[0]);
+    env.sockets[0].deliver({ type: "restarted" });
+    assert.equal(env.sockets.length, 2);
+    assert.equal(env.sockets[0].closed, true);
 });
 
 test("leaving picture-in-picture while hidden starts the pause timer", async () => {

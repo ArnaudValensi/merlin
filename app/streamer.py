@@ -127,6 +127,11 @@ def choose_encoder(codecs: list[str]) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def _printable(keysym: int) -> bool:
+    """Latin-1 printable characters: the keysyms whose Shift level matters."""
+    return 0x20 <= keysym <= 0x7E or 0xA0 <= keysym <= 0xFF
+
+
 class Injector:
     """XTEST input on the app's display. Main-loop thread only."""
 
@@ -136,6 +141,8 @@ class Injector:
         self.keys_down: set[int] = set()
         self.shift_held: set[int] = set()  # Shift keycodes the user holds
         self.buttons_down: set[int] = set()
+        self.typing: subprocess.Popen | None = None
+        self.text_queue: list[str] = []
 
     def handle(self, msg: dict) -> None:
         kind = msg.get("t")
@@ -163,13 +170,42 @@ class Injector:
                 xtest.fake_input(self.disp, X.ButtonRelease, button)
         elif kind == "text":
             self.disp.sync()
-            subprocess.run(
-                ["xdotool", "type", "--delay", "12", "--", str(msg.get("s", ""))],
-                env={"DISPLAY": self.display_name, "PATH": "/usr/bin:/bin"},
-                check=False,
-                timeout=60,
-            )
+            self.type_text(str(msg.get("s", "")))
         self.disp.sync()
+
+    # Text goes through `xdotool type`, one at a time, never blocking the main
+    # loop: a long paste must not delay shutdown, and stop() kills it.
+    def type_text(self, text: str) -> None:
+        if text:
+            self.text_queue.append(text)
+            self._next_text()
+
+    def _next_text(self) -> None:
+        if self.typing is not None and self.typing.poll() is None:
+            return
+        self.typing = None
+        if not self.text_queue:
+            return
+        self.typing = subprocess.Popen(
+            ["xdotool", "type", "--delay", "12", "--", self.text_queue.pop(0)],
+            env={"DISPLAY": self.display_name, "PATH": "/usr/bin:/bin"},
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+        )
+        GLib.timeout_add(50, self._watch_typing)
+
+    def _watch_typing(self) -> bool:
+        if self.typing is not None and self.typing.poll() is None:
+            return True  # still typing: check again
+        self._next_text()
+        return False
+
+    def stop_typing(self) -> None:
+        self.text_queue.clear()
+        if self.typing is not None and self.typing.poll() is None:
+            self.typing.kill()
+            self.typing.wait()
+        self.typing = None
 
     def key(self, name: str, down: bool) -> None:
         """Press or release the key that produces keysym ``name``.
@@ -197,6 +233,11 @@ class Injector:
             if keycode in self.keys_down:
                 self._fake(keycode, False)
             return
+        if not _printable(keysym):
+            # Arrows, Tab, F-keys...: the user's modifiers are the point
+            # (Shift+Right selects, Shift+Tab goes back). Press as is.
+            self._fake(keycode, True)
+            return
         if index > 1:
             # Only reachable through AltGr levels: type it as text instead.
             self.handle({"t": "text", "s": XK.keysym_to_string(keysym) or ""})
@@ -221,12 +262,13 @@ class Injector:
         (self.keys_down.add if down else self.keys_down.discard)(keycode)
 
     def button(self, button: int, down: bool) -> None:
-        if button not in (1, 2, 3):
+        if button not in (1, 2, 3, 8, 9):  # 4-7 are the wheel, see "wheel"
             return
         xtest.fake_input(self.disp, X.ButtonPress if down else X.ButtonRelease, button)
         (self.buttons_down.add if down else self.buttons_down.discard)(button)
 
     def release_all(self) -> None:
+        self.stop_typing()
         for keycode in list(self.keys_down | self.shift_held):
             xtest.fake_input(self.disp, X.KeyRelease, keycode)
         self.shift_held.clear()
@@ -264,11 +306,27 @@ def skipped_addresses() -> set[str]:
 # ---------------------------------------------------------------------------
 
 
+def check_display_owner(display: str, pid: int, start: int) -> None:
+    """The display must still be served by the app's own Xvfb (PID and start
+    time): between the server's check and now, the app may have been stopped
+    and its display number taken by another app."""
+    try:
+        owner = int(open(f"/tmp/.X{display.lstrip(':')}-lock").read().strip())
+        stat = open(f"/proc/{owner}/stat").read()
+        owner_start = int(stat[stat.rfind(")") + 2 :].split()[19])
+    except (OSError, ValueError, IndexError):
+        raise RuntimeError(f"display {display} is gone")
+    if owner != pid or owner_start != start:
+        raise RuntimeError(f"display {display} now belongs to another X server")
+
+
 class Streamer:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.loop = GLib.MainLoop()
         self.injector = Injector(args.display)
+        if args.xvfb_pid:
+            check_display_owner(args.display, args.xvfb_pid, args.xvfb_start)
         self.skipped = skipped_addresses()
         self.offered = False
         self.channel = None
@@ -407,6 +465,8 @@ def main() -> int:
     parser.add_argument("--codecs", default="H264,VP8", help="browser codecs")
     parser.add_argument("--fps", type=int, default=60)
     parser.add_argument("--bitrate", type=int, default=8000, help="kbit/s")
+    parser.add_argument("--xvfb-pid", type=int, default=0, help="expected X server")
+    parser.add_argument("--xvfb-start", type=int, default=0, help="its start time")
     args = parser.parse_args()
     Gst.init(None)
     try:

@@ -47,6 +47,7 @@ times out after 8 s and says so.
 | `main.py` | `_load_flagged_builtins()` loads `app` only with its flag |
 | `app/__init__.py` | Extension exports, routes loaded lazily so CLI imports stay light |
 | `app/sessions.py` | The one library behind the CLI and the API: displays, lifecycle, registry, input, screenshots, saved apps. **Stdlib only** |
+| `app/supervise.py` | Per-app supervisor: group leader and child subreaper, exit code, ends leftovers. **Stdlib only** |
 | `app/deps.py` | Prerequisite checks (runs a probe in the system Python) |
 | `app/cli_support.py`, `app/commands/*.py` | `merlin app run/list/stop/logs/screenshot/input`, `#!/usr/bin/env python3` |
 | `app/routes.py` | `/apps`, `/apps/{id}/play`, `/api/apps/*`, the signaling WebSocket |
@@ -66,11 +67,18 @@ A session is one app on one private display, recorded as
 `thumbs/<id>.png`. Saved apps live in `saved.json`.
 
 - **Launch**: the first free display from `:100` (a stale lock whose PID is
-  dead is reclaimed), `Xvfb -nolisten tcp`, then the app through
-  `sh -c '"$@"; echo $? > exitfile'`, both with `start_new_session=True`, so
-  they survive the CLI call and any Merlin restart. No window manager: the
+  dead is reclaimed; readiness requires the lock file to name our Xvfb, so a
+  display another X server took meanwhile is skipped), `Xvfb -nolisten tcp`,
+  then the app under `app/supervise.py`, both with `start_new_session=True`,
+  so they survive the CLI call and any Merlin restart. No window manager: the
   first new top-level window is moved to `0,0`, resized to the display and
   focused (`--no-fill` keeps its size).
+- **Supervisor**: leads the app's process group and is a child subreaper, so
+  every orphan (and a `setsid` escapee) is re-parented to it. It writes the
+  main process's exit code (128+N for a signal), then ends whatever is left
+  (SIGTERM, SIGKILL after 3 s) and exits last. A SIGTERM to it does the same.
+  While anything of the app lives, its leader does, so the group number cannot
+  be reused.
 - **Environment**: the caller's, minus `WAYLAND_DISPLAY`/`WAYLAND_SOCKET`,
   plus `DISPLAY=:N` and the X11 overrides for SDL, GTK and Qt. Without the
   scrub, an app launched from a Wayland desktop session opens on the real
@@ -81,15 +89,21 @@ A session is one app on one private display, recorded as
   that pins the NVIDIA GLX vendor, an app on Xvfb would otherwise still
   render on the GPU.
 - **Liveness** is PID plus `/proc/<pid>/stat` start time: a zombie or a
-  recycled PID counts as dead and is never signalled. Merlin only kills the
-  process groups it recorded.
+  recycled PID counts as dead. **Ownership** (whether a group may be
+  signalled) needs the group's leader present, alive or zombie, with the
+  recorded start time; a group seen without its leader is never signalled.
+  `_kill_group` sends SIGTERM to the group, waits for the leader and members,
+  re-checks ownership, then SIGKILL.
 - **Exit**: any read (`list`, `get`, the server's start-up sweep) notices a
   dead app, records `exited` with its code, tears the display down and keeps
   the record and log until a stop or a relaunch with the same id.
-- **State lock**: launch, stop and the exit transition run under one
-  `flock` (re-entrant per thread). Stop marks the record `stopping` before
-  killing, and the exit transition re-reads the record under the lock, so a
-  stop racing a poll is never resurrected as a crash.
+- **State lock and generations**: launch, stop and the exit transition run
+  under one `flock` (re-entrant per thread). Each launch gets a `generation`
+  id; every later update goes through `_update_record`, which re-reads under
+  the lock and applies only to the same generation, so a stop is never
+  resurrected (by the window wait, the exit check or an agent input) and a
+  `run --replace` is never overwritten. Stop reads and marks the record
+  `stopping` under the lock before killing.
 - **Origin**: a CLI call inside tmux records `$TMUX_PANE`'s session, window
   id and window name. That is what puts the ▶ button on the right terminal
   window.
@@ -109,26 +123,46 @@ terminal (`verify_ws_cookie`, close `4401`).
 
 1. Server → browser `welcome` (`host`, the app's public record). Browser →
    server `hello` with the codecs from `RTCRtpReceiver.getCapabilities`.
-2. The server kills any previous viewer's streamer (it gets `replaced`) and
-   starts `/usr/bin/python3 app/streamer.py --display :N --codecs ... --fps 60
-   --bitrate K` (8 Mbit/s at 1080p, proportional, 1.5 to 12).
+2. Under a per-app lock (so simultaneous viewers still end with one), the
+   server stops any previous viewer's streamer (it gets `replaced`), re-reads
+   the record (the app may have been relaunched during the handshake), binds
+   the viewer to its `generation`, and starts `/usr/bin/python3
+   app/streamer.py --display :N --codecs ... --fps 60 --bitrate K --xvfb-pid P
+   --xvfb-start T` in its own process group (8 Mbit/s at 1080p, proportional,
+   1.5 to 12). The streamer refuses a display whose lock no longer names that
+   Xvfb.
 3. The streamer picks NVENC H.264 (after a one-frame test pipeline, since
    `nvh264enc` can exist and fail to open), else OpenH264, else VP8, builds
    `ximagesrc ! encoder ! payloader ! webrtcbin`, creates the `input` data
    channel, then the offer. It drops candidates on `docker*`, `br-*`,
    `veth*`, `virbr*` interfaces.
 4. The server relays `offer`, `answer` and `ice` both ways and polls the
-   record every 500 ms (`exited`, `agent_input`). When the socket closes, the
-   streamer is killed and a thumbnail is captured.
+   record every 500 ms (`exited`, `agent_input`, and `restarted` when the
+   generation changed: the client reconnects to the new launch). When the
+   socket closes, the streamer is stopped gracefully (stdin closed: it stops
+   typing, releases held input, quits), its group signalled only if it does
+   not, and a thumbnail is captured.
 
 Input on the data channel: `key {k, d}` (X keysym names), `move {x, y}`,
-`rel {dx, dy}`, `btn {b, d}`, `wheel {dy}`, `text {s}` (xdotool type). The
+`rel {dx, dy}`, `btn {b, d}` (1-3, 8, 9), `wheel {dy}`, `text {s}`. For
+printable characters the streamer presses the keycode with the Shift level
+the display's keymap needs (adding or lifting Shift around the press), so a
+French `&` or Shift+`1` arrives as typed on a US keymap; other keys (arrows,
+Tab, F-keys) keep the user's modifiers. Text goes through `xdotool type`, one
+at a time and asynchronously, so a long paste never blocks shutdown. The
 streamer releases any held key or button when it stops.
 
 Client states (`client.js`): `connecting`, `live`, `unreachable`, `replaced`,
-`exited`, `paused` (hidden 30 s, except in picture-in-picture), `error`,
+`exited`, `paused` (hidden 30 s, except in picture-in-picture: entering and
+leaving it re-arms the timer; pausing cancels a pending reconnect), `error`,
 `closed`. A dead streamer gets one automatic retry per 20 s; a lost server
-(a Merlin restart) gets seven, with backoff, before `closed`.
+(a Merlin restart) gets seven, with backoff, before `closed`. Every
+connection carries a generation and the client a `destroyed` flag: callbacks
+of a superseded or destroyed connection (a late promise, a closing socket)
+do nothing. Desktop mouse buttons use pointer capture (a drag ending outside
+the video still releases) and are reconciled with the `buttons` bitmask, so
+chords (left held, right pressed) reach the app; buttons over the video
+(Retry, Logs) are exempt from the capture.
 
 ## UI
 

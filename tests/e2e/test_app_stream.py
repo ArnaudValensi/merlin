@@ -259,3 +259,109 @@ def test_layout_symbols_arrive_as_typed(browser, server, probe):
         assert "keydown exclam" not in lines
     finally:
         context.close()
+
+
+def test_shift_stays_on_navigation_keys(browser, server, probe):
+    """Shift+Right selects and Shift+Tab goes back: the modifier must reach
+    the app on non-printable keys (only printable symbols get Shift fixed)."""
+    _, log = probe
+    context, page = _player(browser, server)
+    try:
+        wait_live(page)
+        _key(page, "keydown", "Shift", "ShiftLeft", shift=True)
+        _key(page, "keydown", "ArrowRight", "ArrowRight", shift=True)
+        _key(page, "keyup", "ArrowRight", "ArrowRight", shift=True)
+        _key(page, "keydown", "Tab", "Tab", shift=True)
+        _key(page, "keyup", "Tab", "Tab", shift=True)
+        _key(page, "keyup", "Shift", "ShiftLeft")
+        # Shift+Tab is ISO_Left_Tab on X: the press carried Shift.
+        wait_for_lines(
+            log, ["state Right shift", "state ISO_Left_Tab shift", "keyup Shift_L"]
+        )
+    finally:
+        context.close()
+
+
+def _order(lines, prefixes):
+    return [
+        next(i for i, line in enumerate(lines) if line.startswith(p)) for p in prefixes
+    ]
+
+
+def test_mouse_button_chords(browser, server, probe):
+    """Left down, right down, left up, right up: each change reaches the app."""
+    _, log = probe
+    context, page = _player(browser, server)
+    try:
+        wait_live(page)
+        seen = len(log.read_text().splitlines())  # the module shares one probe
+        page.mouse.move(400, 300)
+        page.mouse.down(button="left")
+        page.mouse.down(button="right")
+        page.mouse.up(button="left")
+        page.mouse.up(button="right")
+        lines = []
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            lines = log.read_text().splitlines()[seen:]
+            if any(line.startswith("btnup 3 ") for line in lines):
+                break
+            time.sleep(0.1)
+        order = _order(lines, ["btndown 1 ", "btndown 3 ", "btnup 1 ", "btnup 3 "])
+        assert order == sorted(order), lines
+    finally:
+        context.close()
+
+
+def _xdotool_typing_on(display: str) -> list[int]:
+    """`xdotool type` processes whose DISPLAY is ``display``."""
+    found = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            argv = (entry / "cmdline").read_bytes().split(b"\0")
+            env = (entry / "environ").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if argv[:2] == [b"xdotool", b"type"] and f"DISPLAY={display}".encode() in env:
+            found.append(int(entry.name))
+    return found
+
+
+def _text(log: Path) -> str:
+    return log.read_text() if log.exists() else ""
+
+
+def test_a_long_paste_stops_with_its_viewer(browser, server, probe):
+    handle, log = probe
+    first_ctx, first = _player(browser, server)
+    second_ctx = None
+    try:
+        wait_live(first)
+        first.evaluate(
+            "window.MerlinPlayer.stream.send({t: 'text', s: 'q'.repeat(400)})"
+        )
+        deadline = time.monotonic() + 10
+        while _text(log).count("keydown q") < 20:
+            assert time.monotonic() < deadline, "typing never started"
+            time.sleep(0.05)
+        assert _xdotool_typing_on(handle["display"])
+        second_ctx, second = _player(browser, server)
+        wait_live(second)
+        # The typist is gone with its viewer...
+        assert _xdotool_typing_on(handle["display"]) == []
+        # ...and once the probe has drained its queue, the paste stopped short.
+        deadline = time.monotonic() + 15
+        typed = -1
+        while time.monotonic() < deadline:
+            now = _text(log).count("keydown q")
+            if now == typed:
+                break
+            typed = now
+            time.sleep(1)
+        assert typed < 400, "the whole paste went through"
+    finally:
+        first_ctx.close()
+        if second_ctx:
+            second_ctx.close()

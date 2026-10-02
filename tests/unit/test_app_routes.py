@@ -1,5 +1,7 @@
 """Apps REST routes, pages and the signaling socket's auth, on a bare app."""
 
+import time
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -152,3 +154,94 @@ def test_missing_tools_are_named_with_their_package(monkeypatch):
     monkeypatch.setattr(sessions.shutil, "which", which)
     with pytest.raises(sessions.AppError, match="Missing Xvfb"):
         sessions.launch(["true"], gpu="off")
+
+
+class _FakeStdin:
+    def __init__(self, proc):
+        self.proc = proc
+
+    def write(self, data):
+        pass
+
+    async def drain(self):
+        pass
+
+    def close(self):
+        self.proc.returncode = 0  # a graceful streamer quits on stdin EOF
+
+
+class _Silent:
+    """A stdout/stderr that never produces a line (a streamer still running)."""
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        import asyncio
+
+        await asyncio.sleep(3600)
+        raise StopAsyncIteration
+
+
+class _FakeProcess:
+    pid = 999999
+
+    def __init__(self):
+        self.returncode = None
+        self.stdin = _FakeStdin(self)
+        self.stdout = _Silent()
+        self.stderr = _Silent()
+
+    async def wait(self):
+        return self.returncode
+
+
+def _record(generation, display, xvfb_pid):
+    return {
+        "id": "probe",
+        "name": "probe",
+        "generation": generation,
+        "display": display,
+        "size": [1280, 720],
+        "status": "running",
+        "exit_code": None,
+        "xvfb_pid": xvfb_pid,
+        "xvfb_start": 1,
+        "last_agent_input_at": None,
+    }
+
+
+def test_viewer_attaches_to_the_launch_current_at_attach_time(client, monkeypatch):
+    """The app is relaunched on another display between welcome and hello:
+    the streamer must attach to the new display, and a later relaunch tells
+    the client to reconnect."""
+    import asyncio
+
+    from app import sessions
+
+    current = {"record": _record("first", ":100", 111)}
+    monkeypatch.setattr(sessions, "get", lambda _id: dict(current["record"]))
+    monkeypatch.setattr(sessions, "capture_thumbnail", lambda _id: None)
+    spawned = []
+
+    async def fake_exec(*argv, **kwargs):
+        spawned.append((argv, kwargs))
+        return _FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    with client.websocket_connect("/ws/apps/probe/stream") as ws:
+        welcome = ws.receive_json()
+        assert welcome["type"] == "welcome"
+        current["record"] = _record("second", ":101", 222)  # relaunched meanwhile
+        ws.send_json({"type": "hello", "codecs": ["H264"]})
+        deadline = time.monotonic() + 5
+        while not spawned:
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        argv, kwargs = spawned[0]
+        assert argv[argv.index("--display") + 1] == ":101"
+        assert argv[argv.index("--xvfb-pid") + 1] == "222"
+        assert kwargs.get("start_new_session") is True
+
+        current["record"] = _record("third", ":102", 333)
+        assert ws.receive_json() == {"type": "restarted"}

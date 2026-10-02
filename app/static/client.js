@@ -225,6 +225,10 @@
                     teardown();
                     setState('replaced');
                     break;
+                case 'restarted':
+                    // The app was relaunched: stream the new launch.
+                    open();
+                    break;
                 case 'exited':
                     teardown();
                     setState('exited', {reason: msg.reason, code: msg.code});
@@ -418,6 +422,7 @@
         }
         target.addEventListener('pointermove', function (event) {
             if (event.pointerType === 'touch') return;
+            if (Object.keys(buttonsHeld).length) syncButtons(event);  // chords
             var point = toDisplay(video, event.clientX, event.clientY);
             if (!point) return;
             pendingMove = point;
@@ -426,6 +431,10 @@
         // Buttons: pointer capture keeps the release coming to us when the drag
         // ends outside the video (over the terminal); whatever is still held
         // when capture or focus is lost is released, never left pressed.
+        // Pointer events report a second button pressed or released during a
+        // drag (a chord) as a pointermove, so held buttons are reconciled with
+        // the `buttons` bitmask on every event rather than per down/up.
+        var BUTTON_BITS = [[1, 1], [2, 3], [4, 2], [8, 8], [16, 9]];  // [bit, X button]
         var buttonsHeld = {};
         function releaseButtons() {
             var s = stream();
@@ -433,6 +442,24 @@
                 if (s) s.send({t: 'btn', b: +b, d: false});
             });
             buttonsHeld = {};
+        }
+        function syncButtons(event) {
+            var s = stream();
+            if (!s) return;
+            var point = toDisplay(video, event.clientX, event.clientY);
+            BUTTON_BITS.forEach(function (pair) {
+                var down = (event.buttons & pair[0]) !== 0;
+                var b = pair[1];
+                if (down && !buttonsHeld[b]) {
+                    if (point) s.send({t: 'move', x: point.x, y: point.y});
+                    s.send({t: 'btn', b: b, d: true});
+                    buttonsHeld[b] = true;
+                } else if (!down && buttonsHeld[b]) {
+                    if (point) s.send({t: 'move', x: point.x, y: point.y});
+                    s.send({t: 'btn', b: b, d: false});
+                    delete buttonsHeld[b];
+                }
+            });
         }
         // Overlays on the video (Retry, Logs) keep their own clicks: capturing
         // the pointer would retarget the click away from them.
@@ -443,25 +470,15 @@
         target.addEventListener('pointerdown', function (event) {
             if (event.pointerType === 'touch' || onControl(event)) return;
             var point = toDisplay(video, event.clientX, event.clientY);
-            var s = stream();
             target.focus({preventScroll: true});
             event.preventDefault();
-            if (!s || !point) return;
+            if (!stream() || !point) return;
             try { target.setPointerCapture(event.pointerId); } catch (e) {}
-            var b = event.button + 1;
-            s.send({t: 'move', x: point.x, y: point.y});
-            s.send({t: 'btn', b: b, d: true});
-            buttonsHeld[b] = true;
+            syncButtons(event);
         });
         target.addEventListener('pointerup', function (event) {
-            if (event.pointerType === 'touch') return;
-            var b = event.button + 1;
-            if (!buttonsHeld[b]) return;
-            delete buttonsHeld[b];
-            var s = stream();
-            var point = toDisplay(video, event.clientX, event.clientY);
-            if (s && point) s.send({t: 'move', x: point.x, y: point.y});
-            if (s) s.send({t: 'btn', b: b, d: false});
+            if (event.pointerType === 'touch' || !Object.keys(buttonsHeld).length) return;
+            syncButtons(event);
             event.preventDefault();
         });
         target.addEventListener('lostpointercapture', releaseButtons);

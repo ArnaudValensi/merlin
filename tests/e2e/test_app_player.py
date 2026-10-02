@@ -259,3 +259,33 @@ def test_second_finger_during_a_trackpad_drag_releases_the_button(phone):
     cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
     cdp.detach()
     _lines_with(log, "btnup 1 ", count=2)
+
+
+def _hold(page, x, y):
+    cdp = page.context.new_cdp_session(page)
+    cdp.send(
+        "Input.dispatchTouchEvent",
+        {"type": "touchStart", "touchPoints": [{"x": x, "y": y, "id": 0}]},
+    )
+    return cdp
+
+
+def test_switching_profile_releases_held_gamepad_keys(phone):
+    page, log = phone
+    ax, ay = _center(page, ".player-pad-btn[data-button='A']")
+    cdp = _hold(page, ax, ay)
+    wait_for_lines(log, ["keydown x"])
+    page.evaluate("window.MerlinPlayer.setProfile('trackpad')")
+    wait_for_lines(log, ["keydown x", "keyup x"])
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    cdp.detach()
+
+    page.evaluate("window.MerlinPlayer.setProfile('gamepad')")
+    box = page.locator(".player-dpad").bounding_box()
+    assert box
+    cdp = _hold(page, box["x"] + box["width"] - 10, box["y"] + box["height"] / 2)
+    wait_for_lines(log, ["keydown Right"])
+    page.evaluate("window.MerlinPlayer.setProfile('touch')")
+    wait_for_lines(log, ["keydown Right", "keyup Right"])
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    cdp.detach()

@@ -323,6 +323,14 @@ subprocess.Popen([sys.executable, '-c',
 time.sleep(600)
 """
 
+ESCAPES_THE_GROUP = """
+import subprocess, sys, time
+child = subprocess.Popen([sys.executable, '-c', 'import os, time; time.sleep(600)'],
+                         start_new_session=True)
+print("escaped", child.pid, flush=True)
+time.sleep(600)
+"""
+
 LEAVES_A_CHILD = """
 import subprocess, sys
 subprocess.Popen([sys.executable, '-c',
@@ -372,14 +380,41 @@ class TestProcessTree:
             time.sleep(0.1)
         assert _wait_group_empty(pgid) == []
 
-    def test_a_reused_group_number_is_never_signalled(self):
-        # A live leader with another start time: the number was reused.
+    def test_an_escaped_setsid_child_is_ended_too(self):
+        sessions.launch(
+            [sys.executable, "-c", ESCAPES_THE_GROUP], name="escaper", gpu="off", wait=0
+        )
+        _wait_log("escaper", "escaped ")
+        escaped = int(sessions.read_log("escaper").split("escaped ")[1].split()[0])
+        assert sessions._start_time(escaped) is not None
+        sessions.stop("escaper")
+        deadline = time.monotonic() + 15
+        while sessions._start_time(escaped) is not None:
+            assert time.monotonic() < deadline, "the setsid child survived the stop"
+            time.sleep(0.05)
+
+    def test_ownership_needs_the_recorded_leader(self):
         me = os.getpid()
-        start = sessions._start_time(me)
+        start = sessions._identity(me)
         assert start is not None
         assert sessions._owns_group(me, start)
+        # A live leader with another start time: the number was reused.
         assert not sessions._owns_group(me, start - 1)
-        sessions._kill_group(me, start - 1)  # must be a no-op on ourselves
+        sessions._kill_group(me, start - 1)  # a no-op, or this test dies
+
+    def test_a_zombie_leader_keeps_its_identity(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+        deadline = time.monotonic() + 5
+        while sessions._start_time(child.pid) is not None:  # until it is a zombie
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        start = sessions._identity(child.pid)
+        assert start is not None
+        assert sessions._owns_group(child.pid, start)
+        assert not sessions._owns_group(child.pid, start + 1)  # a reused zombie
+        child.wait()
+        # Gone: no leader, no proof of ownership, never signalled.
+        assert not sessions._owns_group(child.pid, start)
 
 
 class TestStateRaces:

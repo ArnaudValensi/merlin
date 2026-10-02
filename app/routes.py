@@ -12,6 +12,8 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
+import signal
 import socket
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -218,6 +220,7 @@ class Viewer:
     websocket: WebSocket
     process: asyncio.subprocess.Process | None = None
     done: asyncio.Event = field(default_factory=asyncio.Event)
+    generation: str | None = None  # the app launch this viewer streams
 
     async def send(self, message: dict) -> None:
         if self.websocket.application_state == WebSocketState.CONNECTED:
@@ -238,27 +241,33 @@ async def _end_viewer(session_id: str, message: dict) -> None:
         viewer.done.set()
 
 
+def _signal_group(process: asyncio.subprocess.Process, sig: int) -> None:
+    """Signal the streamer's own process group: it and an `xdotool type` it
+    may have started. Only while it is not reaped yet (``returncode`` None):
+    until then its PID, hence the group number, cannot be reused."""
+    if process.returncode is not None:
+        return
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(process.pid, sig)
+
+
 async def _kill(process: asyncio.subprocess.Process | None) -> None:
-    """Stop a streamer gracefully: closing its stdin makes it release any key
-    or button the viewer held, then quit. Signals only if it does not."""
+    """Stop a streamer gracefully: closing its stdin makes it stop typing,
+    release any key or button the viewer held, and quit. Only if it does not
+    is its whole group signalled (a blocked streamer, a long paste)."""
     if process is None or process.returncode is not None:
         return
     if process.stdin is not None:
         with contextlib.suppress(Exception):
             process.stdin.close()
-    try:
-        await asyncio.wait_for(process.wait(), timeout=3)
-        return
-    except TimeoutError:
-        pass
-    with contextlib.suppress(ProcessLookupError):
-        process.terminate()
-    try:
-        await asyncio.wait_for(process.wait(), timeout=2)
-    except TimeoutError:
-        with contextlib.suppress(ProcessLookupError):
-            process.kill()
-        await process.wait()
+    for sig, grace in ((None, 3.0), (signal.SIGTERM, 2.0), (signal.SIGKILL, 5.0)):
+        if sig is not None:
+            _signal_group(process, sig)
+        try:
+            await asyncio.wait_for(process.wait(), timeout=grace)
+            return
+        except TimeoutError:
+            continue
 
 
 async def _pump_streamer_out(viewer: Viewer) -> None:
@@ -297,6 +306,11 @@ async def _watch_record(viewer: Viewer, session_id: str, last_input: str | None)
             record = await asyncio.to_thread(sessions.get, session_id)
         except KeyError:
             await viewer.send({"type": "exited", "reason": "stopped"})
+            return
+        if record.get("generation") != viewer.generation:
+            # Relaunched (run --replace): this stream shows a dead display;
+            # the client reconnects to the new launch.
+            await viewer.send({"type": "restarted"})
             return
         if record["status"] == "exited":
             await viewer.send(
@@ -345,7 +359,6 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
         return
     codecs = [str(c) for c in hello.get("codecs") or ["VP8"]]
 
-    width, height = record["size"]
     async with _viewer_locks.setdefault(session_id, asyncio.Lock()):
         if websocket.application_state != WebSocketState.CONNECTED:
             return
@@ -354,6 +367,20 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
             await previous.send({"type": "replaced"})
             previous.done.set()
             await _kill(previous.process)
+        # Re-read right before attaching: during the handshake the app may
+        # have been stopped or relaunched on another display.
+        try:
+            record = await asyncio.to_thread(sessions.get, session_id)
+        except KeyError:
+            await viewer.send({"type": "exited", "reason": "stopped"})
+            return
+        if record["status"] not in ("starting", "running"):
+            await viewer.send(
+                {"type": "exited", "reason": "exited", "code": record["exit_code"]}
+            )
+            return
+        viewer.generation = record.get("generation")
+        width, height = record["size"]
         _viewers[session_id] = viewer
         viewer.process = await asyncio.create_subprocess_exec(
             deps.SYSTEM_PYTHON,
@@ -366,9 +393,14 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
             str(FPS),
             "--bitrate",
             str(bitrate_kbps(width, height)),
+            "--xvfb-pid",
+            str(record.get("xvfb_pid") or 0),
+            "--xvfb-start",
+            str(record.get("xvfb_start") or 0),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
         )
     logger.info(
         "viewer connected to %s (streamer pid %s)", session_id, viewer.process.pid

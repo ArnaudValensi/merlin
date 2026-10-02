@@ -21,6 +21,7 @@ BACKGROUND = 0x00FF88
 SQUARE = 0xFF00FF
 
 # keysym -> X keysym name (Escape, Right, x), the names xdotool takes.
+XK.load_keysym_group("xkb")  # ISO_Left_Tab (Shift+Tab) and friends
 KEYSYM_NAMES: dict[int, str] = {}
 for _attr in dir(XK):
     if _attr.startswith("XK_"):
@@ -97,6 +98,8 @@ def main() -> int:
             )
             name = KEYSYM_NAMES.get(keysym, str(keysym))
             log(f"{'keydown' if event.type == X.KeyPress else 'keyup'} {name}")
+            if event.type == X.KeyPress:
+                log(f"state {name} {'shift' if event.state & X.ShiftMask else 'none'}")
         elif event.type in (X.ButtonPress, X.ButtonRelease):
             kind = "btndown" if event.type == X.ButtonPress else "btnup"
             log(f"{kind} {event.detail} {event.event_x} {event.event_y}")

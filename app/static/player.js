@@ -385,6 +385,14 @@
         if (meta.children.length) controlsEl.appendChild(meta);
     }
 
+    // Release functions of every gamepad control that can hold a key: the
+    // controls are rebuilt on a profile change, never with a key left down.
+    var padReleases = [];
+    function releasePad() {
+        padReleases.forEach(function (release) { release(); });
+        padReleases = [];
+    }
+
     function bindPadButton(el, keysym) {
         var pointer = null;
         el.addEventListener('pointerdown', function (e) {
@@ -397,14 +405,17 @@
             send({t: 'key', k: keysym, d: true});
             vibrate();
         });
-        function up(e) {
-            if (e.pointerId !== pointer) return;
+        function release() {
+            if (pointer === null) return;
             pointer = null;
             el.classList.remove('on');
             send({t: 'key', k: keysym, d: false});
         }
+        function up(e) { if (e.pointerId === pointer) release(); }
         el.addEventListener('pointerup', up);
         el.addEventListener('pointercancel', up);
+        el.addEventListener('lostpointercapture', up);
+        padReleases.push(release);
     }
 
     function bindDpad(el) {
@@ -439,18 +450,21 @@
         el.addEventListener('pointermove', function (e) {
             if (e.pointerId === pointer) setDir(dirAt(e));
         });
-        function up(e) {
-            if (e.pointerId !== pointer) return;
+        function release() {
             pointer = null;
             setDir(null);
         }
+        function up(e) { if (e.pointerId === pointer) release(); }
         el.addEventListener('pointerup', up);
         el.addEventListener('pointercancel', up);
+        el.addEventListener('lostpointercapture', up);
+        padReleases.push(release);
     }
 
     // ---- profiles -------------------------------------------------------------------
 
     function setProfile(next) {
+        releasePad();
         releaseGesture(gesture);
         gesture = null;
         touches = {};
