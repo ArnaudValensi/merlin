@@ -92,6 +92,9 @@
     flex-direction: column;
     background: #000;
     overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
 }
 .app-panel-head {
     display: flex;

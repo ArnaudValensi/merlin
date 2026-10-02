@@ -289,3 +289,23 @@ def test_switching_profile_releases_held_gamepad_keys(phone):
     wait_for_lines(log, ["keydown Right", "keyup Right"])
     cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
     cdp.detach()
+
+
+def test_nothing_on_the_player_is_selectable(phone):
+    """Fast taps on the controls must not select their labels."""
+    page, _ = phone
+    styles = page.evaluate(
+        """() => ['.player-pad-btn', '.player-dpad', '#player-chip', '#player-menu-btn', 'body']
+            .map((sel) => {
+                const s = getComputedStyle(document.querySelector(sel));
+                return [sel, s.userSelect || s.webkitUserSelect];
+            })"""
+    )
+    assert all(value == "none" for _, value in styles), styles
+    # Double-tapping a button label selects nothing.
+    page.locator(".player-pad-btn[data-button='A'] small").dblclick()
+    assert page.evaluate("window.getSelection().toString()") == ""
+    kb = page.evaluate(
+        "getComputedStyle(document.getElementById('player-kb')).userSelect"
+    )
+    assert kb == "text"

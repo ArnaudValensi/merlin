@@ -10,6 +10,32 @@ html, body.player-body {
     -webkit-tap-highlight-color: transparent;
 }
 
+/* A player, not a document: quick taps on the controls must never select
+   their labels or pop the callout menu. Only the hidden keyboard field takes
+   text. */
+body.player-body,
+body.player-body * {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
+body.player-body .player-kb {
+    -webkit-user-select: text;
+    user-select: text;
+}
+.player-fab,
+.player-chip,
+.player-sheet button,
+.player-keys button,
+.player-pad-btn,
+.player-dpad {
+    touch-action: manipulation;  /* no double-tap zoom on fast presses */
+}
+.player-pad-btn,
+.player-dpad {
+    touch-action: none;
+}
+
 .player {
     position: fixed;
     inset: 0;
