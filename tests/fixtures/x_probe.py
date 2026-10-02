@@ -5,14 +5,19 @@ Fills its window with #00ff88 and a 50 px magenta (#ff00ff) square at the
 top-left, appends every key and button event to the file named by
 ``X_PROBE_LOG`` (and does not read events at all while the file named by
 ``X_PROBE_PAUSE`` exists, like a busy app) (``keydown x``, ``keyup x``, ``btndown 1 120 80``, ...), and
-dumps its environment as JSON to ``X_PROBE_ENV``.
+dumps its environment as JSON to ``X_PROBE_ENV``. With ``--tone HZ`` it also
+plays a sine at that frequency through PulseAudio (``pulsesink``, which honors
+``PULSE_SINK``) for as long as it runs; ``--tone-device NAME`` opens that sink
+by name instead, ignoring ``PULSE_SINK`` (as SDL3 does with the default one).
 
     x_probe.py [--size WxH] [--exit-after SECONDS] [--exit-code N]
+               [--tone HZ [--tone-device NAME]]
 """
 
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -41,6 +46,8 @@ def main() -> int:
     parser.add_argument("--size", default="640x480")
     parser.add_argument("--exit-after", type=float)
     parser.add_argument("--exit-code", type=int, default=0)
+    parser.add_argument("--tone", type=int, help="play a sine at this frequency")
+    parser.add_argument("--tone-device", help="open this sink by name")
     args = parser.parse_args()
     width, height = (int(v) for v in args.size.split("x"))
 
@@ -48,6 +55,23 @@ def main() -> int:
     if env_path:
         with open(env_path, "w") as handle:
             json.dump(dict(os.environ), handle)
+    if args.tone:
+        # A child in the app's process group: it ends with the app.
+        subprocess.Popen(
+            [
+                "gst-launch-1.0",
+                "-q",
+                "audiotestsrc",
+                f"freq={args.tone}",
+                "volume=0.5",
+                "is-live=true",
+                "!",
+                "audioconvert",
+                "!",
+                "pulsesink",
+                *([f"device={args.tone_device}"] if args.tone_device else []),
+            ]
+        )
 
     disp = display.Display()
     screen = disp.screen()

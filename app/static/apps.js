@@ -260,6 +260,7 @@
                 controls: fromSession.controls,
                 keys: fromSession.keys,
                 gpu: 'auto',
+                audio: fromSession.audio_requested || fromSession.audio,
                 size: (fromSession.size || []).join('x')
             };
         }
@@ -268,6 +269,7 @@
         form.elements.cwd.value = src.cwd || homeDir;
         form.elements.controls.value = src.controls || 'trackpad';
         form.elements.gpu.value = src.gpu || 'auto';
+        form.elements.audio.value = src.audio || 'stream';
         form.elements.keys.value = keysText(src.keys);
         var size = src.size || (touch ? 'fit' : '1280x720');
         form.querySelector('[name="size_mode"][value="' + (size === 'fit' ? 'fit' : 'fixed') + '"]').checked = true;
@@ -286,6 +288,7 @@
             cwd: form.elements.cwd.value,
             controls: form.elements.controls.value,
             gpu: form.elements.gpu.value,
+            audio: form.elements.audio.value,
             keys: form.elements.controls.value === 'gamepad' ? form.elements.keys.value : '',
             size: mode && mode.value === 'fixed' ? form.elements.size.value : 'fit'
         };

@@ -27,6 +27,7 @@
     var known = null;           // "id@started_at" seen at least once (null until the first poll)
     var openId = null;
     var stream = null;
+    var sound = null;
     var statsTimer = null;
     var agentUntil = 0;
     var chooser = null;
@@ -163,6 +164,10 @@
         name.textContent = app ? app.name : openId;
         var chip = document.createElement('span');
         chip.className = 'app-chip';
+        var speaker = iconButton('Sound', '');
+        speaker.classList.add('app-sound');
+        speaker.setAttribute('data-sound', '');
+        speaker.hidden = true;   // until the stream says it carries sound
         var pip = iconButton('Picture in picture', '<rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="12" width="8" height="6" rx="1"/>');
         pip.classList.add('app-pip');
         pip.hidden = !document.pictureInPictureEnabled;
@@ -170,6 +175,7 @@
         var x = iconButton('Close (the app keeps running)', '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
         head.appendChild(name);
         head.appendChild(chip);
+        head.appendChild(speaker);
         head.appendChild(pip);
         head.appendChild(full);
         head.appendChild(x);
@@ -190,8 +196,13 @@
 
         panel.appendChild(head);
         panel.appendChild(body);
-        els = {head: head, chip: chip, body: body, video: video, overlay: overlay};
+        els = {head: head, chip: chip, body: body, video: video, overlay: overlay, speaker: speaker};
 
+        speaker.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (sound) sound.set(!sound.on);
+        });
+        video.addEventListener('volumechange', renderSpeaker);
         x.addEventListener('click', function (e) { e.stopPropagation(); close(); });
         full.addEventListener('click', function (e) { e.stopPropagation(); location.href = '/apps/' + encodeURIComponent(openId) + '/play'; });
         pip.addEventListener('click', function (e) {
@@ -200,6 +211,20 @@
             else video.requestPictureInPicture().catch(function () {});
         });
         return body;
+    }
+
+    var SPEAKER_ON = '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/>';
+    var SPEAKER_OFF = '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/>';
+
+    function renderSpeaker() {
+        var b = els.speaker;
+        if (!b || !els.video) return;
+        var on = !els.video.muted;
+        var label = on ? 'Mute' : 'Sound on';
+        b.title = label;
+        b.setAttribute('aria-label', label);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        b.querySelector('svg').innerHTML = on ? SPEAKER_ON : SPEAKER_OFF;
     }
 
     function iconButton(title, paths) {
@@ -298,10 +323,18 @@
         } else {
             placeMini();
         }
+        // Sound: on in the docked panel (the click that opened it is the
+        // gesture browsers want), off in the mini-player; each remembered.
+        sound = MerlinApps.sound(els.video, desktop() ? 'panel' : 'mini', panel);
+        sound.apply();
+        renderSpeaker();
         stream = MerlinApps.connect({
             id: id,
             video: els.video,
             onState: onState,
+            onReady: function (info) {
+                if (els.speaker) els.speaker.hidden = !info.audio;
+            },
             onAgentInput: function () { agentUntil = Date.now() + AGENT_INPUT_MS; updateChip(); }
         });
         if (desktop()) MerlinApps.bindDesktopInput(body, els.video, function () { return stream; });
@@ -313,6 +346,7 @@
 
     function close(keepLayout) {
         if (stream) { stream.destroy(); stream = null; }
+        if (sound) { sound.destroy(); sound = null; }
         clearInterval(statsTimer);
         if (document.pictureInPictureElement === els.video) document.exitPictureInPicture().catch(function () {});
         openId = null;

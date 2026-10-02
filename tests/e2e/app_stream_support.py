@@ -58,7 +58,12 @@ def cli(merlin, command: str, *args: str, extra_env: dict | None = None):
 
 
 def launch_probe(
-    merlin, log: Path, name: str = "probe", *extra: str, env: dict | None = None
+    merlin,
+    log: Path,
+    name: str = "probe",
+    *extra: str,
+    env: dict | None = None,
+    probe_args: tuple[str, ...] = (),
 ) -> dict:
     result = cli(
         merlin,
@@ -70,6 +75,7 @@ def launch_probe(
         *extra,
         "--",
         str(PROBE),
+        *probe_args,
         extra_env={"X_PROBE_LOG": str(log), **(env or {})},
     )
     assert result.returncode == 0, result.stderr

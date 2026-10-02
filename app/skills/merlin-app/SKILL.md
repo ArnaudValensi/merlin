@@ -59,6 +59,9 @@ merlin app run --name oob --controls gamepad --keys A=x,B=z,X=r,Y=Tab,Start=Esca
   you touch).
 - `--size 1920x1080` changes the display size (default 1280x720).
 - `--gpu off` forces software rendering (default `auto` uses the GPU).
+- The app's sound goes to the user's player (default `--audio stream`; the
+  app is then silent on the machine). `--audio local` plays it on the machine
+  instead. A note on stderr says when sound cannot be streamed (no PipeWire).
 
 The command's JSON has a `url` (`/apps/<id>/play`): the full-screen player. Give
 the user that path on top of `merlin dashboard-url` when they ask where to

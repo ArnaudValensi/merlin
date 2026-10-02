@@ -41,6 +41,8 @@ WINDOW_TIMEOUT = 10.0
 TYPE_CHUNK = 24  # characters per locked step of agent typing (~0.3 s)
 STOP_GRACE = 10.0  # the supervisor ends leftovers within ~3 s; this bounds a stuck one
 CONTROLS = ("gamepad", "trackpad", "touch")
+AUDIO_MODES = ("stream", "local")
+SINK_PREFIX = "merlin_app_"
 GPU_MODES = ("auto", "on", "off")
 
 # Variables that would send an app to the user's real desktop instead of the
@@ -474,6 +476,118 @@ def missing_message(tools: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Audio: one null sink per app, on PipeWire (through its pulse server)
+# ---------------------------------------------------------------------------
+
+
+def _pactl(*args: str, timeout: float = 5.0) -> subprocess.CompletedProcess | None:
+    if shutil.which("pactl") is None:
+        return None
+    try:
+        return subprocess.run(
+            ["pactl", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def audio_available() -> bool:
+    """PipeWire's pulse server answers. Plain PulseAudio does not qualify: when
+    an app's sink goes away it moves the streamer's capture to the default
+    source (the microphone), where PipeWire can be told not to (streamer.py)."""
+    result = _pactl("info")
+    return bool(result and result.returncode == 0 and "PipeWire" in result.stdout)
+
+
+def _sinks() -> list[dict]:
+    result = _pactl("-f", "json", "list", "sinks")
+    if not result or result.returncode != 0:
+        return []
+    try:
+        data = json.loads(result.stdout)
+    except ValueError:
+        return []
+    return (
+        [sink for sink in data if isinstance(sink, dict)]
+        if isinstance(data, list)
+        else []
+    )
+
+
+def _home_tag() -> str:
+    """This Merlin home's tag in sink names: every home (the live instance, a
+    test server) shares the user's sound server, and each one's orphan sweep
+    must only ever touch its own sinks."""
+    digest = uuid.uuid5(uuid.NAMESPACE_URL, str(apps_dir().resolve())).hex
+    return digest[:6]
+
+
+def _sink_name(session_id: str, generation: str) -> str:
+    safe = re.sub(r"[^a-z0-9]+", "_", session_id)
+    return f"{SINK_PREFIX}{_home_tag()}_{safe}_{generation[:8]}"
+
+
+def _create_sink(name: str) -> int | None:
+    """Load a null sink called ``name``; its module index, or None."""
+    result = _pactl(
+        "load-module",
+        "module-null-sink",
+        f"sink_name={name}",
+        f"sink_properties=device.description=Merlin-app-{name}",
+    )
+    if not result or result.returncode != 0:
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _remove_sink(name: str | None, module: int | None) -> bool:
+    """Unload ``module``, but only while it still owns a sink named exactly
+    ``name``: module indexes are reused after a sound-server restart, and
+    Merlin never unloads a module it did not create."""
+    if not name or module is None:
+        return False
+    for sink in _sinks():
+        if sink.get("name") == name and str(sink.get("owner_module")) == str(module):
+            result = _pactl("unload-module", str(module))
+            return bool(result and result.returncode == 0)
+    return False
+
+
+def _audio_env(sink: str) -> dict[str, str]:
+    """Point every common audio API at ``sink``. An app that names its
+    output anyway (SDL3 names the default one) is moved by its supervisor."""
+    return {
+        "PULSE_SINK": sink,  # libpulse, PipeWire's pulse server
+        "PIPEWIRE_NODE": sink,  # native PipeWire clients, its ALSA plugin
+        "SDL_AUDIO_DRIVER": "pulseaudio",  # SDL3: its pulse backend
+        "SDL_AUDIODRIVER": "pulseaudio",  # SDL2
+    }
+
+
+def _sweep_sinks(records: list[dict]) -> None:
+    """Unload this home's sinks that no live app owns (a crash, a restart)."""
+    live = {
+        r.get("audio_sink")
+        for r in records
+        if r.get("status") in ("starting", "running") and r.get("audio_sink")
+    }
+    mine = f"{SINK_PREFIX}{_home_tag()}_"
+    for sink in _sinks():
+        name = str(sink.get("name") or "")
+        if name.startswith(mine) and name not in live:
+            module = str(sink.get("owner_module") or "")
+            if module.isdigit():
+                _remove_sink(name, int(module))
+
+
+# ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
 
@@ -538,6 +652,7 @@ def _refresh(record: dict) -> dict | None:
         _kill_group(current.get("app_pid"), current.get("app_start"))
         _kill_group(current.get("xvfb_pid"), current.get("xvfb_start"))
         keymap_registry(current).unlink(missing_ok=True)
+        _remove_sink(current.get("audio_sink"), current.get("audio_module"))
         current["status"] = "exited"
         current["exit_code"] = code
         current["exited_at"] = now_iso()
@@ -568,8 +683,11 @@ def list_sessions() -> list[dict]:
 
 
 def sweep() -> None:
-    """Refresh every record (server start-up: apps that died while down)."""
-    list_sessions()
+    """Refresh every record and drop orphan sinks (server start-up: apps that
+    died while Merlin was down). Under the lock: a launch elsewhere creates
+    its sink and its record together."""
+    with _launch_lock():
+        _sweep_sinks(list_sessions())
 
 
 def launch(
@@ -586,12 +704,20 @@ def launch(
     origin: dict | None = None,
     saved_id: str | None = None,
     wait: float = WINDOW_TIMEOUT,
+    audio: str = "stream",
 ) -> dict:
-    """Start ``argv`` on a fresh private display and return its record."""
+    """Start ``argv`` on a fresh private display and return its record.
+
+    ``audio="stream"`` gives the app a null sink of its own, captured by the
+    streamer (it then plays nowhere else); ``"local"`` lets it play on the
+    machine. Without PipeWire, streaming falls back to local.
+    """
     if not argv:
         raise ValueError("no command given")
     if controls is not None and controls not in CONTROLS:
         raise ValueError(f"controls must be one of {', '.join(CONTROLS)}")
+    if audio not in AUDIO_MODES:
+        raise ValueError(f"audio must be one of {', '.join(AUDIO_MODES)}")
     workdir = Path(cwd or os.getcwd()).expanduser().resolve()
     if not workdir.is_dir():
         raise AppError(f"Folder not found: {workdir}")
@@ -621,10 +747,22 @@ def launch(
             width, height, apps_dir() / "logs" / f"{session_id}.xvfb.log"
         )
         display = f":{number}"
+        generation = uuid.uuid4().hex
+        sink: str | None = None
+        module: int | None = None
+        if audio == "stream" and audio_available():
+            sink = _sink_name(session_id, generation)
+            module = _create_sink(sink)
+            if module is None:
+                sink = None
         record: dict[str, Any] = {
             "id": session_id,
             # Identifies this launch: guarded updates never touch a replacement.
-            "generation": uuid.uuid4().hex,
+            "generation": generation,
+            "audio": "stream" if sink else "local",
+            "audio_requested": audio,
+            "audio_sink": sink,
+            "audio_module": module,
             "name": name or Path(argv[0]).name,
             "argv": list(argv),
             "cwd": str(workdir),
@@ -650,6 +788,8 @@ def launch(
             record["baseline_windows"] = sorted(_visible_windows(display))
             prefix = ["vglrun", "-d", "egl"] if gpu_resolved == "on" else []
             env = _xenv(display)
+            if sink:
+                env.update(_audio_env(sink))
             if gpu_resolved == "off":
                 # Software for real: a desktop that pins the NVIDIA GLX vendor
                 # would otherwise still render on the GPU.
@@ -660,6 +800,7 @@ def launch(
                         sys.executable,
                         str(SUPERVISOR),
                         str(exit_file),
+                        *(["--audio-sink", sink] if sink else []),
                         "--",
                         *prefix,
                         *argv,
@@ -674,6 +815,7 @@ def launch(
             _save_record(record)
         except BaseException:
             _kill_group(xvfb_pid, xvfb_start)
+            _remove_sink(sink, module)
             raise
 
     _wait_for_window(record, wait)
@@ -762,6 +904,7 @@ def _stop_record(record: dict, *, thumbnail: bool) -> None:
         _record_path(record["id"]).unlink(missing_ok=True)
         _exit_path(record["id"]).unlink(missing_ok=True)
         keymap_registry(record).unlink(missing_ok=True)
+        _remove_sink(record.get("audio_sink"), record.get("audio_module"))
 
 
 def stop(session_id: str) -> dict:
@@ -908,6 +1051,8 @@ def public(record: dict) -> dict:
             "gpu",
             "controls",
             "keys",
+            "audio",
+            "audio_requested",
             "status",
             "exit_code",
             "origin",
@@ -977,6 +1122,9 @@ def _clean_saved(data: dict) -> dict:
     if size != "fit":
         width, height = parse_size(size)
         size = f"{width}x{height}"
+    audio = data.get("audio") or "stream"
+    if audio not in AUDIO_MODES:
+        raise ValueError(f"audio must be one of {', '.join(AUDIO_MODES)}")
     return {
         "id": slugify(name),
         "name": name,
@@ -986,6 +1134,7 @@ def _clean_saved(data: dict) -> dict:
         "keys": {str(k): str(v) for k, v in keys.items()},
         "gpu": gpu,
         "size": size,
+        "audio": audio,
     }
 
 
@@ -1039,4 +1188,5 @@ def launch_saved(saved_id: str, size: tuple[int, int] | None = None) -> dict:
         keys=app.get("keys") or {},
         origin={"kind": "dashboard"},
         saved_id=app["id"],
+        audio=app.get("audio") or "stream",
     )

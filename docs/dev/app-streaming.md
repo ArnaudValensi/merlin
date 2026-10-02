@@ -25,12 +25,15 @@ help line, skill, or terminal button. Changing it needs `merlin restart`.
                                        ┌───────────────────────────┴──────────┐
                                        ▼                                      ▼
                                Xvfb :N (WxHx24)                     app: [vglrun -d egl] CMD
-                                       ▲                              DISPLAY=:N, x11-only env
-                                       │ ximagesrc + XTEST
+                                       ▲                              DISPLAY=:N, x11-only env,
+                                       │ ximagesrc + XTEST            PULSE_SINK=merlin_app_…
+                                       │                                      │ plays into
+                                       │            PipeWire null sink ◄──────┘
+                                       │            (its monitor) ──► pipewiresrc
  Browser ⇄ WS /ws/apps/{id}/stream ⇄ Merlin ⇄ stdin/stdout JSON ⇄ app/streamer.py
    ▲      (signaling only, authed,     (relay)                     (/usr/bin/python3,
-   │       works through the proxy)                                 webrtcbin, encoder)
-   └──────────── WebRTC over the LAN: H.264/VP8 video + "input" data channel ───────┘
+   │       works through the proxy)                                 webrtcbin, encoders)
+   └──── WebRTC over the LAN: H.264/VP8 video + Opus sound + "input" data channel ───┘
 ```
 
 The proxy (merlincloud.dev) only ever carries the signaling. The video and the
@@ -46,8 +49,8 @@ times out after 8 s and says so.
 | `ext_commands.py` | `FLAGGED_BUILTINS`; `builtin_extension_dirs()` drops a flagged built-in whose flag is off |
 | `main.py` | `_load_flagged_builtins()` loads `app` only with its flag |
 | `app/__init__.py` | Extension exports, routes loaded lazily so CLI imports stay light |
-| `app/sessions.py` | The one library behind the CLI and the API: displays, lifecycle, registry, input, screenshots, saved apps. **Stdlib only** |
-| `app/supervise.py` | Per-app supervisor: group leader and child subreaper, exit code, ends leftovers. **Stdlib only** |
+| `app/sessions.py` | The one library behind the CLI and the API: displays, sound sinks, lifecycle, registry, input, screenshots, saved apps. **Stdlib only** |
+| `app/supervise.py` | Per-app supervisor: group leader and child subreaper, exit code, ends leftovers, keeps the app's sound on its sink. **Stdlib only** |
 | `app/deps.py` | Prerequisite checks (runs a probe in the system Python) |
 | `app/cli_support.py`, `app/commands/*.py` | `merlin app run/list/stop/logs/screenshot/input`, `#!/usr/bin/env python3` |
 | `app/routes.py` | `/apps`, `/apps/{id}/play`, `/api/apps/*`, the signaling WebSocket |
@@ -57,7 +60,7 @@ times out after 8 s and says so.
 | `app/static/terminal-panel.*` | Terminal button, toast, docked panel, mobile mini-player |
 | `app/static/apps.*`, `app/templates/apps.html` | The Apps page |
 | `app/skills/merlin-app/SKILL.md` | The agent skill |
-| `tests/fixtures/x_probe.py` | X11 test app: known colors, logs keys and clicks |
+| `tests/fixtures/x_probe.py` | X11 test app: known colors, logs keys and clicks, `--tone HZ` plays a sine |
 
 ## Sessions
 
@@ -197,6 +200,61 @@ the video still releases) and are reconciled with the `buttons` bitmask, so
 chords (left held, right pressed) reach the app; buttons over the video
 (Retry, Logs) are exempt from the capture.
 
+## Sound
+
+Each app's sound streams with its picture, in the same WebRTC connection (one
+connection keeps them in sync: both tracks share the stream id and CNAME, and
+the browser's jitter buffer aligns them).
+
+- **One sink per app.** With `audio: stream` (the default; CLI `--audio`,
+  saved apps' `audio` field), launch creates a PulseAudio `module-null-sink`
+  through `pactl` (served by PipeWire), under the state lock after Xvfb and
+  before the app. Its name is `merlin_app_<home tag>_<id>_<generation[:8]>`:
+  the home tag (6 hex of a UUID5 of the apps dir) keeps every Merlin home on
+  the machine (the live one, a test server) to its own sinks. The record keeps
+  `audio` (effective mode), `audio_requested`, `audio_sink` and
+  `audio_module` (the module index).
+- **Routing by environment**: `PULSE_SINK` (libpulse), `PIPEWIRE_NODE` (native
+  PipeWire and its ALSA plugin), `SDL_AUDIO_DRIVER` / `SDL_AUDIODRIVER=pulseaudio`
+  (SDL3 / SDL2 pick their pulse backend). That covers apps that open "the
+  default output" without naming it. SDL3 (and SDL2 through sdl2-compat)
+  names it, past `PULSE_SINK`, so the supervisor (`supervise.py
+  --audio-sink`) also follows `pactl subscribe` and moves every playback
+  stream whose process is the app's (in its group, or descended from the
+  supervisor) to the sink, with a rescan every 5 s for a missed event. It
+  never moves anything once the sink is gone, and stops (killing its
+  subscriber) when the app ends. With `stream` the app is silent on the
+  machine even when nobody watches; moving its sound elsewhere by hand is
+  undone (use `local`).
+- **Removal is checked**: stop and the exit transition unload the module only
+  while `pactl -f json list sinks` still shows a sink with exactly that name
+  owned by that module (indexes are reused after a sound-server restart). The
+  start-up sweep (under the state lock) unloads this home's sinks that no
+  starting or running record owns.
+- **Capture**: the streamer gets `--audio-sink`, checks under the state lock
+  that the sink still exists (Merlin removes sinks under that lock), and adds
+  `pipewiresrc target-object=<sink>` (capturing the sink's monitor) `!
+  opusenc` (96 kbit/s, 20 ms frames, `restricted-lowdelay`) `! rtpopuspay
+  pt=97 ! webrtcbin`, a second send-only transceiver. `ready` carries
+  `audio: true|false`; the UI shows the sound toggles only when it is true.
+  An audio branch that cannot start is dropped (the pipeline is rebuilt
+  video-only); an error from an audio element later (the sink went away) is
+  logged and the picture goes on.
+- **Browser**: the `<video>` element carries both tracks (one `MediaStream`
+  per connection collects them). Its answer adds `stereo=1` to the Opus fmtp
+  (otherwise Chromium and WebKit decode mono). Sound needs a user gesture:
+  `MerlinApps.sound(video, surface, target)` keeps a per-surface choice in
+  `localStorage` (`app-sound-player|panel|mini`, defaults on, on, off) and
+  applies it on the next `pointerup`, `touchend` or `keydown` (elements marked
+  `data-sound`, the toggles, are left to their own click). The player starts
+  muted and the first touch brings the sound; the docked panel unmutes on the
+  click that opened it; the mini-player stays muted until its speaker. If the
+  browser still refuses unmuted playback, the client falls back to muted
+  playback (the picture never waits for a gesture) and the next gesture
+  retries.
+- **PipeWire only.** `audio_available()` requires `pactl info` to name
+  PipeWire; plain PulseAudio falls back to `local` (see Gotchas).
+
 ## UI
 
 - **Terminal**: the page dispatches `merlin:terminal-window` when its tmux
@@ -229,17 +287,40 @@ chords (left held, right pressed) reach the app; buttons over the video
   `getCapabilities`.
 - **Apps run as the user**, with the user's files: a game loads and writes the
   user's real saves. The skill tells agents so.
-- **Audio** is not streamed: the app plays on the machine's own output.
+- **The capture must never fall back.** A capture whose target is missing,
+  or whose sink goes away, is linked by PipeWire (WirePlumber) to the default
+  device: the microphone or everything the machine plays, streamed to the
+  phone. Through `pulsesrc` nothing prevents it (verified: the pulse layer
+  ignores the stream properties). `pipewiresrc` with
+  `node.dont-fallback`, `node.dont-reconnect`, `node.dont-move` and
+  `stream.capture.sink` stays unlinked instead, and needs `media.type=Audio`
+  / `media.category=Capture` or WirePlumber finds no target at all. Plain
+  PulseAudio moves a capture to the default source when its sink goes away,
+  so sound streaming is PipeWire only.
+- **SDL3 opens the default output by name**, so `PULSE_SINK` alone leaves
+  oob (SDL2 on sdl2-compat) on the speakers. Hence the supervisor's mover.
+  The probe's `--tone-device` reproduces it in the tests.
+- **The pipeline runs on the system clock** (`use_clock`): `pipewiresrc`
+  provides a clock, and one that stops with a lost sink would stop the
+  picture.
+- **Opus in-band FEC needs SILK**; `restricted-lowdelay` is CELT only, so
+  there is no FEC (negligible loss on a LAN).
 
 ## Tests
 
 - Unit: `test_app_flag.py` (the flag everywhere), `test_app_sessions.py`
   (lifecycle on real Xvfb), `test_app_agent.py` (screenshots, input, skill),
-  `test_app_routes.py` (API, auth, saved apps, missing prerequisites).
+  `test_app_routes.py` (API, auth, saved apps, missing prerequisites),
+  `test_app_audio.py` (sinks on the real PipeWire: routing, the tone reaches
+  the app's sink, removal, ownership, the sweep, local mode, degradation),
+  `tests/js/app-client.test.js` (client states, stereo answer, sound choices).
 - E2E (`uv run scripts.py test-e2e`): `test_app_stream.py` (pixels, input,
   codecs, single viewer, cleanup), `test_app_terminal.py`,
   `test_app_player.py` (touch profiles through CDP touch events),
   `test_app_page.py`, `test_app_hardening.py` (crash, streamer death, restart,
-  no Xvfb).
+  no Xvfb), `test_app_audio.py` (a WebAudio analyser hears the probe's
+  440 Hz; local mode is picture only; each surface's sound default and
+  toggle under Chromium's real autoplay rule; a lost sink keeps the picture
+  and never moves the capture).
 - Tests needing Xvfb or GStreamer skip with a reason on machines without
   them.

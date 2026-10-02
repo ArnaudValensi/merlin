@@ -37,7 +37,8 @@ try:
     from gi.repository import Gst, GstWebRTC, GstSdp  # noqa: F401
     Gst.init(None)
     out["gi"] = True
-    for name in ("webrtcbin", "ximagesrc", "vp8enc", "nvh264enc", "openh264enc"):
+    for name in ("webrtcbin", "ximagesrc", "vp8enc", "nvh264enc", "openh264enc",
+                 "pipewiresrc", "opusenc", "rtpopuspay"):
         out["elements"][name] = Gst.ElementFactory.find(name) is not None
 except Exception:
     pass
@@ -81,6 +82,8 @@ def checks() -> list[Check]:
     """Every prerequisite, required ones first."""
     if not is_linux():
         return [Check("Linux", False, True, "App streaming runs on Linux only")]
+    from app import sessions  # the sound check lives with the sinks
+
     probe = _probe_python()
     elements = probe.get("elements", {})
     result = [
@@ -107,6 +110,19 @@ def checks() -> list[Check]:
             bool(shutil.which("vglrun")),
             False,
             "virtualgl; without it apps render in software",
+        ),
+        Check(
+            "Sound (PipeWire)",
+            sessions.audio_available(),
+            False,
+            "pipewire-pulse and pactl; without it apps play on this machine",
+        ),
+        Check(
+            "Sound streaming",
+            all(elements.get(e) for e in ("pipewiresrc", "opusenc", "rtpopuspay")),
+            False,
+            "gst-plugin-pipewire, gst-plugins-base and -good (Opus); "
+            "without them streams are silent",
         ),
         Check(
             "H.264 encoder",

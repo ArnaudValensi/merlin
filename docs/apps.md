@@ -25,7 +25,10 @@ sudo pacman -S xorg-server-xvfb virtualgl xdotool python-xlib
 
 GStreamer with WebRTC (`gst-plugins-bad`), PyGObject and ImageMagick are also
 needed; most desktops already have them. VirtualGL is optional (GPU rendering
-for OpenGL apps); without it apps render in software.
+for OpenGL apps); without it apps render in software. Sound streaming needs
+PipeWire (the default on current desktops) with `pactl` and its GStreamer
+plugin (`gst-plugin-pipewire`); without them apps play on the machine and the
+stream is silent.
 
 ## Let your agent run it
 
@@ -75,12 +78,23 @@ Pinch to zoom in on the picture in any profile. **Keyboard** in the menu opens
 your phone's keyboard plus a row of Esc, Tab, Ctrl, Alt, arrows, Enter and
 Backspace.
 
+## Sound
+
+The app's sound comes with the picture. Browsers only play sound after you
+touch the page, so the player starts silent and your first tap, click or key
+turns the sound on. **Sound** in the ⋯ menu turns it off and on. In the
+terminal, the docked panel plays the sound and the phone's mini-player stays
+silent until you tap its speaker. Each place remembers your choice.
+
+While an app streams its sound, it is silent on the machine itself. To hear it
+there instead, launch it with `--audio local` (or pick "Play on this machine"
+in the app's form); its stream is then silent.
+
 ## Good to know
 
 - Apps keep running when you close the page or restart Merlin; only Stop ends
   them.
 - One screen at a time watches an app: opening it elsewhere takes over.
 - Apps run as you, with your files: a game uses your real saves.
-- Sound plays on the machine, not on your phone (not streamed yet).
 - "Can't reach … directly" means your phone is not on the same network: join
   the Wi-Fi, or turn on Tailscale on both.

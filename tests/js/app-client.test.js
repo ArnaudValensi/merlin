@@ -60,23 +60,33 @@ function makeEnv() {
             peers.push(this);
         }
         setRemoteDescription() { return this.remote.promise; }
-        createAnswer() { return Promise.resolve({ type: "answer", sdp: "answer-sdp" }); }
-        setLocalDescription() { return Promise.resolve(); }
+        createAnswer() { return Promise.resolve({ type: "answer", sdp: answerSdp }); }
+        setLocalDescription(desc) { this.local = desc; return Promise.resolve(); }
         addIceCandidate() { return Promise.resolve(); }
         getStats() { return Promise.resolve(new Map()); }
         close() { this.closed = true; }
     }
 
+    let answerSdp = "answer-sdp";
+    const storage = new Map();
+    const localStorage = {
+        getItem: (k) => (storage.has(k) ? storage.get(k) : null),
+        setItem: (k, v) => storage.set(k, String(v)),
+    };
+
     const videoListeners = {};
     const parentAttrs = {};
     const video = {
         srcObject: null,
+        muted: true,
+        plays: 0,
+        playResult: null,     // a function returning play()'s promise, when set
         parentElement: { setAttribute(k, v) { parentAttrs[k] = v; } },
         addEventListener(type, cb) { (videoListeners[type] = videoListeners[type] || []).push(cb); },
         removeEventListener(type, cb) {
             videoListeners[type] = (videoListeners[type] || []).filter((f) => f !== cb);
         },
-        play() { return Promise.resolve(); },
+        play() { this.plays++; return this.playResult ? this.playResult(this) : Promise.resolve(); },
         fire(type) { (videoListeners[type] || []).slice().forEach((cb) => cb({})); },
     };
 
@@ -97,7 +107,11 @@ function makeEnv() {
         WebSocket: FakeSocket,
         RTCPeerConnection: FakePeer,
         RTCRtpReceiver: { getCapabilities: () => ({ codecs: [{ mimeType: "video/H264" }] }) },
-        MediaStream: class {},
+        MediaStream: class {
+            constructor() { this.tracks = []; }
+            addTrack(track) { this.tracks.push(track); }
+        },
+        localStorage,
         requestAnimationFrame: (fn) => fn(),
         setTimeout(fn, delay) {
             const id = nextId++;
@@ -134,7 +148,8 @@ function makeEnv() {
 
     return {
         MerlinApps: sandbox.window.MerlinApps,
-        sockets, peers, video, document, parentAttrs, advance, flush,
+        sockets, peers, video, document, parentAttrs, advance, flush, storage,
+        setAnswer(sdp) { answerSdp = sdp; },
     };
 }
 
@@ -313,4 +328,143 @@ test("no offer at all within a minute is a failed start, retried", async () => {
     assert.ok(states.includes("connecting"));
     assert.ok(!states.includes("unreachable"));
     assert.equal(env.sockets.length, 2, "one automatic retry");
+});
+
+// ---- sound -----------------------------------------------------------------
+
+const CHROME_ANSWER = [
+    "v=0",
+    "m=video 9 UDP/TLS/RTP/SAVPF 96",
+    "a=rtpmap:96 VP8/90000",
+    "m=audio 9 UDP/TLS/RTP/SAVPF 97",
+    "a=rtpmap:97 opus/48000/2",
+    "a=fmtp:97 minptime=10;useinbandfec=1",
+    "",
+].join("\r\n");
+
+test("the answer asks for stereo sound, and only once", () => {
+    const { preferStereo } = makeEnv().MerlinApps;
+    const stereo = preferStereo(CHROME_ANSWER);
+    assert.match(stereo, /a=fmtp:97 minptime=10;useinbandfec=1;stereo=1\r\n/);
+    assert.equal(preferStereo(stereo), stereo);
+    const noFmtp = CHROME_ANSWER.replace("a=fmtp:97 minptime=10;useinbandfec=1\r\n", "");
+    assert.match(preferStereo(noFmtp), /a=rtpmap:97 opus\/48000\/2\r\na=fmtp:97 stereo=1\r\n/);
+    const videoOnly = "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:96 VP8/90000\r\n";
+    assert.equal(preferStereo(videoOnly), videoOnly);
+    const mono = CHROME_ANSWER.replace("useinbandfec=1", "stereo=0");
+    assert.equal(preferStereo(mono), mono, "an explicit choice is kept");
+});
+
+test("the stereo answer is the one set locally and sent to the streamer", async () => {
+    const env = makeEnv();
+    env.setAnswer(CHROME_ANSWER);
+    connect(env);
+    await goLive(env, env.sockets[0]);
+    const sent = env.sockets[0].sent.find((m) => m.type === "answer");
+    assert.match(sent.sdp, /stereo=1/);
+    assert.equal(env.peers[0].local.sdp, sent.sdp);
+});
+
+test("picture and sound tracks play in one element", async () => {
+    const env = makeEnv();
+    connect(env);
+    await goLive(env, env.sockets[0]);
+    const peer = env.peers[0];
+    peer.ontrack({ track: { kind: "video" }, streams: [{ id: "a" }] });
+    const media = env.video.srcObject;
+    peer.ontrack({ track: { kind: "audio" }, streams: [{ id: "b" }] });
+    assert.equal(env.video.srcObject, media, "the second track joins, never replaces");
+    assert.deepEqual(media.tracks.map((t) => t.kind), ["video", "audio"]);
+});
+
+test("a browser that refuses sound without a gesture still shows the picture, muted", async () => {
+    const env = makeEnv();
+    env.video.muted = false;
+    env.video.playResult = (v) => (v.muted
+        ? Promise.resolve()
+        : Promise.reject(Object.assign(new Error("gesture"), { name: "NotAllowedError" })));
+    connect(env);
+    await goLive(env, env.sockets[0]);
+    env.peers[0].ontrack({ track: { kind: "video" }, streams: [] });
+    await env.flush();
+    assert.equal(env.video.muted, true);
+    assert.equal(env.video.plays, 2, "played again, muted");
+});
+
+test("ready says whether the stream carries sound", () => {
+    const env = makeEnv();
+    let ready = null;
+    const { stream } = connect(env, { onReady: (info) => { ready = info.audio; } });
+    env.sockets[0].deliver({ type: "ready", encoder: "vp8enc", codec: "VP8", audio: true });
+    assert.equal(ready, true);
+    assert.equal(stream.info.audio, true);
+    assert.equal(env.parentAttrs["data-audio"], "1");
+    env.sockets[0].deliver({ type: "ready", encoder: "vp8enc", codec: "VP8" });
+    assert.equal(ready, false);
+});
+
+function gestureTarget() {
+    const listeners = {};
+    return {
+        addEventListener(type, cb) { (listeners[type] = listeners[type] || []).push(cb); },
+        removeEventListener(type, cb) {
+            listeners[type] = (listeners[type] || []).filter((f) => f !== cb);
+        },
+        fire(type, target) {
+            (listeners[type] || []).slice().forEach((cb) => cb({ target: target || {} }));
+        },
+        count: () => Object.values(listeners).reduce((n, l) => n + l.length, 0),
+    };
+}
+
+test("sound is on where you play, off in the mini-player, until the user says otherwise", () => {
+    for (const [surface, on] of [["player", true], ["panel", true], ["mini", false]]) {
+        const env = makeEnv();
+        const target = gestureTarget();
+        const sound = env.MerlinApps.sound(env.video, surface, target);
+        assert.equal(sound.wanted, on, surface);
+        assert.equal(env.video.muted, true, "nothing changes before a gesture");
+        target.fire("pointerup");
+        assert.equal(env.video.muted, !on, `${surface} after the first gesture`);
+    }
+});
+
+test("the toggle is remembered per surface and left alone by the gesture hook", () => {
+    const env = makeEnv();
+    const target = gestureTarget();
+    const sound = env.MerlinApps.sound(env.video, "player", target);
+    const toggle = { closest: (sel) => (sel === "[data-sound]" ? toggle : null) };
+
+    // Pressing the toggle while muted: the hook must not unmute first (the
+    // click would then read "on" and mute again).
+    target.fire("pointerup", toggle);
+    assert.equal(env.video.muted, true);
+    sound.set(!sound.on);
+    assert.equal(env.video.muted, false);
+
+    sound.set(false);
+    assert.equal(env.video.muted, true);
+    assert.equal(env.storage.get("app-sound-player"), "0");
+    target.fire("keydown");
+    assert.equal(env.video.muted, true, "a muted choice stays muted");
+
+    const again = env.MerlinApps.sound(env.video, "player", gestureTarget());
+    assert.equal(again.wanted, false, "remembered");
+    assert.equal(env.MerlinApps.sound(env.video, "panel", gestureTarget()).wanted, true,
+        "another surface keeps its own");
+});
+
+test("sound comes back on the next gesture after a forced mute", () => {
+    const env = makeEnv();
+    const target = gestureTarget();
+    env.video.srcObject = {};
+    const sound = env.MerlinApps.sound(env.video, "panel", target);
+    sound.apply();
+    assert.equal(env.video.muted, false);
+    env.video.muted = true;          // the browser's autoplay fallback
+    target.fire("touchend");
+    assert.equal(env.video.muted, false);
+    assert.ok(env.video.plays >= 1, "playback resumed with sound");
+    sound.destroy();
+    assert.equal(target.count(), 0);
 });

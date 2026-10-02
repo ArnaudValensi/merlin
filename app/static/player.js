@@ -4,6 +4,8 @@
  * controls profile: Gamepad (D-pad = arrows, buttons mapped to keys),
  * Trackpad (a laptop trackpad: relative cursor, tap = click) or Touch (tap
  * where you touch). Pinch zooms the video on the client in every profile.
+ * Sound starts muted (browsers want a gesture) and comes on with the first
+ * touch, click or key, unless turned off in the ⋯ sheet.
  */
 (function () {
     'use strict';
@@ -24,6 +26,8 @@
     var keysRow = document.getElementById('player-keys');
     var kb = document.getElementById('player-kb');
     var hint = document.getElementById('player-hint');
+    var soundItem = sheet.querySelector('[data-action="sound"]');
+    var soundState = document.getElementById('player-sound-state');
     var id = root.getAttribute('data-id');
 
     var fine = window.matchMedia('(pointer: fine)').matches;
@@ -485,6 +489,17 @@
         return app && app.keys && Object.keys(app.keys).length ? 'gamepad' : 'trackpad';
     }
 
+    // ---- sound ------------------------------------------------------------------------
+
+    var sound = MerlinApps.sound(video, 'player', window);
+    function renderSound() {
+        var on = !video.muted;
+        soundState.textContent = on ? 'On' : 'Off';
+        soundItem.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    video.addEventListener('volumechange', renderSound);
+    renderSound();
+
     // ---- sheet -----------------------------------------------------------------------
 
     function openSheet() { sheet.hidden = false; menuBtn.setAttribute('aria-expanded', 'true'); }
@@ -504,6 +519,7 @@
         var controls = b.getAttribute('data-controls');
         if (controls) { setProfile(controls); return; }
         var action = b.getAttribute('data-action');
+        if (action === 'sound') { sound.set(!sound.on); return; }
         if (action === 'keyboard') { closeSheet(); openKeyboard(); }
         else if (action === 'reset-zoom') { resetZoom(); closeSheet(); }
         else if (action === 'screenshot') { downloadScreenshot(); closeSheet(); }
@@ -613,6 +629,7 @@
             }
             if (!fine && !profile) setProfile(defaultProfile());
         },
+        onReady: function (info) { soundItem.hidden = !info.audio; },
         onAgentInput: function () { agentUntil = Date.now() + AGENT_INPUT_MS; updateChip(); }
     });
     // Root (re)binds after a reconnect via getStream, so a single binding is enough.
@@ -624,6 +641,7 @@
         get stream() { return stream; },
         get profile() { return profile; },
         setProfile: setProfile,
+        get sound() { return sound; },
         get zoom() { return view.scale; }
     };
 })();

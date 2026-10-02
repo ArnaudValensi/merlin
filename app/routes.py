@@ -157,6 +157,7 @@ async def launch_session(request: Request):
                     controls=body.get("controls"),
                     keys=body.get("keys") or {},
                     origin={"kind": "dashboard"},
+                    audio=body.get("audio") or "stream",
                 )
             )
     except KeyError:
@@ -401,6 +402,8 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
             str(sessions.apps_dir() / ".lock"),
             "--keymap-registry",
             str(sessions.keymap_registry(record)),
+            "--audio-sink",
+            record.get("audio_sink") or "",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

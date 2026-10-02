@@ -185,16 +185,13 @@ print(json.dumps({"before_loop": first, "order": order,
     assert out["order"] == [out["h"], out["i"], out["ret"]]
 
 
-def test_attachment_happens_inside_the_state_lock():
-    """Owner check, input connection, pipeline and capture start (PAUSED)
-    all run while the state lock is held; ready is sent after."""
-    trace = _run(
-        """
+ATTACH = """
 from argparse import Namespace
 from contextlib import contextmanager
 
 held = {"v": False}
 trace = []
+FAIL_FIRST_PAUSE = %s
 
 @contextmanager
 def fake_lock(path):
@@ -205,36 +202,69 @@ def fake_lock(path):
         held["v"] = False
 
 class FakePipe:
+    def __init__(self, audio):
+        self.audio = audio
     def set_state(self, state):
         trace.append(["set_state", state.value_nick, held["v"]])
+        if FAIL_FIRST_PAUSE and self.audio and state == streamer.Gst.State.PAUSED:
+            return streamer.Gst.StateChangeReturn.FAILURE
+        return streamer.Gst.StateChangeReturn.SUCCESS
 
 class FakeInjector:
     def __init__(self, display, registry=""):
         trace.append(["injector", display, held["v"]])
 
-def fake_build(self, encoder, codec):
-    trace.append(["build", encoder, held["v"]])
-    self.pipe = FakePipe()
+def fake_build(self, encoder, audio):
+    trace.append(["build", encoder, audio, held["v"]])
+    self.pipe = FakePipe(audio)
+
+def fake_discard(self):
+    trace.append(["discard", held["v"]])
+
+def sink_exists(name):
+    trace.append(["sink", name, held["v"]])
+    return True
 
 streamer.state_lock = fake_lock
 streamer.check_display_owner = lambda *a: trace.append(["check", held["v"]])
 streamer.Injector = FakeInjector
 streamer.choose_encoder = lambda codecs: ("vp8enc", "VP8")
+streamer.missing_audio_elements = lambda: []
+streamer.sink_exists = sink_exists
 streamer.skipped_addresses = lambda: set()
 streamer.Streamer._build = fake_build
-streamer.send = lambda message: trace.append(["send", message["type"], held["v"]])
+streamer.Streamer._discard = fake_discard
+streamer.send = lambda message: trace.append(
+    ["send", message["type"], message.get("audio"), held["v"]])
 streamer.Streamer(Namespace(display=":100", codecs="VP8", fps=60, bitrate=8000,
                             xvfb_pid=1, xvfb_start=2, state_lock="/tmp/lock",
-                            keymap_registry=""))
+                            keymap_registry="", audio_sink="merlin_app_x"))
 print(json.dumps(trace))
 """
-    )
+
+
+def test_attachment_happens_inside_the_state_lock():
+    """Owner check, input connection, the sink check, pipeline and capture
+    start (PAUSED) all run while the state lock is held; ready is sent after."""
+    trace = _run(ATTACH % "False")
     assert trace == [
         ["check", True],
         ["injector", ":100", True],
-        ["build", "vp8enc", True],
+        ["sink", "merlin_app_x", True],
+        ["build", "vp8enc", True, True],
         ["set_state", "paused", True],
-        ["send", "ready", False],
+        ["send", "ready", True, False],
+    ]
+
+
+def test_sound_that_cannot_start_leaves_a_silent_stream():
+    trace = _run(ATTACH % "True")
+    assert trace[-5:] == [
+        ["set_state", "paused", True],
+        ["discard", True],
+        ["build", "vp8enc", False, True],
+        ["set_state", "paused", True],
+        ["send", "ready", False, False],
     ]
 
 

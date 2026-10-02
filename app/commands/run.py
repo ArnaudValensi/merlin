@@ -9,6 +9,7 @@ Examples:
   merlin app run --name oob --controls gamepad --keys A=x,B=z,X=r,Y=Tab,Start=Escape -- ./build/OutOfBody
   merlin app run --replace --name oob -- ./build/OutOfBody     # after a rebuild
   merlin app run --size 1920x1080 --gpu off -- glxgears
+  merlin app run --audio local -- ./build/OutOfBody      # sound on this machine
 
 Output: {id, display, pid, size, gpu, status, url, ...}. Exit 1 if the app
 exited during start-up (the JSON then carries log_tail).
@@ -42,6 +43,13 @@ def main() -> int:
         "--keys", help="gamepad buttons to X keysyms, e.g. A=x,B=z,Start=Escape"
     )
     parser.add_argument(
+        "--audio",
+        default="stream",
+        choices=sessions.AUDIO_MODES,
+        help="stream: the sound goes to the viewer only (default); "
+        "local: it plays on this machine",
+    )
+    parser.add_argument(
         "--no-fill", action="store_true", help="keep the app window's own size"
     )
     parser.add_argument(
@@ -63,8 +71,15 @@ def main() -> int:
         fill=not args.no_fill,
         replace=args.replace,
         origin=sessions.tmux_origin(),
+        audio=args.audio,
     )
     out = sessions.public(record)
+    if args.audio == "stream" and record.get("audio") != "stream":
+        print(
+            "note: the sound cannot be streamed (it needs PipeWire): the app "
+            "plays it on this machine and the stream is silent",
+            file=sys.stderr,
+        )
     if record["status"] == "exited":
         out["log_tail"] = sessions.read_log(record["id"], tail=20)
         cli_support.emit(out)

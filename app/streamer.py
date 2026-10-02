@@ -13,7 +13,10 @@ JSON lines:
 The pipeline captures the X display (``ximagesrc``), encodes it (NVENC H.264,
 OpenH264 or VP8, in that order of preference among the codecs the browser
 supports) and sends it through ``webrtcbin`` with no STUN or TURN: host
-candidates only, the local network. Input arrives on the ``input`` data
+candidates only, the local network. With ``--audio-sink``, a second track
+carries the app's sound: the monitor of its null sink, in Opus. Audio never
+stops the video: a branch that cannot start is dropped, one that fails later
+goes silent. Input arrives on the ``input`` data
 channel and is injected with XTEST. Closing stdin stops everything and
 releases any key or button still held.
 """
@@ -107,6 +110,63 @@ def encoder_branch(name: str, kbps: int, fps: int) -> str:
         "rtpvp8pay pt=96 ! "
         "application/x-rtp,media=video,encoding-name=VP8,payload=96,clock-rate=90000"
     )
+
+
+AUDIO_ELEMENTS = ("pipewiresrc", "opusenc", "rtpopuspay")
+# The named elements of the audio branch: an error from one of them is not fatal.
+AUDIO_NAMES = frozenset(
+    ("audiosrc", "audioqueue", "audioconv", "audioresample", "audioenc", "audiopay")
+)
+
+
+# The capture must only ever hear the app's sink. PipeWire would otherwise
+# link it to the default device when the sink is missing (fallback) or goes
+# away (reconnect): the machine's microphone or everything it plays.
+CAPTURE_PROPS = (
+    "props,node.name=merlin-app-stream,media.type=Audio,media.category=Capture,"
+    "stream.capture.sink=(boolean)true,node.dont-fallback=(boolean)true,"
+    "node.dont-reconnect=(boolean)true,node.dont-move=(boolean)true"
+)
+
+
+def audio_branch(sink: str) -> str:
+    """The app's sound: its sink's monitor, Opus at 96 kbit/s in 20 ms frames.
+
+    Low-delay Opus is CELT only, which has no in-band FEC (a SILK feature):
+    on a LAN the loss it would cover is negligible."""
+    return (
+        f'pipewiresrc name=audiosrc target-object={sink} stream-properties="{CAPTURE_PROPS}" ! '
+        "audio/x-raw,channels=2 ! "
+        "queue name=audioqueue max-size-buffers=0 max-size-bytes=0 "
+        "max-size-time=200000000 leaky=downstream ! "
+        "audioconvert name=audioconv ! audioresample name=audioresample ! "
+        "audio/x-raw,rate=48000,channels=2 ! "
+        "opusenc name=audioenc bitrate=96000 frame-size=20 "
+        "audio-type=restricted-lowdelay ! "
+        "rtpopuspay name=audiopay pt=97 ! "
+        "application/x-rtp,media=audio,encoding-name=OPUS,payload=97,clock-rate=48000 ! "
+        "webrtc."
+    )
+
+
+def missing_audio_elements() -> list[str]:
+    return [name for name in AUDIO_ELEMENTS if Gst.ElementFactory.find(name) is None]
+
+
+def sink_exists(name: str) -> bool:
+    """The app's sink is loaded (checked under the state lock: Merlin removes
+    sinks under it, so it cannot vanish between this check and the build)."""
+    try:
+        out = subprocess.run(
+            ["pactl", "-f", "json", "list", "sinks"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        ).stdout
+        return any(sink.get("name") == name for sink in json.loads(out or "[]"))
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+        return False
 
 
 def choose_encoder(codecs: list[str]) -> tuple[str, str]:
@@ -534,6 +594,10 @@ class Streamer:
         self.offered = False
         self.channel = None
         encoder, codec = choose_encoder(args.codecs.split(","))
+        audio = bool(args.audio_sink)
+        if audio and (missing := missing_audio_elements()):
+            log(f"no sound in the stream: missing GStreamer {', '.join(missing)}")
+            audio = False
         # Check the display and connect to it (input, then capture) under the
         # lock that stop and launch take: the display cannot be torn down and
         # given to another app between the check and the connections.
@@ -541,12 +605,27 @@ class Streamer:
             if args.xvfb_pid:
                 check_display_owner(args.display, args.xvfb_pid, args.xvfb_start)
             self.injector = Injector(args.display, args.keymap_registry)
-            self._build(encoder, codec)
-            # READY -> PAUSED starts ximagesrc, which opens its X connection.
-            self.pipe.set_state(Gst.State.PAUSED)
-        send({"type": "ready", "encoder": encoder, "codec": codec})
+            if audio and not sink_exists(args.audio_sink):
+                log("no sound in the stream: the app's sink is gone")
+                audio = False
+            self._build(encoder, audio)
+            # READY -> PAUSED starts ximagesrc, which opens its X connection,
+            # and connects pipewiresrc to the sink's monitor.
+            if self.pipe.set_state(Gst.State.PAUSED) == Gst.StateChangeReturn.FAILURE:
+                if not audio:
+                    raise RuntimeError("the capture pipeline did not start")
+                log("no sound in the stream: the app's sink did not open")
+                self._discard()
+                audio = False
+                self._build(encoder, audio)
+                if (
+                    self.pipe.set_state(Gst.State.PAUSED)
+                    == Gst.StateChangeReturn.FAILURE
+                ):
+                    raise RuntimeError("the capture pipeline did not start")
+        send({"type": "ready", "encoder": encoder, "codec": codec, "audio": audio})
 
-    def _build(self, encoder: str, codec: str) -> None:
+    def _build(self, encoder: str, audio: bool) -> None:
         args = self.args
         description = (
             f"ximagesrc display-name={args.display} use-damage=false show-pointer=true ! "
@@ -555,21 +634,35 @@ class Streamer:
             f"{encoder_branch(encoder, args.bitrate, args.fps)} ! "
             "webrtcbin name=webrtc bundle-policy=max-bundle latency=0"
         )
+        if audio:
+            description += " " + audio_branch(args.audio_sink)
         log(f"pipeline: {description}")
         self.pipe = Gst.parse_launch(description)
+        # The system clock, never the capture's: a sink that goes away must not
+        # stop the clock the picture runs on.
+        self.pipe.use_clock(Gst.SystemClock.obtain())
+        self.audio_elements = AUDIO_NAMES if audio else frozenset()
         self.webrtc = self.pipe.get_by_name("webrtc")
-        transceiver = self.webrtc.emit("get-transceiver", 0)
-        transceiver.set_property(
-            "direction", GstWebRTC.WebRTCRTPTransceiverDirection.SENDONLY
-        )
+        index = 0
+        while (transceiver := self.webrtc.emit("get-transceiver", index)) is not None:
+            transceiver.set_property(
+                "direction", GstWebRTC.WebRTCRTPTransceiverDirection.SENDONLY
+            )
+            index += 1
         self.webrtc.connect("on-negotiation-needed", self.on_negotiation_needed)
         self.webrtc.connect("on-ice-candidate", self.on_ice_candidate)
         self.webrtc.connect(
             "notify::ice-connection-state", self.on_ice_connection_state
         )
-        bus = self.pipe.get_bus()
-        bus.add_signal_watch()
-        bus.connect("message::error", self.on_bus_error)
+        self.bus = self.pipe.get_bus()
+        self.bus.add_signal_watch()
+        self.bus.connect("message::error", self.on_bus_error)
+
+    def _discard(self) -> None:
+        """Drop a pipeline that never started (and its pending messages)."""
+        self.bus.remove_signal_watch()
+        self.pipe.set_state(Gst.State.NULL)
+        self.bus.set_flushing(True)
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -666,6 +759,11 @@ class Streamer:
 
     def on_bus_error(self, _bus, message) -> None:
         error, debug = message.parse_error()
+        if message.src is not None and message.src.get_name() in self.audio_elements:
+            # The sink went away (the app exited, the sound server restarted):
+            # the sound stops, the picture goes on.
+            log(f"sound lost: {error.message} ({debug})")
+            return
         log(f"pipeline error: {error.message} ({debug})")
         send({"type": "error", "message": error.message})
         self.stop()
@@ -682,6 +780,9 @@ def main() -> int:
     parser.add_argument("--state-lock", default="", help="Merlin's apps state lock")
     parser.add_argument(
         "--keymap-registry", default="", help="keycode slots owned on this display"
+    )
+    parser.add_argument(
+        "--audio-sink", default="", help="the app's null sink (its sound track)"
     )
     args = parser.parse_args()
     Gst.init(None)

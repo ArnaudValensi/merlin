@@ -9,6 +9,11 @@
  * States: connecting, live, unreachable (ICE failed or timed out: not on the
  * same network), replaced (opened on another device), exited (the app ended
  * or was stopped), paused (hidden for a while), error, closed.
+ *
+ * Sound: the app's audio track plays in the same <video>. Browsers only play
+ * sound after a user gesture, so each surface asks for it through
+ * MerlinApps.sound(video, surface, gestureTarget), which keeps the surface's
+ * remembered choice and applies it on the next touch, click or key.
  */
 (function () {
     'use strict';
@@ -74,6 +79,79 @@
         return proto + '//' + location.host + '/ws/apps/' + encodeURIComponent(id) + '/stream';
     }
 
+    /** play(), falling back to muted playback when the browser refuses sound
+     * without a gesture: the picture must never wait for one. */
+    function play(video) {
+        var playing = video.play();
+        if (!playing || !playing.catch) return;
+        playing.catch(function (err) {
+            if (err && err.name === 'NotAllowedError' && !video.muted) {
+                video.muted = true;
+                var again = video.play();
+                if (again && again.catch) again.catch(function () {});
+            }
+        });
+    }
+
+    /** Ask for stereo Opus in our answer: without stereo=1 the browser
+     * decodes the app's sound as mono. */
+    function preferStereo(sdp) {
+        var rtpmap = /a=rtpmap:(\d+) opus\/48000\/2/i.exec(sdp);
+        if (!rtpmap) return sdp;
+        var fmtp = new RegExp('a=fmtp:' + rtpmap[1] + ' ([^\\r\\n]*)');
+        if (fmtp.test(sdp)) {
+            return sdp.replace(fmtp, function (line, params) {
+                return /(^|;)\s*stereo=/.test(params) ? line : line + ';stereo=1';
+            });
+        }
+        return sdp.replace(rtpmap[0], rtpmap[0] + '\r\na=fmtp:' + rtpmap[1] + ' stereo=1');
+    }
+
+    // Where sound is on until the user says otherwise: where you play (the
+    // full player) and the docked desktop panel; not the mobile mini-player.
+    var SOUND_DEFAULTS = {player: true, panel: true, mini: false};
+
+    /** Sound on one surface: its remembered choice, applied on a gesture.
+     * Elements marked data-sound (the toggles) are left to their own click. */
+    function sound(video, surface, gestureTarget) {
+        var storeKey = 'app-sound-' + surface;
+        var wanted = !!SOUND_DEFAULTS[surface];
+        try {
+            var stored = localStorage.getItem(storeKey);
+            if (stored === '1' || stored === '0') wanted = stored === '1';
+        } catch (e) {}
+        var target = gestureTarget || window;
+        var GESTURES = ['pointerup', 'touchend', 'keydown'];
+
+        function apply() {
+            var mute = !wanted;
+            if (video.muted === mute) return;
+            video.muted = mute;
+            if (!mute && video.srcObject) play(video);
+        }
+        function onGesture(event) {
+            var el = event.target;
+            if (el && el.closest && el.closest('[data-sound]')) return;
+            if (wanted && video.muted) apply();
+        }
+        GESTURES.forEach(function (type) { target.addEventListener(type, onGesture, true); });
+
+        return {
+            get on() { return !video.muted; },
+            get wanted() { return wanted; },
+            /** Call from a gesture: the toggle's click, the click that opened. */
+            set: function (on) {
+                wanted = !!on;
+                try { localStorage.setItem(storeKey, wanted ? '1' : '0'); } catch (e) {}
+                apply();
+            },
+            apply: apply,
+            destroy: function () {
+                GESTURES.forEach(function (type) { target.removeEventListener(type, onGesture, true); });
+            }
+        };
+    }
+
     function browserCodecs() {
         var out = [];
         try {
@@ -92,7 +170,7 @@
         var state = 'closed';
         var timer = null, hiddenTimer = null, retryTimer = null;
         var lastBytes = null;
-        var info = {host: '', app: null, encoder: '', codec: ''};
+        var info = {host: '', app: null, encoder: '', codec: '', audio: false};
         // Every open() and teardown() starts a new generation. Callbacks of an
         // older connection (a late promise, a closing socket) check theirs and
         // do nothing, and nothing runs at all once the client is destroyed.
@@ -146,13 +224,14 @@
             function sendOn(message) {
                 if (current(g) && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
             }
+            // Picture and sound in one element: one stream per connection
+            // collects both tracks, whatever streams the offer groups them in.
+            var media = new MediaStream();
             peer.ontrack = function (event) {
                 if (!current(g)) return;
-                var stream = event.streams && event.streams[0];
-                if (!stream) stream = new MediaStream([event.track]);
-                if (video.srcObject !== stream) video.srcObject = stream;
-                var playing = video.play();
-                if (playing && playing.catch) playing.catch(function () {});
+                media.addTrack(event.track);
+                if (video.srcObject !== media) video.srcObject = media;
+                play(video);
             };
             peer.ondatachannel = function (event) { if (current(g)) channel = event.channel; };
             peer.onicecandidate = function (event) {
@@ -174,8 +253,9 @@
             peer.setRemoteDescription({type: 'offer', sdp: sdp})
                 .then(function () { return peer.createAnswer(); })
                 .then(function (answer) {
-                    return peer.setLocalDescription(answer).then(function () {
-                        sendOn({type: 'answer', sdp: answer.sdp});
+                    var local = {type: 'answer', sdp: preferStereo(answer.sdp)};
+                    return peer.setLocalDescription(local).then(function () {
+                        sendOn({type: 'answer', sdp: local.sdp});
                     });
                 })
                 .catch(function (err) {
@@ -211,9 +291,11 @@
                 case 'ready':
                     info.encoder = msg.encoder || '';
                     info.codec = msg.codec || '';
+                    info.audio = !!msg.audio;
                     if (video && video.parentElement) {
                         video.parentElement.setAttribute('data-encoder', info.encoder);
                         video.parentElement.setAttribute('data-codec', info.codec);
+                        video.parentElement.setAttribute('data-audio', info.audio ? '1' : '0');
                     }
                     if (opts.onReady) opts.onReady(info);
                     break;
@@ -504,6 +586,8 @@
 
     window.MerlinApps = {
         connect: connect,
+        sound: sound,
+        preferStereo: preferStereo,
         toDisplay: toDisplay,
         keysymFor: keysymFor,
         bindDesktopInput: bindDesktopInput

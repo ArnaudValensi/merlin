@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Supervise one app: the process that leads its process group.
 
-    supervise.py EXIT_FILE -- ARGV...
+    supervise.py EXIT_FILE [--audio-sink SINK] -- ARGV...
 
 Standard library only. It becomes a child subreaper, starts ARGV, and stays
 alive until every process the app started is gone: orphans (a parent that
@@ -22,15 +22,22 @@ Individual processes are signalled through pidfds, never bare PIDs: a PID
 read from /proc may be reused before the signal is sent, a pidfd may not. Each
 pidfd is checked against /proc after opening (still in our group, or still
 our child) before it is used.
+
+With ``--audio-sink``, the app's sound streams also go to that sink while it
+runs: the environment (PULSE_SINK...) routes most apps there, but some open
+the machine's default output by name (SDL3, and SDL2 through sdl2-compat),
+so every playback stream a process of the app opens is moved to the sink.
 """
 
 from __future__ import annotations
 
 import ctypes
+import json
 import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 PR_SET_CHILD_SUBREAPER = 36
@@ -100,11 +107,138 @@ def signal_ours(sig: int, already: set[tuple[int, int]] | None = None) -> int:
     return sent
 
 
+def _belongs(pid: int, me: int, group: int) -> bool:
+    """``pid`` is the app's: in our group, or descended from us (a process
+    that left the group with setsid is still our descendant, or adopted)."""
+    for _ in range(64):
+        if pid == me:
+            return True
+        fields = _stat_fields(pid)
+        if not fields:
+            return False
+        if int(fields[2]) == group:
+            return True
+        pid = int(fields[1])
+        if pid <= 1:
+            return False
+    return False
+
+
+class SoundMover:
+    """Keep the app's playback streams on its sink (``pactl subscribe``)."""
+
+    SAFETY_SCAN = 5.0  # a rescan even without events (a missed one)
+
+    def __init__(self, sink: str) -> None:
+        self.sink = sink
+        self.stopped = threading.Event()
+        self.dirty = threading.Event()
+        self.env = {**os.environ, "LC_ALL": "C"}
+        self.lock = threading.Lock()
+        self.proc: subprocess.Popen | None = None
+
+    def start(self) -> None:
+        threading.Thread(target=self._listen, daemon=True).start()
+        threading.Thread(target=self._mover, daemon=True).start()
+
+    def stop(self) -> None:
+        with self.lock:
+            self.stopped.set()
+            self.dirty.set()
+            if self.proc is not None:
+                try:
+                    self.proc.kill()
+                except OSError:
+                    pass
+
+    def _pactl(self, *args: str) -> str:
+        # Our own waitpid(-1) may reap this child first: subprocess then
+        # reports status 0, and the output, read to EOF, is complete anyway.
+        try:
+            return subprocess.run(
+                ["pactl", *args],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                env=self.env,
+                check=False,
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    def _listen(self) -> None:
+        while True:
+            with self.lock:  # never a new subscriber after stop()
+                if self.stopped.is_set():
+                    return
+                try:
+                    proc = self.proc = subprocess.Popen(
+                        ["pactl", "subscribe"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL,
+                        text=True,
+                        env=self.env,
+                    )
+                except OSError:
+                    return
+            self.dirty.set()  # a scan once connected: streams opened before
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                if "sink-input" in line:
+                    self.dirty.set()
+                if self.stopped.is_set():
+                    break
+            try:
+                proc.kill()
+                proc.wait(timeout=1)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            self.stopped.wait(1.0)  # the sound server went away: retry
+
+    def _mover(self) -> None:
+        me, group = os.getpid(), os.getpgid(0)
+        while not self.stopped.is_set():
+            self.dirty.wait(self.SAFETY_SCAN)
+            if self.stopped.is_set():
+                return
+            self.dirty.clear()
+            time.sleep(0.05)  # coalesce a burst of events
+            self.scan(me, group)
+
+    def scan(self, me: int, group: int) -> None:
+        try:
+            sinks = json.loads(self._pactl("-f", "json", "list", "sinks") or "[]")
+            inputs = json.loads(
+                self._pactl("-f", "json", "list", "sink-inputs") or "[]"
+            )
+        except ValueError:
+            return
+        target = next(
+            (s.get("index") for s in sinks if s.get("name") == self.sink), None
+        )
+        if target is None:
+            return  # gone (the app is ending): never move anything elsewhere
+        for stream in inputs:
+            if self.stopped.is_set() or stream.get("sink") == target:
+                continue
+            pid = str(stream.get("properties", {}).get("application.process.id", ""))
+            if pid.isdigit() and _belongs(int(pid), me, group):
+                self._pactl("move-sink-input", str(stream.get("index")), self.sink)
+
+
 def main() -> int:
-    if len(sys.argv) < 4 or sys.argv[2] != "--":
-        print("usage: supervise.py EXIT_FILE -- ARGV...", file=sys.stderr)
+    args = sys.argv[1:]
+    sink = ""
+    if len(args) >= 3 and args[1] == "--audio-sink":
+        sink = args[2]
+        args = [args[0], *args[3:]]
+    if len(args) < 3 or args[1] != "--":
+        print(
+            "usage: supervise.py EXIT_FILE [--audio-sink SINK] -- ARGV...",
+            file=sys.stderr,
+        )
         return 2
-    exit_file, argv = sys.argv[1], sys.argv[3:]
+    exit_file, argv = args[0], args[2:]
 
     libc = ctypes.CDLL(None, use_errno=True)
     libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0)
@@ -127,6 +261,11 @@ def main() -> int:
             handle.write("127\n")
         return 127
 
+    # Its first scan, once subscribed, catches a stream opened before it.
+    mover = SoundMover(sink) if sink else None
+    if mover:
+        mover.start()
+
     code: int | None = None
     ending_since: float | None = None
     termed: set[tuple[int, int]] = set()
@@ -147,6 +286,8 @@ def main() -> int:
                     handle.write(f"{code}\n")
         if (stopping or code is not None) and ending_since is None:
             ending_since = time.monotonic()
+            if mover:
+                mover.stop()  # its pactl children end with the passes below
         if ending_since is not None:
             if time.monotonic() - ending_since < GRACE:
                 signal_ours(signal.SIGTERM, termed)  # newcomers get theirs too
