@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>{{ session_id }} · apps</title>
     <link rel="icon" href="/static/favicon.ico" sizes="32x32">
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?c={{ env_color_name }}">
@@ -18,8 +18,55 @@
 <body class="player-body">
 <main id="player" class="player" data-id="{{ session_id }}" data-stream-state="connecting" tabindex="0">
     <video id="player-video" class="player-video" playsinline muted autoplay></video>
+    <div id="player-controls" class="player-controls" aria-hidden="true"></div>
     <div id="player-status" class="player-status" role="status"></div>
 </main>
+
+<button id="player-menu-btn" class="player-fab player-menu-btn" type="button" aria-label="Menu" aria-expanded="false" aria-controls="player-sheet">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+</button>
+<button id="player-chip" class="player-chip" type="button" aria-label="Connection details">…</button>
+
+<div id="player-sheet" class="player-sheet" role="dialog" aria-label="Player menu" hidden>
+    <div class="player-sheet-handle"></div>
+    <div class="player-sheet-title" id="player-title">{{ session_id }}</div>
+    <div class="player-sheet-section touch-only">
+        <div class="player-sheet-label">Controls</div>
+        <div class="player-segmented" role="radiogroup" aria-label="Controls">
+            <button type="button" role="radio" data-controls="gamepad">Gamepad</button>
+            <button type="button" role="radio" data-controls="trackpad">Trackpad</button>
+            <button type="button" role="radio" data-controls="touch">Touch</button>
+        </div>
+    </div>
+    <div class="player-sheet-items">
+        <button type="button" class="touch-only" data-action="keyboard">Keyboard</button>
+        <button type="button" data-action="reset-zoom">Reset zoom</button>
+        <button type="button" data-action="screenshot">Screenshot</button>
+        <button type="button" data-action="leave">Leave <span>(keeps running)</span></button>
+        <button type="button" data-action="stop" class="danger">Stop app</button>
+    </div>
+</div>
+
+<div id="player-keys" class="player-keys" hidden>
+    <button type="button" data-key="Escape">Esc</button>
+    <button type="button" data-key="Tab">Tab</button>
+    <button type="button" data-mod="Control_L">Ctrl</button>
+    <button type="button" data-mod="Alt_L">Alt</button>
+    <button type="button" data-key="Left">←</button>
+    <button type="button" data-key="Up">↑</button>
+    <button type="button" data-key="Down">↓</button>
+    <button type="button" data-key="Right">→</button>
+    <button type="button" data-key="Return">Enter</button>
+    <button type="button" data-key="BackSpace">⌫</button>
+    <button type="button" data-action="keyboard-close" aria-label="Hide keyboard">✕</button>
+</div>
+<input id="player-kb" class="player-kb" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Keyboard input">
+
+<div id="player-hint" class="player-hint" hidden>
+    <span>For full screen on iPhone, add Merlin to your Home Screen (Share → Add to Home Screen).</span>
+    <button type="button" id="player-hint-close">OK</button>
+</div>
+
 <script src="/static/app/client.js"></script>
 <script src="/static/app/player.js"></script>
 </body>
