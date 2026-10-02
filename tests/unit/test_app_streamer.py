@@ -342,3 +342,60 @@ print(json.dumps({"presses": presses, "x": x,
     )
     assert out["presses"] == [[2, out["x"]], [3, out["x"]]]
     assert any("no keycode is free" in line for line in out["logs"])
+
+
+def test_a_vacant_shift_level_repeats_the_symbol():
+    """[É, NoSymbol] would make XKB type é unshifted: the row is [É, É] until
+    the Shift level is used, and filling it keeps the plain symbol."""
+    out = _run(
+        QUEUE_FAKES
+        + """
+assert inj.type_char("É")
+kc = inj.keys.where[0xC9][0]
+first_row = list(inj.disp.server[kc])
+assert inj.type_char("ñ")
+same_kc = inj.keys.where[0xF1][0] == kc
+second_row = list(inj.disp.server[kc])
+print(json.dumps({"first": first_row, "second": second_row, "same": same_kc,
+                  "logical": inj.keys.slots[kc]}))
+"""
+    )
+    assert out["first"] == [0xC9, 0xC9]
+    assert out["same"] is True
+    assert out["second"] == [0xC9, 0xF1]
+    assert out["logical"] == [0xC9, 0xF1]
+
+
+def test_after_reconnect_and_reuse_a_stale_cache_never_types_the_old_character(
+    tmp_path,
+):
+    """A new connection's cached keymap lists é on a keycode that is later
+    reused for ß: typing é again must not press that keycode."""
+    registry = tmp_path / "keymap.json"
+    out = _run(
+        QUEUE_FAKES
+        + f"""
+first = make_injector(registry={str(registry)!r})
+for char in "éñüø":
+    assert first.type_char(char)
+second = streamer.Injector.__new__(streamer.Injector)
+second.disp = FakeDisplay()
+second.disp.server = first.disp.server
+second.disp.snapshot = {{kc: list(v) for kc, v in first.disp.server.items()}}  # real reconnect
+second.display_name = ":0"
+second.keys_down, second.shift_held, second.buttons_down = set(), set(), set()
+second.typing, second.pending = None, []
+second.keys = streamer.KeyAllocator(second.disp, {str(registry)!r}, clock=clock)
+clock.now += streamer.QUIESCENCE_S + 0.1
+assert second.type_char("ß")              # reuses the oldest keycode (é and ñ)
+events.clear()
+typed = []
+for _ in range(100):
+    if second.type_char("é"):
+        break
+    clock.now += 0.5
+presses = [e for e in events if e[0] in (X.KeyPress, X.KeyRelease)]
+print(json.dumps({{"decoded": decode_late(second.disp, presses)}}))
+"""
+    )
+    assert out["decoded"] == [0xE9]

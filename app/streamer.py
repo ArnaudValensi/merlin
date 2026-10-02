@@ -176,11 +176,24 @@ class KeyAllocator:
         now = self.clock()
         for keycode, syms in self._load().items():
             index = keycode - first
-            if 0 <= index < len(current) and self._levels(current[index]) == syms:
+            physical = (
+                self._levels(current[index]) if 0 <= index < len(current) else None
+            )
+            if any(syms) and physical == self._physical(syms):
                 self._own(keycode, syms, now)  # still ours: adopt it
         for index, syms in enumerate(current):
             if not any(syms) and first + index not in self.slots:
                 self._own(first + index, [0, 0], now)
+
+    @staticmethod
+    def _physical(syms: list[int]) -> list[int]:
+        """The keymap row for logical slots ``[plain, shift]``.
+
+        A vacant Shift level repeats the plain symbol: left as NoSymbol, XKB
+        would turn a lone letter into its lower/upper case pair, so an
+        allocated É would type é unshifted.
+        """
+        return [syms[0], syms[1] or syms[0]]
 
     @staticmethod
     def _levels(syms) -> list[int]:
@@ -222,8 +235,15 @@ class KeyAllocator:
         self.slots[keycode] = [keysym, 0]
         return self._commit(keycode, 0, keysym)
 
+    def owns(self, keycode: int) -> bool:
+        """Whether ``keycode`` is one of ours: its meaning is what ``find``
+        says, never what a cached copy of the keymap remembers."""
+        return keycode in self.slots
+
     def _commit(self, keycode: int, level: int, keysym: int) -> tuple[int, int]:
-        self.disp.change_keyboard_mapping(keycode, [tuple(self.slots[keycode])])
+        self.disp.change_keyboard_mapping(
+            keycode, [tuple(self._physical(self.slots[keycode]))]
+        )
         self.disp.sync()
         self.where[keysym] = (keycode, level)
         self.used[keycode] = self.clock()
@@ -332,8 +352,11 @@ class Injector:
             keysym = 0x01000000 | ord(char)  # Unicode keysym
         slot = self.keys.find(keysym)
         if slot is None:
+            # The connection's cached keymap may still list a character on a
+            # keycode we have since reassigned: our keycodes answer to the
+            # allocator only.
             entries = sorted(self.disp.keysym_to_keycodes(keysym), key=lambda e: e[1])
-            entries = [e for e in entries if e[1] <= 1]
+            entries = [e for e in entries if e[1] <= 1 and not self.keys.owns(e[0])]
             slot = entries[0] if entries else self.keys.assign(keysym)
             if slot is None:
                 return False
@@ -388,6 +411,7 @@ class Injector:
                 (self.shift_held.add if down else self.shift_held.discard)(keycode)
             return
         entries = sorted(self.disp.keysym_to_keycodes(keysym), key=lambda e: e[1])
+        entries = [e for e in entries if not self.keys.owns(e[0])]
         if not entries:
             return
         keycode, index = entries[0]

@@ -477,3 +477,61 @@ def test_late_readers_still_get_the_typed_characters(merlin, browser, server, tm
     finally:
         context.close()
         cli(merlin, "stop", "late")
+
+
+def _xkb_reads(display: str, keysym: int) -> int:
+    """What an XKB-aware app reads (libX11, as real toolkits use it) at the
+    keycode and level where the core keymap holds ``keysym``."""
+    import ctypes
+
+    x11 = ctypes.CDLL("libX11.so.6")
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XDisplayKeycodes.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    x11.XGetKeyboardMapping.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ubyte,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    x11.XGetKeyboardMapping.restype = ctypes.POINTER(ctypes.c_ulong)
+    x11.XkbKeycodeToKeysym.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ubyte,
+        ctypes.c_int,
+        ctypes.c_int,
+    ]
+    x11.XkbKeycodeToKeysym.restype = ctypes.c_ulong
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    dpy = x11.XOpenDisplay(display.encode())
+    try:
+        low, high, per = ctypes.c_int(), ctypes.c_int(), ctypes.c_int()
+        x11.XDisplayKeycodes(dpy, ctypes.byref(low), ctypes.byref(high))
+        count = high.value - low.value + 1
+        syms = x11.XGetKeyboardMapping(dpy, low.value, count, ctypes.byref(per))
+        for index in range(count):
+            for level in range(min(per.value, 2)):
+                if syms[index * per.value + level] == keysym:
+                    return x11.XkbKeycodeToKeysym(dpy, low.value + index, 0, level)
+        raise AssertionError(f"no keycode holds {keysym:#x}")
+    finally:
+        x11.XCloseDisplay(dpy)
+
+
+def test_an_uppercase_accented_letter_stays_uppercase(browser, server, probe):
+    """É is not on the US keymap; an XKB-aware app must read É, not é."""
+    handle, log = probe
+    context, page = _player(browser, server)
+    try:
+        wait_live(page)
+        page.evaluate("window.MerlinPlayer.stream.send({t: 'text', s: 'É'})")
+        deadline = time.monotonic() + 10
+        while "keydown Eacute" not in _text(log):
+            assert time.monotonic() < deadline, _text(log)[-500:]
+            time.sleep(0.05)
+        assert _xkb_reads(handle["display"], 0xC9) == 0xC9
+    finally:
+        context.close()

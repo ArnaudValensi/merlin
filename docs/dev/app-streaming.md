@@ -167,7 +167,11 @@ paste then Enter submits the whole paste. A character the keymap lacks (é on
 a US map) gets a slot from `KeyAllocator`: X key events carry keycodes and an
 app decodes them with the keymap as it is when it reads them, so a slot keeps
 its character. A free keycode holds two (plain and Shift level; filling one
-never changes the other). Xvfb's default keymap has only 15 free keycodes,
+never changes the other). While the Shift level is vacant the row repeats the
+plain symbol (`[É, É]`): a lone `[É, NoSymbol]` is read by XKB as the case
+pair é/É, so É would arrive as é. Keycodes the allocator owns answer only to
+it: the connection's cached keymap, which may still list a reassigned
+character there, is never consulted for them. Xvfb's default keymap has only 15 free keycodes,
 so 30 slots: when all are taken, the least recently used keycode is
 reassigned only after 2 s unused, typing waits until then, and the reuse is
 logged. (X cannot tell when an app has read an event: an app more than 2 s
