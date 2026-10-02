@@ -25,9 +25,21 @@ pytestmark = pytest.mark.skipif(
 _SOCK = "boardtest"
 
 
+# The server's windows run /bin/sh, not the developer's login shell: an
+# interactive zsh runs its rc files (pyenv rehash, ...), and killing the
+# server mid-startup can leave their lock files behind, stalling every later
+# shell (theirs included) for up to a minute.
+_ENV = {**os.environ, "SHELL": "/bin/sh"}
+_ENV.pop("TMUX", None)
+
+
 def _tmux(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["tmux", "-L", _SOCK, *args], capture_output=True, text=True, check=False
+        ["tmux", "-L", _SOCK, *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_ENV,
     )
 
 
@@ -329,6 +341,9 @@ def test_send_enter_submits_the_line(tmux_server):
     """send_literal then send_enter runs the line in the shell (the Enter is a
     real submit, not a newline inside the paste)."""
     wid = _window_ids("alpha")[0]
+    # Let the shell draw its prompt first: an interactive shell still
+    # starting (slow on a loaded machine) can discard input typed early.
+    _pane_when(f"alpha:{wid}", lambda text: bool(text.strip()))
     assert sweep.send_literal(f"alpha:{wid}", "echo MERLIN_ENTER_OK") is True
     assert sweep.send_enter(f"alpha:{wid}") is True
     pane = _pane_when(f"alpha:{wid}", lambda text: text.count("MERLIN_ENTER_OK") >= 2)

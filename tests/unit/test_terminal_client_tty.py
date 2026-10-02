@@ -65,12 +65,17 @@ def tmux_server(tmp_path):
     """A private tmux server, always killed even if setup itself fails."""
     socket = str(tmp_path / "tmux.sock")
 
+    # /bin/sh, not the login shell: see test_board_tmux.py.
+    env = {**os.environ, "SHELL": "/bin/sh"}
+    env.pop("TMUX", None)
+
     def tmux(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["tmux", "-S", socket, *args],
             capture_output=True,
             text=True,
             check=False,
+            env=env,
         )
 
     try:
