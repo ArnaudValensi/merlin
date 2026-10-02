@@ -108,7 +108,7 @@ def srv(tmp_path):
     s.kill()
     s.tmux("new-session", "-d", "-s", "t", "-x", "100", "-y", "30")
     wins = {"a": s.tmux("display-message", "-p", "#{window_id}")}
-    wins["b"] = s.tmux("new-window", "-P", "-F", "#{window_id}", "-t", "t")
+    wins["b"] = s.tmux("new-window", "-P", "-F", "#{window_id}", "-t", "t:")
     yield s, wins
     s.kill()
 

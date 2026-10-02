@@ -323,9 +323,26 @@ class TestInteractiveSessionRunsAShell:
                 )
                 client = await conn.create_process(term_type="xterm-256color")
                 # A real shell evaluates this; tmux would swallow it as keys.
-                client.stdin.write('echo "READY:[$TMUX]"\nexit\n')
+                # The login shell may discard input typed while it is still
+                # starting (slow on a loaded machine), so re-send until it
+                # answers: the pty echo shows `$TMUX` literally, only a shell
+                # that ran the line prints the expanded `READY:[]`.
+                text = ""
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + 20
+                while "READY:[]" not in text and loop.time() < deadline:
+                    client.stdin.write('echo "READY:[$TMUX]"\n')
+                    resend_at = loop.time() + 2
+                    while "READY:[]" not in text and loop.time() < resend_at:
+                        try:
+                            text += await asyncio.wait_for(
+                                client.stdout.read(4096), timeout=0.2
+                            )
+                        except TimeoutError:
+                            pass
+                client.stdin.write("exit\n")
                 result = await asyncio.wait_for(client.wait(), timeout=10)
-                text = str(result.stdout)
+                text += str(result.stdout or "")
             finally:
                 if conn is not None:
                     conn.close()

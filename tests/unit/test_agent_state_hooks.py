@@ -151,7 +151,7 @@ def srv(tmp_path):
     s.tmux("new-session", "-d", "-s", "t", "-x", "100", "-y", "30")
     wins = {"a": s.tmux("display-message", "-p", "#{window_id}")}
     for name in ("b", "c"):
-        wins[name] = s.tmux("new-window", "-P", "-F", "#{window_id}", "-t", "t")
+        wins[name] = s.tmux("new-window", "-P", "-F", "#{window_id}", "-t", "t:")
     yield s, wins
     s.kill()
 
@@ -348,7 +348,7 @@ class TestSetHookIntegration:
         t("kill-server")
         t("new-session", "-d", "-s", "t", "-x", "100", "-y", "30")
         t("display-message", "-p", "#{window_id}")  # window a (unused id)
-        b = t("new-window", "-P", "-F", "#{window_id}", "-t", "t")
+        b = t("new-window", "-P", "-F", "#{window_id}", "-t", "t:")
         t("set-option", "-w", "-t", b, "@agent_state", "done")  # b finished
         # Visit b — the conf's session-window-changed set-hook must run
         # agent-state-switch.sh (via $MERLIN_TERMINAL_HOOKS) and clear it.

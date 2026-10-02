@@ -109,7 +109,7 @@ def server(tmp_path):
             break
         time.sleep(0.1)
     for name in ("busy", "ask", "done", "unset"):
-        wins[name] = srv.run("new-window", "-P", "-F", "#{window_id}", "-t", "t")
+        wins[name] = srv.run("new-window", "-P", "-F", "#{window_id}", "-t", "t:")
     assert all(wins.values()), f"tmux did not return every window id: {wins}"
     srv.run("set-option", "-w", "-t", wins["idle"], "@agent_state", "idle")
     srv.run("set-option", "-w", "-t", wins["busy"], "@agent_state", "busy")

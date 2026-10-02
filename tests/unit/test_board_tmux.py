@@ -31,6 +31,21 @@ def _tmux(*args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _pane_when(target: str, ready, timeout: float = 10.0) -> str:
+    """Poll a pane until ``ready(text)`` holds or the deadline passes.
+
+    A fresh tmux window starts the user's shell asynchronously; on a loaded
+    machine that takes well over the fixed sleeps these tests used to rely on.
+    Returns the last capture either way, so the caller's assert shows it.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        text = _tmux("capture-pane", "-p", "-t", target).stdout
+        if ready(text) or time.monotonic() > deadline:
+            return text
+        time.sleep(0.05)
+
+
 @pytest.fixture
 def tmux_server(monkeypatch, request):
     """A private tmux server with two detached sessions. Each test gets its OWN
@@ -296,8 +311,7 @@ def test_send_literal_lands_in_the_target_window(tmux_server):
     assert wid_b
     marker = "MERLIN_TARGET_MARK"
     assert sweep.send_literal(f"alpha:{wid_a}", marker) is True
-    time.sleep(0.3)
-    pane_a = _tmux("capture-pane", "-p", "-t", f"alpha:{wid_a}").stdout
+    pane_a = _pane_when(f"alpha:{wid_a}", lambda text: marker in text)
     pane_b = _tmux("capture-pane", "-p", "-t", f"alpha:{wid_b}").stdout
     assert marker in pane_a
     assert marker not in pane_b
@@ -307,8 +321,7 @@ def test_send_literal_keeps_a_leading_dash(tmux_server):
     """A transcription that starts with a dash is sent as text, not a flag."""
     wid = _window_ids("alpha")[0]
     assert sweep.send_literal(f"alpha:{wid}", "-not-a-flag MARKD") is True
-    time.sleep(0.3)
-    pane = _tmux("capture-pane", "-p", "-t", f"alpha:{wid}").stdout
+    pane = _pane_when(f"alpha:{wid}", lambda text: "-not-a-flag MARKD" in text)
     assert "-not-a-flag MARKD" in pane
 
 
@@ -318,8 +331,7 @@ def test_send_enter_submits_the_line(tmux_server):
     wid = _window_ids("alpha")[0]
     assert sweep.send_literal(f"alpha:{wid}", "echo MERLIN_ENTER_OK") is True
     assert sweep.send_enter(f"alpha:{wid}") is True
-    time.sleep(0.6)
-    pane = _tmux("capture-pane", "-p", "-t", f"alpha:{wid}").stdout
+    pane = _pane_when(f"alpha:{wid}", lambda text: text.count("MERLIN_ENTER_OK") >= 2)
     # The typed line AND its output line both carry the marker: it ran.
     assert pane.count("MERLIN_ENTER_OK") >= 2
 
