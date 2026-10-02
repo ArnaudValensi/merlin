@@ -23,7 +23,6 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
-import os
 import signal
 import subprocess
 import sys
@@ -130,15 +129,7 @@ def choose_encoder(codecs: list[str]) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
-# Runs as `python3 -c TYPIST STREAMER_PID ARGV...`: ask the kernel to SIGKILL
-# it when its parent dies, check the parent is still the streamer, then exec.
-TYPIST = (
-    "import ctypes, os, sys\n"
-    "ctypes.CDLL(None).prctl(1, 9)  # PR_SET_PDEATHSIG, SIGKILL\n"
-    "if os.getppid() != int(sys.argv[1]):\n"
-    "    sys.exit(1)\n"
-    "os.execvp(sys.argv[2], sys.argv[2:])\n"
-)
+TYPE_DELAY_MS = 12  # between typed characters, like `xdotool type --delay 12`
 
 
 def _printable(keysym: int) -> bool:
@@ -158,72 +149,103 @@ class Injector:
         self.keys_down: set[int] = set()
         self.shift_held: set[int] = set()  # Shift keycodes the user holds
         self.buttons_down: set[int] = set()
-        self.typing: subprocess.Popen | None = None
+        self.typing: list[str] | None = None  # characters left of the text being typed
         self.pending: list[dict] = []
+        self.spare_keycode = self._find_spare_keycode()
 
-    # Input is applied strictly in arrival order. Text goes through `xdotool
-    # type`, which runs asynchronously so the main loop (and shutdown) never
-    # blocks on a long paste; everything after it waits for it to finish, so
-    # a paste followed by Enter submits the whole paste.
+    # Input is applied strictly in arrival order. Text is typed here, on this
+    # connection (checked and opened under the state lock, so always the
+    # app's own display), one character per main-loop tick: never blocking,
+    # cancelled by stop, and everything after it waits for it, so a paste
+    # followed by Enter submits the whole paste.
     def submit(self, msg: dict) -> None:
         self.pending.append(msg)
         self._drain()
 
     def _drain(self) -> None:
-        while self.pending:
-            if self.typing is not None and self.typing.poll() is None:
-                return  # resumed by _watch_typing
-            self.typing = None
+        while self.pending and self.typing is None:
             msg = self.pending.pop(0)
-            if msg.get("t") == "text":
-                if self._start_typing(str(msg.get("s", ""))):
-                    return
-                continue
             try:
-                self._apply(msg)
-            except Exception as exc:  # a bad message must not end the stream
+                if msg.get("t") == "text":
+                    self._start_typing(str(msg.get("s", "")))
+                else:
+                    self._apply(msg)
+            except Exception as exc:  # a bad message must not stall the rest
+                self.typing = None
                 log(f"input error: {exc!r}")
 
-    def _start_typing(self, text: str) -> bool:
+    def _start_typing(self, text: str) -> None:
         if not text:
-            return False
-        self.disp.sync()
-        # The typist dies with the streamer (PR_SET_PDEATHSIG, set before it
-        # execs xdotool; it exits at once if the streamer is already gone), so
-        # a streamer killed outright cannot leave it typing.
-        self.typing = subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                TYPIST,
-                str(os.getpid()),
-                "xdotool",
-                "type",
-                "--delay",
-                "12",
-                "--",
-                text,
-            ],
-            env={"DISPLAY": self.display_name, "PATH": "/usr/bin:/bin"},
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-        )
-        GLib.timeout_add(20, self._watch_typing)
-        return True
+            return
+        self.typing = list(text)
+        GLib.timeout_add(TYPE_DELAY_MS, self._type_next)
 
-    def _watch_typing(self) -> bool:
-        if self.typing is not None and self.typing.poll() is None:
-            return True  # still typing: check again
+    def _type_next(self) -> bool:
+        if self.typing is None:
+            return False  # stopped
+        if self.typing:
+            char = self.typing.pop(0)
+            try:
+                self.type_char(char)
+            except Exception as exc:  # skip the character, keep typing
+                log(f"cannot type {char!r}: {exc!r}")
+            return True
         self.typing = None
+        self._restore_spare()
         self._drain()
         return False
 
     def stop_typing(self) -> None:
         self.pending.clear()
-        if self.typing is not None and self.typing.poll() is None:
-            self.typing.kill()
-            self.typing.wait()
         self.typing = None
+        self._restore_spare()
+
+    def type_char(self, char: str) -> None:
+        """Press and release the key for one character, Shift as needed.
+
+        A character the keymap lacks (é on a US map, an emoji) is typed by
+        mapping it on a spare keycode first, as `xdotool type` does.
+        """
+        special = {"\n": XK.XK_Return, "\r": XK.XK_Return, "\t": XK.XK_Tab}
+        if not char:
+            return
+        if char in special:
+            keysym = special[char]
+        elif 0x20 <= ord(char) <= 0x7E or 0xA0 <= ord(char) <= 0xFF:
+            keysym = ord(char)  # Latin-1 keysyms are their code points
+        else:
+            keysym = 0x01000000 | ord(char)  # Unicode keysym
+        entries = sorted(self.disp.keysym_to_keycodes(keysym), key=lambda e: e[1])
+        entries = [e for e in entries if e[1] <= 1]
+        if entries:
+            keycode, index = entries[0]
+        elif self.spare_keycode:
+            keycode, index = self.spare_keycode, 0
+            self.disp.change_keyboard_mapping(keycode, [(keysym, keysym)])
+            self.disp.sync()
+        else:
+            return
+        self._press_with_shift(keycode, index == 1)
+        self._fake(keycode, False)
+        self.disp.sync()
+
+    def _find_spare_keycode(self) -> int:
+        """A keycode with no symbol, to map characters the keymap lacks."""
+        first = self.disp.display.info.min_keycode
+        last = self.disp.display.info.max_keycode
+        mapping = self.disp.get_keyboard_mapping(first, last - first + 1)
+        for offset in range(len(mapping) - 1, -1, -1):
+            if not any(mapping[offset]):
+                return first + offset
+        return 0
+
+    def _restore_spare(self) -> None:
+        if self.spare_keycode:
+            try:
+                self.disp.change_keyboard_mapping(self.spare_keycode, [(0, 0)])
+                self.disp.sync()
+            except Exception:
+                pass
 
     def _apply(self, msg: dict) -> None:
         kind = msg.get("t")
@@ -283,13 +305,14 @@ class Injector:
             self._fake(keycode, True)
             return
         if index > 1:
-            # Only reachable through AltGr levels: type it as text instead,
-            # in its place (before anything queued after it).
-            self.pending.insert(
-                0, {"t": "text", "s": XK.keysym_to_string(keysym) or ""}
-            )
+            # Only reachable through AltGr levels: type it as a character
+            # (through the spare keycode) in its place.
+            self.type_char(XK.keysym_to_string(keysym) or "")
             return
-        needs_shift = index == 1
+        self._press_with_shift(keycode, index == 1)
+
+    def _press_with_shift(self, keycode: int, needs_shift: bool) -> None:
+        """Press ``keycode`` with Shift added or lifted around the press."""
         if needs_shift == bool(self.shift_held):
             self._fake(keycode, True)
         elif needs_shift:

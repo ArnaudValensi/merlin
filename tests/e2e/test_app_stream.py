@@ -348,12 +348,9 @@ def test_a_long_paste_stops_with_its_viewer(browser, server, probe):
         while _text(log).count("keydown q") < 20:
             assert time.monotonic() < deadline, "typing never started"
             time.sleep(0.05)
-        assert _xdotool_typing_on(handle["display"])
         second_ctx, second = _player(browser, server)
         wait_live(second)
-        # The typist is gone with its viewer...
-        assert _xdotool_typing_on(handle["display"]) == []
-        # ...and once the probe has drained its queue, the paste stopped short.
+        # Once the probe has drained its queue, the paste stopped short.
         deadline = time.monotonic() + 15
         typed = -1
         while time.monotonic() < deadline:
@@ -397,7 +394,7 @@ def test_keys_after_a_paste_wait_for_it(browser, server, probe):
         context.close()
 
 
-def test_a_killed_streamer_takes_its_typist_with_it(browser, server, probe):
+def test_a_killed_streamer_stops_typing(browser, server, probe):
     handle, log = probe
     context, page = _player(browser, server)
     try:
@@ -409,13 +406,9 @@ def test_a_killed_streamer_takes_its_typist_with_it(browser, server, probe):
         while _text(log).count("keydown w") < 20:
             assert time.monotonic() < deadline, "typing never started"
             time.sleep(0.05)
-        assert _xdotool_typing_on(handle["display"])
         [streamer] = streamer_pids(handle["display"])
         os.kill(streamer, signal.SIGKILL)  # no cleanup code runs
-        deadline = time.monotonic() + 5
-        while _xdotool_typing_on(handle["display"]):
-            assert time.monotonic() < deadline, "the typist outlived its streamer"
-            time.sleep(0.05)
+        assert _xdotool_typing_on(handle["display"]) == []  # typing is in-process
         deadline = time.monotonic() + 15
         typed = -1
         while time.monotonic() < deadline:
@@ -425,5 +418,26 @@ def test_a_killed_streamer_takes_its_typist_with_it(browser, server, probe):
             typed = now
             time.sleep(1)
         assert typed < 400
+    finally:
+        context.close()
+
+
+def test_characters_the_keymap_lacks_are_typed(browser, server, probe):
+    """é is not on the display's US keymap: it goes through a spare keycode."""
+    _, log = probe
+    context, page = _player(browser, server)
+    try:
+        wait_live(page)
+        seen = len(_text(log).splitlines())
+        page.evaluate("window.MerlinPlayer.stream.send({t: 'text', s: 'aéb'})")
+        deadline = time.monotonic() + 10
+        typed: list[str] = []
+        while time.monotonic() < deadline:
+            lines = _text(log).splitlines()[seen:]
+            typed = [line.split()[1] for line in lines if line.startswith("keydown ")]
+            if "b" in typed:
+                break
+            time.sleep(0.05)
+        assert typed == ["a", "eacute", "b"], typed
     finally:
         context.close()

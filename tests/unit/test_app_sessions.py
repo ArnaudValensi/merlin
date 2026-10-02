@@ -628,6 +628,10 @@ def test_the_streamer_attaches_under_the_state_lock():
             proc.kill()
             raise
     try:
+        import select
+
+        ready, _, _ = select.select([proc.stdout], [], [], 15)
+        assert ready, "the streamer never became ready after the lock was freed"
         line = proc.stdout.readline()
         assert '"ready"' in line, line
     finally:

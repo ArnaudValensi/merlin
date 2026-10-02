@@ -114,7 +114,9 @@ A session is one app on one private display, recorded as
 
 ## Agent input and screenshots
 
-Local, never streamed: `import -display :N -window root` for screenshots,
+Local, never streamed, and run under the state lock with the session
+re-checked (`_on_display`), so the display cannot change hands between the
+check and the connection: `import -display :N -window root` for screenshots,
 `xdotool` for keys (`--hold` sends keydown, sleep, keyup for games that read
 key state once per frame), text, clicks and moves. Each input stamps
 `last_agent_input_at`, which the server pushes to the viewer as
@@ -155,12 +157,14 @@ printable characters the streamer presses the keycode with the Shift level
 the display's keymap needs (adding or lifting Shift around the press), so a
 French `&` or Shift+`1` arrives as typed on a US keymap; other keys (arrows,
 Tab, F-keys) keep the user's modifiers. Input is applied strictly in arrival
-order: text goes through `xdotool type` asynchronously (a long paste never
-blocks the main loop or shutdown) and everything after it waits for it, so a
-paste then Enter submits the whole paste. The typist is started with
-`PR_SET_PDEATHSIG` (after checking its parent is still the streamer), so it
-dies even if the streamer is killed outright. The streamer releases any held
-key or button, and stops typing, when it stops.
+order: text is typed by the streamer itself, one character per main-loop
+tick on its own XTEST connection (so never blocking, and on the display
+checked under the state lock), and everything after it waits for it, so a
+paste then Enter submits the whole paste. A character the keymap lacks (é on
+a US map) is typed through a spare keycode remapped for it, as `xdotool type`
+does. A failing character or a malformed message is logged and skipped; the
+queue never stalls. The streamer stops typing and releases any held key or
+button when it stops.
 
 Client states (`client.js`): `connecting`, `live`, `unreachable`, `replaced`,
 `exited`, `paused` (hidden 30 s, except in picture-in-picture: entering and

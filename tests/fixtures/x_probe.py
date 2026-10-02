@@ -87,7 +87,11 @@ def main() -> int:
             time.sleep(0.01)
             continue
         event = disp.next_event()
-        if event.type == X.Expose:
+        if event.type == X.MappingNotify:
+            # The keymap changed (a character typed through a spare keycode):
+            # refresh it, as real toolkits do, before the next key event.
+            disp.refresh_keyboard_mapping(event)
+        elif event.type == X.Expose:
             window.fill_rectangle(gc, 0, 0, 50, 50)
             disp.flush()
         elif event.type in (X.KeyPress, X.KeyRelease):

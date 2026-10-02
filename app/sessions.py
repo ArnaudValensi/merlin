@@ -719,22 +719,23 @@ def capture(record: dict, path: Path) -> Path:
 
 
 def screenshot(session_id: str, path: Path | None = None) -> Path:
-    record = _require_running(session_id)
     if path is None:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         path = shots_dir() / f"{session_id}-{stamp}.png"
-    return capture(record, path)
+    with _on_display(session_id) as record:
+        return capture(record, path)
 
 
 def capture_thumbnail(session_id: str) -> Path | None:
     """Best-effort last-frame thumbnail (on viewer disconnect and on stop)."""
-    record = _read_record(session_id)
-    if record is None or record.get("status") not in ("starting", "running"):
-        return None
-    try:
-        return capture(record, thumb_path(session_id))
-    except (AppError, OSError, subprocess.SubprocessError):
-        return None
+    with _launch_lock():
+        record = _read_record(session_id)
+        if record is None or record.get("status") not in ("starting", "running"):
+            return None
+        try:
+            return capture(record, thumb_path(session_id))
+        except (AppError, OSError, subprocess.SubprocessError):
+            return None
 
 
 def _stop_record(record: dict, *, thumbnail: bool) -> None:
@@ -781,6 +782,18 @@ def _require_running(session_id: str) -> dict:
     return record
 
 
+@contextmanager
+def _on_display(session_id: str) -> Iterator[dict]:
+    """Hold the state lock while acting on a running app's display.
+
+    Screenshots and agent input connect to the display by its number; under
+    the lock that stop and launch take, the app cannot be stopped and its
+    display handed to another app between the check and the connection.
+    """
+    with _launch_lock():
+        yield _require_running(session_id)
+
+
 def _note_agent_input(record: dict) -> None:
     _update_record(record, {"last_agent_input_at": now_iso()})
 
@@ -804,8 +817,6 @@ def send_keys(
     ``hold_ms`` keeps each key down that long: games that read the keyboard
     state once per frame miss a press and release that land in one frame.
     """
-    record = _require_running(session_id)
-    _focus_app(record)
     repeat = max(1, repeat)
     delay = max(0, delay_ms)
     if hold_ms > 0:
@@ -817,35 +828,37 @@ def send_keys(
     else:
         args = ["key", "--repeat", str(repeat), "--delay", str(delay), *keys]
     budget = repeat * len(keys) * (max(delay, 1) + max(hold_ms, 0)) / 1000
-    _xdotool(record["display"], *args, timeout=30 + budget)
-    _note_agent_input(record)
+    with _on_display(session_id) as record:
+        _focus_app(record)
+        _xdotool(record["display"], *args, timeout=30 + budget)
+        _note_agent_input(record)
 
 
 def type_text(session_id: str, text: str) -> None:
-    record = _require_running(session_id)
-    _focus_app(record)
-    _xdotool(
-        record["display"],
-        "type",
-        "--delay",
-        "12",
-        "--",
-        text,
-        timeout=30 + len(text) * 0.05,
-    )
-    _note_agent_input(record)
+    with _on_display(session_id) as record:
+        _focus_app(record)
+        _xdotool(
+            record["display"],
+            "type",
+            "--delay",
+            "12",
+            "--",
+            text,
+            timeout=30 + len(text) * 0.05,
+        )
+        _note_agent_input(record)
 
 
 def move(session_id: str, x: int, y: int) -> None:
-    record = _require_running(session_id)
-    _xdotool(record["display"], "mousemove", str(x), str(y))
-    _note_agent_input(record)
+    with _on_display(session_id) as record:
+        _xdotool(record["display"], "mousemove", str(x), str(y))
+        _note_agent_input(record)
 
 
 def click(session_id: str, x: int, y: int, button: int = 1) -> None:
-    record = _require_running(session_id)
-    _xdotool(record["display"], "mousemove", str(x), str(y), "click", str(button))
-    _note_agent_input(record)
+    with _on_display(session_id) as record:
+        _xdotool(record["display"], "mousemove", str(x), str(y), "click", str(button))
+        _note_agent_input(record)
 
 
 def public(record: dict) -> dict:
