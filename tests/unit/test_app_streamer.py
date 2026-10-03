@@ -680,3 +680,185 @@ print(json.dumps(out))
     assert trace[1] == ["openh264enc", "H264"]
     assert trace[2] == ["vp8enc", "VP8"]  # the browser has no H264: as usual
     assert trace[3] == ["vp8enc", "VP8"]
+
+
+def test_libnice_upnp_goes_off_and_webrtcbin_keeps_its_agent():
+    """Reading webrtcbin's ice-agent from Python takes its only reference:
+    without giving it back the agent dies and add-turn-server fails."""
+    trace = _run(
+        """
+import gc
+streamer.Gst.init(None)
+pipe = streamer.Gst.parse_launch("webrtcbin name=w fakesrc ! fakesink")
+w = pipe.get_by_name("w")
+off = streamer.libnice_upnp_off(w)
+gc.collect()
+again = w.get_property("ice-agent")
+streamer._restore_ref(again)
+upnp = again.get_property("agent").get_property("upnp")
+del again
+gc.collect()
+added = w.emit("add-turn-server", "turn://u%3Ax:p@127.0.0.1:3478?transport=udp")
+pipe.set_state(streamer.Gst.State.PLAYING)
+pipe.set_state(streamer.Gst.State.NULL)
+print(json.dumps([off, upnp, added]))
+"""
+    )
+    assert trace == [True, False, True]
+
+
+ICE_FAKES = """
+import os
+from argparse import Namespace
+streamer.Gst.init(None)
+sent, logged = [], []
+streamer.send = sent.append
+streamer.log = logged.append
+
+class FakeWebrtc:
+    def __init__(self):
+        self.props, self.emitted = {}, []
+    def set_property(self, name, value):
+        self.props[name] = value
+    def emit(self, *args):
+        self.emitted.append(list(args))
+        return True
+
+def make(settings):
+    os.environ["MERLIN_APP_ICE"] = json.dumps(settings)
+    s = streamer.Streamer.__new__(streamer.Streamer)
+    s.ice = streamer.ice_settings()
+    s.stun_uri, s.turn_uris = streamer.iceservers.for_webrtcbin(s.ice["iceServers"])
+    s.learned = {"srflx": set(), "relay": set()}
+    s.opened_ports = set()
+    s.skipped = set()
+    s.webrtc = FakeWebrtc()
+    return s
+
+TURN = {"urls": ["turn:turn.example:3478?transport=udp", "turns:turn.example:443"],
+        "username": "1:lisa", "credential": "pw"}
+STUN = {"urls": ["stun:turn.example:3478"]}
+"""
+
+
+def test_the_servers_reach_webrtcbin_with_the_relay_switch():
+    trace = _run(
+        ICE_FAKES
+        + """
+upnp = []
+streamer.libnice_upnp_off = lambda w: upnp.append(True) or True
+s = make({"iceServers": [STUN, TURN], "policy": "relay", "turn": "ok"})
+s._configure_ice()
+policy = s.webrtc.props.pop("ice-transport-policy")
+print(json.dumps([upnp, s.webrtc.props, s.webrtc.emitted,
+                  policy == streamer.GstWebRTC.WebRTCICETransportPolicy.RELAY,
+                  s.ice_summary()]))
+"""
+    )
+    upnp, props, emitted, relay, summary = trace
+    assert upnp == [True]
+    assert props == {"stun-server": "stun://turn.example:3478"}
+    assert emitted == [
+        ["add-turn-server", "turn://1%3Alisa:pw@turn.example:3478?transport=udp"],
+        ["add-turn-server", "turns://1%3Alisa:pw@turn.example:443"],
+    ]
+    assert relay is True
+    assert summary == "stun, turn, relay only"
+
+
+def test_the_settings_from_the_server_are_read_defensively():
+    trace = _run(
+        """
+import os
+out = []
+for raw in ('{"iceServers": [{"urls": ["stun:a:1"]}], "policy": "relay", "turn": "no access"}',
+            "not json", "[1, 2]", ""):
+    os.environ["MERLIN_APP_ICE"] = raw
+    out.append(streamer.ice_settings())
+print(json.dumps(out))
+"""
+    )
+    assert trace[0] == {
+        "iceServers": [{"urls": ["stun:a:1"]}],
+        "policy": "relay",
+        "turn": "no access",
+    }
+    for odd in trace[1:]:
+        assert odd == {"iceServers": [], "policy": "all", "turn": "off"}
+
+
+def test_reach_says_what_stun_and_turn_gave():
+    trace = _run(
+        ICE_FAKES
+        + """
+out = []
+s = make({"iceServers": [STUN, TURN], "turn": "ok"})
+out.append(s.reach())
+s.on_ice_candidate(s.webrtc, 0, "candidate:5 1 UDP 1677729535 176.186.26.141 40001 typ srflx raddr 192.168.1.12 rport 40001")
+s.on_ice_candidate(s.webrtc, 0, "candidate:7 1 UDP 505414143 213.239.219.213 50067 typ relay raddr 176.186.26.141 rport 40001")
+s.on_ice_candidate(s.webrtc, 0, "candidate:1 1 UDP 2015363327 192.168.1.12 40001 typ host")
+out.append(s.reach())
+out.append(make({"iceServers": [STUN], "turn": "no access"}).reach())
+out.append(make({"iceServers": [], "turn": "off"}).reach())
+print(json.dumps([out, logged, [m["type"] for m in sent]]))
+"""
+    )
+    reaches, logged, sent = trace
+    assert reaches[0] == {
+        "type": "reach",
+        "stun": "no answer",
+        "turn": "no relay",
+        "upnp": "off",
+    }
+    assert reaches[1]["stun"] == "ok 176.186.26.141"
+    assert reaches[1]["turn"] == "ok"
+    assert reaches[2]["turn"] == "no access"
+    assert reaches[3]["stun"] == "off" and reaches[3]["turn"] == "off"
+    assert logged == ["ice: local srflx udp ipv4", "ice: local relay udp ipv4"]
+    assert sent == ["ice", "ice", "ice"]  # every candidate still goes out
+
+
+def test_the_path_goes_to_the_browser_on_each_change():
+    trace = _run(
+        ICE_FAKES
+        + """
+def stats(local_type, remote_type):
+    return [
+        {"_name": "local-candidate", "id": "L", "address": "2001:861::1", "port": 40001,
+         "candidate-type": local_type, "protocol": "udp"},
+        {"_name": "remote-candidate", "id": "R", "address": "2a01:cb00::9", "port": 5,
+         "candidate-type": remote_type, "protocol": "udp"},
+        {"_name": "candidate-pair", "id": "P", "local-candidate-id": "L",
+         "remote-candidate-id": "R"},
+        {"_name": "transport", "id": "T", "selected-candidate-pair-id": "P"},
+    ]
+
+s = make({"iceServers": [STUN], "turn": "off"})
+s.session = streamer.linkstats.Session()
+s.route, s.path, s.keyframes, s.last_report = "", "", 0, None
+for pair in (("host", "srflx"), ("host", "srflx"), ("relay", "srflx")):
+    s.apply_stats(s.webrtc, stats(*pair))
+print(json.dumps([[m for m in sent if m["type"] == "path"],
+                  [l for l in logged if l.startswith("ice: path")], s.session.path]))
+"""
+    )
+    paths, logged, session_path = trace
+    assert paths == [
+        {
+            "type": "path",
+            "path": "STUN",
+            "local": "host udp ipv6",
+            "remote": "srflx udp ipv6",
+        },
+        {
+            "type": "path",
+            "path": "TURN",
+            "local": "relay udp ipv6",
+            "remote": "srflx udp ipv6",
+        },
+    ]
+    assert logged == [
+        "ice: path STUN (local host udp ipv6, remote srflx udp ipv6)",
+        "ice: path TURN (local relay udp ipv6, remote srflx udp ipv6)",
+    ]
+    assert session_path == "TURN"

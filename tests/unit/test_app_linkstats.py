@@ -214,6 +214,54 @@ def test_the_gauge_levels(rate, level):
     assert rc.level == level
 
 
+def _pair(
+    local_type="host",
+    remote_type="prflx",
+    local="2001:861::1",
+    remote="2a01:cb00::9",
+    port=46569,
+):
+    stats = _stats()
+    stats[1].update({"candidate-type": local_type, "address": local, "port": port})
+    stats[2].update({"candidate-type": remote_type, "address": remote})
+    return linkstats.read_snapshot(stats)
+
+
+@pytest.mark.parametrize(
+    ("snap", "opened", "path"),
+    [
+        (_pair(), set(), "Direct"),  # the phone reached our global address
+        (_pair(remote_type="srflx"), set(), "STUN"),  # the phone's learned address
+        (
+            _pair(local_type="srflx", local="176.186.26.141", remote="82.64.1.2"),
+            set(),
+            "STUN",
+        ),
+        (_pair(local_type="relay"), set(), "TURN"),
+        (_pair(remote_type="relay"), {46569}, "TURN"),  # the relay wins
+        (_pair(), {46569}, "UPnP"),  # the router let it in on our port
+        (_pair(remote_type="srflx"), {46569}, "UPnP"),
+        (_pair(), {9999}, "Direct"),  # another port was opened, not this one
+        (_pair(remote="2001:861::5"), {46569}, "Direct"),  # same /64: the LAN
+        (_pair(local="192.168.1.12", remote="192.168.1.30"), {46569}, "Direct"),
+    ],
+)
+def test_the_path_names_the_mechanism_that_carries_the_stream(snap, opened, path):
+    assert linkstats.path_of(snap, opened) == path
+
+
+def test_no_pair_yet_has_no_path():
+    assert linkstats.path_of(linkstats.Snapshot(), {1}) == ""
+
+
+def test_both_candidates_are_described_for_the_chip():
+    snap = _pair(remote_type="srflx")
+    assert snap.local_type == "host" and snap.local_port == 46569
+    assert snap.kinds() == ("host udp ipv6", "srflx udp ipv6")
+    hidden = _pair(remote="abcd.local")
+    assert hidden.kinds()[1] == "prflx udp mdns"
+
+
 def test_the_session_summary():
     session = linkstats.Session()
     assert session.summary(10.0) == "session: never connected"
@@ -230,6 +278,10 @@ def test_the_session_summary():
         "session: 1m00s via Internet · IPv6, sent 4000 kbit/s on average, "
         "rate 3850-5500 kbit/s, loss 1.0 %, 3 keyframe requests "
         "(3 to the encoder, 2 answered)"
+    )
+    session.path = "STUN"
+    assert session.summary(160.0).startswith(
+        "session: 1m00s via Internet · IPv6 · STUN, sent 4000 kbit/s"
     )
 
 

@@ -20,7 +20,7 @@ const SOURCE = fs.readFileSync(
     "utf8",
 );
 
-function makeEnv() {
+function makeEnv(options = {}) {
     let now = 0;
     let nextId = 1;
     const timers = new Map();
@@ -53,7 +53,12 @@ function makeEnv() {
     FakeSocket.OPEN = 1;
 
     class FakePeer {
-        constructor() {
+        constructor(config) {
+            // A browser that refuses the servers (a bad URL) throws here.
+            if (options.rejectServers && config && config.iceServers && config.iceServers.length) {
+                throw new Error("bad iceServers");
+            }
+            this.config = config;
             this.remote = deferred();
             this.closed = false;
             this.connectionState = "new";
@@ -103,7 +108,8 @@ function makeEnv() {
     const sandbox = {
         window: {},
         document,
-        location: { protocol: "http:", host: "merlin.test" },
+        location: { protocol: "http:", host: "merlin.test", search: options.search || "" },
+        URLSearchParams,
         WebSocket: FakeSocket,
         RTCPeerConnection: FakePeer,
         RTCRtpReceiver: { getCapabilities: () => ({ codecs: [{ mimeType: "video/H264" }] }) },
@@ -451,7 +457,94 @@ test("the chip names the route and round trip, with the numbers on demand", () =
                 fps: 60, lossPct: 1.24, codec: "H264", encoder: "nvh264enc" };
     assert.equal(chipText(s, false), "Internet · IPv6 · 48 ms");
     assert.equal(chipText(s, true),
-        "Internet · IPv6 · 48 ms · 3.2 Mbit/s (target 4.8/5.5) · 60 fps · loss 1.2 % · H264 (nvh264enc)");
+        "Internet · IPv6 · 48 ms\n3.2 Mbit/s (target 4.8/5.5) · 60 fps · loss 1.2 % · H264 (nvh264enc)");
+});
+
+test("the chip names the path, and its detail what each way of reaching gave", () => {
+    const { chipText } = makeEnv().MerlinApps;
+    const s = { route: "Internet · IPv6", path: "STUN", rttMs: 48, rateKbps: 4800, rateMax: 5500,
+                local: "host udp ipv6", remote: "srflx udp ipv6",
+                reach: { stun: "ok 176.186.26.141", upnp: "pinhole", turn: "ok" } };
+    assert.equal(chipText(s, false), "Internet · IPv6 · STUN · 48 ms");
+    assert.equal(chipText(s, true), [
+        "Internet · IPv6 · STUN · 48 ms",
+        "target 4.8/5.5 Mbit/s",
+        "host udp ipv6 ↔ srflx udp ipv6",
+        "STUN ok 176.186.26.141 · UPnP pinhole · TURN ok",
+    ].join("\n"));
+    // On the LAN a direct path goes without saying.
+    assert.equal(chipText({ route: "LAN", path: "Direct", rttMs: 3 }, false), "LAN · 3 ms");
+    assert.equal(chipText({ route: "LAN", path: "UPnP", rttMs: 3 }, false), "LAN · UPnP · 3 ms");
+});
+
+test("the browser names the path from its own pair until the streamer says", () => {
+    const { pathOf } = makeEnv().MerlinApps;
+    assert.equal(pathOf("host", "relay"), "TURN");
+    assert.equal(pathOf("relay", "host"), "TURN");
+    assert.equal(pathOf("srflx", "prflx"), "STUN");
+    assert.equal(pathOf("host", "prflx"), "Direct");
+    assert.equal(pathOf("", ""), "");
+});
+
+test("the servers from the server go into the peer, the relay switch too", async () => {
+    const env = makeEnv();
+    connect(env);
+    const servers = [{ urls: ["stun:s:3478"] },
+                     { urls: ["turn:t:3478"], username: "1:lisa", credential: "pw" }];
+    env.sockets[0].deliver({ type: "welcome", host: "box", app: { id: "probe" } });
+    env.sockets[0].deliver({ type: "servers", iceServers: servers, policy: "all", turn: "ok" });
+    env.sockets[0].deliver({ type: "offer", sdp: "offer-sdp" });
+    assert.deepEqual(JSON.parse(JSON.stringify(env.peers[0].config)), { iceServers: servers });
+    env.sockets[0].deliver({ type: "servers", iceServers: servers, policy: "relay", turn: "ok" });
+    env.sockets[0].deliver({ type: "offer", sdp: "offer-sdp" });
+    assert.equal(env.peers[1].config.iceTransportPolicy, "relay");
+});
+
+test("a browser that refuses the servers still gets a peer, for the LAN", async () => {
+    const env = makeEnv({ rejectServers: true });
+    const { states } = connect(env);
+    env.sockets[0].deliver({ type: "welcome", host: "box", app: { id: "probe" } });
+    env.sockets[0].deliver({ type: "servers", iceServers: [{ urls: ["stun:bad"] }] });
+    env.sockets[0].deliver({ type: "offer", sdp: "offer-sdp" });
+    assert.equal(env.peers.length, 1);
+    assert.deepEqual(JSON.parse(JSON.stringify(env.peers[0].config)), { iceServers: [] });
+    assert.ok(!states.includes("error"));
+});
+
+test("?ice=relay on the page asks for a relay session, nothing else does", () => {
+    for (const [search, ice] of [["?ice=relay", "relay"], ["?ice=nonsense", undefined], ["", undefined]]) {
+        const env = makeEnv({ search });
+        connect(env);
+        env.sockets[0].deliver({ type: "welcome", host: "box", app: { id: "probe" } });
+        const hello = env.sockets[0].sent.find((m) => m.type === "hello");
+        assert.equal(hello.ice, ice, search);
+    }
+});
+
+test("path and reach reach the stats; a new session forgets them and the servers", async () => {
+    const env = makeEnv();
+    const { stream } = connect(env);
+    env.sockets[0].deliver({ type: "servers", iceServers: [{ urls: ["stun:s:1"] }], policy: "relay" });
+    await goLive(env, env.sockets[0]);
+    env.peers[0].report = new Map([
+        ["T", { id: "T", type: "transport", selectedCandidatePairId: "P" }],
+        ["P", { id: "P", type: "candidate-pair", remoteCandidateId: "R", localCandidateId: "L" }],
+        ["R", { id: "R", type: "remote-candidate", address: "2001:861::1", candidateType: "prflx" }],
+        ["L", { id: "L", type: "local-candidate", candidateType: "srflx" }],
+    ]);
+    assert.equal((await stream.stats()).path, "STUN", "the browser's own reading first");
+    env.sockets[0].deliver({ type: "path", path: "UPnP", local: "host udp ipv6", remote: "srflx udp ipv6" });
+    env.sockets[0].deliver({ type: "reach", stun: "ok 1.2.3.4", upnp: "pinhole", turn: "no access" });
+    const s = await stream.stats();
+    assert.equal(s.path, "UPnP");
+    assert.equal(s.local, "host udp ipv6");
+    assert.equal(s.remote, "srflx udp ipv6");
+    assert.deepEqual(JSON.parse(JSON.stringify(s.reach)), { stun: "ok 1.2.3.4", upnp: "pinhole", turn: "no access" });
+    stream.reconnect();
+    assert.equal(stream.info.path, null);
+    assert.equal(stream.info.reach, null);
+    assert.deepEqual(JSON.parse(JSON.stringify(stream.info.iceServers)), []);
+    assert.equal(stream.info.policy, "all");
 });
 
 test("rate messages reach the stats; a new session forgets them", async () => {

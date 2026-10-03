@@ -1,6 +1,7 @@
-/* App stream client: WebRTC over the local network, signaling over Merlin's
+/* App stream client: WebRTC, peer to peer when a path exists (LAN, UPnP,
+ * STUN) else through Merlin Cloud's relay (TURN), signaling over Merlin's
  * WebSocket. Shared by the full-screen player, the terminal panel and the
- * mobile mini-player.
+ * mobile mini-player. ?ice=relay on the page forces the relay (a test switch).
  *
  *   const stream = MerlinApps.connect({id, video, onState, onWelcome, ...});
  *   stream.send({t: 'key', k: 'Right', d: true});
@@ -69,6 +70,15 @@
         return '?';
     }
 
+    /** Which mechanism carries the stream, from the browser's side of the
+     * pair (the streamer's ``path`` message wins: it also knows UPnP). */
+    function pathOf(localType, remoteType) {
+        if (!localType && !remoteType) return '';
+        if (localType === 'relay' || remoteType === 'relay') return 'TURN';
+        if (localType === 'srflx' || remoteType === 'srflx') return 'STUN';
+        return 'Direct';
+    }
+
     /** The quality gauge, 1 to 4 bars: where the rate controller stands. */
     function levelOf(kbps, max) {
         if (!kbps || !max) return 4;
@@ -78,17 +88,33 @@
 
     function mbit(kbps) { return (kbps / 1000).toFixed(1); }
 
-    /** The chip's words: route and round trip; with detail, the numbers. */
+    /** The chip's words: route, path and round trip (a plain LAN connection
+     * says only LAN). With detail, more lines: the numbers, the selected
+     * pair, and what each way of reaching the machine gave. */
     function chipText(s, detail) {
+        var route = s.route || 'LAN';
+        var path = s.path && !(route === 'LAN' && s.path === 'Direct') ? ' · ' + s.path : '';
         var rtt = s.rttMs == null ? '' : ' · ' + (s.rttMs < 1 ? '<1' : s.rttMs) + ' ms';
-        var text = (s.route || 'LAN') + rtt;
+        var text = route + path + rtt;
         if (!detail) return text;
-        if (s.kbps != null) text += ' · ' + mbit(s.kbps) + ' Mbit/s';
-        if (s.rateKbps && s.rateMax) text += ' (target ' + mbit(s.rateKbps) + '/' + mbit(s.rateMax) + ')';
-        if (s.fps != null) text += ' · ' + s.fps + ' fps';
-        if (s.lossPct != null) text += ' · loss ' + s.lossPct.toFixed(1) + ' %';
-        if (s.codec) text += ' · ' + s.codec + (s.encoder ? ' (' + s.encoder + ')' : '');
-        return text;
+        var numbers = [];
+        if (s.kbps != null) {
+            numbers.push(mbit(s.kbps) + ' Mbit/s' +
+                (s.rateKbps && s.rateMax ? ' (target ' + mbit(s.rateKbps) + '/' + mbit(s.rateMax) + ')' : ''));
+        } else if (s.rateKbps && s.rateMax) {
+            numbers.push('target ' + mbit(s.rateKbps) + '/' + mbit(s.rateMax) + ' Mbit/s');
+        }
+        if (s.fps != null) numbers.push(s.fps + ' fps');
+        if (s.lossPct != null) numbers.push('loss ' + s.lossPct.toFixed(1) + ' %');
+        if (s.codec) numbers.push(s.codec + (s.encoder ? ' (' + s.encoder + ')' : ''));
+        var lines = [text];
+        if (numbers.length) lines.push(numbers.join(' · '));
+        if (s.local || s.remote) lines.push((s.local || '?') + ' ↔ ' + (s.remote || '?'));
+        if (s.reach) {
+            lines.push('STUN ' + (s.reach.stun || '?') + ' · UPnP ' + (s.reach.upnp || '?') +
+                ' · TURN ' + (s.reach.turn || '?'));
+        }
+        return lines.join('\n');
     }
 
     /** Fill a chip: its text, then the gauge (built once, kept). */
@@ -107,14 +133,18 @@
             el.appendChild(text);
         }
         text.textContent = chipText(s, detail);
+        // Several lines with the detail (the chip's CSS keeps them).
+        if (detail) el.setAttribute('data-detail', ''); else el.removeAttribute('data-detail');
         var level = s ? levelOf(s.rateKbps, s.rateMax) : 4;
         gauge.setAttribute('data-level', String(level));
         gauge.hidden = !s;
-        el.setAttribute('aria-label', 'Connection: ' + chipText(s, true) + ', quality ' + level + ' of 4');
+        el.setAttribute('aria-label', 'Connection: ' + chipText(s, true).replace(/\n/g, ', ') +
+            ', quality ' + level + ' of 4');
     }
 
     /** A chip showing only words (a state, the agent's input). */
     function chipWords(el, words) {
+        el.removeAttribute('data-detail');
         el.textContent = words;
         el.setAttribute('aria-label', 'Connection: ' + words);
     }
@@ -261,6 +291,25 @@
         return out.length ? out : ['VP8'];
     }
 
+    /** ?ice=relay on the page: through the relay only (to test TURN). */
+    function icePolicy() {
+        try {
+            return new URLSearchParams(location.search).get('ice') === 'relay' ? 'relay' : '';
+        } catch (e) { return ''; }
+    }
+
+    /** The peer, with the servers the server sent (STUN, TURN); a browser
+     * that refuses them still gets a peer: host candidates, the LAN. */
+    function makePeer(servers, policy) {
+        var config = {iceServers: Array.isArray(servers) ? servers : []};
+        if (policy === 'relay') config.iceTransportPolicy = 'relay';
+        try {
+            return new RTCPeerConnection(config);
+        } catch (e) {
+            return new RTCPeerConnection({iceServers: []});
+        }
+    }
+
     function connect(opts) {
         var video = opts.video;
         var ws = null, pc = null, channel = null;
@@ -270,7 +319,8 @@
         var lastLoss = null;
         var slowTimer = null, dropTimer = null, netTimer = null;
         var drops = 0;   // dropped live connections being restored in a row
-        var info = {host: '', app: null, encoder: '', codec: '', audio: false, rate: null, route: ''};
+        var info = {host: '', app: null, encoder: '', codec: '', audio: false, rate: null, route: '',
+                    iceServers: [], policy: 'all', path: null, reach: null};
         // Every open() and teardown() starts a new generation. Callbacks of an
         // older connection (a late promise, a closing socket) check theirs and
         // do nothing, and nothing runs at all once the client is destroyed.
@@ -319,7 +369,7 @@
             // its pipeline, without sound): the previous peer is closed, and
             // everything it still had in flight is ignored (mine()).
             if (pc) { try { pc.close(); } catch (e) {} }
-            var peer = new RTCPeerConnection({iceServers: []});
+            var peer = makePeer(info.iceServers, info.policy);
             pc = peer;
             function mine() { return current(g) && pc === peer; }
             // "Not on the same network" is about ICE only: the clock starts at
@@ -454,7 +504,9 @@
                     info.host = msg.host || '';
                     info.app = msg.app || null;
                     if (opts.onWelcome) opts.onWelcome(info);
-                    socket.send(JSON.stringify({type: 'hello', codecs: browserCodecs()}));
+                    var hello = {type: 'hello', codecs: browserCodecs()};
+                    if (icePolicy()) hello.ice = icePolicy();
+                    socket.send(JSON.stringify(hello));
                     break;
                 case 'ready':
                     info.encoder = msg.encoder || '';
@@ -472,6 +524,18 @@
                     break;
                 case 'route':
                     info.route = String(msg.route || '');
+                    break;
+                case 'servers':
+                    info.iceServers = Array.isArray(msg.iceServers) ? msg.iceServers : [];
+                    info.policy = msg.policy === 'relay' ? 'relay' : 'all';
+                    break;
+                case 'path':
+                    info.path = {path: String(msg.path || ''), local: String(msg.local || ''),
+                                 remote: String(msg.remote || '')};
+                    break;
+                case 'reach':
+                    info.reach = {stun: String(msg.stun || ''), upnp: String(msg.upnp || ''),
+                                  turn: String(msg.turn || '')};
                     break;
                 case 'offer':
                     onOffer(msg.sdp, g, socket);
@@ -512,6 +576,10 @@
             lastLoss = null;
             info.rate = null;
             info.route = '';
+            info.iceServers = [];
+            info.policy = 'all';
+            info.path = null;
+            info.reach = null;
             // Always with a detail: from "reconnecting" to a plain start the
             // state stays "connecting", and the status must still change.
             setState('connecting', drops ? {reconnecting: true} : {});
@@ -590,7 +658,7 @@
             if (!peer) return Promise.resolve(null);
             return peer.getStats().then(function (report) {
                 var out = {rttMs: null, fps: null, kbps: null, codec: info.codec, encoder: info.encoder,
-                           route: '', lossPct: null,
+                           route: '', lossPct: null, path: '', local: '', remote: '', reach: info.reach,
                            rateKbps: info.rate ? info.rate.kbps : null,
                            rateMax: info.rate ? info.rate.max : null};
                 var byId = {};
@@ -616,6 +684,8 @@
                     // hidden from us, so a public IPv6 at home reads as internet).
                     out.route = info.route ||
                         routeOf(remote.address || remote.ip, relay ? 'relay' : remote.candidateType);
+                    out.path = info.path ? info.path.path : pathOf(local.candidateType, remote.candidateType);
+                    if (info.path) { out.local = info.path.local; out.remote = info.path.remote; }
                 }
                 report.forEach(function (s) {
                     if (s.type === 'inbound-rtp' && s.kind === 'video') {
@@ -805,6 +875,7 @@
     window.MerlinApps = {
         connect: connect,
         routeOf: routeOf,
+        pathOf: pathOf,
         levelOf: levelOf,
         chipText: chipText,
         renderChip: renderChip,

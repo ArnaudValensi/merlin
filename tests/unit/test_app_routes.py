@@ -243,5 +243,91 @@ def test_viewer_attaches_to_the_launch_current_at_attach_time(client, monkeypatc
         assert argv[argv.index("--xvfb-pid") + 1] == "222"
         assert kwargs.get("start_new_session") is True
 
+        assert ws.receive_json()["type"] == "servers"
         current["record"] = _record("third", ":102", 333)
         assert ws.receive_json() == {"type": "restarted"}
+
+
+def _spawn_one(client, monkeypatch, hello):
+    """Connect, say hello, and return (messages before the spawn, argv, env)."""
+    import asyncio
+
+    from app import sessions
+
+    monkeypatch.setattr(sessions, "get", lambda _id: _record("g", ":100", 111))
+    monkeypatch.setattr(sessions, "capture_thumbnail", lambda _id: None)
+    spawned = []
+
+    async def fake_exec(*argv, **kwargs):
+        spawned.append((argv, kwargs))
+        return _FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    with client.websocket_connect("/ws/apps/probe/stream") as ws:
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json(hello)
+        servers = ws.receive_json()
+        deadline = time.monotonic() + 5
+        while not spawned:
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+    argv, kwargs = spawned[0]
+    return servers, argv, kwargs.get("env") or {}
+
+
+TURN = {
+    "urls": ["turn:turn.merlincloud.dev:3478?transport=udp"],
+    "username": "1790900000:lisa",
+    "credential": "secret-credential",
+}
+
+
+def test_the_browser_and_the_streamer_get_the_same_servers(client, monkeypatch):
+    import json
+
+    from app import iceservers
+
+    servers = iceservers.Servers([{"urls": ["stun:s:3478"]}, TURN], "ok", 9e12)
+    monkeypatch.setattr(routes._ice_cache, "get", lambda: servers)
+    message, argv, env = _spawn_one(client, monkeypatch, {"type": "hello"})
+    assert message == {
+        "type": "servers",
+        "iceServers": [{"urls": ["stun:s:3478"]}, TURN],
+        "turn": "ok",
+        "policy": "all",
+    }
+    assert json.loads(env["MERLIN_APP_ICE"]) == {
+        "iceServers": [{"urls": ["stun:s:3478"]}, TURN],
+        "turn": "ok",
+        "policy": "all",
+    }
+    assert not any("secret-credential" in str(a) for a in argv)  # never in ps
+
+
+def test_ice_relay_in_hello_makes_a_relay_only_session(client, monkeypatch):
+    message, _argv, env = _spawn_one(
+        client, monkeypatch, {"type": "hello", "ice": "relay"}
+    )
+    assert message["policy"] == "relay"
+    assert '"policy": "relay"' in env["MERLIN_APP_ICE"]
+
+
+def test_a_slow_portal_does_not_hold_the_stream(client, monkeypatch):
+    from app import iceservers
+
+    monkeypatch.setattr(routes, "SERVERS_WAIT", 0.2)
+    monkeypatch.setattr(routes._ice_cache, "get", lambda: time.sleep(3))
+    started = time.monotonic()
+    message, _argv, _env = _spawn_one(client, monkeypatch, {"type": "hello"})
+    assert time.monotonic() - started < 2.5
+    assert message["iceServers"] == iceservers.stun_servers()
+    assert message["turn"] == iceservers.TURN_UNREACHABLE
+
+
+def test_without_merlin_cloud_the_stream_gets_stun_only(client, monkeypatch):
+    from app import iceservers
+
+    monkeypatch.delenv("MERLIN_APP_STUN", raising=False)
+    message, _argv, _env = _spawn_one(client, monkeypatch, {"type": "hello"})
+    assert message["iceServers"] == [{"urls": [iceservers.DEFAULT_STUN]}]
+    assert message["turn"] == "off"

@@ -2,8 +2,9 @@
 
 The WebSocket only carries signaling (the SDP offer and answer, ICE
 candidates) plus a few status events, so it works unchanged through the
-merlincloud.dev proxy. The video and the input travel over WebRTC directly on
-the local network. One viewer per app: a new viewer replaces the previous one.
+merlincloud.dev proxy. The video and the input travel over WebRTC, peer to
+peer when a path exists (the LAN, UPnP, STUN), else through Merlin Cloud's
+relay (TURN). One viewer per app: a new viewer replaces the previous one.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 from auth import verify_ws_cookie
 from merlin_ext import make_templates
 
-from . import deps, sessions
+from . import deps, iceservers, sessions
 
 logger = logging.getLogger("merlin.ext.app")
 
@@ -37,6 +38,8 @@ api_router = APIRouter()
 page_router = APIRouter()
 
 HELLO_TIMEOUT = 15.0
+SERVERS_WAIT = 4.0  # for the portal's TURN credentials, then STUN alone
+_ice_cache = iceservers.Cache()
 RECORD_POLL = 0.5
 FPS = 60
 
@@ -350,15 +353,31 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
             "app": sessions.public(record),
         }
     )
+    # The ICE servers (TURN credentials from the portal, cached) while the
+    # browser says hello.
+    servers_task = asyncio.create_task(asyncio.to_thread(_ice_cache.get))
     try:
         hello = json.loads(
             await asyncio.wait_for(websocket.receive_text(), HELLO_TIMEOUT)
         )
     except (TimeoutError, WebSocketDisconnect, ValueError):
+        servers_task.cancel()
         with contextlib.suppress(Exception):
             await websocket.close()
         return
+    if not isinstance(hello, dict):
+        hello = {}
     codecs = [str(c) for c in hello.get("codecs") or ["VP8"]]
+    try:
+        servers = await asyncio.wait_for(asyncio.shield(servers_task), SERVERS_WAIT)
+    except Exception:  # a slow or failing portal: STUN alone this time
+        servers = iceservers.Servers(
+            iceservers.stun_servers(), iceservers.TURN_UNREACHABLE
+        )
+    # ?ice=relay on the page: this session goes through the relay only (a
+    # test switch, for TURN on purpose).
+    policy = "relay" if hello.get("ice") == "relay" else "all"
+    ice = {**servers.to_json(), "policy": policy}
 
     async with _viewer_locks.setdefault(session_id, asyncio.Lock()):
         if websocket.application_state != WebSocketState.CONNECTED:
@@ -383,6 +402,10 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
         viewer.generation = record.get("generation")
         width, height = record["size"]
         _viewers[session_id] = viewer
+        # Before the streamer exists, so before its offer: the browser builds
+        # its peer with them. To the streamer through its environment, never
+        # its argv (the credentials would show in ps).
+        await viewer.send({"type": "servers", **ice})
         viewer.process = await asyncio.create_subprocess_exec(
             deps.SYSTEM_PYTHON,
             str(STREAMER),
@@ -408,6 +431,7 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            env={**os.environ, "MERLIN_APP_ICE": json.dumps(ice)},
         )
     logger.info(
         "viewer connected to %s (streamer pid %s)", session_id, viewer.process.pid

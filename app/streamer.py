@@ -8,12 +8,16 @@ JSON lines:
 - stdin  (server -> streamer): ``answer`` ``{"sdp"}``, ``ice``
   ``{"candidate", "sdpMLineIndex"}``, ``stop``.
 - stdout (streamer -> server): ``ready`` ``{"encoder", "codec"}``, ``offer``
-  ``{"sdp"}``, ``ice``, ``state`` ``{"ice"}``, ``error`` ``{"message"}``.
+  ``{"sdp"}``, ``ice``, ``state`` ``{"ice"}``, ``route``, ``rate``, ``path``,
+  ``reach``, ``error`` ``{"message"}``.
 
 The pipeline captures the X display (``ximagesrc``), encodes it (NVENC H.264,
 OpenH264 or VP8, in that order of preference among the codecs the browser
-supports) and sends it through ``webrtcbin`` with no STUN or TURN: host
-candidates only, the local network. With ``--audio-sink``, a second track
+supports) and sends it through ``webrtcbin``. To reach the browser from
+another network it uses the ICE servers the server hands it in
+``MERLIN_APP_ICE`` (STUN, and TURN for a Merlin Cloud account; see
+iceservers.py). libnice's own UPnP is off: it never removes its mappings.
+With ``--audio-sink``, a second track
 carries the app's sound: the monitor of its null sink, in Opus. Audio never
 stops the video: a branch that cannot start is dropped, one that fails later
 goes silent. Input arrives on the ``input`` data
@@ -24,6 +28,7 @@ releases any key or button still held.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import fcntl
 import json
 import os
@@ -49,6 +54,7 @@ from Xlib.ext import xtest  # noqa: E402
 # linkstats lives next to this file (stdlib only): run as a script or
 # imported as app.streamer by the tests.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import iceservers  # noqa: E402
 import linkstats  # noqa: E402
 
 # Interfaces whose candidates can never reach a phone on the LAN.
@@ -609,6 +615,57 @@ class Injector:
 # ---------------------------------------------------------------------------
 
 
+def _restore_ref(obj) -> None:
+    """Give a GObject back the reference PyGObject took from it.
+
+    webrtcbin holds its ICE agent by the agent's floating reference; reading
+    ``ice-agent`` from Python sinks that reference into the Python wrapper,
+    so the agent dies with the wrapper and webrtcbin is left with a dangling
+    pointer (``add-turn-server`` then fails, teardown aborts). When the
+    wrapper holds the only reference, add one at the C level, owned by
+    webrtcbin as it should have been."""
+    if obj.__grefcount__ != 1:
+        return  # a GStreamer that refs it properly: nothing was taken
+    gobject = ctypes.CDLL("libgobject-2.0.so.0")
+    gobject.g_object_ref.argtypes = [ctypes.c_void_p]
+    gobject.g_object_ref.restype = ctypes.c_void_p
+    pointer = ctypes.pythonapi.PyCapsule_GetPointer
+    pointer.argtypes = [ctypes.py_object, ctypes.c_char_p]
+    pointer.restype = ctypes.c_void_p
+    gobject.g_object_ref(pointer(obj.__gpointer__, None))
+
+
+def libnice_upnp_off(webrtc) -> bool:
+    """Turn off libnice's UPnP on this webrtcbin (see _restore_ref for the
+    reference the read needs back). False when there is no libnice agent."""
+    ice = webrtc.get_property("ice-agent")
+    if ice is None:
+        return False
+    _restore_ref(ice)
+    if not any(p.name == "agent" for p in ice.list_properties()):
+        return False
+    agent = ice.get_property("agent")
+    if agent is None:
+        return False
+    agent.set_property("upnp", False)
+    return True
+
+
+def ice_settings() -> dict:
+    """The server's ``MERLIN_APP_ICE``: ``{"iceServers", "policy", "turn"}``."""
+    try:
+        settings = json.loads(os.environ.get("MERLIN_APP_ICE") or "{}")
+    except ValueError:
+        settings = {}
+    if not isinstance(settings, dict):
+        settings = {}
+    return {
+        "iceServers": settings.get("iceServers") or [],
+        "policy": "relay" if settings.get("policy") == "relay" else "all",
+        "turn": str(settings.get("turn") or iceservers.TURN_OFF),
+    }
+
+
 def skipped_addresses() -> set[str]:
     """Addresses of docker/bridge interfaces, unreachable from a phone."""
     try:
@@ -678,7 +735,13 @@ class Streamer:
         self.session = linkstats.Session()
         self.last_report = None
         self.route = ""
+        self.path = ""
         self.keyframes = 0
+        # How the machine can be reached: the servers, and what they gave.
+        self.ice = ice_settings()
+        self.stun_uri, self.turn_uris = iceservers.for_webrtcbin(self.ice["iceServers"])
+        self.learned: dict[str, set[str]] = {"srflx": set(), "relay": set()}
+        self.opened_ports: set[int] = set()  # local ports UPnP let in
         self.client_rtt: float | None = None  # seconds, from the browser
         audio = bool(args.audio_sink)
         if audio and (missing := missing_audio_elements()):
@@ -754,6 +817,7 @@ class Streamer:
             "notify::ice-connection-state", self.on_ice_connection_state
         )
         self.webrtc.connect("notify::ice-gathering-state", self.on_ice_gathering_state)
+        self._configure_ice()
         self.bus = self.pipe.get_bus()
         self.bus.add_signal_watch()
         self.bus.connect("message::error", self.on_bus_error)
@@ -764,6 +828,32 @@ class Streamer:
             pad = enc.get_static_pad("src")
             pad.add_probe(Gst.PadProbeType.EVENT_UPSTREAM, self.on_upstream_event)
             pad.add_probe(Gst.PadProbeType.BUFFER, self.on_encoded)
+
+    def _configure_ice(self) -> None:
+        # libnice maps a port on the router for every candidate and never
+        # removes it (hundreds of leftovers on a real router).
+        libnice_upnp_off(self.webrtc)
+        if self.stun_uri:
+            self.webrtc.set_property("stun-server", self.stun_uri)
+        for uri in self.turn_uris:
+            if not self.webrtc.emit("add-turn-server", uri):
+                log(f"ice: turn server refused: {uri.split('@')[-1]}")
+        if self.ice["policy"] == "relay":
+            self.webrtc.set_property(
+                "ice-transport-policy", GstWebRTC.WebRTCICETransportPolicy.RELAY
+            )
+
+    def ice_summary(self) -> str:
+        """``stun, turn (until 18:05)``, or why there is no relay."""
+        kinds = ["stun"] if self.stun_uri else []
+        if self.turn_uris:
+            kinds.append("turn")
+        text = ", ".join(kinds) or "none"
+        if not self.turn_uris:
+            text += f" (turn: {self.ice['turn']})"
+        if self.ice["policy"] == "relay":
+            text += ", relay only"
+        return text
 
     def on_upstream_event(self, _pad, info):
         event = info.get_event()
@@ -846,6 +936,7 @@ class Streamer:
     # -- lifecycle ---------------------------------------------------------
 
     def run(self) -> None:
+        log(f"ice: servers {self.ice_summary()}")
         if not self._start():
             if not self.audio:
                 send({"type": "error", "message": "the capture pipeline did not play"})
@@ -912,6 +1003,11 @@ class Streamer:
         parts = candidate.split()
         if len(parts) > 4 and parts[4] in self.skipped:
             return
+        kind = parts[parts.index("typ") + 1] if "typ" in parts[:-1] else ""
+        if kind in self.learned and len(parts) > 4:
+            # What STUN and TURN gave: the log says so as they come.
+            log(f"ice: local {linkstats.describe_candidate(candidate)}")
+            self.learned[kind].add(parts[4])
         send({"type": "ice", "candidate": candidate, "sdpMLineIndex": mline})
 
     def on_ice_connection_state(self, element, _pspec) -> None:
@@ -926,7 +1022,31 @@ class Streamer:
     def on_ice_gathering_state(self, element, _pspec) -> None:
         if element is not self.webrtc:
             return
-        log(f"ice: gathering {element.get_property('ice-gathering-state').value_nick}")
+        state = element.get_property("ice-gathering-state").value_nick
+        log(f"ice: gathering {state}")
+        if state == "complete":
+            GLib.idle_add(self.send_reach)
+
+    def reach(self) -> dict:
+        """What each way of reaching the machine gave, for the chip's detail."""
+        if not self.stun_uri:
+            stun = "off"
+        elif self.learned["srflx"]:
+            stun = "ok " + " ".join(sorted(self.learned["srflx"]))
+        else:
+            stun = "no answer"
+        if self.turn_uris:
+            turn = "ok" if self.learned["relay"] else "no relay"
+        else:
+            turn = self.ice["turn"]
+        return {"type": "reach", "stun": stun, "turn": turn, "upnp": self.upnp_status()}
+
+    def upnp_status(self) -> str:
+        return "off"
+
+    def send_reach(self) -> bool:
+        send(self.reach())
+        return False
 
     def on_connected(self) -> bool:
         if self.session.connected_at is None:
@@ -971,6 +1091,12 @@ class Streamer:
             # We see both ends of the pair; the browser, which hides its own
             # address, would take a public IPv6 at home for the internet.
             send({"type": "route", "route": snap.route})
+        path = linkstats.path_of(snap, self.opened_ports)
+        if path and path != self.path:
+            self.path = self.session.path = path
+            local, remote = snap.kinds()
+            log(f"ice: path {path} (local {local}, remote {remote})")
+            send({"type": "path", "path": path, "local": local, "remote": remote})
         if snap.keyframe_requests > self.keyframes:
             log(f"rate: keyframe requested ({snap.keyframe_requests} so far)")
             self.keyframes = snap.keyframe_requests

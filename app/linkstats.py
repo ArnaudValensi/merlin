@@ -10,6 +10,7 @@ them.
 - ``describe_candidate``: an ICE candidate line, reduced to its type,
   protocol and address family (for the log).
 - ``read_snapshot``: the figures that matter from one stats reply.
+- ``path_of``: which mechanism carries the stream (Direct, UPnP, STUN, TURN).
 - ``RateControl``: the bitrate controller (AIMD on the browser's receiver
   reports).
 - ``Session``: what a viewer's session did, for the summary line.
@@ -89,6 +90,8 @@ class Snapshot:
     local_address: str = ""
     remote_address: str = ""
     remote_type: str = ""
+    local_type: str = ""
+    local_port: int = 0
     protocol: str = ""
     report: int | None = None  # the browser's last receiver report (its seq)
     fraction_lost: float | None = None  # 0..1, over that report's interval
@@ -103,6 +106,21 @@ class Snapshot:
         if not self.remote_address:
             return ""
         return classify(self.remote_address, self.remote_type, self.local_address)
+
+    def kinds(self) -> tuple[str, str]:
+        """Both candidates as ``type protocol family`` (``host udp ipv6``)."""
+        protocol = self.protocol.lower() or "?"
+        return (
+            f"{self.local_type or '?'} {protocol} {_family(self.local_address)}",
+            f"{self.remote_type or '?'} {protocol} {_family(self.remote_address)}",
+        )
+
+
+def _family(address: str) -> str:
+    try:
+        return f"ipv{ipaddress.ip_address(address.split('%')[0]).version}"
+    except ValueError:
+        return "mdns" if address.endswith(".local") else "?"
 
 
 def _by_id(stats: list[dict]) -> dict[str, dict]:
@@ -126,6 +144,11 @@ def read_snapshot(stats: list[dict]) -> Snapshot:
                 snap.local_address = str(local.get("address") or "")
                 snap.remote_address = str(remote.get("address") or "")
                 snap.remote_type = str(remote.get("candidate-type") or "")
+                snap.local_type = str(local.get("candidate-type") or "")
+                try:
+                    snap.local_port = int(local.get("port") or 0)
+                except (TypeError, ValueError):
+                    snap.local_port = 0
                 snap.protocol = str(local.get("protocol") or "")
         elif name == "outbound-rtp" and entry.get("kind") == "video":
             snap.packets_sent = int(entry.get("packets-sent") or 0)
@@ -143,6 +166,33 @@ def read_snapshot(stats: list[dict]) -> Snapshot:
                 lost = int(entry.get("packets-lost") or 0)
                 snap.packets_lost = max(lost, 0)
     return snap
+
+
+# --- the path ---------------------------------------------------------------------
+
+
+def path_of(
+    snap: Snapshot, opened_ports: frozenset[int] | set[int] = frozenset()
+) -> str:
+    """Which mechanism carries the stream, from the selected pair:
+
+    - ``TURN``: either end is a relay candidate.
+    - ``UPnP``: the far end is not on our network and the router was asked to
+      let it in on our end's port (a mapping or an IPv6 pinhole).
+    - ``STUN``: either end is server-reflexive, a public address learned from
+      STUN (the browser's hides its host addresses, so the path needed it).
+    - ``Direct``: host or peer-reflexive candidates only.
+    """
+    if not snap.remote_address and not snap.remote_type:
+        return ""
+    if "relay" in (snap.local_type, snap.remote_type):
+        return "TURN"
+    lan = classify(snap.remote_address, "", snap.local_address) == "LAN"
+    if not lan and snap.local_port and snap.local_port in opened_ports:
+        return "UPnP"
+    if "srflx" in (snap.local_type, snap.remote_type):
+        return "STUN"
+    return "Direct"
 
 
 # --- bitrate --------------------------------------------------------------------
@@ -246,6 +296,7 @@ class Session:
     last: Snapshot | None = None
     rates: list[int] = field(default_factory=list)
     keyframes: KeyframeAnswers = field(default_factory=KeyframeAnswers)
+    path: str = ""  # the last path_of the selected pair
 
     def summary(self, now: float) -> str:
         if self.connected_at is None or self.last is None or self.first is None:
@@ -257,7 +308,8 @@ class Session:
         loss = 100 * lost / packets if packets else 0.0
         rates = f"{min(self.rates)}-{max(self.rates)}" if self.rates else "?"
         return (
-            f"session: {minutes}m{rest:02d}s via {self.last.route or '?'}, "
+            f"session: {minutes}m{rest:02d}s via {self.last.route or '?'}"
+            f"{' · ' + self.path if self.path else ''}, "
             f"sent {sent:.0f} kbit/s on average, rate {rates} kbit/s, "
             f"loss {loss:.1f} %, {self.last.keyframe_requests} keyframe requests "
             f"({self.keyframes.forwarded} to the encoder, "

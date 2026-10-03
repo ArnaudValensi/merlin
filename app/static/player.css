@@ -139,6 +139,13 @@ body.player-body .player-kb {
     backdrop-filter: blur(4px);
 }
 .player-chip.live { color: var(--accent-green); border-color: rgba(52, 211, 153, 0.35); }
+/* Tapped: the numbers, the pair and what each way of reaching the machine
+   gave, one per line (wrapped, never cut). */
+.player-chip[data-detail] {
+    white-space: pre-line;
+    border-radius: 14px;
+    line-height: 1.5;
+}
 .player-chip.agent { color: var(--accent-blue); border-color: rgba(74, 158, 255, 0.5); }
 
 /* ---- Bottom sheet ------------------------------------------------------- */
