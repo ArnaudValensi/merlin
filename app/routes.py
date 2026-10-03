@@ -427,6 +427,8 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
             str(sessions.keymap_registry(record)),
             "--audio-sink",
             record.get("audio_sink") or "",
+            "--app",
+            str(record.get("id") or session_id),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

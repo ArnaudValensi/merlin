@@ -432,6 +432,7 @@ print(json.dumps({{"decoded": decode_late(second.disp, presses)}}))
 
 
 DROP = """
+import os
 from argparse import Namespace
 from contextlib import contextmanager
 
@@ -500,9 +501,10 @@ streamer.GLib.idle_add = lambda fn, *args: fn(*args)
 streamer.GLib.timeout_add_seconds = lambda secs, fn, *a: trace.append(["timer", fn.__name__])
 streamer.send = lambda message: trace.append(
     ["send", message["type"], message.get("audio")])
+os.environ["MERLIN_APP_UPNP"] = "0"  # never the real router from a test
 s = streamer.Streamer(Namespace(display=":100", codecs="VP8", fps=60, bitrate=8000,
                                 xvfb_pid=1, xvfb_start=2, state_lock="/tmp/lock",
-                                keymap_registry="", audio_sink="merlin_app_x"))
+                                keymap_registry="", audio_sink="merlin_app_x", app="x"))
 %s
 print(json.dumps(trace))
 """
@@ -733,6 +735,7 @@ def make(settings):
     s.opened_ports = set()
     s.skipped = set()
     s.webrtc = FakeWebrtc()
+    s.opener, s.upnp_state, s.offered = None, "off", False
     return s
 
 TURN = {"urls": ["turn:turn.example:3478?transport=udp", "turns:turn.example:443"],
@@ -862,3 +865,34 @@ print(json.dumps([[m for m in sent if m["type"] == "path"],
         "ice: path TURN (local relay udp ipv6, remote srflx udp ipv6)",
     ]
     assert session_path == "TURN"
+
+
+def test_host_candidates_go_to_the_router_and_its_mapping_to_the_browser():
+    trace = _run(
+        ICE_FAKES
+        + """
+from types import SimpleNamespace
+added = []
+s = make({"iceServers": [STUN], "turn": "off"})
+s.opener = SimpleNamespace(add=lambda a, p: added.append([a, p]), gateway=None)
+s.session = streamer.linkstats.Session()
+s.on_ice_candidate(s.webrtc, 0, "candidate:1 1 UDP 2015363327 192.168.1.12 40001 typ host")
+s.on_ice_candidate(s.webrtc, 0, "candidate:2 1 TCP 1015021823 192.168.1.12 9 typ host tcptype active")
+s.on_ice_candidate(s.webrtc, 0, "candidate:3 1 UDP 2015363327 2001:861::1 40002 typ host")
+s.on_mapped(streamer.upnp.Opening(40001, "192.168.1.12", "176.186.26.141", 40001))
+s.apply_upnp("mapped 176.186.26.141:40001", {40001})
+print(json.dumps([added, sent[-1:], s.opened_ports and sorted(s.opened_ports),
+                  s.reach()["upnp"], logged]))
+"""
+    )
+    added, sent, ports, upnp_status, logged = trace
+    assert added == [["192.168.1.12", 40001], ["2001:861::1", 40002]]  # UDP only
+    assert sent[0] == {
+        "type": "ice",
+        "candidate": "candidate:upnp40001 1 UDP 1694498815 176.186.26.141 40001 "
+        "typ srflx raddr 192.168.1.12 rport 40001",
+        "sdpMLineIndex": 0,
+    }
+    assert ports == [40001]
+    assert upnp_status == "mapped 176.186.26.141:40001"
+    assert logged == ["upnp: mapped 176.186.26.141:40001"]

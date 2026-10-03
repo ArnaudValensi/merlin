@@ -16,7 +16,9 @@ OpenH264 or VP8, in that order of preference among the codecs the browser
 supports) and sends it through ``webrtcbin``. To reach the browser from
 another network it uses the ICE servers the server hands it in
 ``MERLIN_APP_ICE`` (STUN, and TURN for a Merlin Cloud account; see
-iceservers.py). libnice's own UPnP is off: it never removes its mappings.
+iceservers.py), and asks the home router to let the stream in (upnp.py,
+``MERLIN_APP_UPNP=0`` to stop it). libnice's own UPnP is off: it never
+removes its mappings.
 With ``--audio-sink``, a second track
 carries the app's sound: the monitor of its null sink, in Opus. Audio never
 stops the video: a branch that cannot start is dropped, one that fails later
@@ -56,6 +58,11 @@ from Xlib.ext import xtest  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import iceservers  # noqa: E402
 import linkstats  # noqa: E402
+import upnp  # noqa: E402
+
+# A server-reflexive candidate's priority (RFC 8445: type preference 100,
+# local preference 65535, component 1), for the router's mapped address.
+SRFLX_PRIORITY = (100 << 24) + (65535 << 8) + 255
 
 # Interfaces whose candidates can never reach a phone on the LAN.
 SKIPPED_INTERFACES = ("docker", "br-", "veth", "virbr")
@@ -742,6 +749,8 @@ class Streamer:
         self.stun_uri, self.turn_uris = iceservers.for_webrtcbin(self.ice["iceServers"])
         self.learned: dict[str, set[str]] = {"srflx": set(), "relay": set()}
         self.opened_ports: set[int] = set()  # local ports UPnP let in
+        self.opener: upnp.Opener | None = None
+        self.upnp_state = "off"
         self.client_rtt: float | None = None  # seconds, from the browser
         audio = bool(args.audio_sink)
         if audio and (missing := missing_audio_elements()):
@@ -914,6 +923,8 @@ class Streamer:
         log(f"no sound in the stream: {why}")
         self._discard()
         self.offered = False
+        if self.opener is not None:
+            self.opener.reset()  # the new webrtcbin has new ports
         try:
             with state_lock(self.args.state_lock):
                 if self.args.xvfb_pid:
@@ -937,12 +948,18 @@ class Streamer:
 
     def run(self) -> None:
         log(f"ice: servers {self.ice_summary()}")
+        if os.environ.get("MERLIN_APP_UPNP", "1").strip() != "0":
+            self.upnp_state = "searching"
+            self.opener = upnp.Opener(
+                self.args.app, on_change=self.on_upnp_change, on_mapped=self.on_mapped
+            )
         if not self._start():
             if not self.audio:
                 send({"type": "error", "message": "the capture pipeline did not play"})
             if not self.audio or not self._drop_audio("its capture did not play"):
                 self.injector.release_all()
                 self.pipe.set_state(Gst.State.NULL)
+                self.close_upnp()
                 return
         threading.Thread(target=self.read_stdin, daemon=True).start()
         for sig in (signal.SIGTERM, signal.SIGINT):
@@ -954,6 +971,15 @@ class Streamer:
             self.injector.release_all()
             self.pipe.set_state(Gst.State.NULL)
             log(self.session.summary(time.monotonic()))
+            self.close_upnp()
+
+    def close_upnp(self) -> None:
+        if self.opener is None:
+            return
+        if self.opener.openings:
+            log(f"upnp: removing {self.opener.status}")
+        self.opener.close()
+        self.opener = None
 
     def stop(self) -> bool:
         self.loop.quit()
@@ -1008,7 +1034,41 @@ class Streamer:
             # What STUN and TURN gave: the log says so as they come.
             log(f"ice: local {linkstats.describe_candidate(candidate)}")
             self.learned[kind].add(parts[4])
+        elif kind == "host" and len(parts) > 5 and parts[2].upper() == "UDP":
+            if self.opener is not None:
+                try:
+                    self.opener.add(parts[4], int(parts[5]))
+                except ValueError:
+                    pass
         send({"type": "ice", "candidate": candidate, "sdpMLineIndex": mline})
+
+    # -- UPnP (on the opener's thread, handed to the main loop) ----------------
+
+    def on_upnp_change(self, status: str, openings: list) -> None:
+        ports = {o.port for o in openings if not o.ipv6 or o.pinhole_ids()}
+        GLib.idle_add(self.apply_upnp, status, ports)
+
+    def apply_upnp(self, status: str, ports: set[int]) -> bool:
+        if status == "router found" and self.opener and self.opener.gateway:
+            gw = self.opener.gateway
+            log(f"upnp: router {gw.model or '?'} at {gw.address}")
+        elif status != self.upnp_state:
+            log(f"upnp: {status}")
+        self.upnp_state = status
+        self.opened_ports = ports
+        if self.session.connected_at is not None or self.offered:
+            self.send_reach()
+        return False
+
+    def on_mapped(self, opening) -> None:
+        """The router forwards an external port to a host candidate's: the
+        browser gets a candidate for it, and its checks come in that way."""
+        candidate = (
+            f"candidate:upnp{opening.port} 1 UDP {SRFLX_PRIORITY} "
+            f"{opening.external_ip} {opening.external_port} typ srflx "
+            f"raddr {opening.address} rport {opening.port}"
+        )
+        send({"type": "ice", "candidate": candidate, "sdpMLineIndex": 0})
 
     def on_ice_connection_state(self, element, _pspec) -> None:
         if element is not self.webrtc:
@@ -1042,7 +1102,7 @@ class Streamer:
         return {"type": "reach", "stun": stun, "turn": turn, "upnp": self.upnp_status()}
 
     def upnp_status(self) -> str:
-        return "off"
+        return self.upnp_state
 
     def send_reach(self) -> bool:
         send(self.reach())
@@ -1133,6 +1193,13 @@ class Streamer:
             self.webrtc.emit("set-remote-description", answer, Gst.Promise.new())
         elif kind == "ice" and msg.get("candidate"):
             log(f"ice: remote {linkstats.describe_candidate(msg['candidate'])}")
+            parts = msg["candidate"].split()
+            if self.opener is not None and len(parts) > 5 and parts[2].upper() == "UDP":
+                # A router that pinholes per remote port needs the browser's.
+                try:
+                    self.opener.add_remote(int(parts[5]))
+                except ValueError:
+                    pass
             self.webrtc.emit(
                 "add-ice-candidate",
                 int(msg.get("sdpMLineIndex") or 0),
@@ -1196,6 +1263,7 @@ def main() -> int:
     parser.add_argument(
         "--audio-sink", default="", help="the app's null sink (its sound track)"
     )
+    parser.add_argument("--app", default="app", help="the app's id (UPnP labels)")
     args = parser.parse_args()
     Gst.init(None)
     try:
