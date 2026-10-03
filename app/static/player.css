@@ -431,3 +431,32 @@ body.player-body .player-logs pre {
     .touch-only { display: none !important; }
     .player-controls { display: none; }
 }
+
+/* The quality gauge in the chip: four bars, lit up to the rate controller's
+   level (client.js renderChip); green, then yellow, then red as it falls. */
+.stream-gauge {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 10px;
+    margin-right: 6px;
+    vertical-align: -1px;
+}
+.stream-gauge[hidden] { display: none; }
+.stream-gauge i {
+    display: block;
+    width: 3px;
+    border-radius: 1px;
+    background: currentColor;
+    opacity: 0.25;
+}
+.stream-gauge i:nth-child(1) { height: 3px; }
+.stream-gauge i:nth-child(2) { height: 5px; }
+.stream-gauge i:nth-child(3) { height: 7px; }
+.stream-gauge i:nth-child(4) { height: 10px; }
+.stream-gauge[data-level="1"] i:nth-child(-n+1),
+.stream-gauge[data-level="2"] i:nth-child(-n+2),
+.stream-gauge[data-level="3"] i:nth-child(-n+3),
+.stream-gauge[data-level="4"] i { opacity: 1; }
+.stream-gauge[data-level="2"] { color: var(--accent-yellow, #fbbf24); }
+.stream-gauge[data-level="1"] { color: var(--accent-red, #f87171); }

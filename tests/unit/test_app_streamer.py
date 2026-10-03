@@ -497,7 +497,7 @@ streamer.Streamer._build = fake_build
 streamer.Streamer._discard = lambda self: trace.append(["discard"])
 streamer.Streamer.stop = lambda self: trace.append(["stop"])
 streamer.GLib.idle_add = lambda fn, *args: fn(*args)
-streamer.GLib.timeout_add_seconds = lambda *a: trace.append(["watchdog"])
+streamer.GLib.timeout_add_seconds = lambda secs, fn, *a: trace.append(["timer", fn.__name__])
 streamer.send = lambda message: trace.append(
     ["send", message["type"], message.get("audio")])
 s = streamer.Streamer(Namespace(display=":100", codecs="VP8", fps=60, bitrate=8000,
@@ -524,6 +524,7 @@ s.run()
         ["set_state", "paused", False, True],
         ["send", "ready", False],
         ["set_state", "playing", False, False],
+        ["timer", "poll_stats"],
         ["loop"],
         ["set_state", "null", False, False],
     ]
@@ -623,3 +624,40 @@ s.on_bus_error(None, Message("audiosrc"))
     trace = _run(DROP % ("False", script))
     assert ["send", "offer", None] in trace
     assert ["discard"] not in trace
+
+
+def test_each_encoder_takes_the_bitrate_in_its_own_unit():
+    trace = _run(
+        """
+class Enc:
+    def __init__(self):
+        self.props = {}
+    def set_property(self, name, value):
+        self.props[name] = value
+out = {}
+for name in ("nvh264enc", "openh264enc", "vp8enc"):
+    enc = Enc()
+    streamer.set_bitrate(enc, name, 2500)
+    out[name] = enc.props
+print(json.dumps(out))
+"""
+    )
+    assert trace == {
+        "nvh264enc": {"bitrate": 2500, "max-bitrate": 2500},  # kbit/s
+        "openh264enc": {"bitrate": 2500000},  # bit/s
+        "vp8enc": {"target-bitrate": 2500000},  # bit/s
+    }
+
+
+def test_the_browsers_round_trip_feeds_rate_control_and_nothing_else():
+    script = """
+injected = []
+s.inject = lambda msg: injected.append(msg) or False
+s.on_channel_message(None, json.dumps({"t": "net", "rtt": 48.5}))
+s.on_channel_message(None, json.dumps({"t": "net", "rtt": "nonsense"}))
+s.on_channel_message(None, json.dumps({"t": "net", "rtt": -5}))
+s.on_channel_message(None, json.dumps({"t": "key", "k": "x", "d": True}))
+trace.append(["rtt", s.client_rtt, len(injected)])
+"""
+    trace = _run(DROP % ("False", script))
+    assert trace[-1] == ["rtt", 0.0485, 1]  # the key goes on to the app

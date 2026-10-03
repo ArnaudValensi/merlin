@@ -257,7 +257,12 @@
     function onState(state, detail) {
         setTimeout(updateChip, 0);
         if (state === 'live') { hideOverlay(); return; }
-        if (state === 'connecting') { showOverlay('Connecting…', null); return; }
+        if (state === 'connecting') {
+            showOverlay(detail.reconnecting ? 'Reconnecting…' :
+                detail.slow ? 'Still connecting… (over the internet this can take a few seconds)' :
+                'Connecting…', null);
+            return;
+        }
         if (state === 'unreachable') {
             showOverlay("Can't reach " + (detail.host || 'this machine') +
                 ' directly. Join the same Wi-Fi, or use Tailscale.',
@@ -286,22 +291,22 @@
     function updateChip() {
         if (!stream || !els.chip) return;
         if (Date.now() < agentUntil) {
-            els.chip.textContent = 'agent is pressing keys';
+            MerlinApps.chipWords(els.chip, 'agent is pressing keys');
             els.chip.className = 'app-chip agent';
             return;
         }
         if (stream.state !== 'live') {
-            els.chip.textContent = stream.state;
+            MerlinApps.chipWords(els.chip, stream.state);
             els.chip.className = 'app-chip';
             return;
         }
         stream.stats().then(function (s) {
-            if (!s || !els.chip || Date.now() < agentUntil) return;
-            els.chip.textContent = 'LAN' + (s.rttMs != null ? ' · ' + s.rttMs + ' ms' : '') +
-                (s.fps != null ? ' · ' + s.fps + ' fps' : '');
+            if (!s || !els.chip || Date.now() < agentUntil || !stream || stream.state !== 'live') return;
+            MerlinApps.renderChip(els.chip, s, false);
             els.chip.className = 'app-chip live';
         });
     }
+
 
     function open(id) {
         if (openId === id && stream) return;

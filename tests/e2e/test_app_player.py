@@ -195,16 +195,30 @@ def test_key_row_sends_special_keys(phone):
     page.wait_for_selector("#player-keys", state="hidden")
 
 
+def _chip_until(page, condition: str, timeout: int) -> None:
+    """Wait for the chip, and say what it showed if it never does."""
+    try:
+        page.wait_for_function(condition, timeout=timeout)
+    except Exception as exc:
+        chip, state = page.evaluate(
+            "[document.getElementById('player-chip').textContent,"
+            " document.getElementById('player').dataset.streamState]"
+        )
+        raise AssertionError(f"chip {chip!r}, stream {state!r}") from exc
+
+
 def test_agent_input_shows_in_the_chip(merlin, phone):
     page, _ = phone
     assert cli(merlin, "input", "probe", "key", "x").returncode == 0
-    page.wait_for_function(
+    _chip_until(
+        page,
         "document.getElementById('player-chip').textContent.includes('agent')",
-        timeout=5000,
+        5000,
     )
-    page.wait_for_function(
+    _chip_until(
+        page,
         "document.getElementById('player-chip').textContent.startsWith('LAN')",
-        timeout=8000,
+        8000,
     )
 
 

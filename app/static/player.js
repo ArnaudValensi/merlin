@@ -77,7 +77,11 @@
         updateChip();
         if (state === 'live') { status(''); acquireWakeLock(); return; }
         releaseWakeLock();
-        if (state === 'connecting') status('Connecting…');
+        if (state === 'connecting') {
+            status(detail.reconnecting ? 'Reconnecting…' :
+                detail.slow ? 'Still connecting… (over the internet this can take a few seconds)' :
+                'Connecting…');
+        }
         else if (state === 'unreachable') {
             status("Can't reach " + (detail.host || 'this machine') +
                 ' directly. Join the same Wi-Fi, or use Tailscale.', [retry]);
@@ -96,27 +100,22 @@
     function updateChip() {
         if (!stream) return;
         if (Date.now() < agentUntil) {
-            chip.textContent = 'agent is pressing keys';
+            MerlinApps.chipWords(chip, 'agent is pressing keys');
             chip.className = 'player-chip agent';
             return;
         }
         if (stream.state !== 'live') {
-            chip.textContent = stream.state;
+            MerlinApps.chipWords(chip, stream.state);
             chip.className = 'player-chip';
             return;
         }
         stream.stats().then(function (s) {
-            if (!s || Date.now() < agentUntil) return;
-            var text = 'LAN' + (s.rttMs != null ? ' · ' + s.rttMs + ' ms' : '');
-            if (chipDetail) {
-                text += (s.fps != null ? ' · ' + s.fps + ' fps' : '') +
-                    (s.kbps != null ? ' · ' + (s.kbps / 1000).toFixed(1) + ' Mbit/s' : '') +
-                    (s.codec ? ' · ' + s.codec : '') + (s.encoder ? ' (' + s.encoder + ')' : '');
-            }
-            chip.textContent = text;
+            if (!s || Date.now() < agentUntil || stream.state !== 'live') return;
+            MerlinApps.renderChip(chip, s, chipDetail);
             chip.className = 'player-chip live';
         });
     }
+
     chip.addEventListener('click', function () { chipDetail = !chipDetail; updateChip(); });
 
     // ---- wake lock, fullscreen, iOS hint ------------------------------------------

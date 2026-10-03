@@ -38,9 +38,10 @@ help line, skill, or terminal button. Changing it needs `merlin restart`.
 ```
 
 The proxy (merlincloud.dev) only ever carries the signaling. The video and the
-input travel peer to peer with host candidates only: no STUN, no TURN. Off the
-local network (or Tailscale, which looks like a LAN to WebRTC) the client
-times out after 8 s and says so.
+input travel peer to peer with host candidates only: no STUN, no TURN. That
+already works beyond the LAN when one side can reach the other directly
+(Tailscale; IPv6 when the machine has a global address its router lets in);
+otherwise the client says the machine is unreachable. See "Beyond the LAN".
 
 ## Code
 
@@ -57,6 +58,7 @@ times out after 8 s and says so.
 | `app/cli_support.py`, `app/commands/*.py` | `merlin app run/list/stop/logs/screenshot/input`, `#!/usr/bin/env python3` |
 | `app/routes.py` | `/apps`, `/apps/{id}/play`, `/api/apps/*`, the signaling WebSocket |
 | `app/streamer.py` | WebRTC helper, one per viewer, **system Python** (PyGObject, python-xlib) |
+| `app/linkstats.py` | The link: route names, stats snapshots, rate control, session summary. **Stdlib only** |
 | `app/static/client.js` | Browser WebRTC client shared by the player, the panel and the mini-player |
 | `app/static/player.*` | Full-screen player and its touch controls |
 | `app/static/terminal-panel.*` | Terminal button, toast, docked panel, mobile mini-player |
@@ -191,9 +193,9 @@ button when it stops.
 Client states (`client.js`): `connecting`, `live`, `unreachable`, `replaced`,
 `exited`, `paused` (hidden 30 s, except in picture-in-picture: entering and
 leaving it re-arms the timer; pausing cancels a pending reconnect), `error`,
-`closed`. "Unreachable" means ICE did not connect within 8 s of the offer;
-before the offer the server may be busy (another app starting or stopping),
-bounded separately by 60 s. A dead streamer gets one automatic retry per 20 s; a lost server
+`closed`. "Unreachable" means ICE failed, or did not connect within 30 s of
+the offer (see "Beyond the LAN"); before the offer the server may be busy
+(another app starting or stopping), bounded separately by 60 s. A dead streamer gets one automatic retry per 20 s; a lost server
 (a Merlin restart) gets seven, with backoff, before `closed`. Every
 connection carries a generation and the client a `destroyed` flag: callbacks
 of a superseded or destroyed connection (a late promise, a closing socket)
@@ -283,6 +285,76 @@ the browser's jitter buffer aligns them).
 - **PipeWire only.** `audio_available()` requires `pactl info` to name
   PipeWire and `pw-cli`, `pw-dump`; anything else, or nodes that cannot be
   made, falls back to `local` (see Gotchas).
+
+## Beyond the LAN
+
+What a session does on the network is visible, waits as long as ICE needs,
+recovers from drops, and adapts its bitrate. NAT traversal helpers (STUN,
+UPnP, TURN) are a later step.
+
+- **The log** (`merlin.log`, the streamer's lines): `ice: gathering …`,
+  `ice: connection …`, `ice: remote host udp mdns` (each browser candidate,
+  reduced to type, protocol and family: Chrome hides its addresses behind
+  `.local` names, so the pair usually ends up `prflx` on our side),
+  `ice: route LAN: <local> -> <remote> udp` (the selected pair, on change),
+  `rate: …` (each bitrate change, with the loss and round trip behind it;
+  each keyframe request), and when the viewer leaves `session: 2m10s via
+  Internet · IPv6, sent … kbit/s on average, rate 600-5555 kbit/s, loss
+  3.1 %, 4 keyframe requests (4 forced)`.
+- **The stats**: every second the streamer calls `get-stats` on its
+  `webrtcbin` and reads it with `app/linkstats.py` (stdlib, imported next to
+  the streamer and from the tests): the selected pair (`transport` →
+  `candidate-pair` → candidates), the browser's receiver reports
+  (`remote-inbound-rtp`: `fraction-lost`, and `gst-rtpsource-stats`
+  `rb-exthighestseq` to tell a new report from the same one; Chrome sends one
+  a second), the counters (`outbound-rtp`: bytes, packets, PLI, FIR). Some
+  fields are types PyGObject cannot convert (`GstValueList`): skipped.
+- **The round trip** comes from the browser: webrtcbin computes none from
+  Chrome's reports, so the client sends its ICE pair's
+  `currentRoundTripTime` over the data channel every 2 s
+  (`{"t": "net", "rtt": ms}`, kept out of the input queue).
+- **Rate control** (`linkstats.RateControl`, one step per new report): loss
+  over 10 % or a round trip over twice the baseline: x0.7; loss 2 to 10 %:
+  x0.9; three clean reports in a row (under 2 %, within 1.3x the baseline):
+  x1.08, then on each clean one. The baseline is the best round trip of the
+  last 30 reports (a path whose latency rose for good gets a new one) and
+  never under 25 ms (on a LAN a sub-millisecond trip that doubles is noise).
+  Between max(600, ceiling/10) and the ceiling, today's bitrate for the
+  display size. Applied live: `nvh264enc` `bitrate`/`max-bitrate` in kbit/s,
+  `openh264enc` `bitrate` and `vp8enc` `target-bitrate` in bit/s. Each
+  change goes to the browser as `{"type": "rate", "kbps", "max"}`.
+- **Keyframes on loss**: webrtcbin turns the browser's PLI/FIR into an
+  upstream force-key-unit event; a probe on the encoder's source pad counts
+  them (the summary's "forced"). Coalesced bursts are expected.
+- **The route** is named by the streamer, which sees both ends of the
+  selected pair (`linkstats.classify`): `LAN` for RFC 1918, `fc00::/7`,
+  `fe80::/10`, **and a public address on our own network** (the same /64 in
+  IPv6, which has no NAT: at home a phone and the machine talk over global
+  addresses; the same /24 for a public IPv4); `Tailscale` for
+  `100.64.0.0/10` and `fd7a:115c:a1e0::/48`; `Internet · IPv4/IPv6`;
+  `Relay`. It goes to the browser as `{"type": "route", "route"}` on each
+  change. The browser alone cannot tell (Chrome hides its own address), so
+  its own reading (`routeOf`, remote address only) is a fallback.
+- **The chip** (`client.js` `renderChip`, the player and the docked panel):
+  a four-bar gauge (the controller's level: 85 / 60 / 35 % of the ceiling;
+  yellow at 2, red at 1; full until the first `rate`), then the route, then
+  the round trip (`<1 ms` on a LAN). A tap on the player's chip adds
+  received and target bitrate, fps, loss, codec.
+- **Waiting** (`client.js`): from the offer, ICE's own verdict (`failed`)
+  ends a hopeless attempt at once; 30 s bound one that never decides; after
+  4 s the status says "Still connecting…".
+- **Recovering**: a live connection `disconnected` for 5 s, or `failed`,
+  gets new sessions after 1, 2 and 4 s ("Reconnecting…"), then
+  `unreachable`. A new session that fails counts as the next try; one that
+  connects resets the count, and so do the user's Retry and a resume after a
+  pause. Apart from the dead-streamer retry and the lost-socket backoff.
+- **Testing a bad network**: `tests/e2e/test_app_network.py` runs a whole
+  session (a throwaway Merlin, an app drawing a moving ball, headless
+  Chromium) inside `unshare -rn`, with a dummy interface (`10.99.0.1`:
+  browsers and libnice skip loopback, so ICE needs a real address) whose
+  traffic goes through `lo`, where `tc netem` adds 15 % loss and 60 ms of
+  delay for 20 s. Unprivileged, no effect on the machine's network. Inside,
+  `UV_OFFLINE=1`, no SaaS token, a fresh home.
 
 ## UI
 
@@ -375,7 +447,9 @@ the browser's jitter buffer aligns them).
   codecs, single viewer, cleanup), `test_app_terminal.py`,
   `test_app_player.py` (touch profiles through CDP touch events),
   `test_app_page.py`, `test_app_hardening.py` (crash, streamer death, restart,
-  no Xvfb), `test_app_audio.py` (a WebAudio analyser hears the probe's
+  no Xvfb), `test_app_network.py` (a bad network in a namespace: route,
+  rate down and back up, gauge, round trip, keyframes forced),
+  `test_app_audio.py` (a WebAudio analyser hears the probe's
   440 Hz; local mode is picture only; each surface's sound default and
   toggle under Chromium's real autoplay rule; sinks lost mid-stream keep the
   picture coming (decoded frames) and never move the capture; sinks gone

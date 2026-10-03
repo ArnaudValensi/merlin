@@ -63,8 +63,12 @@ terminal; **Stop** ends it.
 
 The player fills the screen (on Android it also goes full screen and turns
 landscape; on iPhone, add Merlin to your Home Screen for that). The **⋯**
-button opens the menu; the chip at the top shows the connection (tap it for
-fps and bitrate) and "agent is pressing keys" when your agent is.
+button opens the menu. The chip at the top right shows the connection: bars
+for its quality (four when the stream runs at full quality, fewer as it
+lowers its bitrate for a weak network; yellow, then red), how you are
+connected (`LAN`, `Tailscale`, `Internet · IPv6`…) and the round trip in
+milliseconds (a packet's trip to the machine and back). Tap it for the
+numbers. It says "agent is pressing keys" when your agent is.
 
 Three control profiles, switchable from the menu:
 
@@ -101,5 +105,10 @@ the machine, and its sound is not streamed.
   them.
 - One screen at a time watches an app: opening it elsewhere takes over.
 - Apps run as you, with your files: a game uses your real saves.
-- "Can't reach … directly" means your phone is not on the same network: join
-  the Wi-Fi, or turn on Tailscale on both.
+- From outside your home: Tailscale on both devices works; so does IPv6 when
+  your machine and your phone both have it and your router lets the stream
+  in (try it on 4G with the Wi-Fi off). "Still connecting…" can take a few
+  seconds over the internet; "Can't reach … directly" means no direct path
+  was found: join the same Wi-Fi, or use Tailscale.
+- If the connection drops (switching from Wi-Fi to 4G, say), the player
+  reconnects by itself, three times, before asking you to retry.

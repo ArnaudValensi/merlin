@@ -6,9 +6,11 @@
  *   stream.send({t: 'key', k: 'Right', d: true});
  *   stream.close();
  *
- * States: connecting, live, unreachable (ICE failed or timed out: not on the
- * same network), replaced (opened on another device), exited (the app ended
- * or was stopped), paused (hidden for a while), error, closed.
+ * States: connecting, live, unreachable (ICE failed, or nothing after 30 s:
+ * no path between the two), replaced (opened on another device), exited (the
+ * app ended or was stopped), paused (hidden for a while), error, closed.
+ * "connecting" carries {slow: true} after 4 s without a connection, and
+ * {reconnecting: true} while a dropped connection is being restored.
  *
  * Sound: the app's audio track plays in the same <video>. Browsers only play
  * sound after a user gesture, so each surface asks for it through
@@ -18,9 +20,105 @@
 (function () {
     'use strict';
 
-    var CONNECT_TIMEOUT_MS = 8000;   // from the offer: ICE must connect by then
+    // From the offer, ICE's own verdict ("failed") ends a hopeless attempt;
+    // this only bounds one that never decides. On a LAN connections take well
+    // under a second; over the internet (a phone on 4G) several.
+    var CONNECT_TIMEOUT_MS = 30000;
+    var SLOW_CONNECT_MS = 4000;      // then the status says we are still trying
+    var DROP_GRACE_MS = 5000;        // a live connection "disconnected" this long has dropped
+    var DROP_RETRY_DELAYS = [1000, 2000, 4000];  // new sessions after a drop
+    var NET_REPORT_MS = 2000;        // the round trip, sent to the streamer
     var SETUP_TIMEOUT_MS = 60000;    // from the socket: the server must offer by then
     var HIDDEN_CLOSE_MS = 30000;
+
+    // ---- the link: route and quality ----
+
+    function ipv4(address) {
+        var m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(address);
+        return m ? [+m[1], +m[2], +m[3], +m[4]] : null;
+    }
+    function ipv6Head(address) {
+        // The first two 16-bit groups, enough for the ranges below.
+        if (address.indexOf(':') < 0) return null;
+        var parts = address.split('%')[0].split('::');
+        var head = parts[0] ? parts[0].split(':') : [];
+        var groups = head.map(function (h) { return parseInt(h || '0', 16); });
+        while (groups.length < 3) groups.push(0);
+        if (parts.length > 1 && !parts[0]) groups = [0, 0, 0];  // "::1"
+        return groups;
+    }
+
+    /** The route to the machine, from its address in the selected ICE pair
+     * (the same rule as app/linkstats.py classify). */
+    function routeOf(address, candidateType) {
+        if (candidateType === 'relay') return 'Relay';
+        address = String(address || '');
+        var v4 = ipv4(address);
+        if (v4) {
+            if (v4[0] === 100 && v4[1] >= 64 && v4[1] <= 127) return 'Tailscale';
+            if (v4[0] === 10 || v4[0] === 127 || (v4[0] === 172 && v4[1] >= 16 && v4[1] <= 31) ||
+                (v4[0] === 192 && v4[1] === 168) || (v4[0] === 169 && v4[1] === 254)) return 'LAN';
+            return 'Internet · IPv4';
+        }
+        var v6 = ipv6Head(address);
+        if (v6) {
+            if (v6[0] === 0xfd7a && v6[1] === 0x115c && v6[2] === 0xa1e0) return 'Tailscale';
+            if ((v6[0] & 0xfe00) === 0xfc00 || (v6[0] & 0xffc0) === 0xfe80) return 'LAN';
+            if (address === '::1') return 'LAN';
+            return 'Internet · IPv6';
+        }
+        return '?';
+    }
+
+    /** The quality gauge, 1 to 4 bars: where the rate controller stands. */
+    function levelOf(kbps, max) {
+        if (!kbps || !max) return 4;
+        var share = kbps / max;
+        return share >= 0.85 ? 4 : share >= 0.60 ? 3 : share >= 0.35 ? 2 : 1;
+    }
+
+    function mbit(kbps) { return (kbps / 1000).toFixed(1); }
+
+    /** The chip's words: route and round trip; with detail, the numbers. */
+    function chipText(s, detail) {
+        var rtt = s.rttMs == null ? '' : ' · ' + (s.rttMs < 1 ? '<1' : s.rttMs) + ' ms';
+        var text = (s.route || 'LAN') + rtt;
+        if (!detail) return text;
+        if (s.kbps != null) text += ' · ' + mbit(s.kbps) + ' Mbit/s';
+        if (s.rateKbps && s.rateMax) text += ' (target ' + mbit(s.rateKbps) + '/' + mbit(s.rateMax) + ')';
+        if (s.fps != null) text += ' · ' + s.fps + ' fps';
+        if (s.lossPct != null) text += ' · loss ' + s.lossPct.toFixed(1) + ' %';
+        if (s.codec) text += ' · ' + s.codec + (s.encoder ? ' (' + s.encoder + ')' : '');
+        return text;
+    }
+
+    /** Fill a chip: its text, then the gauge (built once, kept). */
+    function renderChip(el, s, detail) {
+        var text = el.querySelector('.stream-chip-text');
+        var gauge = el.querySelector('.stream-gauge');
+        if (!text) {
+            el.textContent = '';
+            text = document.createElement('span');
+            text.className = 'stream-chip-text';
+            gauge = document.createElement('span');
+            gauge.className = 'stream-gauge';
+            gauge.setAttribute('aria-hidden', 'true');
+            for (var i = 0; i < 4; i++) gauge.appendChild(document.createElement('i'));
+            el.appendChild(gauge);  // first, like a phone's bars: a long text gets cut, not it
+            el.appendChild(text);
+        }
+        text.textContent = chipText(s, detail);
+        var level = s ? levelOf(s.rateKbps, s.rateMax) : 4;
+        gauge.setAttribute('data-level', String(level));
+        gauge.hidden = !s;
+        el.setAttribute('aria-label', 'Connection: ' + chipText(s, true) + ', quality ' + level + ' of 4');
+    }
+
+    /** A chip showing only words (a state, the agent's input). */
+    function chipWords(el, words) {
+        el.textContent = words;
+        el.setAttribute('aria-label', 'Connection: ' + words);
+    }
 
     // Printable characters that are not their own X keysym name.
     var CHAR_KEYSYMS = {
@@ -170,7 +268,10 @@
         var state = 'closed';
         var timer = null, hiddenTimer = null, retryTimer = null;
         var lastBytes = null;
-        var info = {host: '', app: null, encoder: '', codec: '', audio: false};
+        var lastLoss = null;
+        var slowTimer = null, dropTimer = null, netTimer = null;
+        var drops = 0;   // dropped live connections being restored in a row
+        var info = {host: '', app: null, encoder: '', codec: '', audio: false, rate: null, route: ''};
         // Every open() and teardown() starts a new generation. Callbacks of an
         // older connection (a late promise, a closing socket) check theirs and
         // do nothing, and nothing runs at all once the client is destroyed.
@@ -196,6 +297,9 @@
         function teardown() {
             gen++;
             clearTimeout(timer);
+            clearTimeout(slowTimer);
+            clearTimeout(dropTimer);
+            clearInterval(netTimer);
             if (channel) { try { channel.close(); } catch (e) {} channel = null; }
             if (pc) { try { pc.close(); } catch (e) {} pc = null; }
             if (ws) {
@@ -224,8 +328,13 @@
             // start or stop, which is not a network problem.
             clearTimeout(timer);
             timer = setTimeout(function () {
-                if (mine() && state === 'connecting') unreachable();
+                if (mine() && state === 'connecting') lost();
             }, CONNECT_TIMEOUT_MS);
+            clearTimeout(slowTimer);
+            slowTimer = setTimeout(function () {
+                if (mine() && state === 'connecting' && !drops) setState('connecting', {slow: true});
+            }, SLOW_CONNECT_MS);
+            var wasLive = false;
             function sendOn(message) {
                 if (mine() && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
             }
@@ -247,12 +356,26 @@
             };
             peer.onconnectionstatechange = function () {
                 if (!mine()) return;
-                if (peer.connectionState === 'connected') {
+                var now = peer.connectionState;
+                if (now === 'connected') {
                     clearTimeout(timer);
+                    clearTimeout(slowTimer);
+                    clearTimeout(dropTimer);
                     reconnects = 0;
+                    drops = 0;
+                    wasLive = true;
                     setState('live');
-                } else if (peer.connectionState === 'failed') {
-                    unreachable();
+                    clearInterval(netTimer);
+                    netTimer = setInterval(function () { if (mine()) reportNet(peer); }, NET_REPORT_MS);
+                } else if (now === 'disconnected' && wasLive) {
+                    // Often back within a second (a Wi-Fi blip); a phone that
+                    // changed networks is not: then a new session.
+                    clearTimeout(dropTimer);
+                    dropTimer = setTimeout(function () {
+                        if (mine() && peer.connectionState !== 'connected') dropped();
+                    }, DROP_GRACE_MS);
+                } else if (now === 'failed') {
+                    if (wasLive) dropped(); else lost();
                 }
             };
             peer.setRemoteDescription({type: 'offer', sdp: sdp})
@@ -271,7 +394,39 @@
 
         function unreachable() {
             teardown();
+            drops = 0;
             setState('unreachable', {host: info.host});
+        }
+
+        /** The round trip as the browser measures it (its ICE checks), for
+         * the streamer's rate control: it has no measure of its own. */
+        function reportNet(peer) {
+            if (!channel || channel.readyState !== 'open') return;
+            peer.getStats().then(function (report) {
+                var pair = null, byId = {};
+                report.forEach(function (s) {
+                    byId[s.id] = s;
+                    if (s.type === 'transport' && s.selectedCandidatePairId) pair = s.selectedCandidatePairId;
+                });
+                var found = pair ? byId[pair] : null;
+                if (found && found.currentRoundTripTime != null && channel && channel.readyState === 'open') {
+                    channel.send(JSON.stringify({t: 'net', rtt: found.currentRoundTripTime * 1000}));
+                }
+            }).catch(function () {});
+        }
+
+        /** A session that never connected: unreachable, unless it was one of
+         * the new sessions after a drop, which gets the next try. */
+        function lost() {
+            if (drops) dropped(); else unreachable();
+        }
+
+        /** A live connection was lost: a few new sessions, then unreachable. */
+        function dropped() {
+            if (drops >= DROP_RETRY_DELAYS.length) { unreachable(); return; }
+            teardown();
+            setState('connecting', {reconnecting: true});
+            schedule(open, DROP_RETRY_DELAYS[drops++]);
         }
 
         function fail(message) {
@@ -304,6 +459,12 @@
                         video.parentElement.setAttribute('data-audio', info.audio ? '1' : '0');
                     }
                     if (opts.onReady) opts.onReady(info);
+                    break;
+                case 'rate':
+                    info.rate = {kbps: msg.kbps, max: msg.max};
+                    break;
+                case 'route':
+                    info.route = String(msg.route || '');
                     break;
                 case 'offer':
                     onOffer(msg.sdp, g, socket);
@@ -341,7 +502,12 @@
             clearTimeout(retryTimer);
             var g = gen;
             lastBytes = null;
-            setState('connecting');
+            lastLoss = null;
+            info.rate = null;
+            info.route = '';
+            // Always with a detail: from "reconnecting" to a plain start the
+            // state stays "connecting", and the status must still change.
+            setState('connecting', drops ? {reconnecting: true} : {});
             var socket = new WebSocket(wsUrl(opts.id));
             ws = socket;
             socket.onmessage = function (event) {
@@ -380,6 +546,7 @@
 
         function pause() {
             clearTimeout(retryTimer);
+            drops = 0;  // a resume is a fresh start, not a reconnection
             if (state === 'live' || state === 'connecting') {
                 teardown();
                 setState('paused');
@@ -415,15 +582,42 @@
             var peer = pc;
             if (!peer) return Promise.resolve(null);
             return peer.getStats().then(function (report) {
-                var out = {rttMs: null, fps: null, kbps: null, codec: info.codec, encoder: info.encoder};
+                var out = {rttMs: null, fps: null, kbps: null, codec: info.codec, encoder: info.encoder,
+                           route: '', lossPct: null,
+                           rateKbps: info.rate ? info.rate.kbps : null,
+                           rateMax: info.rate ? info.rate.max : null};
+                var byId = {};
                 var codecs = {};
-                report.forEach(function (s) { if (s.type === 'codec') codecs[s.id] = s; });
+                var selected = null;
                 report.forEach(function (s) {
-                    if (s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded' &&
-                        s.currentRoundTripTime != null) {
-                        out.rttMs = Math.round(s.currentRoundTripTime * 1000);
-                    }
+                    byId[s.id] = s;
+                    if (s.type === 'codec') codecs[s.id] = s;
+                    if (s.type === 'transport' && s.selectedCandidatePairId) selected = s.selectedCandidatePairId;
+                });
+                var pair = selected ? byId[selected] : null;
+                if (!pair) {
+                    report.forEach(function (s) {
+                        if (s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded') pair = s;
+                    });
+                }
+                if (pair) {
+                    if (pair.currentRoundTripTime != null) out.rttMs = Math.round(pair.currentRoundTripTime * 1000);
+                    var remote = byId[pair.remoteCandidateId] || {};
+                    var local = byId[pair.localCandidateId] || {};
+                    var relay = remote.candidateType === 'relay' || local.candidateType === 'relay';
+                    // The streamer's reading wins: it sees both ends (ours is
+                    // hidden from us, so a public IPv6 at home reads as internet).
+                    out.route = info.route ||
+                        routeOf(remote.address || remote.ip, relay ? 'relay' : remote.candidateType);
+                }
+                report.forEach(function (s) {
                     if (s.type === 'inbound-rtp' && s.kind === 'video') {
+                        var lost = s.packetsLost || 0, got = s.packetsReceived || 0;
+                        if (lastLoss && got + lost > lastLoss.got + lastLoss.lost) {
+                            var dLost = Math.max(0, lost - lastLoss.lost);
+                            out.lossPct = 100 * dLost / (got - lastLoss.got + dLost);
+                        }
+                        lastLoss = {lost: lost, got: got};
                         if (s.framesPerSecond != null) out.fps = Math.round(s.framesPerSecond);
                         var now = s.timestamp, bytes = s.bytesReceived;
                         if (lastBytes) {
@@ -451,7 +645,8 @@
                 return false;
             },
             close: close,
-            reconnect: function () { reconnects = 0; open(); },
+            // The user's Retry: a fresh start, with every automatic budget back.
+            reconnect: function () { reconnects = 0; drops = 0; open(); },
             stats: stats,
             get state() { return state; },
             get info() { return info; },
@@ -602,6 +797,11 @@
 
     window.MerlinApps = {
         connect: connect,
+        routeOf: routeOf,
+        levelOf: levelOf,
+        chipText: chipText,
+        renderChip: renderChip,
+        chipWords: chipWords,
         sound: sound,
         preferStereo: preferStereo,
         toDisplay: toDisplay,

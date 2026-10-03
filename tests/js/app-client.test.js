@@ -63,7 +63,7 @@ function makeEnv() {
         createAnswer() { return Promise.resolve({ type: "answer", sdp: answerSdp }); }
         setLocalDescription(desc) { this.local = desc; return Promise.resolve(); }
         addIceCandidate() { return Promise.resolve(); }
-        getStats() { return Promise.resolve(new Map()); }
+        getStats() { return Promise.resolve(this.report || new Map()); }
         close() { this.closed = true; }
     }
 
@@ -119,6 +119,12 @@ function makeEnv() {
             return id;
         },
         clearTimeout(id) { timers.delete(id); },
+        setInterval(fn, every) {
+            const id = nextId++;
+            timers.set(id, { fn, due: now + every, every });
+            return id;
+        },
+        clearInterval(id) { timers.delete(id); },
         Date,
         JSON,
         Promise,
@@ -137,9 +143,10 @@ function makeEnv() {
                 if (t.due <= end && (!next || t.due < next[1].due)) next = [id, t];
             }
             if (!next) break;
-            timers.delete(next[0]);
-            now = next[1].due;
-            next[1].fn();
+            const [id, t] = next;
+            if (t.every) t.due += t.every; else timers.delete(id);
+            now = Math.max(now, t.due - (t.every || 0));
+            t.fn();
         }
         now = end;
     }
@@ -305,20 +312,158 @@ test("an unauthorized socket is an error, not a retry", async () => {
     assert.equal(states[states.length - 1], "error");
 });
 
-test("a slow server start is not 'unreachable'; ICE gets 8 s from the offer", async () => {
+test("a slow server start is not 'unreachable'; ICE gets up to 30 s from the offer", async () => {
     const env = makeEnv();
-    const { states } = connect(env);
+    const { stream } = connect(env);
     env.sockets[0].deliver({ type: "welcome", host: "box", app: { id: "probe" } });
     env.advance(30000);  // the server waits (another app's stop, say): no offer yet
-    assert.equal(states[states.length - 1], "connecting");
+    assert.equal(stream.state, "connecting");
     assert.equal(env.sockets.length, 1);
 
     env.sockets[0].deliver({ type: "offer", sdp: "offer-sdp" });
     await env.flush();
-    env.advance(7000);
-    assert.equal(states[states.length - 1], "connecting");
-    env.advance(2000);  // 8 s after the offer, still no ICE: not the same network
-    assert.equal(states[states.length - 1], "unreachable");
+    env.advance(29000);
+    assert.equal(stream.state, "connecting");
+    env.advance(2000);  // 30 s after the offer and ICE never decided: give up
+    assert.equal(stream.state, "unreachable");
+});
+
+test("after 4 s without a connection the state says it is still trying", async () => {
+    const env = makeEnv();
+    const details = [];
+    connect(env, { onState: (s, d) => details.push([s, d]) });
+    await offer(env, env.sockets[0]);
+    env.advance(3900);
+    assert.ok(!details.some(([, d]) => d.slow));
+    env.advance(200);
+    const last = details[details.length - 1];
+    assert.equal(last[0], "connecting");
+    assert.equal(last[1].slow, true);
+});
+
+test("ICE failing before any connection is unreachable at once", async () => {
+    const env = makeEnv();
+    const { stream } = connect(env);
+    await offer(env, env.sockets[0]);
+    env.peers[0].connectionState = "failed";
+    env.peers[0].onconnectionstatechange();
+    assert.equal(stream.state, "unreachable");
+});
+
+async function dropLive(env, peer, how) {
+    peer.connectionState = how;
+    peer.onconnectionstatechange();
+    if (how === "disconnected") env.advance(5000);  // the grace before calling it dropped
+}
+
+test("a dropped live connection gets three new sessions, then is unreachable", async () => {
+    const env = makeEnv();
+    const details = [];
+    const { stream } = connect(env, { onState: (s, d) => details.push([s, d]) });
+    await goLive(env, env.sockets[0]);
+    await dropLive(env, env.peers[0], "disconnected");
+    for (const [attempt, delay] of [[1, 1000], [2, 2000], [3, 4000]]) {
+        assert.equal(stream.state, "connecting");
+        assert.equal(details[details.length - 1][1].reconnecting, true);
+        const sockets = env.sockets.length;
+        env.advance(delay - 1);
+        assert.equal(env.sockets.length, sockets, `not before ${delay} ms`);
+        env.advance(1);
+        assert.equal(env.sockets.length, sockets + 1, `session ${attempt} after ${delay} ms`);
+        await offer(env, env.sockets[env.sockets.length - 1]);
+        const fresh = env.peers[env.peers.length - 1];
+        fresh.remote.resolve();
+        await env.flush();
+        // The network is still gone: this session never connects.
+        if (attempt === 2) {
+            env.advance(30000);  // the bound, this time, rather than ICE's verdict
+        } else {
+            fresh.connectionState = "failed";
+            fresh.onconnectionstatechange();
+        }
+    }
+    assert.equal(stream.state, "unreachable");
+    env.advance(60000);
+    assert.equal(env.sockets.length, 4, "nothing more after the third");
+});
+
+test("a short blip is not a drop, and a successful reconnect resets the count", async () => {
+    const env = makeEnv();
+    const { stream } = connect(env);
+    await goLive(env, env.sockets[0]);
+    const peer = env.peers[0];
+    peer.connectionState = "disconnected";
+    peer.onconnectionstatechange();
+    env.advance(3000);
+    peer.connectionState = "connected";
+    peer.onconnectionstatechange();
+    env.advance(5000);
+    assert.equal(stream.state, "live");
+    assert.equal(env.sockets.length, 1, "no new session for a blip");
+
+    // Four drops in a row, each followed by a successful reconnect: never
+    // unreachable, since each success resets the count.
+    for (let i = 0; i < 4; i++) {
+        const live = env.peers[env.peers.length - 1];
+        await dropLive(env, live, "failed");
+        env.advance(1000);
+        await goLive(env, env.sockets[env.sockets.length - 1]);
+        assert.equal(stream.state, "live");
+    }
+});
+
+test("the route is named from the machine's address", () => {
+    const { routeOf } = makeEnv().MerlinApps;
+    const cases = [
+        ["192.168.1.12", "host", "LAN"],
+        ["10.1.2.3", "host", "LAN"],
+        ["172.20.0.5", "prflx", "LAN"],
+        ["169.254.3.4", "host", "LAN"],
+        ["fe80::1", "host", "LAN"],
+        ["fd12:3456::1", "host", "LAN"],
+        ["100.101.102.103", "host", "Tailscale"],
+        ["fd7a:115c:a1e0:ab12::1", "host", "Tailscale"],
+        ["2001:861:61c0:8770:a065:d2fb:61b8:6724", "host", "Internet · IPv6"],
+        ["176.186.26.141", "srflx", "Internet · IPv4"],
+        ["176.186.26.141", "relay", "Relay"],
+        ["abcd.local", "host", "?"],
+    ];
+    for (const [address, type, route] of cases) {
+        assert.equal(routeOf(address, type), route, address);
+    }
+});
+
+test("the gauge shows where the rate controller stands", () => {
+    const { levelOf } = makeEnv().MerlinApps;
+    assert.equal(levelOf(null, null), 4, "full until the streamer says otherwise");
+    assert.equal(levelOf(5500, 5500), 4);
+    assert.equal(levelOf(4700, 5500), 4);
+    assert.equal(levelOf(4600, 5500), 3);
+    assert.equal(levelOf(3300, 5500), 3);
+    assert.equal(levelOf(3200, 5500), 2);
+    assert.equal(levelOf(1925, 5500), 2);
+    assert.equal(levelOf(1900, 5500), 1);
+});
+
+test("the chip names the route and round trip, with the numbers on demand", () => {
+    const { chipText } = makeEnv().MerlinApps;
+    const s = { route: "Internet · IPv6", rttMs: 48, kbps: 3200, rateKbps: 4800, rateMax: 5500,
+                fps: 60, lossPct: 1.24, codec: "H264", encoder: "nvh264enc" };
+    assert.equal(chipText(s, false), "Internet · IPv6 · 48 ms");
+    assert.equal(chipText(s, true),
+        "Internet · IPv6 · 48 ms · 3.2 Mbit/s (target 4.8/5.5) · 60 fps · loss 1.2 % · H264 (nvh264enc)");
+});
+
+test("rate messages reach the stats; a new session forgets them", async () => {
+    const env = makeEnv();
+    const { stream } = connect(env);
+    await goLive(env, env.sockets[0]);
+    env.sockets[0].deliver({ type: "rate", kbps: 2000, max: 5500 });
+    const s = await stream.stats();
+    assert.equal(s.rateKbps, 2000);
+    assert.equal(s.rateMax, 5500);
+    stream.reconnect();
+    assert.equal(stream.info.rate, null);
 });
 
 test("no offer at all within a minute is a failed start, retried", async () => {
@@ -509,3 +654,71 @@ for (const outcome of ["rejects", "resolves"]) {
         assert.equal(states[states.length - 1], "live", "the old peer's failure is ignored");
     });
 }
+
+test("the browser's round trip goes to the streamer every 2 s while live", async () => {
+    const env = makeEnv();
+    connect(env);
+    await goLive(env, env.sockets[0]);
+    const peer = env.peers[0];
+    const sent = [];
+    peer.ondatachannel({ channel: { readyState: "open", send: (t) => sent.push(JSON.parse(t)), close() {} } });
+    peer.report = new Map([
+        ["T", { id: "T", type: "transport", selectedCandidatePairId: "P" }],
+        ["P", { id: "P", type: "candidate-pair", currentRoundTripTime: 0.048 }],
+    ]);
+    env.advance(1999);
+    await env.flush();
+    assert.deepEqual(sent, []);
+    env.advance(1);
+    await env.flush();
+    assert.deepEqual(sent, [{ t: "net", rtt: 48 }]);
+    env.advance(2000);
+    await env.flush();
+    assert.equal(sent.length, 2);
+});
+
+test("a sub-millisecond round trip reads as <1 ms", () => {
+    const { chipText } = makeEnv().MerlinApps;
+    assert.equal(chipText({ route: "LAN", rttMs: 0 }, false), "LAN · <1 ms");
+});
+
+test("the streamer's route wins over the browser's own reading", async () => {
+    const env = makeEnv();
+    const { stream } = connect(env);
+    await goLive(env, env.sockets[0]);
+    env.peers[0].report = new Map([
+        ["T", { id: "T", type: "transport", selectedCandidatePairId: "P" }],
+        ["P", { id: "P", type: "candidate-pair", remoteCandidateId: "R", localCandidateId: "L" }],
+        ["R", { id: "R", type: "remote-candidate", address: "2001:861::1", candidateType: "host" }],
+        ["L", { id: "L", type: "local-candidate", candidateType: "host" }],
+    ]);
+    assert.equal((await stream.stats()).route, "Internet · IPv6", "alone, a public IPv6");
+    env.sockets[0].deliver({ type: "route", route: "LAN" });
+    assert.equal((await stream.stats()).route, "LAN");
+    stream.reconnect();
+    assert.equal(stream.info.route, "");
+});
+
+test("a Retry, or a resume, starts fresh: not a reconnection, the full budget back", async () => {
+    const env = makeEnv();
+    const details = [];
+    const { stream } = connect(env, { onState: (s, d) => details.push([s, d]) });
+    await goLive(env, env.sockets[0]);
+    env.peers[0].connectionState = "failed";
+    env.peers[0].onconnectionstatechange();  // a drop: reconnecting
+    assert.equal(details[details.length - 1][1].reconnecting, true);
+    stream.reconnect();  // the user does not wait
+    const last = details[details.length - 1];
+    assert.equal(last[0], "connecting");
+    assert.ok(!last[1].reconnecting, "a Retry says Connecting, not Reconnecting");
+    // and three automatic sessions again after the next drop
+    await goLive(env, env.sockets[env.sockets.length - 1]);
+    for (let i = 0; i < 3; i++) {
+        const peer = env.peers[env.peers.length - 1];
+        peer.connectionState = "failed";
+        peer.onconnectionstatechange();
+        assert.equal(stream.state, "connecting", `try ${i + 1} of 3`);
+        env.advance(4000);
+        await offer(env, env.sockets[env.sockets.length - 1]);
+    }
+});

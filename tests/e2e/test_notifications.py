@@ -796,6 +796,45 @@ def test_push_toggle_subscribes_tests_and_unsubscribes(browser, server, push_ser
         ctx.close()
 
 
+class _DeviceReads:
+    """The page's reads of the device list, counted per document."""
+
+    def __init__(self, pg) -> None:
+        self.pg = pg
+        self.started = 0
+        self.finished = 0
+        pg.on("framenavigated", self._navigated)
+        pg.on("request", self._request)
+        pg.on("requestfinished", self._done)
+        pg.on("requestfailed", self._done)
+
+    @staticmethod
+    def _is_read(request) -> bool:
+        return request.method == "GET" and "/api/notifications/devices" in request.url
+
+    def _navigated(self, frame) -> None:
+        if frame == self.pg.main_frame:
+            self.started = self.finished = 0
+
+    def _request(self, request) -> None:
+        if self._is_read(request):
+            self.started += 1
+
+    def _done(self, request) -> None:
+        if self._is_read(request):
+            self.finished += 1
+
+    def settled(self, expected: int, timeout: float = 30.0) -> None:
+        deadline = time.monotonic() + timeout
+        while self.finished < expected or self.started > self.finished:
+            assert time.monotonic() < deadline, (self.started, self.finished)
+            self.pg.wait_for_timeout(50)
+
+
+def _device_reads(pg) -> _DeviceReads:
+    return _DeviceReads(pg)
+
+
 def _open_bell(pg, server):
     open_terminal(pg, server)
     pg.evaluate("navigator.serviceWorker.ready")
@@ -869,9 +908,15 @@ def test_browser_refusing_to_unsubscribe_keeps_both_sides_on(
         ]
         assert [d["endpoint"] for d in devices] == [endpoint]
         # After a reload the state is still consistent: on, with the device listed.
+        reads = _device_reads(pg)
         pg.reload()
         _open_bell(pg, server)
         assert pg.locator("#notif-toggle").is_checked()
+        # This page reads the device list twice (on load, on opening the
+        # bell). Both answers must be in before the device is removed: a read
+        # answered after the removal would make *this* page find it (and say
+        # so), leaving nothing to find for the page this test looks at.
+        reads.settled(expected=2)
         # A subscription the instance no longer lists (removed from another
         # device, or dropped after the push service declared it dead) turns
         # this device off: preference and browser subscription both dropped,
@@ -888,10 +933,15 @@ def test_browser_refusing_to_unsubscribe_keeps_both_sides_on(
         pg.wait_for_selector("#notif-toggle", timeout=15000)
         # The reload's two async reads (subscription, device list) settle
         # first: as slow as the page itself under a loaded full run.
-        pg.wait_for_function(
-            "document.getElementById('notif-status').textContent.includes('Turned off from another device')",
-            timeout=30000,
-        )
+        try:
+            pg.wait_for_function(
+                "document.getElementById('notif-status').textContent.includes('Turned off from another device')",
+                timeout=30000,
+            )
+        except Exception as exc:
+            shown = pg.evaluate("document.getElementById('notif-status').textContent")
+            toggle = pg.locator("#notif-toggle").is_checked()
+            raise AssertionError(f"status {shown!r}, toggle {toggle}") from exc
         assert not pg.locator("#notif-toggle").is_checked()
         assert pg.evaluate("sessionStorage.getItem('fake-push-sub')") is None
     finally:

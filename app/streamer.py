@@ -31,6 +31,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from contextlib import contextmanager, redirect_stdout
 
 import gi
@@ -38,11 +39,17 @@ import gi
 gi.require_version("Gst", "1.0")
 gi.require_version("GstWebRTC", "1.0")
 gi.require_version("GstSdp", "1.0")
+gi.require_version("GstVideo", "1.0")
 
-from gi.repository import GLib, Gst, GstSdp, GstWebRTC  # noqa: E402
+from gi.repository import GLib, Gst, GstSdp, GstVideo, GstWebRTC  # noqa: E402
 from Xlib import XK, X  # noqa: E402
 from Xlib import display as xdisplay  # noqa: E402
 from Xlib.ext import xtest  # noqa: E402
+
+# linkstats lives next to this file (stdlib only): run as a script or
+# imported as app.streamer by the tests.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import linkstats  # noqa: E402
 
 # Interfaces whose candidates can never reach a phone on the LAN.
 SKIPPED_INTERFACES = ("docker", "br-", "veth", "virbr")
@@ -151,6 +158,47 @@ def audio_branch(sink: str) -> str:
 
 def missing_audio_elements() -> list[str]:
     return [name for name in AUDIO_ELEMENTS if Gst.ElementFactory.find(name) is None]
+
+
+STATS_PERIOD_S = 1  # how often the link's stats are read (rate control, log)
+
+
+def structure_dict(structure) -> dict:
+    """A stats structure as a plain dict (its name under ``_name``), nested
+    structures included, enums and other GLib values left out."""
+    out: dict = {"_name": structure.get_name()}
+    for index in range(structure.n_fields()):
+        name = structure.nth_field_name(index)
+        try:
+            value = structure.get_value(name)
+        except TypeError:
+            continue  # a type the bindings cannot convert (GstValueList…)
+        if isinstance(value, Gst.Structure):
+            out[name] = structure_dict(value)
+        elif isinstance(value, (str, int, float, bool)):
+            out[name] = value
+    return out
+
+
+def stats_list(reply) -> list[dict]:
+    """``webrtcbin``'s ``get-stats`` reply as plain dicts, one per entry."""
+    items = []
+    for index in range(reply.n_fields()):
+        value = reply.get_value(reply.nth_field_name(index))
+        if isinstance(value, Gst.Structure):
+            items.append(structure_dict(value))
+    return items
+
+
+def set_bitrate(enc, encoder: str, kbps: int) -> None:
+    """Change a running encoder's bitrate (all three take it live)."""
+    if encoder == "nvh264enc":
+        enc.set_property("bitrate", kbps)
+        enc.set_property("max-bitrate", kbps)
+    elif encoder == "openh264enc":
+        enc.set_property("bitrate", kbps * 1000)
+    else:
+        enc.set_property("target-bitrate", kbps * 1000)
 
 
 SINK_CLASS = "Audio/Sink"  # the class sound.py gives the app's sink
@@ -605,6 +653,14 @@ class Streamer:
         self.offer_lock = threading.Lock()
         self.channel = None
         self.encoder, self.codec = choose_encoder(args.codecs.split(","))
+        # The link: rate control on the browser's receiver reports, and what
+        # the session did (logged when the viewer leaves).
+        self.rate = linkstats.RateControl(ceiling=args.bitrate)
+        self.session = linkstats.Session()
+        self.last_report = None
+        self.route = ""
+        self.keyframes = 0
+        self.client_rtt: float | None = None  # seconds, from the browser
         audio = bool(args.audio_sink)
         if audio and (missing := missing_audio_elements()):
             log(f"no sound in the stream: missing GStreamer {', '.join(missing)}")
@@ -678,9 +734,23 @@ class Streamer:
         self.webrtc.connect(
             "notify::ice-connection-state", self.on_ice_connection_state
         )
+        self.webrtc.connect("notify::ice-gathering-state", self.on_ice_gathering_state)
         self.bus = self.pipe.get_bus()
         self.bus.add_signal_watch()
         self.bus.connect("message::error", self.on_bus_error)
+        # Count the keyframes the encoder is asked for (the browser's PLI/FIR,
+        # forwarded upstream by webrtcbin): the summary shows requests served.
+        enc = self.pipe.get_by_name("enc")
+        if enc is not None:
+            enc.get_static_pad("src").add_probe(
+                Gst.PadProbeType.EVENT_UPSTREAM, self.on_upstream_event
+            )
+
+    def on_upstream_event(self, _pad, info):
+        event = info.get_event()
+        if event is not None and GstVideo.video_event_is_force_key_unit(event):
+            self.session.forced += 1
+        return Gst.PadProbeReturn.OK
 
     def _discard(self) -> None:
         """Drop a pipeline that never started (and its pending messages)."""
@@ -759,11 +829,13 @@ class Streamer:
         threading.Thread(target=self.read_stdin, daemon=True).start()
         for sig in (signal.SIGTERM, signal.SIGINT):
             GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, self.stop)
+        GLib.timeout_add_seconds(STATS_PERIOD_S, self.poll_stats)
         try:
             self.loop.run()
         finally:
             self.injector.release_all()
             self.pipe.set_state(Gst.State.NULL)
+            log(self.session.summary(time.monotonic()))
 
     def stop(self) -> bool:
         self.loop.quit()
@@ -819,7 +891,82 @@ class Streamer:
         if element is not self.webrtc:
             return
         state = element.get_property("ice-connection-state")
+        log(f"ice: connection {state.value_nick}")
         send({"type": "state", "ice": state.value_nick})
+        if state.value_nick in ("connected", "completed"):
+            GLib.idle_add(self.on_connected)
+
+    def on_ice_gathering_state(self, element, _pspec) -> None:
+        if element is not self.webrtc:
+            return
+        log(f"ice: gathering {element.get_property('ice-gathering-state').value_nick}")
+
+    def on_connected(self) -> bool:
+        if self.session.connected_at is None:
+            self.session.connected_at = time.monotonic()
+            self.session.rates.append(self.rate.rate)
+            self.send_rate()
+        return False
+
+    # -- the link: stats, route, rate ---------------------------------------
+
+    def poll_stats(self) -> bool:
+        element = self.webrtc
+        if element is not None and self.session.connected_at is not None:
+            promise = Gst.Promise.new_with_change_func(self.on_stats, element)
+            element.emit("get-stats", None, promise)
+        return True  # every STATS_PERIOD_S, for the streamer's life
+
+    def on_stats(self, promise, element) -> None:
+        # webrtcbin's thread: read the reply here, act on the main loop.
+        reply = promise.get_reply()
+        try:
+            stats = stats_list(reply) if reply is not None else []
+        except Exception as exc:  # never let one odd reply stop the readings
+            log(f"rate: unreadable stats ({exc!r})")
+            return
+        finally:
+            del reply
+        GLib.idle_add(self.apply_stats, element, stats)
+
+    def apply_stats(self, element, stats: list[dict]) -> bool:
+        if element is not self.webrtc:
+            return False
+        snap = linkstats.read_snapshot(stats)
+        if self.session.first is None:
+            self.session.first = snap
+        self.session.last = snap
+        if snap.remote and f"{snap.local} {snap.remote}" != self.route:
+            self.route = f"{snap.local} {snap.remote}"
+            log(
+                f"ice: route {snap.route}: {snap.local} -> {snap.remote} {snap.protocol}"
+            )
+            # We see both ends of the pair; the browser, which hides its own
+            # address, would take a public IPv6 at home for the internet.
+            send({"type": "route", "route": snap.route})
+        if snap.keyframe_requests > self.keyframes:
+            log(f"rate: keyframe requested ({snap.keyframe_requests} so far)")
+            self.keyframes = snap.keyframe_requests
+        if snap.report is not None and snap.report != self.last_report:
+            self.last_report = snap.report
+            before = self.rate.rate
+            rtt = snap.rtt if snap.rtt is not None else self.client_rtt
+            after = self.rate.update(snap.fraction_lost or 0.0, rtt)
+            if after != before:
+                self.session.rates.append(after)
+                enc = self.pipe.get_by_name("enc")
+                if enc is not None:
+                    set_bitrate(enc, self.encoder, after)
+                shown = f"{rtt * 1000:.0f} ms" if rtt is not None else "?"
+                log(
+                    f"rate: {after} kbit/s (was {before}; loss "
+                    f"{100 * (snap.fraction_lost or 0):.1f} %, rtt {shown})"
+                )
+                self.send_rate()
+        return False
+
+    def send_rate(self) -> None:
+        send({"type": "rate", "kbps": self.rate.rate, "max": self.rate.ceiling})
 
     def on_server_message(self, msg: dict) -> bool:
         kind = msg.get("type")
@@ -832,6 +979,7 @@ class Streamer:
             )
             self.webrtc.emit("set-remote-description", answer, Gst.Promise.new())
         elif kind == "ice" and msg.get("candidate"):
+            log(f"ice: remote {linkstats.describe_candidate(msg['candidate'])}")
             self.webrtc.emit(
                 "add-ice-candidate",
                 int(msg.get("sdpMLineIndex") or 0),
@@ -847,6 +995,16 @@ class Streamer:
         try:
             msg = json.loads(text)
         except ValueError:
+            return
+        if isinstance(msg, dict) and msg.get("t") == "net":
+            # The browser's round trip (its ICE checks): webrtcbin computes
+            # none from Chrome's receiver reports, and rate control needs it.
+            try:
+                rtt = float(msg.get("rtt"))
+            except (TypeError, ValueError):
+                return
+            if 0 <= rtt < 60000:
+                self.client_rtt = rtt / 1000
             return
         GLib.idle_add(self.inject, msg)
 
