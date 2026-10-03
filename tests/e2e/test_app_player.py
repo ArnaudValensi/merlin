@@ -413,3 +413,41 @@ def test_the_end_screen_works_from_the_keyboard(merlin, browser, server):
     finally:
         context.close()
         stop_all(merlin)
+
+
+def test_the_logs_cover_the_iphone_hint(merlin, playwright, browser, server):
+    """On an iPhone outside the Home Screen the hint is showing; while the
+    logs are open it is inert, so it must not sit over them."""
+    _quitter(merlin)
+    device = {
+        k: v
+        for k, v in playwright.devices["iPhone 13"].items()
+        if k != "default_browser_type"
+    }
+    context = browser.new_context(**device)
+    page = context.new_page()
+    try:
+        page.goto(f"{server}/apps/quitter/play")
+        _wait_exited(page)
+        assert page.locator("#player-hint").is_visible()
+        page.tap("#player-status button:has-text('Logs')")
+        page.wait_for_selector("#player-logs:not([hidden])")
+        # Both are fixed children of <body>, one stacking context: the higher
+        # z-index paints on top. (elementFromPoint cannot tell: it skips the
+        # inert hint either way.)
+        order = page.evaluate(
+            """() => ['player-logs', 'player-hint'].map((id) => {
+                const style = getComputedStyle(document.getElementById(id));
+                return [style.position, parseInt(style.zIndex, 10)];
+            })"""
+        )
+        (logs_pos, logs_z), (hint_pos, hint_z) = order
+        assert logs_pos == hint_pos == "fixed"
+        assert logs_z > hint_z, "the hint covers the logs"
+        page.tap("#player-logs-back")
+        page.wait_for_selector("#player-logs", state="hidden")
+        page.tap("#player-hint-close")  # dismissable again once they close
+        page.wait_for_selector("#player-hint", state="hidden")
+    finally:
+        context.close()
+        stop_all(merlin)
