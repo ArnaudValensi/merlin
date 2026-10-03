@@ -28,7 +28,7 @@ from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[2]
 CLEAN_S, LOSSY_S, RECOVER_S = 5, 15, 20
-NETEM = ("loss", "15%", "delay", "60ms")
+NETEM = ("loss", "20%", "25%", "delay", "60ms")  # 20 % in bursts (25 % correlated)
 
 
 def sh(*cmd: str) -> None:
@@ -118,9 +118,11 @@ def main() -> int:
                         const chip = document.getElementById('player-chip');
                         const gauge = chip.querySelector('.stream-gauge');
                         const video = document.getElementById('player-video');
+                        const q = video.getVideoPlaybackQuality();
                         return [chip.textContent, gauge ? +gauge.dataset.level : null,
                                 document.getElementById('player').dataset.streamState,
-                                video.getVideoPlaybackQuality().totalVideoFrames];
+                                [q.totalVideoFrames, q.droppedVideoFrames,
+                                 performance.now() / 1000]];
                     }"""
                 )
                 out["chips"].append([phase, text, level, state, frames])

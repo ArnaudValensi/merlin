@@ -223,11 +223,45 @@ def test_the_session_summary():
         _stats(sent=2000, lost=20, sent_bytes=31_000_000)
     )
     session.rates = [5500, 3850, 4158]
-    session.forwarded = 3
-    session.answered = 2
+    session.keyframes.forwarded = 3
+    session.keyframes.answered = 2
     line = session.summary(160.0)
     assert line == (
         "session: 1m00s via Internet · IPv6, sent 4000 kbit/s on average, "
         "rate 3850-5500 kbit/s, loss 1.0 %, 3 keyframe requests "
         "(3 to the encoder, 2 answered)"
     )
+
+
+def test_a_keyframe_soon_after_a_request_answers_it():
+    k = linkstats.KeyframeAnswers()
+    k.asked(10.0)
+    k.keyframe(10.2)
+    assert (k.forwarded, k.answered, k.waiting_since) == (1, 1, None)
+    k.keyframe(11.0)  # a periodic keyframe with nothing waiting: not an answer
+    assert k.answered == 1
+
+
+def test_a_late_keyframe_does_not_count():
+    k = linkstats.KeyframeAnswers()
+    k.asked(10.0)
+    k.keyframe(10.9)
+    assert (k.forwarded, k.answered, k.waiting_since) == (1, 0, None)
+
+
+def test_requests_while_one_waits_are_one():
+    k = linkstats.KeyframeAnswers()
+    k.asked(10.0)
+    k.asked(10.1)
+    k.asked(10.3)
+    k.keyframe(10.4)
+    assert (k.forwarded, k.answered) == (3, 1)
+
+
+def test_an_expired_request_does_not_hide_a_later_answered_one():
+    """Request at 0 never answered in time; another at 1.0 answered at 1.1."""
+    k = linkstats.KeyframeAnswers()
+    k.asked(0.0)
+    k.asked(1.0)
+    k.keyframe(1.1)
+    assert (k.forwarded, k.answered) == (2, 1)

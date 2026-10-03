@@ -680,7 +680,6 @@ class Streamer:
         self.route = ""
         self.keyframes = 0
         self.client_rtt: float | None = None  # seconds, from the browser
-        self.key_asked_at: float | None = None  # a keyframe request waiting
         audio = bool(args.audio_sink)
         if audio and (missing := missing_audio_elements()):
             log(f"no sound in the stream: missing GStreamer {', '.join(missing)}")
@@ -769,20 +768,15 @@ class Streamer:
     def on_upstream_event(self, _pad, info):
         event = info.get_event()
         if event is not None and GstVideo.video_event_is_force_key_unit(event):
-            self.session.forwarded += 1
-            if self.key_asked_at is None:
-                self.key_asked_at = time.monotonic()
+            self.session.keyframes.asked(time.monotonic())
         return Gst.PadProbeReturn.OK
 
     def on_encoded(self, _pad, info):
         """A keyframe right after a request answers it (PLI/FIR served)."""
-        asked = self.key_asked_at
-        if asked is not None:
+        if self.session.keyframes.waiting_since is not None:
             buffer = info.get_buffer()
             if buffer is not None and not buffer.has_flags(Gst.BufferFlags.DELTA_UNIT):
-                if time.monotonic() - asked <= linkstats.KEYFRAME_ANSWER_S:
-                    self.session.answered += 1
-                self.key_asked_at = None
+                self.session.keyframes.keyframe(time.monotonic())
         return Gst.PadProbeReturn.OK
 
     def _discard(self) -> None:

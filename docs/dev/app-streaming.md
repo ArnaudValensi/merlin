@@ -359,11 +359,14 @@ UPnP, TURN) are a later step.
   session (a throwaway Merlin, an app drawing a moving ball, headless
   Chromium) inside `unshare -rn`, with a dummy interface (`10.99.0.1`:
   browsers and libnice skip loopback, so ICE needs a real address) whose
-  traffic goes through `lo`, where `tc netem` adds 15 % loss and 60 ms of
-  delay for 15 s, once per encoder (`MERLIN_APP_ENCODER`; one this machine
+  traffic goes through `lo`, where `tc netem` adds 20 % loss in bursts
+  (25 % correlated, as on a mobile link) and 60 ms of delay for 15 s, once
+  per encoder (`MERLIN_APP_ENCODER`; one this machine
   cannot use is skipped). It checks the route, the rate falling and
-  climbing back, the gauge, the round trip, keyframe requests answered, and
-  frames still presented under loss and at full pace after. Unprivileged,
+  climbing back, the gauge, the round trip, keyframe requests answered
+  (skipped in a run where the browser asked for none: VP8's error-resilient
+  partitions often decode through loss), and frames shown (total minus
+  dropped, over time) under loss and at 20 fps or more after. Unprivileged,
   no effect on the machine's network. Inside, `UV_OFFLINE=1`, no SaaS
   token, a fresh home.
 

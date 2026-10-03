@@ -204,6 +204,38 @@ class RateControl:
         return 4 if share >= 0.85 else 3 if share >= 0.60 else 2 if share >= 0.35 else 1
 
 
+# --- keyframes -----------------------------------------------------------------
+
+
+@dataclass
+class KeyframeAnswers:
+    """Keyframe requests that reached the encoder, and the ones it answered
+    with a keyframe within ``KEYFRAME_ANSWER_S``. Requests while one is
+    waiting (and still fresh) are one request (webrtcbin coalesces bursts
+    too); a request left unanswered past the window expires, so a later one
+    starts its own."""
+
+    forwarded: int = 0
+    answered: int = 0
+    waiting_since: float | None = None
+
+    def asked(self, now: float) -> None:
+        self.forwarded += 1
+        stale = (
+            self.waiting_since is not None
+            and now - self.waiting_since > KEYFRAME_ANSWER_S
+        )
+        if self.waiting_since is None or stale:
+            self.waiting_since = now
+
+    def keyframe(self, now: float) -> None:
+        if self.waiting_since is None:
+            return
+        if now - self.waiting_since <= KEYFRAME_ANSWER_S:
+            self.answered += 1
+        self.waiting_since = None
+
+
 # --- the session ----------------------------------------------------------------
 
 
@@ -215,8 +247,7 @@ class Session:
     first: Snapshot | None = None
     last: Snapshot | None = None
     rates: list[int] = field(default_factory=list)
-    forwarded: int = 0  # keyframe requests that reached the encoder
-    answered: int = 0  # ... followed by a keyframe within KEYFRAME_ANSWER_S
+    keyframes: KeyframeAnswers = field(default_factory=KeyframeAnswers)
 
     def summary(self, now: float) -> str:
         if self.connected_at is None or self.last is None or self.first is None:
@@ -231,5 +262,6 @@ class Session:
             f"session: {minutes}m{rest:02d}s via {self.last.route or '?'}, "
             f"sent {sent:.0f} kbit/s on average, rate {rates} kbit/s, "
             f"loss {loss:.1f} %, {self.last.keyframe_requests} keyframe requests "
-            f"({self.forwarded} to the encoder, {self.answered} answered)"
+            f"({self.keyframes.forwarded} to the encoder, "
+            f"{self.keyframes.answered} answered)"
         )
