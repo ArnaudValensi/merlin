@@ -212,3 +212,41 @@ def test_our_stun_setting_holds_when_the_portal_grants_the_relay(
     servers = iceservers.fetch_from_portal("mrl_abc", 100.0)
     assert servers.ice_servers == stun + [TURN]
     assert servers.turn == "ok"
+
+
+GRANTED = Servers([STUN, TURN], "ok", 9e12)
+
+
+@pytest.mark.parametrize(
+    ("mode", "servers", "turn", "policy", "upnp"),
+    [
+        ("auto", [STUN, TURN], "ok", "all", True),
+        ("relay", [STUN, TURN], "ok", "relay", True),  # the browser relays only
+        ("stun", [STUN], "off (stun test)", "all", False),
+        ("upnp", [], "off (upnp test)", "all", True),
+        ("direct", [], "off (direct test)", "all", False),
+        ("nonsense", [STUN, TURN], "ok", "all", True),  # an unknown mode is auto
+    ],
+)
+def test_each_test_mode_leaves_one_way_on(mode, servers, turn, policy, upnp):
+    browser, streamer = iceservers.for_mode(GRANTED, mode)
+    expected_mode = mode if mode in iceservers.MODES else "auto"
+    assert browser == {
+        "iceServers": servers,
+        "turn": turn,
+        "policy": policy,
+        "mode": expected_mode,
+    }
+    assert streamer == {
+        "iceServers": servers,
+        "turn": turn,
+        "upnp": upnp,
+        "mode": expected_mode,
+    }
+
+
+def test_a_mode_never_adds_a_relay_the_account_does_not_have():
+    stun_only = Servers([STUN], "no subscription")
+    browser, _ = iceservers.for_mode(stun_only, "relay")
+    assert browser["iceServers"] == [STUN]
+    assert browser["turn"] == "no subscription"

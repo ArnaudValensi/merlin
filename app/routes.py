@@ -404,12 +404,13 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
         servers = iceservers.Servers(
             iceservers.stun_servers(), iceservers.TURN_UNREACHABLE
         )
-    # ?ice=relay on the page: the browser goes through the relay only (a
-    # test switch, for TURN on purpose). The streamer keeps every path: a
-    # relay reaches any address, but two relays of the same server cannot
-    # reach each other (the relay refuses its own address as a peer).
-    policy = "relay" if hello.get("ice") == "relay" else "all"
-    ice = servers.to_json()
+    # A test mode (the player's menu, ?ice= on the page): one way of reaching
+    # the machine at a time. "relay" relays the browser only: a relay reaches
+    # any address, but two relays of the same server cannot reach each other
+    # (it refuses its own address as a peer).
+    asked = hello.get("ice")
+    mode = asked if isinstance(asked, str) else "auto"
+    browser_ice, streamer_ice = iceservers.for_mode(servers, mode)
 
     async with _viewer_locks.setdefault(session_id, asyncio.Lock()):
         if websocket.application_state != WebSocketState.CONNECTED:
@@ -437,7 +438,7 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
         # Before the streamer exists, so before its offer: the browser builds
         # its peer with them. To the streamer through its environment, never
         # its argv (the credentials would show in ps).
-        await viewer.send({"type": "servers", **ice, "policy": policy})
+        await viewer.send({"type": "servers", **browser_ice})
         viewer.process = await asyncio.create_subprocess_exec(
             deps.SYSTEM_PYTHON,
             str(STREAMER),
@@ -465,7 +466,7 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
-            env={**os.environ, "MERLIN_APP_ICE": json.dumps(ice)},
+            env={**os.environ, "MERLIN_APP_ICE": json.dumps(streamer_ice)},
         )
     logger.info(
         "viewer connected to %s (streamer pid %s)", session_id, viewer.process.pid

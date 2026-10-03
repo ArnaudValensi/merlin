@@ -119,6 +119,7 @@
             lines.push('STUN ' + (s.reach.stun || '?') + ' · UPnP ' + (s.reach.upnp || '?') +
                 ' · TURN ' + (s.reach.turn || '?'));
         }
+        if (s.mode && s.mode !== 'auto') lines.push('Test mode: ' + s.mode);
         return lines.join('\n');
     }
 
@@ -296,11 +297,16 @@
         return out.length ? out : ['VP8'];
     }
 
-    /** ?ice=relay on the page: through the relay only (to test TURN). */
-    function icePolicy() {
+    // Test modes: one way of reaching the machine at a time (the server
+    // decides what each leaves on, app/iceservers.py MODES).
+    var ICE_MODES = ['auto', 'direct', 'upnp', 'stun', 'relay'];
+
+    /** ?ice=<mode> on the page, else "auto". */
+    function iceMode() {
         try {
-            return new URLSearchParams(location.search).get('ice') === 'relay' ? 'relay' : '';
-        } catch (e) { return ''; }
+            var asked = new URLSearchParams(location.search).get('ice');
+            return ICE_MODES.indexOf(asked) >= 0 ? asked : 'auto';
+        } catch (e) { return 'auto'; }
     }
 
     /** The peer, with the servers the server sent (STUN, TURN); a browser
@@ -325,7 +331,8 @@
         var slowTimer = null, dropTimer = null, netTimer = null, failTimer = null;
         var drops = 0;   // dropped live connections being restored in a row
         var info = {host: '', app: null, encoder: '', codec: '', audio: false, rate: null, route: '',
-                    iceServers: [], policy: 'all', path: null, reach: null};
+                    iceServers: [], policy: 'all', path: null, reach: null, mode: 'auto'};
+        var mode = ICE_MODES.indexOf(opts.ice) >= 0 ? opts.ice : iceMode();
         // Every open() and teardown() starts a new generation. Callbacks of an
         // older connection (a late promise, a closing socket) check theirs and
         // do nothing, and nothing runs at all once the client is destroyed.
@@ -516,7 +523,7 @@
                     info.app = msg.app || null;
                     if (opts.onWelcome) opts.onWelcome(info);
                     var hello = {type: 'hello', codecs: browserCodecs()};
-                    if (icePolicy()) hello.ice = icePolicy();
+                    if (mode !== 'auto') hello.ice = mode;
                     socket.send(JSON.stringify(hello));
                     break;
                 case 'ready':
@@ -539,6 +546,7 @@
                 case 'servers':
                     info.iceServers = Array.isArray(msg.iceServers) ? msg.iceServers : [];
                     info.policy = msg.policy === 'relay' ? 'relay' : 'all';
+                    info.mode = ICE_MODES.indexOf(msg.mode) >= 0 ? msg.mode : 'auto';
                     break;
                 case 'path':
                     info.path = {path: String(msg.path || ''), local: String(msg.local || ''),
@@ -591,6 +599,7 @@
             info.policy = 'all';
             info.path = null;
             info.reach = null;
+            info.mode = 'auto';
             // Always with a detail: from "reconnecting" to a plain start the
             // state stays "connecting", and the status must still change.
             setState('connecting', drops ? {reconnecting: true} : {});
@@ -670,6 +679,7 @@
             return peer.getStats().then(function (report) {
                 var out = {rttMs: null, fps: null, kbps: null, codec: info.codec, encoder: info.encoder,
                            route: '', lossPct: null, path: '', local: '', remote: '', reach: info.reach,
+                           mode: info.mode,
                            rateKbps: info.rate ? info.rate.kbps : null,
                            rateMax: info.rate ? info.rate.max : null};
                 var byId = {};
@@ -734,6 +744,14 @@
             close: close,
             // The user's Retry: a fresh start, with every automatic budget back.
             reconnect: function () { reconnects = 0; drops = 0; open(); },
+            /** A test mode for this page's sessions: a fresh start in it. */
+            setIce: function (next) {
+                mode = ICE_MODES.indexOf(next) >= 0 ? next : 'auto';
+                reconnects = 0;
+                drops = 0;
+                open();
+            },
+            get iceMode() { return mode; },
             stats: stats,
             get state() { return state; },
             get info() { return info; },

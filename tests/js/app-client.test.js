@@ -539,8 +539,10 @@ test("a browser that refuses the servers still gets a peer, for the LAN", async 
     assert.ok(!states.includes("error"));
 });
 
-test("?ice=relay on the page asks for a relay session, nothing else does", () => {
-    for (const [search, ice] of [["?ice=relay", "relay"], ["?ice=nonsense", undefined], ["", undefined]]) {
+test("?ice=<mode> on the page asks for a test mode, nothing else does", () => {
+    for (const [search, ice] of [["?ice=relay", "relay"], ["?ice=stun", "stun"], ["?ice=direct", "direct"],
+                                 ["?ice=upnp", "upnp"], ["?ice=auto", undefined],
+                                 ["?ice=nonsense", undefined], ["", undefined]]) {
         const env = makeEnv({ search });
         connect(env);
         env.sockets[0].deliver({ type: "welcome", host: "box", app: { id: "probe" } });
@@ -924,3 +926,28 @@ for (const how of ["reconnect", "pause", "destroy"]) {
         assert.deepEqual(fresh, [], "the new session never hears the old path");
     });
 }
+
+test("a test mode chosen from the menu starts a fresh session in it", async () => {
+    const env = makeEnv();
+    const { stream } = connect(env);
+    await goLive(env, env.sockets[0]);
+    assert.equal(stream.iceMode, "auto");
+    stream.setIce("stun");
+    assert.equal(env.sockets.length, 2, "a new session");
+    env.sockets[1].deliver({ type: "welcome", host: "box", app: { id: "probe" } });
+    assert.equal(env.sockets[1].sent.find((m) => m.type === "hello").ice, "stun");
+    env.sockets[1].deliver({ type: "servers", iceServers: [], mode: "stun" });
+    assert.equal(stream.info.mode, "stun");
+    stream.setIce("nonsense");
+    assert.equal(stream.iceMode, "auto");
+    env.sockets[2].deliver({ type: "welcome", host: "box", app: { id: "probe" } });
+    assert.equal(env.sockets[2].sent.find((m) => m.type === "hello").ice, undefined);
+});
+
+test("the chip's detail says when a test mode is on", () => {
+    const { chipText } = makeEnv().MerlinApps;
+    const s = { route: "Internet · IPv6", path: "STUN", rttMs: 40, mode: "stun" };
+    assert.equal(chipText(s, true).split("\n").pop(), "Test mode: stun");
+    assert.ok(!chipText({ ...s, mode: "auto" }, true).includes("Test mode"));
+    assert.ok(!chipText(s, false).includes("Test mode"), "the short chip stays short");
+});

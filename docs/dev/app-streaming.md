@@ -422,11 +422,17 @@ in. ICE then tries every pair; the selected one decides the path.
   "reach", "stun", "upnp", "turn"}` (when gathering completes, and on each
   UPnP change) says what each gave: `STUN ok 176.186.26.141`, `UPnP mapped
   176.186.26.141:42452`, `TURN no access`.
-- **`?ice=relay`** on the player's (or the terminal's) URL forces the relay
-  for that session, to test TURN. On the browser's side only: a relay
-  reaches any public address, but two relays of the same server cannot
-  reach each other (it refuses its own address as a peer), so the streamer
-  keeps every path.
+- **Test modes** (`iceservers.MODES`), one way of reaching the machine at a
+  time: the player's ⋯ menu ("Connection test": Auto, Direct, UPnP, STUN,
+  Relay; `stream.setIce` starts a fresh session in it) or `?ice=<mode>` on
+  the player's or the terminal's URL, sent in `hello`. The server decides
+  what each leaves on (`iceservers.for_mode`): `direct` no servers and no
+  UPnP, `upnp` UPnP alone, `stun` STUN alone, `relay` everything with the
+  browser relaying only (a relay reaches any public address, but two relays
+  of the same server cannot reach each other: it refuses its own address
+  as a peer). The browser's `servers` message carries `mode`, the
+  streamer's `MERLIN_APP_ICE` carries `upnp` and `mode` (`ice: test mode
+  stun` in the log), and the chip's detail ends with `Test mode: stun`.
 - **Gotchas**: reading webrtcbin's `ice-agent` from Python takes the
   agent's only reference (it is held by a floating ref), so the agent dies
   with the wrapper and `add-turn-server` fails: `streamer._restore_ref`

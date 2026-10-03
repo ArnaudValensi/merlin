@@ -482,6 +482,13 @@
         root.setAttribute('data-controls', next);
     }
 
+    function renderIce() {
+        var current = stream ? stream.iceMode : 'auto';
+        sheet.querySelectorAll('[data-ice]').forEach(function (b) {
+            b.setAttribute('aria-checked', b.getAttribute('data-ice') === current ? 'true' : 'false');
+        });
+    }
+
     function defaultProfile() {
         var saved = readFlag('app-controls:' + id);
         if (saved === 'gamepad' || saved === 'trackpad' || saved === 'touch') return saved;
@@ -518,6 +525,14 @@
         if (!b) return;
         var controls = b.getAttribute('data-controls');
         if (controls) { setProfile(controls); return; }
+        var ice = b.getAttribute('data-ice');
+        if (ice) {
+            // A test: this mode until another, or the page is left.
+            if (stream && stream.iceMode !== ice) stream.setIce(ice);
+            renderIce();
+            closeSheet();
+            return;
+        }
         var action = b.getAttribute('data-action');
         if (action === 'sound') { sound.set(!sound.on); return; }
         if (action === 'keyboard') { closeSheet(); openKeyboard(); }
@@ -690,6 +705,7 @@
         onAgentInput: function () { agentUntil = Date.now() + AGENT_INPUT_MS; updateChip(); }
     });
     // Root (re)binds after a reconnect via getStream, so a single binding is enough.
+    renderIce();
     if (fine) MerlinApps.bindDesktopInput(root, video, function () { return stream; });
     root.focus({preventScroll: true});
     setInterval(updateChip, 1000);

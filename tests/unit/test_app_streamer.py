@@ -771,15 +771,22 @@ def test_the_settings_from_the_server_are_read_defensively():
 import os
 out = []
 for raw in ('{"iceServers": [{"urls": ["stun:a:1"]}], "turn": "no access"}',
+            '{"iceServers": [], "upnp": false, "mode": "stun"}',
             "not json", "[1, 2]", ""):
     os.environ["MERLIN_APP_ICE"] = raw
     out.append(streamer.ice_settings())
 print(json.dumps(out))
 """
     )
-    assert trace[0] == {"iceServers": [{"urls": ["stun:a:1"]}], "turn": "no access"}
-    for odd in trace[1:]:
-        assert odd == {"iceServers": [], "turn": "off"}
+    assert trace[0] == {
+        "iceServers": [{"urls": ["stun:a:1"]}],
+        "turn": "no access",
+        "upnp": True,
+        "mode": "auto",
+    }
+    assert trace[1] == {"iceServers": [], "turn": "off", "upnp": False, "mode": "stun"}
+    for odd in trace[2:]:
+        assert odd == {"iceServers": [], "turn": "off", "upnp": True, "mode": "auto"}
 
 
 def test_reach_says_what_stun_and_turn_gave():

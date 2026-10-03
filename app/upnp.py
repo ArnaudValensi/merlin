@@ -601,7 +601,7 @@ class Opener:
                     opening.external_ip = gw.external_ip()
                 except (UPnPError, urllib.error.URLError, OSError, ValueError):
                     pass  # mapped, but no address to tell the browser
-                self._set(self._describe())
+                self._set(self.describe())
                 if self.on_mapped is not None and opening.external_ip:
                     self.on_mapped(opening)
             elif ip.version == 6 and ip.is_global and gw.firewall6 is not None:
@@ -622,10 +622,10 @@ class Opener:
                     self.openings.append(opening)
                     for remote in self._remote_ports:
                         self._pinhole_for(gw, opening, remote)
-                    self._set(self._describe())
+                    self._set(self.describe())
                     return
                 self.openings.append(Opening(port, address, pinhole=unique_id))
-                self._set(self._describe())
+                self._set(self.describe())
         except UPnPError as exc:
             self._set(f"refused ({exc})")
         except (urllib.error.URLError, OSError, ValueError):
@@ -640,7 +640,7 @@ class Opener:
             if o.per_port is not None:
                 changed |= self._pinhole_for(gw, o, port)
         if changed:
-            self._set(self._describe())
+            self._set(self.describe())
 
     def _pinhole_for(self, gw: Gateway, opening: Opening, remote_port: int) -> bool:
         assert opening.per_port is not None
@@ -657,7 +657,8 @@ class Opener:
             self._set("router not answering")
         return False
 
-    def _describe(self) -> str:
+    def describe(self) -> str:
+        """What is open now, for the log and the chip."""
         parts = []
         for o in self.openings:
             if o.pinhole:

@@ -15,6 +15,10 @@ webrtcbin).
 
 Servers travel in the browser's ``RTCIceServer`` form (``{"urls", "username",
 "credential"}``); ``for_webrtcbin`` turns them into webrtcbin's URIs.
+
+A session can be put in a test mode (``MODES``, from the player's menu or
+``?ice=`` on the page) to try one way of reaching the machine at a time;
+``for_mode`` gives what the browser and the streamer then get.
 """
 
 from __future__ import annotations
@@ -34,6 +38,15 @@ RETRY_AFTER_S = 60  # after a failed fetch, the next viewer may try again
 FETCH_TIMEOUT_S = 3
 
 TURN_OFF = "off"  # no Merlin Cloud: no relay to ask for
+
+# Test modes: what each one leaves on. "auto" is everything.
+MODES = {
+    "auto": {"stun": True, "turn": True, "upnp": True},
+    "direct": {"stun": False, "turn": False, "upnp": False},
+    "upnp": {"stun": False, "turn": False, "upnp": True},
+    "stun": {"stun": True, "turn": False, "upnp": False},
+    "relay": {"stun": True, "turn": True, "upnp": True},  # the browser relays only
+}
 TURN_UNREACHABLE = "portal unreachable"
 
 
@@ -129,11 +142,7 @@ def fetch_from_portal(token: str, now: float) -> Servers:
         raise ValueError("not an object")
     # The relay comes from the portal; STUN stays ours (MERLIN_APP_STUN, empty
     # for none), whatever the portal lists.
-    relays = [
-        s
-        for s in _valid(answer.get("iceServers"))
-        if all(u.startswith(("turn:", "turns:")) for u in s["urls"])
-    ]
+    relays = [s for s in _valid(answer.get("iceServers")) if _is_turn(s)]
     turn = answer.get("turn")
     turn = turn if isinstance(turn, str) and turn else "?"
     ttl = answer.get("ttl")
@@ -142,6 +151,33 @@ def fetch_from_portal(token: str, now: float) -> Servers:
     if not isinstance(ttl, (int, float)) or ttl <= 0:
         raise ValueError("credentials without a lifetime")
     return Servers(stun_servers() + relays, "ok", now + float(ttl))
+
+
+def _is_turn(entry: dict) -> bool:
+    return all(u.startswith(("turn:", "turns:")) for u in entry["urls"])
+
+
+def for_mode(servers: Servers, mode: str) -> tuple[dict, dict]:
+    """``(browser, streamer)`` settings for a session in ``mode`` (an
+    unknown one is "auto"): the servers each end gets, why there is no
+    relay, the browser's transport policy, and whether the streamer asks
+    the router (UPnP)."""
+    allowed = MODES.get(mode, MODES["auto"])
+    mode = mode if mode in MODES else "auto"
+    kept = [
+        s
+        for s in _valid(servers.ice_servers)
+        if (allowed["turn"] if _is_turn(s) else allowed["stun"])
+    ]
+    turn = servers.turn if allowed["turn"] else f"off ({mode} test)"
+    browser = {
+        "iceServers": kept,
+        "turn": turn,
+        "policy": "relay" if mode == "relay" else "all",
+        "mode": mode,
+    }
+    streamer = {"iceServers": kept, "turn": turn, "upnp": allowed["upnp"], "mode": mode}
+    return browser, streamer
 
 
 # --- for webrtcbin ----------------------------------------------------------------

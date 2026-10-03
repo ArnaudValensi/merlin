@@ -122,7 +122,9 @@ the machine, and its sound is not streamed.
 
   "Still connecting…" can take a few seconds over the internet; "Can't reach
   … from this network" means no way through was found: join the same Wi-Fi
-  as the machine. To try the relay on purpose, add `?ice=relay` to the
-  player's address.
+  as the machine. To try one way at a time, pick it in the player's **⋯**
+  menu under "Connection test" (Direct, UPnP, STUN, Relay; Auto is the
+  usual everything), or add `?ice=stun` (say) to the player's address. It
+  lasts until you pick another or leave the player.
 - If the connection drops (switching from Wi-Fi to 4G, say), the player
   reconnects by itself, three times, before asking you to retry.

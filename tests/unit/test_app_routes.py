@@ -295,10 +295,13 @@ def test_the_browser_and_the_streamer_get_the_same_servers(client, monkeypatch):
         "iceServers": [{"urls": ["stun:s:3478"]}, TURN],
         "turn": "ok",
         "policy": "all",
+        "mode": "auto",
     }
     assert json.loads(env["MERLIN_APP_ICE"]) == {
         "iceServers": [{"urls": ["stun:s:3478"]}, TURN],
         "turn": "ok",
+        "upnp": True,
+        "mode": "auto",
     }
     assert not any("secret-credential" in str(a) for a in argv)  # never in ps
 
@@ -310,6 +313,7 @@ def test_ice_relay_in_hello_sends_the_browser_through_the_relay(client, monkeypa
         client, monkeypatch, {"type": "hello", "ice": "relay"}
     )
     assert message["policy"] == "relay"
+    assert message["mode"] == "relay"
     assert "policy" not in env["MERLIN_APP_ICE"]
 
 
@@ -402,3 +406,23 @@ def test_a_streamer_error_while_the_app_runs_goes_through(client, monkeypatch):
         ws.send_json({"type": "hello"})
         assert ws.receive_json()["type"] == "servers"
         assert ws.receive_json() == {"type": "error", "message": "encoder failed"}
+
+
+def test_a_test_mode_reaches_both_ends(client, monkeypatch):
+    import json
+
+    from app import iceservers
+
+    servers = iceservers.Servers([{"urls": ["stun:s:3478"]}, TURN], "ok", 9e12)
+    monkeypatch.setattr(routes._ice_cache, "get", lambda: servers)
+    message, _argv, env = _spawn_one(
+        client, monkeypatch, {"type": "hello", "ice": "stun"}
+    )
+    assert message["mode"] == "stun"
+    assert message["iceServers"] == [{"urls": ["stun:s:3478"]}]  # no relay
+    streamer = json.loads(env["MERLIN_APP_ICE"])
+    assert streamer["upnp"] is False and streamer["iceServers"] == message["iceServers"]
+    message, _argv, env = _spawn_one(
+        client, monkeypatch, {"type": "hello", "ice": ["not", "a", "mode"]}
+    )
+    assert message["mode"] == "auto"

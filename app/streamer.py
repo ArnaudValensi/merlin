@@ -659,7 +659,8 @@ def libnice_upnp_off(webrtc) -> bool:
 
 
 def ice_settings() -> dict:
-    """The server's ``MERLIN_APP_ICE``: ``{"iceServers", "turn"}``."""
+    """The server's ``MERLIN_APP_ICE``: ``{"iceServers", "turn", "upnp",
+    "mode"}`` (``upnp`` False in a test mode without it)."""
     try:
         settings = json.loads(os.environ.get("MERLIN_APP_ICE") or "{}")
     except ValueError:
@@ -669,6 +670,8 @@ def ice_settings() -> dict:
     return {
         "iceServers": settings.get("iceServers") or [],
         "turn": str(settings.get("turn") or iceservers.TURN_OFF),
+        "upnp": settings.get("upnp") is not False,
+        "mode": str(settings.get("mode") or "auto"),
     }
 
 
@@ -941,7 +944,9 @@ class Streamer:
 
     def run(self) -> None:
         log(f"ice: servers {self.ice_summary()}")
-        if os.environ.get("MERLIN_APP_UPNP", "1").strip() != "0":
+        if self.ice["mode"] != "auto":
+            log(f"ice: test mode {self.ice['mode']}")
+        if os.environ.get("MERLIN_APP_UPNP", "1").strip() != "0" and self.ice["upnp"]:
             self.upnp_state = "searching"
             self.opener = upnp.Opener(
                 self.args.app, on_change=self.on_upnp_change, on_mapped=self.on_mapped
@@ -970,7 +975,7 @@ class Streamer:
         if self.opener is None:
             return
         if self.opener.openings:
-            log(f"upnp: removing {self.opener.status}")
+            log(f"upnp: removing {self.opener.describe()}")
         if not self.opener.close():
             log(
                 "upnp: the router did not answer in time: the rest expires within the hour"

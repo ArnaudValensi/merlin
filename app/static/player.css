@@ -204,6 +204,9 @@ body.player-body .player-kb {
     color: var(--text-secondary);
 }
 .player-segmented button[aria-checked="true"] { background: var(--bg-hover); color: var(--text-primary); }
+/* One way of reaching the machine at a time (a test): five, narrower. */
+.player-segmented.player-ice { grid-template-columns: repeat(5, 1fr); }
+.player-segmented.player-ice button { min-width: 0; padding: 0 2px; font-size: 12px; }
 .player-sheet-items { display: flex; flex-direction: column; }
 .player-sheet-items button {
     min-height: 48px;
