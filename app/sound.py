@@ -16,8 +16,9 @@ supervise.py). Nothing is ever loaded or unloaded by number.
   the default output). Nothing moves streams into it.
 - **The guard** (``<sink>_guard``, ``Audio/Sink``, never captured) keeps the
   sink from ever becoming the desktop's default output: WirePlumber ranks
-  default candidates by ``priority.session``, then by age, and the guard is
-  created first with a higher priority (0 against -1). If the machine's real outputs go
+  default candidates by ``priority.session`` first: the guard (-1) is below
+  any ordinary output (0 or more, so it never takes the default from one)
+  and above the sink (-2), and it is created first. If the machine's real outputs go
   away, the guard (silent) becomes the default, never the sink: no other
   program's sound reaches the capture.
 - ``state.restore-*`` off on both: WirePlumber keeps no state for them.
@@ -30,10 +31,10 @@ import os
 import subprocess
 
 SINK_CLASS = "Audio/Sink"
-# The guard only has to outrank its own sink. At 0 it ties with ordinary
-# virtual sinks, and WirePlumber then prefers the older one: the user's own.
-SINK_PRIORITY = -1
-GUARD_PRIORITY = 0
+# Strictly ordered, so no tie-break is ever involved (WirePlumber versions
+# break ties differently): ordinary outputs (0 or more) > guard > sink.
+GUARD_PRIORITY = -1
+SINK_PRIORITY = -2
 
 ENV = {**os.environ, "LC_ALL": "C"}
 

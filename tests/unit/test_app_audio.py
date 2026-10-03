@@ -412,6 +412,39 @@ def test_plain_pulseaudio_does_not_stream(monkeypatch):
     assert sessions.audio_available() is False
 
 
+def _wireplumber_default(candidates: list[dict], *, by_age: bool) -> str:
+    """WirePlumber's automatic default-output choice among ``candidates``
+    (no configured preference, no device routes): the highest
+    priority.session wins; on a tie 0.5.17 prefers the older node (lower
+    serial), 0.5.12 keeps the first one enumerated."""
+    best = None
+    for node in candidates:
+        if best is None or node["priority"] > best["priority"]:
+            best = node
+        elif node["priority"] == best["priority"] and by_age:
+            if node["serial"] < best["serial"]:
+                best = node
+    assert best is not None
+    return best["name"]
+
+
+@pytest.mark.parametrize("by_age", [True, False], ids=["0.5.17", "0.5.12"])
+def test_the_guard_takes_the_default_from_nobody(by_age):
+    """Strict priorities, so no WirePlumber tie-break is involved: an
+    existing output (a virtual one at priority 0 included) keeps the default;
+    with nothing else the guard has it; the captured sink never does."""
+    guard = {"name": "guard", "priority": sound.GUARD_PRIORITY, "serial": 10}
+    sink = {"name": "sink", "priority": sound.SINK_PRIORITY, "serial": 11}
+    for user in (
+        {"name": "user-virtual", "priority": 0, "serial": 50},  # newer than ours
+        {"name": "user-hardware", "priority": 1000, "serial": 5},
+    ):
+        for order in ([user, guard, sink], [guard, sink, user], [sink, guard, user]):
+            assert _wireplumber_default(order, by_age=by_age) == user["name"]
+    for order in ([guard, sink], [sink, guard]):
+        assert _wireplumber_default(order, by_age=by_age) == "guard"
+
+
 def test_the_node_specs():
     (guard, guard_spec), (sink, sink_spec) = sound.specs("merlin_app_x_1")
     assert (guard, sink) == ("merlin_app_x_1_guard", "merlin_app_x_1")

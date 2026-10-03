@@ -216,16 +216,18 @@ the browser's jitter buffer aligns them).
   (`app/sound.py` has the specs), both `object.linger=false` (they die with
   the connection) and `state.restore-*=false` (WirePlumber keeps no state for
   them):
-  - the **guard** `<sink>_guard`, created first, `priority.session=0`, never
-    captured (at 0 it ties with ordinary virtual sinks, and WirePlumber then
-    prefers the older one: the user's own);
-  - the **sink** `<sink>`, `priority.session=-1`, class `Audio/Sink` (so
+  - the **guard** `<sink>_guard`, created first, `priority.session=-1`,
+    never captured;
+  - the **sink** `<sink>`, `priority.session=-2`, class `Audio/Sink` (so
     PipeWire's pulse server lists it and pulse clients can play into it): the
     only node the streamer captures.
-  WirePlumber picks a default output by `priority.session`, then by age: the
-  guard always outranks the sink, so if the machine's real outputs go away
-  the silent guard becomes the default, never the sink, and no other
-  program's sound reaches the capture. The supervisor waits until WirePlumber
+  WirePlumber picks a default output by `priority.session` first (its
+  tie-breaks differ between versions, so the order is strict and none is
+  needed): any ordinary output (0 or more) beats the guard, which beats the
+  sink. So the guard never takes the default from a real or virtual output
+  of the user's, and if every other output goes away the silent guard
+  becomes the default, never the sink: no other program's sound reaches the
+  capture. The supervisor waits until WirePlumber
   has set each node up (it has input ports) before the next (4 s for both,
   every `pw-dump` bounded by what is left), writes `stream`
   or `local` to the status file (on `local` it drops the routing variables:

@@ -577,9 +577,12 @@ class Reply:
         return type("O", (), {"sdp": sdp})()
 
 class Promise:
-    def __init__(self, gate=None):
+    def __init__(self, gate=None, reached=None):
         self.gate = gate
+        self.reached = reached
     def wait(self):
+        if self.reached is not None:
+            self.reached.set()
         if self.gate is not None:
             self.gate.wait()
     def get_reply(self):
@@ -593,11 +596,11 @@ def test_an_offer_finishing_during_the_drop_is_never_sent():
     script = (
         OFFERS
         + """
-gate = threading.Event()
+gate, reached = threading.Event(), threading.Event()
 old = s.webrtc
-t = threading.Thread(target=s.on_offer_created, args=(Promise(gate), old))
+t = threading.Thread(target=s.on_offer_created, args=(Promise(gate, reached), old))
 t.start()
-time.sleep(0.1)  # waiting for its reply, past the early check
+assert reached.wait(10)  # past the early check, waiting for its reply
 s.on_bus_error(None, Message("audiosrc"))  # the sound fails: drop
 gate.set()
 t.join()
