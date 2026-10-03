@@ -744,29 +744,25 @@ STUN = {"urls": ["stun:turn.example:3478"]}
 """
 
 
-def test_the_servers_reach_webrtcbin_with_the_relay_switch():
+def test_the_servers_reach_webrtcbin():
     trace = _run(
         ICE_FAKES
         + """
 upnp = []
 streamer.libnice_upnp_off = lambda w: upnp.append(True) or True
-s = make({"iceServers": [STUN, TURN], "policy": "relay", "turn": "ok"})
+s = make({"iceServers": [STUN, TURN], "turn": "ok"})
 s._configure_ice()
-policy = s.webrtc.props.pop("ice-transport-policy")
-print(json.dumps([upnp, s.webrtc.props, s.webrtc.emitted,
-                  policy == streamer.GstWebRTC.WebRTCICETransportPolicy.RELAY,
-                  s.ice_summary()]))
+print(json.dumps([upnp, s.webrtc.props, s.webrtc.emitted, s.ice_summary()]))
 """
     )
-    upnp, props, emitted, relay, summary = trace
+    upnp, props, emitted, summary = trace
     assert upnp == [True]
     assert props == {"stun-server": "stun://turn.example:3478"}
     assert emitted == [
         ["add-turn-server", "turn://1%3Alisa:pw@turn.example:3478?transport=udp"],
         ["add-turn-server", "turns://1%3Alisa:pw@turn.example:443"],
     ]
-    assert relay is True
-    assert summary == "stun, turn, relay only"
+    assert summary == "stun, turn"
 
 
 def test_the_settings_from_the_server_are_read_defensively():
@@ -774,20 +770,16 @@ def test_the_settings_from_the_server_are_read_defensively():
         """
 import os
 out = []
-for raw in ('{"iceServers": [{"urls": ["stun:a:1"]}], "policy": "relay", "turn": "no access"}',
+for raw in ('{"iceServers": [{"urls": ["stun:a:1"]}], "turn": "no access"}',
             "not json", "[1, 2]", ""):
     os.environ["MERLIN_APP_ICE"] = raw
     out.append(streamer.ice_settings())
 print(json.dumps(out))
 """
     )
-    assert trace[0] == {
-        "iceServers": [{"urls": ["stun:a:1"]}],
-        "policy": "relay",
-        "turn": "no access",
-    }
+    assert trace[0] == {"iceServers": [{"urls": ["stun:a:1"]}], "turn": "no access"}
     for odd in trace[1:]:
-        assert odd == {"iceServers": [], "policy": "all", "turn": "off"}
+        assert odd == {"iceServers": [], "turn": "off"}
 
 
 def test_reach_says_what_stun_and_turn_gave():

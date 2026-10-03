@@ -299,17 +299,18 @@ def test_the_browser_and_the_streamer_get_the_same_servers(client, monkeypatch):
     assert json.loads(env["MERLIN_APP_ICE"]) == {
         "iceServers": [{"urls": ["stun:s:3478"]}, TURN],
         "turn": "ok",
-        "policy": "all",
     }
     assert not any("secret-credential" in str(a) for a in argv)  # never in ps
 
 
-def test_ice_relay_in_hello_makes_a_relay_only_session(client, monkeypatch):
+def test_ice_relay_in_hello_sends_the_browser_through_the_relay(client, monkeypatch):
+    """Only the browser: two relays of the same server cannot reach each
+    other (it refuses its own address as a peer)."""
     message, _argv, env = _spawn_one(
         client, monkeypatch, {"type": "hello", "ice": "relay"}
     )
     assert message["policy"] == "relay"
-    assert '"policy": "relay"' in env["MERLIN_APP_ICE"]
+    assert "policy" not in env["MERLIN_APP_ICE"]
 
 
 def test_a_slow_portal_does_not_hold_the_stream(client, monkeypatch):

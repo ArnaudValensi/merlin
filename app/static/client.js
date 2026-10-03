@@ -27,6 +27,9 @@
     var CONNECT_TIMEOUT_MS = 30000;
     var SLOW_CONNECT_MS = 4000;      // then the status says we are still trying
     var DROP_GRACE_MS = 5000;        // a live connection "disconnected" this long has dropped
+    // ICE "failed" before the first connection: candidates still on their
+    // way (STUN's public address, the router's mapping) may revive it.
+    var FAILED_GRACE_MS = 6000;
     var DROP_RETRY_DELAYS = [1000, 2000, 4000];  // new sessions after a drop
     var NET_REPORT_MS = 2000;        // the round trip, sent to the streamer
     var SETUP_TIMEOUT_MS = 60000;    // from the socket: the server must offer by then
@@ -50,9 +53,8 @@
     }
 
     /** The route to the machine, from its address in the selected ICE pair
-     * (the same rule as app/linkstats.py classify). */
-    function routeOf(address, candidateType) {
-        if (candidateType === 'relay') return 'Relay';
+     * (the same rule as app/linkstats.py classify); a relay is a path. */
+    function routeOf(address) {
         address = String(address || '');
         var v4 = ipv4(address);
         if (v4) {
@@ -317,7 +319,7 @@
         var timer = null, hiddenTimer = null, retryTimer = null;
         var lastBytes = null;
         var lastLoss = null;
-        var slowTimer = null, dropTimer = null, netTimer = null;
+        var slowTimer = null, dropTimer = null, netTimer = null, failTimer = null;
         var drops = 0;   // dropped live connections being restored in a row
         var info = {host: '', app: null, encoder: '', codec: '', audio: false, rate: null, route: '',
                     iceServers: [], policy: 'all', path: null, reach: null};
@@ -348,6 +350,7 @@
             clearTimeout(timer);
             clearTimeout(slowTimer);
             clearTimeout(dropTimer);
+            clearTimeout(failTimer);
             clearInterval(netTimer);
             if (channel) { try { channel.close(); } catch (e) {} channel = null; }
             if (pc) { try { pc.close(); } catch (e) {} pc = null; }
@@ -410,6 +413,7 @@
                     clearTimeout(timer);
                     clearTimeout(slowTimer);
                     clearTimeout(dropTimer);
+                    clearTimeout(failTimer);
                     reconnects = 0;
                     drops = 0;
                     wasLive = true;
@@ -424,7 +428,11 @@
                         if (mine() && peer.connectionState !== 'connected') dropped();
                     }, DROP_GRACE_MS);
                 } else if (now === 'failed') {
-                    if (wasLive) dropped(); else lost();
+                    if (wasLive) { dropped(); return; }
+                    clearTimeout(failTimer);
+                    failTimer = setTimeout(function () {
+                        if (mine() && peer.connectionState !== 'connected') lost();
+                    }, FAILED_GRACE_MS);
                 }
             };
             peer.setRemoteDescription({type: 'offer', sdp: sdp})
@@ -679,11 +687,10 @@
                     if (pair.currentRoundTripTime != null) out.rttMs = Math.round(pair.currentRoundTripTime * 1000);
                     var remote = byId[pair.remoteCandidateId] || {};
                     var local = byId[pair.localCandidateId] || {};
-                    var relay = remote.candidateType === 'relay' || local.candidateType === 'relay';
                     // The streamer's reading wins: it sees both ends (ours is
                     // hidden from us, so a public IPv6 at home reads as internet).
                     out.route = info.route ||
-                        routeOf(remote.address || remote.ip, relay ? 'relay' : remote.candidateType);
+                        routeOf(remote.address || remote.ip);
                     out.path = info.path ? info.path.path : pathOf(local.candidateType, remote.candidateType);
                     if (info.path) { out.local = info.path.local; out.remote = info.path.remote; }
                 }

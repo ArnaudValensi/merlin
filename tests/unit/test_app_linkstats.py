@@ -20,12 +20,12 @@ from app.linkstats import RateControl
         ("fd7a:115c:a1e0:ab12::1", "host", "LAN"),
         ("2001:861:61c0:8770:a065:d2fb:61b8:6724", "host", "Internet · IPv6"),
         ("176.186.26.141", "srflx", "Internet · IPv4"),
-        ("176.186.26.141", "relay", "Relay"),
+        ("213.239.219.213", "relay", "Internet · IPv4"),  # the relay is a path
         ("abcd-1234.local", "host", "?"),
     ],
 )
 def test_routes_are_named_from_the_far_address(address, kind, route):
-    assert linkstats.classify(address, kind) == route
+    assert linkstats.classify(address) == route
 
 
 @pytest.mark.parametrize(
@@ -45,7 +45,7 @@ def test_routes_are_named_from_the_far_address(address, kind, route):
     ],
 )
 def test_our_own_end_tells_a_public_lan_from_the_internet(remote, local, route):
-    assert linkstats.classify(remote, "prflx", local) == route
+    assert linkstats.classify(remote, local) == route
 
 
 def test_candidates_are_reduced_to_type_protocol_and_family():

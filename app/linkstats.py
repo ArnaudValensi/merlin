@@ -5,8 +5,9 @@ the tests import it from the package. Nothing here talks to GStreamer: the
 streamer turns ``webrtcbin``'s stats into plain dicts, and this module reads
 them.
 
-- ``classify``: names a route from the far end's address (LAN, Internet,
-  Relay), the same rule as the browser's chip (client.js ``routeOf``).
+- ``classify``: names a route from the far end's address (LAN or Internet),
+  the same rule as the browser's chip (client.js ``routeOf``). How the
+  stream crosses it (a relay among others) is ``path_of``'s.
 - ``describe_candidate``: an ICE candidate line, reduced to its type,
   protocol and address family (for the log).
 - ``read_snapshot``: the figures that matter from one stats reply.
@@ -29,13 +30,11 @@ from dataclasses import dataclass, field
 SHARED_V4 = ipaddress.ip_network("100.64.0.0/10")
 
 
-def classify(address: str, candidate_type: str = "", local: str = "") -> str:
+def classify(address: str, local: str = "") -> str:
     """The route a connection to ``address`` takes. With ``local`` (our end
     of the pair) a public address on our own network is the LAN too: IPv6
     has no NAT, so a phone at home talks to the machine over global
     addresses sharing its /64 (and so would hosts on a public IPv4 /24)."""
-    if candidate_type == "relay":
-        return "Relay"
     try:
         ip = ipaddress.ip_address(address.split("%")[0])
     except ValueError:
@@ -105,7 +104,7 @@ class Snapshot:
     def route(self) -> str:
         if not self.remote_address:
             return ""
-        return classify(self.remote_address, self.remote_type, self.local_address)
+        return classify(self.remote_address, self.local_address)
 
     def kinds(self) -> tuple[str, str]:
         """Both candidates as ``type protocol family`` (``host udp ipv6``)."""
@@ -187,7 +186,7 @@ def path_of(
         return ""
     if "relay" in (snap.local_type, snap.remote_type):
         return "TURN"
-    lan = classify(snap.remote_address, "", snap.local_address) == "LAN"
+    lan = classify(snap.remote_address, snap.local_address) == "LAN"
     if not lan and snap.local_port and snap.local_port in opened_ports:
         return "UPnP"
     if "srflx" in (snap.local_type, snap.remote_type):

@@ -659,7 +659,7 @@ def libnice_upnp_off(webrtc) -> bool:
 
 
 def ice_settings() -> dict:
-    """The server's ``MERLIN_APP_ICE``: ``{"iceServers", "policy", "turn"}``."""
+    """The server's ``MERLIN_APP_ICE``: ``{"iceServers", "turn"}``."""
     try:
         settings = json.loads(os.environ.get("MERLIN_APP_ICE") or "{}")
     except ValueError:
@@ -668,7 +668,6 @@ def ice_settings() -> dict:
         settings = {}
     return {
         "iceServers": settings.get("iceServers") or [],
-        "policy": "relay" if settings.get("policy") == "relay" else "all",
         "turn": str(settings.get("turn") or iceservers.TURN_OFF),
     }
 
@@ -847,10 +846,6 @@ class Streamer:
         for uri in self.turn_uris:
             if not self.webrtc.emit("add-turn-server", uri):
                 log(f"ice: turn server refused: {uri.split('@')[-1]}")
-        if self.ice["policy"] == "relay":
-            self.webrtc.set_property(
-                "ice-transport-policy", GstWebRTC.WebRTCICETransportPolicy.RELAY
-            )
 
     def ice_summary(self) -> str:
         """``stun, turn (until 18:05)``, or why there is no relay."""
@@ -860,8 +855,6 @@ class Streamer:
         text = ", ".join(kinds) or "none"
         if not self.turn_uris:
             text += f" (turn: {self.ice['turn']})"
-        if self.ice["policy"] == "relay":
-            text += ", relay only"
         return text
 
     def on_upstream_event(self, _pad, info):
@@ -1194,8 +1187,15 @@ class Streamer:
         elif kind == "ice" and msg.get("candidate"):
             log(f"ice: remote {linkstats.describe_candidate(msg['candidate'])}")
             parts = msg["candidate"].split()
-            if self.opener is not None and len(parts) > 5 and parts[2].upper() == "UDP":
-                # A router that pinholes per remote port needs the browser's.
+            kind = parts[parts.index("typ") + 1] if "typ" in parts[:-1] else ""
+            if (
+                self.opener is not None
+                and len(parts) > 5
+                and parts[2].upper() == "UDP"
+                and kind in ("host", "srflx", "prflx")
+            ):
+                # A router that pinholes per remote port needs the browser's
+                # own ports (not its relay's: the relay is not on its side).
                 try:
                     self.opener.add_remote(int(parts[5]))
                 except ValueError:

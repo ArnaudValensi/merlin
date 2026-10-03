@@ -347,13 +347,32 @@ test("after 4 s without a connection the state says it is still trying", async (
     assert.equal(last[1].slow, true);
 });
 
-test("ICE failing before any connection is unreachable at once", async () => {
+test("ICE failing before any connection is unreachable after a short grace", async () => {
     const env = makeEnv();
     const { stream } = connect(env);
     await offer(env, env.sockets[0]);
     env.peers[0].connectionState = "failed";
     env.peers[0].onconnectionstatechange();
+    env.advance(5999);
+    assert.equal(stream.state, "connecting", "late candidates may still revive it");
+    env.advance(1);
     assert.equal(stream.state, "unreachable");
+});
+
+test("late candidates revive an early failure (STUN, the router's mapping)", async () => {
+    const env = makeEnv();
+    const { stream } = connect(env);
+    await offer(env, env.sockets[0]);
+    const peer = env.peers[0];
+    peer.remote.resolve();
+    await env.flush();
+    peer.connectionState = "failed";  // every early pair refused at once
+    peer.onconnectionstatechange();
+    env.advance(2000);
+    peer.connectionState = "connected";  // the public candidate arrived
+    peer.onconnectionstatechange();
+    env.advance(10000);
+    assert.equal(stream.state, "live");
 });
 
 async function dropLive(env, peer, how) {
@@ -386,6 +405,7 @@ test("a dropped live connection gets three new sessions, then is unreachable", a
         } else {
             fresh.connectionState = "failed";
             fresh.onconnectionstatechange();
+            env.advance(6000);  // its grace for late candidates
         }
     }
     assert.equal(stream.state, "unreachable");
@@ -431,7 +451,7 @@ test("the route is named from the machine's address", () => {
         ["fd7a:115c:a1e0:ab12::1", "host", "LAN"],
         ["2001:861:61c0:8770:a065:d2fb:61b8:6724", "host", "Internet · IPv6"],
         ["176.186.26.141", "srflx", "Internet · IPv4"],
-        ["176.186.26.141", "relay", "Relay"],
+        ["213.239.219.213", "relay", "Internet · IPv4"],  // the relay is a path
         ["abcd.local", "host", "?"],
     ];
     for (const [address, type, route] of cases) {

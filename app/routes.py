@@ -374,10 +374,12 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
         servers = iceservers.Servers(
             iceservers.stun_servers(), iceservers.TURN_UNREACHABLE
         )
-    # ?ice=relay on the page: this session goes through the relay only (a
-    # test switch, for TURN on purpose).
+    # ?ice=relay on the page: the browser goes through the relay only (a
+    # test switch, for TURN on purpose). The streamer keeps every path: a
+    # relay reaches any address, but two relays of the same server cannot
+    # reach each other (the relay refuses its own address as a peer).
     policy = "relay" if hello.get("ice") == "relay" else "all"
-    ice = {**servers.to_json(), "policy": policy}
+    ice = servers.to_json()
 
     async with _viewer_locks.setdefault(session_id, asyncio.Lock()):
         if websocket.application_state != WebSocketState.CONNECTED:
@@ -405,7 +407,7 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
         # Before the streamer exists, so before its offer: the browser builds
         # its peer with them. To the streamer through its environment, never
         # its argv (the credentials would show in ps).
-        await viewer.send({"type": "servers", **ice})
+        await viewer.send({"type": "servers", **ice, "policy": policy})
         viewer.process = await asyncio.create_subprocess_exec(
             deps.SYSTEM_PYTHON,
             str(STREAMER),
