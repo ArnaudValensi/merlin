@@ -379,6 +379,7 @@ def test_dead_streamers_leftovers_go_and_nothing_else(router):
         r.mappings[port] = {
             "NewExternalPort": str(port),
             "NewProtocol": "UDP",
+            "NewInternalPort": str(port),
             "NewInternalClient": client,
             "NewPortMappingDescription": desc,
         }
@@ -564,3 +565,36 @@ def test_closing_stops_what_is_queued(router):
         opener.add("127.0.0.1", port)
     assert opener.close()
     assert r.mappings == {}  # opened then removed, or never opened
+
+
+def test_the_sweep_rechecks_each_mapping_before_deleting_it(router, monkeypatch):
+    """The table is listed first: a leftover that lapses meanwhile and goes
+    to another device must survive the sweep."""
+    r = router()
+    for port in (50001, 50002):
+        r.mappings[port] = {
+            "NewExternalPort": str(port),
+            "NewProtocol": "UDP",
+            "NewRemoteHost": "",
+            "NewInternalPort": str(port),
+            "NewInternalClient": "127.0.0.1",
+            "NewPortMappingDescription": "Merlin old 999999999",
+        }
+    listed = upnp.Gateway.mappings
+
+    def mappings_then_reassign(self, limit=1024):
+        table = listed(self, limit)
+        r.mappings[50001] = dict(
+            r.mappings[50001],
+            NewInternalClient="192.168.1.30",
+            NewPortMappingDescription="game console",
+        )
+        return table
+
+    monkeypatch.setattr(upnp.Gateway, "mappings", mappings_then_reassign)
+    rec = Recorder()
+    opener = _opener(r, rec)
+    assert rec.wait_for(lambda: opener.status == "router found")
+    assert sorted(r.mappings) == [50001]  # the other device's, kept
+    assert r.mappings[50001]["NewPortMappingDescription"] == "game console"
+    opener.close()

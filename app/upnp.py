@@ -414,6 +414,21 @@ def discover(
 # --- one stream's openings -----------------------------------------------------------
 
 
+def _unmap_if_owned(
+    gw: Gateway, external_port: int, internal_port: str, description: str
+) -> None:
+    """Delete the UDP mapping on ``external_port`` only if the router has it,
+    now, pointing at our address and ``internal_port`` with ``description``:
+    after a lease that lapsed the port may belong to someone else."""
+    entry = gw.mapping(external_port)
+    if (
+        entry.get("NewInternalClient") == gw.local_ip
+        and entry.get("NewInternalPort") == internal_port
+        and entry.get("NewPortMappingDescription") == description
+    ):
+        gw.unmap_udp(external_port)
+
+
 def pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -558,7 +573,14 @@ class Opener:
             if pid_alive(int(m.group(2))):
                 continue
             try:
-                gw.unmap_udp(int(entry.get("NewExternalPort") or 0))
+                # Read again first: it may have lapsed and changed hands since
+                # the table was listed.
+                _unmap_if_owned(
+                    gw,
+                    int(entry.get("NewExternalPort") or 0),
+                    str(entry.get("NewInternalPort") or ""),
+                    str(entry.get("NewPortMappingDescription") or ""),
+                )
             except Exception:
                 pass
 
@@ -688,15 +710,7 @@ class Opener:
             pass  # the lease ends it (an hour at most)
 
     def _unmap_if_ours(self, gw: Gateway, o: Opening) -> None:
-        """Delete the mapping only if it is still this stream's: after a lease
-        that lapsed, the port may belong to someone else now."""
-        entry = gw.mapping(o.external_port)
-        if (
-            entry.get("NewInternalClient") == gw.local_ip
-            and entry.get("NewInternalPort") == str(o.port)
-            and entry.get("NewPortMappingDescription") == self._description
-        ):
-            gw.unmap_udp(o.external_port)
+        _unmap_if_owned(gw, o.external_port, str(o.port), self._description)
 
     @property
     def ports(self) -> set[int]:
