@@ -401,16 +401,20 @@
         /** The round trip as the browser measures it (its ICE checks), for
          * the streamer's rate control: it has no measure of its own. */
         function reportNet(peer) {
-            if (!channel || channel.readyState !== 'open') return;
+            // The answer comes later: it belongs to this peer and this channel
+            // only, never to a session that replaced them meanwhile.
+            var g = gen, ch = channel;
+            if (!ch || ch.readyState !== 'open') return;
             peer.getStats().then(function (report) {
+                if (!current(g) || pc !== peer || channel !== ch) return;
                 var pair = null, byId = {};
                 report.forEach(function (s) {
                     byId[s.id] = s;
                     if (s.type === 'transport' && s.selectedCandidatePairId) pair = s.selectedCandidatePairId;
                 });
                 var found = pair ? byId[pair] : null;
-                if (found && found.currentRoundTripTime != null && channel && channel.readyState === 'open') {
-                    channel.send(JSON.stringify({t: 'net', rtt: found.currentRoundTripTime * 1000}));
+                if (found && found.currentRoundTripTime != null && ch.readyState === 'open') {
+                    ch.send(JSON.stringify({t: 'net', rtt: found.currentRoundTripTime * 1000}));
                 }
             }).catch(function () {});
         }
@@ -432,6 +436,10 @@
         function fail(message) {
             teardown();
             if (destroyed) return;
+            // While restoring a dropped connection, every failure (no offer
+            // in time, a streamer error) spends one of its tries: the
+            // dead-streamer retry below would otherwise refresh forever.
+            if (drops) { dropped(); return; }
             if (Date.now() - lastAutoRetry > 20000) {
                 lastAutoRetry = Date.now();
                 setState('connecting');

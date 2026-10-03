@@ -300,7 +300,7 @@ UPnP, TURN) are a later step.
   `rate: …` (each bitrate change, with the loss and round trip behind it;
   each keyframe request), and when the viewer leaves `session: 2m10s via
   Internet · IPv6, sent … kbit/s on average, rate 600-5555 kbit/s, loss
-  3.1 %, 4 keyframe requests (4 forced)`.
+  3.1 %, 4 keyframe requests (3 to the encoder, 3 answered)`.
 - **The stats**: every second the streamer calls `get-stats` on its
   `webrtcbin` and reads it with `app/linkstats.py` (stdlib, imported next to
   the streamer and from the tests): the selected pair (`transport` →
@@ -324,8 +324,12 @@ UPnP, TURN) are a later step.
   `openh264enc` `bitrate` and `vp8enc` `target-bitrate` in bit/s. Each
   change goes to the browser as `{"type": "rate", "kbps", "max"}`.
 - **Keyframes on loss**: webrtcbin turns the browser's PLI/FIR into an
-  upstream force-key-unit event; a probe on the encoder's source pad counts
-  them (the summary's "forced"). Coalesced bursts are expected.
+  upstream force-key-unit event (bursts coalesced). Two probes on the
+  encoder's source pad count the events that reached it ("to the encoder")
+  and the ones followed by a keyframe within 0.5 s ("answered").
+- **`MERLIN_APP_ENCODER`** (`nvh264enc`, `openh264enc`, `vp8enc`) forces the
+  encoder when the browser can decode it (a misbehaving GPU encoder; the
+  network test exercising each one); otherwise the usual choice, logged.
 - **The route** is named by the streamer, which sees both ends of the
   selected pair (`linkstats.classify`): `LAN` for RFC 1918, `fc00::/7`,
   `fe80::/10`, **and a public address on our own network** (the same /64 in
@@ -347,14 +351,21 @@ UPnP, TURN) are a later step.
   gets new sessions after 1, 2 and 4 s ("Reconnecting…"), then
   `unreachable`. A new session that fails counts as the next try; one that
   connects resets the count, and so do the user's Retry and a resume after a
-  pause. Apart from the dead-streamer retry and the lost-socket backoff.
+  pause. During a recovery any failure (no offer within the setup deadline,
+  a streamer error) spends a try, so it is always bounded; otherwise apart
+  from the dead-streamer retry and the lost-socket backoff. A round-trip
+  report answered after its session was replaced is dropped.
 - **Testing a bad network**: `tests/e2e/test_app_network.py` runs a whole
   session (a throwaway Merlin, an app drawing a moving ball, headless
   Chromium) inside `unshare -rn`, with a dummy interface (`10.99.0.1`:
   browsers and libnice skip loopback, so ICE needs a real address) whose
   traffic goes through `lo`, where `tc netem` adds 15 % loss and 60 ms of
-  delay for 20 s. Unprivileged, no effect on the machine's network. Inside,
-  `UV_OFFLINE=1`, no SaaS token, a fresh home.
+  delay for 15 s, once per encoder (`MERLIN_APP_ENCODER`; one this machine
+  cannot use is skipped). It checks the route, the rate falling and
+  climbing back, the gauge, the round trip, keyframe requests answered, and
+  frames still presented under loss and at full pace after. Unprivileged,
+  no effect on the machine's network. Inside, `UV_OFFLINE=1`, no SaaS
+  token, a fresh home.
 
 ## UI
 

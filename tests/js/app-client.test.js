@@ -722,3 +722,84 @@ test("a Retry, or a resume, starts fresh: not a reconnection, the full budget ba
         await offer(env, env.sockets[env.sockets.length - 1]);
     }
 });
+
+test("during recovery, sessions that never get an offer spend the tries too", async () => {
+    const env = makeEnv();
+    const details = [];
+    const { stream } = connect(env, { onState: (s, d) => details.push([s, d]) });
+    await goLive(env, env.sockets[0]);
+    env.peers[0].connectionState = "failed";
+    env.peers[0].onconnectionstatechange();
+    // Each new session opens its socket and then hears nothing for a minute.
+    for (const delay of [1000, 2000, 4000]) {
+        env.advance(delay);
+        assert.equal(stream.state, "connecting");
+        assert.equal(details[details.length - 1][1].reconnecting, true);
+        env.sockets[env.sockets.length - 1].deliver({ type: "welcome", host: "box" });
+        env.advance(60000);  // no offer: the setup deadline
+    }
+    assert.equal(stream.state, "unreachable");
+    const opened = env.sockets.length;
+    env.advance(600000);
+    assert.equal(env.sockets.length, opened, "bounded: nothing more after the third");
+    assert.equal(opened, 4);
+});
+
+test("a streamer error during recovery spends a try, and says Reconnecting", async () => {
+    const env = makeEnv();
+    const details = [];
+    const { stream } = connect(env, { onState: (s, d) => details.push([s, d]) });
+    await goLive(env, env.sockets[0]);
+    env.peers[0].connectionState = "failed";
+    env.peers[0].onconnectionstatechange();
+    env.advance(1000);
+    env.sockets[1].deliver({ type: "error", message: "The streamer stopped." });
+    assert.equal(stream.state, "connecting");
+    assert.equal(details[details.length - 1][1].reconnecting, true);
+    env.advance(2000);
+    assert.equal(env.sockets.length, 3, "the second try, on its own schedule");
+});
+
+function deferredStats(peer) {
+    let resolve;
+    peer.getStats = () => new Promise((r) => { resolve = r; });
+    return (report) => resolve(report);
+}
+
+const RTT_1200 = new Map([
+    ["T", { id: "T", type: "transport", selectedCandidatePairId: "P" }],
+    ["P", { id: "P", type: "candidate-pair", currentRoundTripTime: 1.2 }],
+]);
+
+for (const how of ["reconnect", "pause", "destroy"]) {
+    test(`an RTT answered after a ${how} is dropped, never sent to another session`, async () => {
+        const env = makeEnv();
+        const { stream } = connect(env);
+        await goLive(env, env.sockets[0]);
+        const old = env.peers[0];
+        const oldSent = [];
+        old.ondatachannel({ channel: { readyState: "open", send: (t) => oldSent.push(t), close() {} } });
+        const answer = deferredStats(old);
+        env.advance(2000);  // the report is asked, its answer pending
+        await env.flush();
+        const fresh = [];
+        if (how === "reconnect") {
+            stream.reconnect();
+            await goLive(env, env.sockets[env.sockets.length - 1]);
+            env.peers[env.peers.length - 1].ondatachannel({
+                channel: { readyState: "open", send: (t) => fresh.push(t), close() {} },
+            });
+        } else if (how === "pause") {
+            env.document.hidden = true;
+            env.document.fire("visibilitychange");
+            env.advance(30000);
+            assert.equal(stream.state, "paused");
+        } else {
+            stream.destroy();
+        }
+        answer(RTT_1200);
+        await env.flush();
+        assert.deepEqual(oldSent, [], "the old channel is closed");
+        assert.deepEqual(fresh, [], "the new session never hears the old path");
+    });
+}

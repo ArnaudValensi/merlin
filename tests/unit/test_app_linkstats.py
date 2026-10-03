@@ -223,9 +223,11 @@ def test_the_session_summary():
         _stats(sent=2000, lost=20, sent_bytes=31_000_000)
     )
     session.rates = [5500, 3850, 4158]
-    session.forced = 3
+    session.forwarded = 3
+    session.answered = 2
     line = session.summary(160.0)
     assert line == (
         "session: 1m00s via Internet · IPv6, sent 4000 kbit/s on average, "
-        "rate 3850-5500 kbit/s, loss 1.0 %, 3 keyframe requests (3 forced)"
+        "rate 3850-5500 kbit/s, loss 1.0 %, 3 keyframe requests "
+        "(3 to the encoder, 2 answered)"
     )

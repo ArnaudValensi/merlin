@@ -223,14 +223,33 @@ def sink_exists(name: str) -> bool:
         return False
 
 
+ENCODER_CODECS = {"nvh264enc": "H264", "openh264enc": "H264", "vp8enc": "VP8"}
+NVENC_PROBE = (
+    "videotestsrc num-buffers=1 ! video/x-raw,width=320,height=240 ! "
+    "cudaupload ! nvh264enc ! fakesink"
+)
+
+
 def choose_encoder(codecs: list[str]) -> tuple[str, str]:
-    """(element, codec) for the best encoder the browser can decode."""
+    """(element, codec) for the best encoder the browser can decode.
+
+    ``MERLIN_APP_ENCODER`` (nvh264enc, openh264enc or vp8enc) forces one when
+    it is usable for this browser: a broken GPU encoder, or a test that
+    exercises each one."""
     wanted = {c.upper() for c in codecs}
+    forced = os.environ.get("MERLIN_APP_ENCODER", "")
+    if forced:
+        codec = ENCODER_CODECS.get(forced)
+        usable = (
+            codec in wanted
+            and Gst.ElementFactory.find(forced) is not None
+            and (forced != "nvh264enc" or _works(NVENC_PROBE))
+        )
+        if usable and codec:
+            return forced, codec
+        log(f"MERLIN_APP_ENCODER={forced} is not usable here: choosing as usual")
     if "H264" in wanted:
-        if Gst.ElementFactory.find("nvh264enc") and _works(
-            "videotestsrc num-buffers=1 ! video/x-raw,width=320,height=240 ! "
-            "cudaupload ! nvh264enc ! fakesink"
-        ):
+        if Gst.ElementFactory.find("nvh264enc") and _works(NVENC_PROBE):
             return "nvh264enc", "H264"
         if Gst.ElementFactory.find("openh264enc"):
             return "openh264enc", "H264"
@@ -661,6 +680,7 @@ class Streamer:
         self.route = ""
         self.keyframes = 0
         self.client_rtt: float | None = None  # seconds, from the browser
+        self.key_asked_at: float | None = None  # a keyframe request waiting
         audio = bool(args.audio_sink)
         if audio and (missing := missing_audio_elements()):
             log(f"no sound in the stream: missing GStreamer {', '.join(missing)}")
@@ -742,14 +762,27 @@ class Streamer:
         # forwarded upstream by webrtcbin): the summary shows requests served.
         enc = self.pipe.get_by_name("enc")
         if enc is not None:
-            enc.get_static_pad("src").add_probe(
-                Gst.PadProbeType.EVENT_UPSTREAM, self.on_upstream_event
-            )
+            pad = enc.get_static_pad("src")
+            pad.add_probe(Gst.PadProbeType.EVENT_UPSTREAM, self.on_upstream_event)
+            pad.add_probe(Gst.PadProbeType.BUFFER, self.on_encoded)
 
     def on_upstream_event(self, _pad, info):
         event = info.get_event()
         if event is not None and GstVideo.video_event_is_force_key_unit(event):
-            self.session.forced += 1
+            self.session.forwarded += 1
+            if self.key_asked_at is None:
+                self.key_asked_at = time.monotonic()
+        return Gst.PadProbeReturn.OK
+
+    def on_encoded(self, _pad, info):
+        """A keyframe right after a request answers it (PLI/FIR served)."""
+        asked = self.key_asked_at
+        if asked is not None:
+            buffer = info.get_buffer()
+            if buffer is not None and not buffer.has_flags(Gst.BufferFlags.DELTA_UNIT):
+                if time.monotonic() - asked <= linkstats.KEYFRAME_ANSWER_S:
+                    self.session.answered += 1
+                self.key_asked_at = None
         return Gst.PadProbeReturn.OK
 
     def _discard(self) -> None:

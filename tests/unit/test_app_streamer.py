@@ -661,3 +661,22 @@ trace.append(["rtt", s.client_rtt, len(injected)])
 """
     trace = _run(DROP % ("False", script))
     assert trace[-1] == ["rtt", 0.0485, 1]  # the key goes on to the app
+
+
+def test_an_encoder_can_be_forced_when_the_browser_can_take_it():
+    trace = _run(
+        """
+import os
+streamer.Gst.init(None)
+out = []
+for forced, codecs in (("vp8enc", ["H264", "VP8"]), ("openh264enc", ["H264", "VP8"]),
+                       ("openh264enc", ["VP8"]), ("nonsense", ["VP8"])):
+    os.environ["MERLIN_APP_ENCODER"] = forced
+    out.append(list(streamer.choose_encoder(codecs)))
+print(json.dumps(out))
+"""
+    )
+    assert trace[0] == ["vp8enc", "VP8"]
+    assert trace[1] == ["openh264enc", "H264"]
+    assert trace[2] == ["vp8enc", "VP8"]  # the browser has no H264: as usual
+    assert trace[3] == ["vp8enc", "VP8"]

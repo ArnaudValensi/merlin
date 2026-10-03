@@ -151,6 +151,7 @@ def read_snapshot(stats: list[dict]) -> Snapshot:
 
 
 RTT_BASELINE_MIN = 0.025  # seconds
+KEYFRAME_ANSWER_S = 0.5  # a keyframe this soon after a request answers it
 RTT_WINDOW = 30  # reports (about 30 s with Chrome's one a second)
 
 
@@ -214,7 +215,8 @@ class Session:
     first: Snapshot | None = None
     last: Snapshot | None = None
     rates: list[int] = field(default_factory=list)
-    forced: int = 0  # keyframes the encoder was asked for (PLI/FIR served)
+    forwarded: int = 0  # keyframe requests that reached the encoder
+    answered: int = 0  # ... followed by a keyframe within KEYFRAME_ANSWER_S
 
     def summary(self, now: float) -> str:
         if self.connected_at is None or self.last is None or self.first is None:
@@ -229,5 +231,5 @@ class Session:
             f"session: {minutes}m{rest:02d}s via {self.last.route or '?'}, "
             f"sent {sent:.0f} kbit/s on average, rate {rates} kbit/s, "
             f"loss {loss:.1f} %, {self.last.keyframe_requests} keyframe requests "
-            f"({self.forced} forced)"
+            f"({self.forwarded} to the encoder, {self.answered} answered)"
         )

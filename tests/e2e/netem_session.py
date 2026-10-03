@@ -5,9 +5,11 @@ The namespace has its own loopback and a dummy interface (10.99.0.1, so ICE
 has a candidate: browsers and libnice skip loopback); traffic to it goes
 through ``lo``, where ``tc netem`` adds loss and delay. A throwaway Merlin
 (its own home, no SaaS token), an app drawing a moving ball, and headless
-Chromium all run inside. Prints one JSON object: what the chip showed each
-second of each phase, the stream's final state, and the streamer's ``ice:``,
-``rate:`` and ``session:`` log lines.
+Chromium all run inside. ``NETEM_ENCODER`` forces the streamer's encoder
+(``MERLIN_APP_ENCODER``). Prints one JSON object: what the chip showed and
+how many frames the browser had presented, each second of each phase, the
+encoder actually used, and the streamer's ``ice:``, ``rate:`` and
+``session:`` log lines.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[2]
-CLEAN_S, LOSSY_S, RECOVER_S = 6, 20, 25
+CLEAN_S, LOSSY_S, RECOVER_S = 5, 15, 20
 NETEM = ("loss", "15%", "delay", "60ms")
 
 
@@ -55,6 +57,8 @@ def main() -> int:
         TMUX_TMPDIR=tempfile.mkdtemp(prefix="nt-"),
         UV_OFFLINE="1",  # no network in here: uv must not look for one
     )
+    if os.environ.get("NETEM_ENCODER"):
+        env["MERLIN_APP_ENCODER"] = os.environ["NETEM_ENCODER"]
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
@@ -109,16 +113,21 @@ def main() -> int:
 
             def sample(phase: str) -> None:
                 time.sleep(1)
-                text, level, state = page.evaluate(
+                text, level, state, frames = page.evaluate(
                     """() => {
                         const chip = document.getElementById('player-chip');
                         const gauge = chip.querySelector('.stream-gauge');
+                        const video = document.getElementById('player-video');
                         return [chip.textContent, gauge ? +gauge.dataset.level : null,
-                                document.getElementById('player').dataset.streamState];
+                                document.getElementById('player').dataset.streamState,
+                                video.getVideoPlaybackQuality().totalVideoFrames];
                     }"""
                 )
-                out["chips"].append([phase, text, level, state])
+                out["chips"].append([phase, text, level, state, frames])
 
+            out["encoder"] = page.evaluate(
+                "document.getElementById('player').dataset.encoder"
+            )
             for _ in range(CLEAN_S):
                 sample("clean")
             sh("tc", "qdisc", "add", "dev", "lo", "root", "netem", *NETEM)
