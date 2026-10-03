@@ -300,8 +300,12 @@ the browser's jitter buffer aligns them).
   ends it offers Logs and Leave (the same as Leave in the sheet: back where
   the player was opened from, else the Apps page). The logs open over the
   player, never in a new tab (in full screen or from the home screen a tab
-  has no way back): Back, the system back (a history entry) or Escape close
-  them; terminal colors are stripped. Desktop gets
+  has no way back): Back or Escape close them (no history entry: the system
+  back leaves the player, and Leave's own history logic stays simple); the
+  rest of the page is `inert` meanwhile, and focus returns to Logs; terminal
+  colors are stripped. Desktop keys go to the app only while it is live and
+  never from a control over the video, so Tab, Enter and Space reach the end
+  screen. Desktop gets
   keyboard (mapped from `KeyboardEvent.key`, so the user's layout types the
   right letters) and mouse.
 - **Apps page**: cards for saved and running apps, thumbnails retried until

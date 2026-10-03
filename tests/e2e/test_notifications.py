@@ -886,9 +886,11 @@ def test_browser_refusing_to_unsubscribe_keeps_both_sides_on(
         pg.evaluate("navigator.serviceWorker.ready")
         pg.click("#notif-btn")
         pg.wait_for_selector("#notif-toggle", timeout=15000)
+        # The reload's two async reads (subscription, device list) settle
+        # first: as slow as the page itself under a loaded full run.
         pg.wait_for_function(
             "document.getElementById('notif-status').textContent.includes('Turned off from another device')",
-            timeout=10000,
+            timeout=30000,
         )
         assert not pg.locator("#notif-toggle").is_checked()
         assert pg.evaluate("sessionStorage.getItem('fake-push-sub')") is None

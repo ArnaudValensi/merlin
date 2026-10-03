@@ -477,8 +477,17 @@
 
         function stream() { return getStream(); }
 
+        // Keys go to the app only while it is live, and never those meant for
+        // a control over the video (Retry, Logs, Leave): Tab, Enter and Space
+        // keep working on the page around a stream that is not playing.
+        function forApp(event) {
+            if (onControl(event)) return false;
+            var s = stream();
+            return !!s && s.state === 'live';
+        }
         target.addEventListener('keydown', function (event) {
             if (event.metaKey && event.key !== 'Meta') return; // leave OS shortcuts alone
+            if (!forApp(event)) return;
             var keysym = keysymFor(event);
             event.preventDefault();
             var s = stream();
@@ -495,6 +504,7 @@
             s.send({t: 'key', k: keysym, d: true});
         });
         target.addEventListener('keyup', function (event) {
+            if (onControl(event)) return;
             var keysym = held[event.code] || keysymFor(event);
             delete held[event.code];
             event.preventDefault();

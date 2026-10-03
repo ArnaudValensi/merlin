@@ -311,12 +311,8 @@ def test_nothing_on_the_player_is_selectable(phone):
     assert kb == "text"
 
 
-def test_an_ended_app_offers_its_logs_and_a_way_out(
-    merlin, playwright, browser, server
-):
-    """On a phone the logs open over the player (a new tab has no way back
-    in full screen), Back or the system back close them, and Leave goes back
-    to where the player was opened from."""
+def _quitter(merlin) -> None:
+    """An app that writes a colored line, shows a window, and exits."""
     from app_stream_support import PROBE
 
     result = cli(
@@ -332,14 +328,29 @@ def test_an_ended_app_offers_its_logs_and_a_way_out(
         f"printf '\\033[0;93mhello from the app\\033[0m\\n'; exec {PROBE} --exit-after 4",
     )
     assert result.returncode == 0, result.stderr
+
+
+def _wait_exited(page) -> None:
+    page.wait_for_function(
+        "document.getElementById('player').dataset.streamState === 'exited'",
+        timeout=20000,
+    )
+
+
+def test_an_ended_app_offers_its_logs_and_a_way_out(
+    merlin, playwright, browser, server
+):
+    """On a phone the logs open over the player (a new tab has no way back
+    in full screen), Back closes them, and Leave returns to the page the
+    player was opened from."""
+    _quitter(merlin)
     context = browser.new_context(**playwright.devices["Pixel 7 landscape"])
     page = context.new_page()
     try:
-        page.goto(f"{server}/apps/quitter/play")
-        page.wait_for_function(
-            "document.getElementById('player').dataset.streamState === 'exited'",
-            timeout=20000,
-        )
+        page.goto(f"{server}/jobs")
+        page.evaluate("location.assign('/apps/quitter/play')")  # as a link would
+        page.wait_for_url("**/apps/quitter/play")
+        _wait_exited(page)
         buttons = page.locator("#player-status button")
         assert buttons.all_inner_texts() == ["Logs", "Leave"]
         url = page.url
@@ -360,13 +371,44 @@ def test_an_ended_app_offers_its_logs_and_a_way_out(
         assert page.url == url
         assert "exited" in page.inner_text("#player-status")
 
-        page.tap("#player-status button:has-text('Logs')")
-        page.wait_for_selector("#player-logs:not([hidden])")
-        page.go_back()  # the system back closes the logs, not the player
-        page.wait_for_selector("#player-logs", state="hidden")
-        assert page.url == url
-
         page.tap("#player-status button:has-text('Leave')")
+        page.wait_for_url("**/jobs", timeout=10000)
+    finally:
+        context.close()
+        stop_all(merlin)
+
+
+def test_the_end_screen_works_from_the_keyboard(merlin, browser, server):
+    """On a desktop the keys stop going to an app that is not playing: Tab
+    reaches the end screen, the logs keep the keyboard while open, Escape
+    returns to Logs, and Leave (opened directly: no page to go back to) goes
+    to the Apps page."""
+    _quitter(merlin)
+    context = browser.new_context(viewport={"width": 1280, "height": 720})
+    page = context.new_page()
+    active = "document.activeElement && document.activeElement.textContent.trim()"
+    in_logs = "document.getElementById('player-logs').contains(document.activeElement)"
+    try:
+        page.goto(f"{server}/apps/quitter/play")
+        _wait_exited(page)
+        page.locator("#player").focus()
+        page.keyboard.press("Tab")
+        assert page.evaluate(active) == "Logs"
+        page.keyboard.press("Enter")
+        page.wait_for_selector("#player-logs:not([hidden])")
+        assert page.evaluate(active) == "‹ Back"
+        for key in ("Tab", "Tab", "Tab", "Shift+Tab", "Shift+Tab", "Shift+Tab"):
+            page.keyboard.press(key)
+            focus = page.evaluate(
+                "document.activeElement === document.body || " + in_logs
+            )
+            assert focus, f"focus left the logs after {key}"
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#player-logs", state="hidden")
+        assert page.evaluate(active) == "Logs"
+        page.keyboard.press("Tab")
+        assert page.evaluate(active) == "Leave"
+        page.keyboard.press("Enter")
         page.wait_for_url("**/apps", timeout=10000)
     finally:
         context.close()

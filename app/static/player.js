@@ -556,10 +556,14 @@
     // ---- logs -------------------------------------------------------------------------
 
     // Over the player, not in a new tab: in full screen or from the home
-    // screen a tab has no way back. Back (or the system back) closes them.
+    // screen a tab has no way back. Back or Escape close them (the system back
+    // leaves the player, as everywhere else in it). While they are open the
+    // rest of the page is inert, so the keyboard stays in them.
     var logsEl = document.getElementById('player-logs');
     var logsText = document.getElementById('player-logs-text');
     var logsBack = document.getElementById('player-logs-back');
+    var logsOpener = null;
+    var inerted = [];
     var ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;   // the colors an app writes to its terminal
 
     function loadLogs() {
@@ -577,25 +581,33 @@
     }
     function openLogs() {
         if (!logsEl.hidden) return;
+        logsOpener = document.activeElement;
         document.getElementById('player-logs-title').textContent = 'Logs · ' + (app ? app.name : id);
+        inerted = Array.prototype.filter.call(document.body.children, function (el) {
+            return el !== logsEl && el.tagName !== 'SCRIPT' && !el.inert;
+        });
+        inerted.forEach(function (el) { el.inert = true; });
         logsEl.hidden = false;
-        try { history.pushState({playerLogs: true}, ''); } catch (e) {}
         loadLogs();
-        if (fine) logsBack.focus({preventScroll: true});  // Escape closes them
-    }
-    function hideLogs() {
-        logsEl.hidden = true;
-        root.focus({preventScroll: true});
+        if (fine) logsBack.focus({preventScroll: true});
     }
     function closeLogs() {
-        if (history.state && history.state.playerLogs) history.back();  // popstate hides them
-        else hideLogs();
+        if (logsEl.hidden) return;
+        logsEl.hidden = true;
+        inerted.forEach(function (el) { el.inert = false; });
+        inerted = [];
+        // Back to what opened them (the end screen's Logs), or to the first
+        // action still shown, so the keyboard can go on to Leave.
+        var target = logsOpener && document.contains(logsOpener) ? logsOpener :
+            statusEl.querySelector('button');
+        logsOpener = null;
+        if (fine && target) target.focus({preventScroll: true});
+        else root.focus({preventScroll: true});
     }
-    window.addEventListener('popstate', function () { if (!logsEl.hidden) hideLogs(); });
     logsBack.addEventListener('click', closeLogs);
     document.getElementById('player-logs-refresh').addEventListener('click', loadLogs);
-    logsEl.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') { e.preventDefault(); closeLogs(); }
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !logsEl.hidden) { e.preventDefault(); closeLogs(); }
     });
 
     // ---- keyboard (phone) ---------------------------------------------------------------
