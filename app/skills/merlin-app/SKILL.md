@@ -66,4 +66,6 @@ merlin app run --name oob --controls gamepad --keys A=x,B=z,X=r,Y=Tab,Start=Esca
 
 The command's JSON has a `url` (`/apps/<id>/play`): the full-screen player. Give
 the user that path on top of `merlin dashboard-url` when they ask where to
-watch; otherwise they see it in the terminal's ▶ button automatically.
+watch. The terminal's ▶ button shows the app only on the tmux window you ran
+`merlin app run` from: a user looking at another window does not see it, so
+say which window (or point them to the Apps page, or the `url`).
