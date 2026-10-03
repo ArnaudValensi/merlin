@@ -74,6 +74,8 @@ def test_the_stream_takes_the_expected_path(session):
     want = PATH[session["case"]]
     paths = [line for line in session["log"] if line.startswith("ice: path ")]
     assert paths and paths[-1].startswith(f"ice: path {want} ("), session["log"]
+    # Never relay to relay: production's relay refuses its own address.
+    assert not ("local relay" in paths[-1] and "remote relay" in paths[-1]), paths
     assert session["chip"].startswith(f"Internet · IPv4 · {want} · "), session["chip"]
     summary = [line for line in session["log"] if line.startswith("session: ")]
     assert summary and f"via Internet · IPv4 · {want}," in summary[-1], summary

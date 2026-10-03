@@ -264,7 +264,9 @@ async def _kill(process: asyncio.subprocess.Process | None) -> None:
     if process.stdin is not None:
         with contextlib.suppress(Exception):
             process.stdin.close()
-    for sig, grace in ((None, 3.0), (signal.SIGTERM, 2.0), (signal.SIGKILL, 5.0)):
+    # 6 s first: on its way out the streamer removes what it opened on the
+    # home router (upnp.CLOSE_S, 4 s at most).
+    for sig, grace in ((None, 6.0), (signal.SIGTERM, 2.0), (signal.SIGKILL, 5.0)):
         if sig is not None:
             _signal_group(process, sig)
         try:
@@ -274,14 +276,42 @@ async def _kill(process: asyncio.subprocess.Process | None) -> None:
             continue
 
 
-async def _pump_streamer_out(viewer: Viewer) -> None:
+async def _app_gone(viewer: Viewer, session_id: str) -> dict | None:
+    """When the streamer fails, whether that is the app: stopped (its
+    display killed under the streamer), relaunched, or exited. None while it
+    still runs. Said as the record has it, before the client hears of a
+    streamer error and retries into "no app named ..."."""
+    try:
+        record = await asyncio.to_thread(sessions.get, session_id)
+    except KeyError:
+        return {"type": "exited", "reason": "stopped"}
+    if record.get("generation") != viewer.generation:
+        return {"type": "restarted"}
+    if record["status"] == "exited":
+        return {"type": "exited", "reason": "exited", "code": record["exit_code"]}
+    return None
+
+
+async def _pump_streamer_out(viewer: Viewer, session_id: str) -> None:
     assert viewer.process is not None and viewer.process.stdout is not None
     async for line in viewer.process.stdout:
         text = line.decode(errors="replace").strip()
-        if text:
-            with contextlib.suppress(Exception):
-                await viewer.websocket.send_text(text)
-    await viewer.send({"type": "error", "message": "The streamer stopped."})
+        if not text:
+            continue
+        if '"error"' in text:
+            try:
+                message = json.loads(text)
+            except ValueError:
+                message = None
+            if isinstance(message, dict) and message.get("type") == "error":
+                gone = await _app_gone(viewer, session_id)
+                if gone is not None:
+                    await viewer.send(gone)
+                    return
+        with contextlib.suppress(Exception):
+            await viewer.websocket.send_text(text)
+    gone = await _app_gone(viewer, session_id)
+    await viewer.send(gone or {"type": "error", "message": "The streamer stopped."})
 
 
 async def _pump_streamer_err(viewer: Viewer, session_id: str) -> None:
@@ -441,7 +471,7 @@ async def stream_ws(websocket: WebSocket, session_id: str) -> None:
         "viewer connected to %s (streamer pid %s)", session_id, viewer.process.pid
     )
     tasks = [
-        asyncio.create_task(_pump_streamer_out(viewer)),
+        asyncio.create_task(_pump_streamer_out(viewer, session_id)),
         asyncio.create_task(_pump_browser(viewer)),
         asyncio.create_task(
             _watch_record(viewer, session_id, record.get("last_agent_input_at"))

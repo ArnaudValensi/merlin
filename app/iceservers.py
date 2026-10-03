@@ -127,20 +127,21 @@ def fetch_from_portal(token: str, now: float) -> Servers:
         answer = json.loads(response.read().decode())
     if not isinstance(answer, dict):
         raise ValueError("not an object")
-    servers = _valid(answer.get("iceServers"))
+    # The relay comes from the portal; STUN stays ours (MERLIN_APP_STUN, empty
+    # for none), whatever the portal lists.
+    relays = [
+        s
+        for s in _valid(answer.get("iceServers"))
+        if all(u.startswith(("turn:", "turns:")) for u in s["urls"])
+    ]
     turn = answer.get("turn")
     turn = turn if isinstance(turn, str) and turn else "?"
     ttl = answer.get("ttl")
-    has_turn = any(
-        u.startswith(("turn:", "turns:")) for s in servers for u in s["urls"]
-    )
-    if not has_turn:
-        # Our STUN setting still applies (empty: none), the portal's answer
-        # only says why there is no relay.
+    if not relays:
         return Servers(stun_servers(), turn if turn != "ok" else "?", 0.0)
     if not isinstance(ttl, (int, float)) or ttl <= 0:
         raise ValueError("credentials without a lifetime")
-    return Servers(servers, "ok", now + float(ttl))
+    return Servers(stun_servers() + relays, "ok", now + float(ttl))
 
 
 # --- for webrtcbin ----------------------------------------------------------------

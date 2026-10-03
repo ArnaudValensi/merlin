@@ -195,3 +195,20 @@ def test_a_turn_entry_without_credentials_is_not_used():
     )
     assert stun is None
     assert turns == []
+
+
+@pytest.mark.parametrize(
+    ("setting", "stun"),
+    [
+        ("", []),  # STUN turned off: the portal's does not come back
+        ("stun:stun.example.org:3478", [{"urls": ["stun:stun.example.org:3478"]}]),
+    ],
+)
+def test_our_stun_setting_holds_when_the_portal_grants_the_relay(
+    monkeypatch, setting, stun
+):
+    monkeypatch.setenv("MERLIN_APP_STUN", setting)
+    _portal(monkeypatch, {"iceServers": [STUN, TURN], "ttl": 21600, "turn": "ok"})
+    servers = iceservers.fetch_from_portal("mrl_abc", 100.0)
+    assert servers.ice_servers == stun + [TURN]
+    assert servers.turn == "ok"

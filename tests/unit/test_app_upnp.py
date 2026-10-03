@@ -33,6 +33,9 @@ class FakeRouter:
         permanent_only=False,
         control_host="127.0.0.1",
         any_port_refused=False,
+        redirect_to="",
+        external_ip_fails=False,
+        delete_delay=0.0,
     ):
         self.wan = wan
         self.firewall6 = firewall6
@@ -42,7 +45,11 @@ class FakeRouter:
         self.permanent_only = permanent_only
         self.control_host = control_host
         self.any_port_refused = any_port_refused  # MiniUPnPd 1.9 on a Bbox
+        self.redirect_to = redirect_to  # the description answers a redirect
+        self.external_ip_fails = external_ip_fails
+        self.delete_delay = delete_delay  # a slow router, per deletion
         self.calls: list[tuple[str, dict]] = []
+        self.gets: list[str] = []
         self.mappings: dict[int, dict] = {}
         self.pinholes: dict[str, dict] = {}
         self._next_pinhole = 1
@@ -53,8 +60,15 @@ class FakeRouter:
                 pass
 
             def do_GET(self):
+                router.gets.append(self.path)
                 if self.path != "/rootDesc.xml":
                     self.send_error(404)
+                    return
+                if router.redirect_to:
+                    self.send_response(302)
+                    self.send_header("Location", router.redirect_to)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
                     return
                 self._reply(200, router.description().encode())
 
@@ -141,6 +155,8 @@ class FakeRouter:
 
     def act(self, action, a):
         if action == "GetExternalIPAddress":
+            if self.external_ip_fails:
+                return self.fault(501, "ActionFailed")
             return self.ok(
                 action, "<NewExternalIPAddress>176.186.26.141</NewExternalIPAddress>"
             )
@@ -157,9 +173,23 @@ class FakeRouter:
                 return self.ok(action, f"<NewReservedPort>{port}</NewReservedPort>")
             return self.ok(action)
         if action == "DeletePortMapping":
+            time.sleep(self.delete_delay)
             if self.mappings.pop(int(a["NewExternalPort"]), None) is None:
                 return self.fault(714, "NoSuchEntryInArray")
             return self.ok(action)
+        if action == "GetSpecificPortMappingEntry":
+            entry = self.mappings.get(int(a["NewExternalPort"]))
+            if entry is None or entry.get("NewProtocol") != a["NewProtocol"]:
+                return self.fault(714, "NoSuchEntryInArray")
+            keep = (
+                "NewInternalPort",
+                "NewInternalClient",
+                "NewEnabled",
+                "NewPortMappingDescription",
+                "NewLeaseDuration",
+            )
+            fields = "".join(f"<{k}>{v}</{k}>" for k, v in entry.items() if k in keep)
+            return self.ok(action, fields)
         if action == "GetGenericPortMappingEntry":
             entries = sorted(
                 self.mappings.values(), key=lambda e: int(e["NewExternalPort"])
@@ -190,6 +220,7 @@ class FakeRouter:
                 else self.fault(704, "NoSuchEntry")
             )
         if action == "DeletePinhole":
+            time.sleep(self.delete_delay)
             return (
                 self.ok(action)
                 if self.pinholes.pop(a["UniqueID"], None)
@@ -216,7 +247,7 @@ def router():
 
 
 def _gateway(r):
-    gw = upnp.discover(timeout=1.0, target=r.ssdp_target)
+    gw = upnp.discover(timeout=1.0, target=r.ssdp_target, expect="127.0.0.1")
     assert gw is not None
     return gw
 
@@ -233,7 +264,7 @@ def test_the_router_is_found_and_its_services_read(router):
 
 def test_a_router_pointing_elsewhere_is_not_followed(router):
     r = router(control_host="8.8.8.8")  # the control URL leaves the router
-    gw = upnp.discover(timeout=1.0, target=r.ssdp_target)
+    gw = upnp.discover(timeout=1.0, target=r.ssdp_target, expect="127.0.0.1")
     assert gw is not None and gw.wan is None  # only the relative one is kept
     assert upnp._router_address("http://8.8.8.8:5000/desc.xml") is None
     assert upnp._router_address("https://192.168.1.254/desc.xml") is None
@@ -248,7 +279,10 @@ def test_nobody_answering_is_no_router():
     quiet.bind(("127.0.0.1", 0))
     try:
         started = time.monotonic()
-        assert upnp.discover(timeout=0.5, target=quiet.getsockname()) is None
+        found = upnp.discover(
+            timeout=0.5, target=quiet.getsockname(), expect="127.0.0.1"
+        )
+        assert found is None
         assert time.monotonic() - started < 2
     finally:
         quiet.close()
@@ -264,11 +298,16 @@ def test_a_taken_port_gets_another_one_on_igd2_and_fails_on_igd1(router):
     assert err.value.code == upnp.CONFLICT
 
 
-def test_a_router_taking_only_permanent_mappings_gets_one(router):
+def test_a_router_taking_only_permanent_mappings_gets_none(router):
+    """A permanent mapping would stay open for good after a crash."""
     r = router(permanent_only=True)
     gw = _gateway(r)
-    assert gw.map_udp(40001, "Merlin a 1") == (40001, 0)
-    assert r.mappings[40001]["NewLeaseDuration"] == "0"
+    with pytest.raises(upnp.UPnPError) as err:
+        gw.map_udp(40001, "Merlin a 1")
+    assert err.value.code == 725
+    assert r.mappings == {}
+    leases = [a["NewLeaseDuration"] for n, a in r.calls if n == "AddPortMapping"]
+    assert leases == ["3600"]
 
 
 class Recorder:
@@ -294,7 +333,9 @@ def _opener(r, rec, **kw):
         "oob",
         on_change=rec.change,
         on_mapped=rec.mapped.append,
-        discover=lambda: upnp.discover(timeout=1.0, target=r.ssdp_target),
+        discover=lambda: upnp.discover(
+            timeout=1.0, target=r.ssdp_target, expect="127.0.0.1"
+        ),
         **kw,
     )
 
@@ -428,3 +469,98 @@ def test_an_ipv6_opening_without_a_browser_port_lets_nothing_in_yet(router):
     assert rec.wait_for(lambda: "from ports none yet" in opener.status)
     assert opener.ports == set()  # not counted as open
     opener.close()
+
+
+# --- what a device on the LAN can make Merlin do --------------------------------
+
+
+def test_only_the_default_gateway_is_the_router(router):
+    r = router()
+    # Answering from 127.0.0.1 while the gateway is elsewhere: ignored.
+    found = upnp.discover(timeout=0.5, target=r.ssdp_target, expect="192.168.1.254")
+    assert found is None
+    assert r.gets == []  # not even its description was fetched
+    table = (
+        "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\n"
+        "enp9s0\t00000000\tFE01A8C0\t0003\t0\t0\t100\t00000000\n"
+        "enp9s0\t0001A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\n"
+    )
+    assert upnp.default_gateway(table) == "192.168.1.254"
+    assert upnp.default_gateway("Iface\tDestination\tGateway\n") is None
+
+
+def test_a_redirect_is_never_followed(router):
+    elsewhere = router()  # stands for anything else reachable from here
+    r = router(redirect_to=f"http://127.0.0.1:{elsewhere.port}/rootDesc.xml")
+    found = upnp.discover(timeout=1.0, target=r.ssdp_target, expect="127.0.0.1")
+    assert found is None
+    assert r.gets == ["/rootDesc.xml"]
+    assert elsewhere.gets == []  # the redirect went nowhere
+
+
+def test_a_failed_address_lookup_leaves_the_mapping_owned(router):
+    r = router(external_ip_fails=True)
+    rec = Recorder()
+    opener = _opener(r, rec)
+    opener.add("127.0.0.1", 40001)
+    assert rec.wait_for(lambda: opener.status == "mapped ?:40001")
+    assert rec.mapped == []  # no address to give the browser
+    assert opener.close()
+    assert r.mappings == {}  # removed all the same
+
+
+def test_only_a_mapping_still_ours_is_deleted(router):
+    r = router()
+    rec = Recorder()
+    opener = _opener(r, rec)
+    opener.add("127.0.0.1", 40001)
+    assert rec.wait_for(lambda: 40001 in r.mappings)
+    # Our lease lapsed and another application took the port meanwhile.
+    r.mappings[40001] = dict(
+        r.mappings[40001],
+        NewInternalClient="192.168.1.30",
+        NewPortMappingDescription="game console",
+    )
+    assert opener.close()
+    assert r.mappings[40001]["NewPortMappingDescription"] == "game console"
+    assert "DeletePortMapping" not in r.actions()
+
+
+def test_the_sweep_leaves_mappings_merlin_does_not_make(router):
+    r = router()
+    for port, protocol, remote in ((50001, "TCP", ""), (50002, "UDP", "8.8.8.8")):
+        r.mappings[port] = {
+            "NewExternalPort": str(port),
+            "NewProtocol": protocol,
+            "NewRemoteHost": remote,
+            "NewInternalClient": "127.0.0.1",
+            "NewPortMappingDescription": "Merlin old 999999999",
+        }
+    rec = Recorder()
+    opener = _opener(r, rec)
+    assert rec.wait_for(lambda: opener.status == "router found")
+    assert sorted(r.mappings) == [50001, 50002]
+    opener.close()
+
+
+def test_a_slow_router_still_gets_everything_removed_in_time(router):
+    r = router(delete_delay=1.6)
+    rec = Recorder()
+    opener = _opener(r, rec)
+    opener.add("127.0.0.1", 40001)
+    opener.add("2a01:cb00::5", 40002)
+    assert rec.wait_for(lambda: len(opener.openings) == 2)
+    started = time.monotonic()
+    assert opener.close()  # both removals at once, not one after the other
+    assert time.monotonic() - started < upnp.CLOSE_S
+    assert r.mappings == {} and r.pinholes == {}
+
+
+def test_closing_stops_what_is_queued(router):
+    r = router()
+    rec = Recorder()
+    opener = _opener(r, rec)
+    for port in range(40001, 40021):
+        opener.add("127.0.0.1", port)
+    assert opener.close()
+    assert r.mappings == {}  # opened then removed, or never opened

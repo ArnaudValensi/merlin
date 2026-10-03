@@ -15,8 +15,11 @@ for every candidate and never removes it.
   Bbox answers 402) gets one per port the browser announces: its candidates
   hide its address (mDNS) but not its port, which IPv6 does not translate.
 
-Everything the router says is data: its URLs must stay on the router's own
-private address, and replies are read with a size limit.
+Everything the LAN says is data. The router must be our default gateway,
+answer SSDP from that address and keep every URL on it; requests never
+follow a redirect or a proxy, and replies are read with a size limit. A
+mapping must expire (a router that only takes permanent ones gets none),
+and Merlin deletes only a mapping that is still its own.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 SSDP = ("239.255.255.250", 1900)
@@ -49,15 +53,13 @@ LEASE_S = 3600
 RENEW_S = 1800
 DISCOVER_S = 2.0
 HTTP_TIMEOUT_S = 3.0
+CLOSE_S = 4.0  # to remove a stream's openings (the server waits 6 s)
 MAX_REPLY = 256 * 1024
 UDP = 17
 
 # UPnP error codes the openings react to.
 INVALID_ARGS = 402
 CONFLICT = 718  # ConflictInMappingEntry
-PERMANENT_ONLY = 725  # OnlyPermanentLeasesSupported
-NO_SUCH_ENTRY = 714
-INVALID_INDEX = 713
 
 
 class UPnPError(Exception):
@@ -71,10 +73,21 @@ def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """The router answers itself: a redirect is an error, never followed."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+# No proxy from the environment either: requests go to the router directly.
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+
+
 def _fetch(url: str, data: bytes | None = None, headers: dict | None = None) -> bytes:
     request = urllib.request.Request(url, data=data, headers=headers or {})
     try:
-        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_S) as response:
+        with _OPENER.open(request, timeout=HTTP_TIMEOUT_S) as response:
             return response.read(MAX_REPLY)
     except urllib.error.HTTPError as exc:
         body = exc.read(MAX_REPLY) if exc.fp is not None else b""
@@ -99,9 +112,26 @@ def _soap_fault(body: bytes) -> UPnPError | None:
     return UPnPError(code, text) if code is not None else None
 
 
+def default_gateway(table: str | None = None) -> str | None:
+    """Our IPv4 default gateway (``/proc/net/route``, or ``table``), the only
+    device treated as the router."""
+    if table is None:
+        try:
+            with open("/proc/net/route") as f:
+                table = f.read()
+        except OSError:
+            return None
+    for line in table.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) > 3 and fields[1] == "00000000" and int(fields[3], 16) & 0x2:
+            return socket.inet_ntoa(int(fields[2], 16).to_bytes(4, "little"))
+    return None
+
+
 def _router_address(url: str) -> str | None:
     """The router's address in one of its URLs: an IP literal on a private
-    network over plain HTTP, or None (anything else is not followed)."""
+    network over plain HTTP, or None (anything else is not followed). The
+    caller also requires it to be the expected router's."""
     parts = urllib.parse.urlsplit(url)
     if parts.scheme != "http" or not parts.hostname:
         return None
@@ -109,7 +139,7 @@ def _router_address(url: str) -> str | None:
         ip = ipaddress.ip_address(parts.hostname)
     except ValueError:
         return None
-    if not (ip.is_private or ip.is_link_local):
+    if not (ip.is_private or ip.is_link_local or ip.is_loopback):
         return None
     return str(ip)
 
@@ -175,8 +205,8 @@ class Gateway:
         """Map an external UDP port to ``port`` on our address: the same
         number (or ``external_port``, when renewing), else, when taken,
         another one the router picks (IGD v2). Returns ``(external_port,
-        lease)``; lease 0 is permanent (a router that only takes those: removed
-        at the end all the same)."""
+        lease)``. A router that only takes permanent mappings refuses (725):
+        none is made, since a crash would leave it open for good."""
         assert self.wan is not None
         wanted = external_port or port
         args = [
@@ -193,18 +223,30 @@ class Gateway:
             self.call(self.wan, "AddPortMapping", args)
             return wanted, lease
         except UPnPError as exc:
-            if exc.code == PERMANENT_ONLY and lease:
-                return self.map_udp(port, description, 0, external_port)
             if exc.code != CONFLICT or external_port or not self.wan[0].endswith(":2"):
                 raise
         reply = self.call(self.wan, "AddAnyPortMapping", args)
         return int(reply.get("NewReservedPort") or 0), lease
 
-    def unmap_udp(self, external_port: int) -> None:
+    def unmap_udp(self, external_port: int, remote_host: str = "") -> None:
         assert self.wan is not None
         self.call(
             self.wan,
             "DeletePortMapping",
+            [
+                ("NewRemoteHost", remote_host),
+                ("NewExternalPort", external_port),
+                ("NewProtocol", "UDP"),
+            ],
+        )
+
+    def mapping(self, external_port: int) -> dict:
+        """The UDP mapping on ``external_port`` (any remote host), as the
+        router has it now."""
+        assert self.wan is not None
+        return self.call(
+            self.wan,
+            "GetSpecificPortMappingEntry",
             [
                 ("NewRemoteHost", ""),
                 ("NewExternalPort", external_port),
@@ -302,8 +344,10 @@ def _services(location: str, xml: bytes) -> tuple[str, list[tuple[str, str]]]:
     return model, services
 
 
-def _search(timeout: float, target: tuple[str, int]) -> list[str]:
-    """LOCATION headers of the gateways answering an SSDP search."""
+def _search(timeout: float, target: tuple[str, int], expect: str) -> list[str]:
+    """LOCATION headers answering an SSDP search from ``expect`` (the
+    router) and pointing at it: another device on the LAN cannot send us
+    elsewhere."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
     sock.settimeout(0.25)
@@ -321,24 +365,32 @@ def _search(timeout: float, target: tuple[str, int]) -> list[str]:
         end = time.monotonic() + timeout
         while time.monotonic() < end:
             try:
-                data, _ = sock.recvfrom(4096)
+                data, sender = sock.recvfrom(4096)
             except TimeoutError:
                 if found:
                     break  # answers come together: no need to wait the rest
                 continue
             m = re.search(rb"(?im)^location:\s*(\S+)", data)
-            if m:
+            if m and sender[0] == expect:
                 url = m.group(1).decode(errors="replace")
-                if url not in found and _router_address(url):
+                if url not in found and _router_address(url) == expect:
                     found.append(url)
     finally:
         sock.close()
     return found
 
 
-def discover(timeout: float = DISCOVER_S, target: tuple[str, int] = SSDP):
-    """The home router, or None (no answer, no usable service)."""
-    for location in _search(timeout, target):
+def discover(
+    timeout: float = DISCOVER_S,
+    target: tuple[str, int] = SSDP,
+    expect: str | None = None,
+) -> Gateway | None:
+    """The home router (``expect``, our default gateway unless given), or
+    None (no gateway, no answer, no usable service)."""
+    expect = expect or default_gateway()
+    if not expect:
+        return None
+    for location in _search(timeout, target, expect):
         try:
             model, services = _services(location, _fetch(location))
         except (UPnPError, urllib.error.URLError, OSError, ET.ParseError):
@@ -406,13 +458,15 @@ class Opener:
     ``add(address, port)`` for each host candidate (any thread). Results go
     to ``on_change(status, openings)`` and, for an IPv4 mapping, to
     ``on_mapped(opening)`` (the streamer sends the browser a candidate for
-    the external address). ``close()`` removes everything (waits a little)."""
+    the external address). ``close()`` stops opening and removes everything,
+    the removals in parallel, within ``CLOSE_S``; what is left expires with
+    its lease (an hour)."""
 
     app: str
-    on_change: object = None
-    on_mapped: object = None
-    discover: object = None
-    clock: object = time.monotonic
+    on_change: Callable[[str, list[Opening]], None] | None = None
+    on_mapped: Callable[[Opening], None] | None = None
+    discover: Callable[[], Gateway | None] | None = None
+    clock: Callable[[], float] = time.monotonic
     renew_every: float = RENEW_S
     status: str = "searching"
     openings: list[Opening] = field(default_factory=list)
@@ -421,6 +475,8 @@ class Opener:
     def __post_init__(self) -> None:
         self._queue: queue.Queue = queue.Queue()
         self._remote_ports: list[int] = []
+        self._closing = False
+        self._description = f"Merlin {self.app} {os.getpid()}"
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -435,9 +491,13 @@ class Opener:
         """Remove the openings (a rebuilt pipeline has new ports)."""
         self._queue.put(("reset",))
 
-    def close(self, wait: float = 3.0) -> None:
+    def close(self, wait: float = CLOSE_S) -> bool:
+        """Stop opening, remove what is open. False if that did not finish
+        in time (the leases end it)."""
+        self._closing = True  # queued additions are skipped from now on
         self._queue.put(("close",))
         self._thread.join(wait)
+        return not self._thread.is_alive()
 
     # -- the worker ----------------------------------------------------------------
 
@@ -450,39 +510,39 @@ class Opener:
         if self.gateway is None:
             self._set("no router")
         else:
-            self._sweep()
+            self._sweep(self.gateway)
             self._set("router found")
         renew_at = self.clock() + self.renew_every
         while True:
             try:
-                item = self._queue.get(timeout=max(1.0, renew_at - self.clock()))
+                item = self._queue.get(timeout=max(0.1, renew_at - self.clock()))
             except queue.Empty:
-                item = ("renew",)
+                item = ("tick",)
             if item[0] == "close":
                 self._remove_all()
                 return
-            if self.gateway is None:
+            gw = self.gateway
+            if gw is None or (self._closing and item[0] in ("add", "remote")):
                 continue
             if item[0] == "add":
-                self._open(item[1], item[2])
+                self._open(gw, item[1], item[2])
             elif item[0] == "remote":
-                self._remote(item[1])
+                self._remote(gw, item[1])
             elif item[0] == "reset":
                 self._remove_all()
                 self._set("router found")
-            elif item[0] == "renew" or self.clock() >= renew_at:
-                self._renew()
+            if self.clock() >= renew_at:  # due, whatever else keeps coming
+                self._renew(gw)
                 renew_at = self.clock() + self.renew_every
 
     def _set(self, status: str) -> None:
         self.status = status
-        if callable(self.on_change):
+        if self.on_change is not None:
             self.on_change(status, list(self.openings))
 
-    def _sweep(self) -> None:
+    def _sweep(self, gw: Gateway) -> None:
         """Mappings of streamers that died (``Merlin <app> <pid>`` on our
         address, the pid gone). Another app's live stream is never touched."""
-        gw = self.gateway
         try:
             entries = gw.mappings()
         except Exception:
@@ -491,6 +551,10 @@ class Opener:
             m = DESCRIPTION.match(entry.get("NewPortMappingDescription", ""))
             if not m or entry.get("NewInternalClient") != gw.local_ip:
                 continue
+            if entry.get("NewProtocol", "").upper() != "UDP" or entry.get(
+                "NewRemoteHost"
+            ):
+                continue  # not a mapping Merlin makes
             if pid_alive(int(m.group(2))):
                 continue
             try:
@@ -498,8 +562,7 @@ class Opener:
             except Exception:
                 pass
 
-    def _open(self, address: str, port: int) -> None:
-        gw = self.gateway
+    def _open(self, gw: Gateway, address: str, port: int) -> None:
         try:
             ip = ipaddress.ip_address(address.split("%")[0])
         except ValueError:
@@ -508,13 +571,16 @@ class Opener:
             return
         try:
             if ip.version == 4 and gw.wan is not None and address == gw.local_ip:
-                external_port, lease = gw.map_udp(
-                    port, f"Merlin {self.app} {os.getpid()}"
-                )
-                opening = Opening(port, address, gw.external_ip(), external_port, lease)
+                external_port, lease = gw.map_udp(port, self._description)
+                # Ours from now on, whatever fails next: close removes it.
+                opening = Opening(port, address, "", external_port, lease)
                 self.openings.append(opening)
+                try:
+                    opening.external_ip = gw.external_ip()
+                except (UPnPError, urllib.error.URLError, OSError, ValueError):
+                    pass  # mapped, but no address to tell the browser
                 self._set(self._describe())
-                if callable(self.on_mapped) and opening.external_ip:
+                if self.on_mapped is not None and opening.external_ip:
                     self.on_mapped(opening)
             elif ip.version == 6 and ip.is_global and gw.firewall6 is not None:
                 allowed = gw.pinholes_allowed()
@@ -533,7 +599,7 @@ class Opener:
                     opening = Opening(port, address, per_port={})
                     self.openings.append(opening)
                     for remote in self._remote_ports:
-                        self._pinhole_for(opening, remote)
+                        self._pinhole_for(gw, opening, remote)
                     self._set(self._describe())
                     return
                 self.openings.append(Opening(port, address, pinhole=unique_id))
@@ -543,23 +609,23 @@ class Opener:
         except (urllib.error.URLError, OSError, ValueError):
             self._set("router not answering")
 
-    def _remote(self, port: int) -> None:
+    def _remote(self, gw: Gateway, port: int) -> None:
         if port in self._remote_ports or not 0 < port < 65536:
             return
         self._remote_ports.append(port)
         changed = False
         for o in self.openings:
             if o.per_port is not None:
-                changed |= self._pinhole_for(o, port)
+                changed |= self._pinhole_for(gw, o, port)
         if changed:
             self._set(self._describe())
 
-    def _pinhole_for(self, opening: Opening, remote_port: int) -> bool:
+    def _pinhole_for(self, gw: Gateway, opening: Opening, remote_port: int) -> bool:
         assert opening.per_port is not None
         if remote_port in opening.per_port or len(opening.per_port) >= MAX_REMOTE_PORTS:
             return False
         try:
-            opening.per_port[remote_port] = self.gateway.pinhole_udp(
+            opening.per_port[remote_port] = gw.pinhole_udp(
                 opening.address, opening.port, remote_port=remote_port
             )
             return True
@@ -578,40 +644,59 @@ class Opener:
                 ports = ", ".join(str(p) for p in o.per_port) or "none yet"
                 parts.append(f"pinhole [{o.address}]:{o.port} from ports {ports}")
             else:
-                parts.append(f"mapped {o.external_ip}:{o.external_port}")
+                parts.append(f"mapped {o.external_ip or '?'}:{o.external_port}")
         return ", ".join(parts) or "router found"
 
-    def _renew(self) -> None:
-        gw = self.gateway
+    def _renew(self, gw: Gateway) -> None:
         for o in self.openings:
             try:
                 if o.ipv6:
                     for unique_id in o.pinhole_ids():
                         gw.renew_pinhole(unique_id)
-                elif o.lease:
-                    gw.map_udp(
-                        o.port,
-                        f"Merlin {self.app} {os.getpid()}",
-                        external_port=o.external_port,
-                    )
+                else:
+                    # Same port, same owner; taken by someone else meanwhile,
+                    # the router refuses (718) and nothing is overwritten.
+                    gw.map_udp(o.port, self._description, external_port=o.external_port)
             except Exception:
                 pass  # the next renewal tries again; the lease covers a miss
 
     def _remove_all(self) -> None:
+        """Remove every opening, all at once (a slow router must not make the
+        stream's end wait for each in turn). Failures are left to the lease."""
         gw = self.gateway
+        if gw is None:
+            return  # nothing was ever opened
+        jobs: list[Callable[[], None]] = []
         for o in self.openings:
             if o.ipv6:
-                for unique_id in o.pinhole_ids():
-                    try:
-                        gw.remove_pinhole(unique_id)
-                    except Exception:
-                        pass  # the lease ends it (an hour at most)
-                continue
-            try:
-                gw.unmap_udp(o.external_port)
-            except Exception:
-                pass
+                for uid in o.pinhole_ids():
+                    jobs.append(lambda u=uid: gw.remove_pinhole(u))
+            else:
+                jobs.append(lambda o=o: self._unmap_if_ours(gw, o))
+        threads = [threading.Thread(target=self._quietly, args=(job,)) for job in jobs]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
         self.openings = []
+
+    @staticmethod
+    def _quietly(job: Callable[[], None]) -> None:
+        try:
+            job()
+        except Exception:
+            pass  # the lease ends it (an hour at most)
+
+    def _unmap_if_ours(self, gw: Gateway, o: Opening) -> None:
+        """Delete the mapping only if it is still this stream's: after a lease
+        that lapsed, the port may belong to someone else now."""
+        entry = gw.mapping(o.external_port)
+        if (
+            entry.get("NewInternalClient") == gw.local_ip
+            and entry.get("NewInternalPort") == str(o.port)
+            and entry.get("NewPortMappingDescription") == self._description
+        ):
+            gw.unmap_udp(o.external_port)
 
     @property
     def ports(self) -> set[int]:

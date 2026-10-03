@@ -971,7 +971,10 @@ class Streamer:
             return
         if self.opener.openings:
             log(f"upnp: removing {self.opener.status}")
-        self.opener.close()
+        if not self.opener.close():
+            log(
+                "upnp: the router did not answer in time: the rest expires within the hour"
+            )
         self.opener = None
 
     def stop(self) -> bool:

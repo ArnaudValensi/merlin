@@ -332,3 +332,73 @@ def test_without_merlin_cloud_the_stream_gets_stun_only(client, monkeypatch):
     message, _argv, _env = _spawn_one(client, monkeypatch, {"type": "hello"})
     assert message["iceServers"] == [{"urls": [iceservers.DEFAULT_STUN]}]
     assert message["turn"] == "off"
+
+
+class _Lines:
+    """A streamer's stdout: these lines, then it keeps running."""
+
+    def __init__(self, *lines):
+        self.lines = [line.encode() + b"\n" for line in lines]
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        import asyncio
+
+        if self.lines:
+            return self.lines.pop(0)
+        await asyncio.sleep(3600)
+        raise StopAsyncIteration
+
+
+def test_a_stopped_app_is_said_stopped_not_a_streamer_error(client, monkeypatch):
+    """Stopping kills the display under the streamer, which reports an
+    error: the viewer must hear "stopped", not retry into "no app named"."""
+    import asyncio
+
+    from app import sessions
+
+    record = {"r": _record("g", ":100", 111)}
+
+    def get(_id):
+        if record["r"] is None:
+            raise KeyError(_id)
+        return dict(record["r"])
+
+    monkeypatch.setattr(sessions, "get", get)
+    monkeypatch.setattr(sessions, "capture_thumbnail", lambda _id: None)
+
+    async def fake_exec(*argv, **kwargs):
+        process = _FakeProcess()
+        record["r"] = None  # stopped while the streamer starts
+        process.stdout = _Lines('{"type": "error", "message": "X server gone"}')
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    with client.websocket_connect("/ws/apps/probe/stream") as ws:
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json({"type": "hello"})
+        assert ws.receive_json()["type"] == "servers"
+        assert ws.receive_json() == {"type": "exited", "reason": "stopped"}
+
+
+def test_a_streamer_error_while_the_app_runs_goes_through(client, monkeypatch):
+    import asyncio
+
+    from app import sessions
+
+    monkeypatch.setattr(sessions, "get", lambda _id: _record("g", ":100", 111))
+    monkeypatch.setattr(sessions, "capture_thumbnail", lambda _id: None)
+
+    async def fake_exec(*argv, **kwargs):
+        process = _FakeProcess()
+        process.stdout = _Lines('{"type": "error", "message": "encoder failed"}')
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    with client.websocket_connect("/ws/apps/probe/stream") as ws:
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json({"type": "hello"})
+        assert ws.receive_json()["type"] == "servers"
+        assert ws.receive_json() == {"type": "error", "message": "encoder failed"}

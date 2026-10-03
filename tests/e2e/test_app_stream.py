@@ -6,6 +6,7 @@ machine); a page that only advertises VP8 exercises the software fallback.
 
 import os
 import shutil
+import subprocess
 import signal
 import time
 from pathlib import Path
@@ -150,16 +151,36 @@ def test_unknown_app_reports_exited(browser, server, probe):
         context.close()
 
 
+def _nvenc_works() -> bool:
+    """NVENC encodes here, as the streamer checks it (its NVENC_PROBE): an
+    NVIDIA card is not enough (a driver updated but not loaded yet cannot
+    encode until the next reboot)."""
+    if not shutil.which("gst-launch-1.0"):
+        return False
+    probe = (
+        "videotestsrc num-buffers=1 ! video/x-raw,width=320,height=240 ! "
+        "cudaupload ! nvh264enc ! fakesink"
+    )
+    result = subprocess.run(
+        ["gst-launch-1.0", "-q", *probe.split()],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    return result.returncode == 0 and "erroneous pipeline" not in result.stderr
+
+
 def test_h264_prefers_nvenc(browser, server, probe):
     context, page = _player(browser, server)
     try:
         wait_live(page)
         assert page.get_attribute("#player", "data-codec") == "H264"
         encoder = page.get_attribute("#player", "data-encoder")
-        if shutil.which("nvidia-smi"):
+        if _nvenc_works():
             assert encoder == "nvh264enc"
-        else:
-            assert encoder in ("nvh264enc", "openh264enc")
+        else:  # no GPU, or one whose driver cannot encode right now
+            assert encoder == "openh264enc"
     finally:
         context.close()
 

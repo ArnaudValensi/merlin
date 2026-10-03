@@ -86,6 +86,10 @@ def start_merlin(
             "DISCORD_CHANNEL_IDS": "",
             "MERLIN_HOME": str(home),
             "MERLIN_DEV": "1",
+            # Streams in tests never touch the machine's real router or the
+            # internet's STUN (the namespace tests build their own world).
+            "MERLIN_APP_UPNP": "0",
+            "MERLIN_APP_STUN": "",
         }
     )
     env.update(extra_env or {})

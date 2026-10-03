@@ -386,6 +386,9 @@ def main(phone_nat: str, query: str, relay: bool = True) -> int:
                     "172.16.0.0-172.31.255.255",
                     "--denied-peer-ip",
                     "192.168.0.0-192.168.255.255",
+                    # and itself: two relays of the same server never reach each other
+                    "--denied-peer-ip",
+                    TURN_IP,
                     "--no-tls",
                     "--log-file",
                     str(tmp / "turn.log"),
