@@ -310,14 +310,18 @@
     }
 
     /** The peer, with the servers the server sent (STUN, TURN); a browser
-     * that refuses them still gets a peer: host candidates, the LAN. */
+     * that refuses them still gets a peer: host candidates, the LAN. Never
+     * in a relay-only session: there it stays relay-only (with no relay it
+     * cannot connect, which is the honest outcome of that test). */
     function makePeer(servers, policy) {
         var config = {iceServers: Array.isArray(servers) ? servers : []};
         if (policy === 'relay') config.iceTransportPolicy = 'relay';
         try {
             return new RTCPeerConnection(config);
         } catch (e) {
-            return new RTCPeerConnection({iceServers: []});
+            var bare = {iceServers: []};
+            if (policy === 'relay') bare.iceTransportPolicy = 'relay';
+            return new RTCPeerConnection(bare);
         }
     }
 

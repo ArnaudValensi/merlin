@@ -951,3 +951,14 @@ test("the chip's detail says when a test mode is on", () => {
     assert.ok(!chipText({ ...s, mode: "auto" }, true).includes("Test mode"));
     assert.ok(!chipText(s, false).includes("Test mode"), "the short chip stays short");
 });
+
+test("a refused configuration never turns a relay test into a direct one", async () => {
+    const env = makeEnv({ rejectServers: true });
+    connect(env);
+    env.sockets[0].deliver({ type: "welcome", host: "box", app: { id: "probe" } });
+    env.sockets[0].deliver({ type: "servers", iceServers: [{ urls: ["turn:bad"] }],
+                             policy: "relay", mode: "relay" });
+    env.sockets[0].deliver({ type: "offer", sdp: "offer-sdp" });
+    assert.deepEqual(JSON.parse(JSON.stringify(env.peers[0].config)),
+        { iceServers: [], iceTransportPolicy: "relay" });
+});
