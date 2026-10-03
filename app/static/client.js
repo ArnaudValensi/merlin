@@ -213,30 +213,32 @@
 
         function onOffer(sdp, g, socket) {
             // A new offer replaces the connection (the streamer restarted
-            // its pipeline, without sound): the previous peer is closed.
+            // its pipeline, without sound): the previous peer is closed, and
+            // everything it still had in flight is ignored (mine()).
             if (pc) { try { pc.close(); } catch (e) {} }
             var peer = new RTCPeerConnection({iceServers: []});
             pc = peer;
+            function mine() { return current(g) && pc === peer; }
             // "Not on the same network" is about ICE only: the clock starts at
             // the offer. Before it, the server may be waiting on another app's
             // start or stop, which is not a network problem.
             clearTimeout(timer);
             timer = setTimeout(function () {
-                if (current(g) && state === 'connecting') unreachable();
+                if (mine() && state === 'connecting') unreachable();
             }, CONNECT_TIMEOUT_MS);
             function sendOn(message) {
-                if (current(g) && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+                if (mine() && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
             }
             // Picture and sound in one element: one stream per connection
             // collects both tracks, whatever streams the offer groups them in.
             var media = new MediaStream();
             peer.ontrack = function (event) {
-                if (!current(g)) return;
+                if (!mine()) return;
                 media.addTrack(event.track);
                 if (video.srcObject !== media) video.srcObject = media;
                 play(video);
             };
-            peer.ondatachannel = function (event) { if (current(g)) channel = event.channel; };
+            peer.ondatachannel = function (event) { if (mine()) channel = event.channel; };
             peer.onicecandidate = function (event) {
                 if (event.candidate) {
                     sendOn({type: 'ice', candidate: event.candidate.candidate,
@@ -244,7 +246,7 @@
                 }
             };
             peer.onconnectionstatechange = function () {
-                if (!current(g)) return;
+                if (!mine()) return;
                 if (peer.connectionState === 'connected') {
                     clearTimeout(timer);
                     reconnects = 0;
@@ -256,13 +258,14 @@
             peer.setRemoteDescription({type: 'offer', sdp: sdp})
                 .then(function () { return peer.createAnswer(); })
                 .then(function (answer) {
+                    if (!mine()) return;
                     var local = {type: 'answer', sdp: preferStereo(answer.sdp)};
                     return peer.setLocalDescription(local).then(function () {
                         sendOn({type: 'answer', sdp: local.sdp});
                     });
                 })
                 .catch(function (err) {
-                    if (current(g)) fail('Could not start the stream: ' + err);
+                    if (mine()) fail('Could not start the stream: ' + err);
                 });
         }
 

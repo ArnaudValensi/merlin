@@ -88,7 +88,9 @@ silent until you tap its speaker. Each place remembers your choice.
 
 While an app streams its sound, it is silent on the machine itself. To hear it
 there instead, launch it with `--audio local` (or pick "Play on this machine"
-in the app's form); its stream is then silent.
+in the app's form); its stream is then silent. An app that picks a particular
+output device by name (rather than "the default one") plays there instead, on
+the machine, and its sound is not streamed.
 
 ## Good to know
 

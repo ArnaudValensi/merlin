@@ -468,3 +468,44 @@ test("sound comes back on the next gesture after a forced mute", () => {
     sound.destroy();
     assert.equal(target.count(), 0);
 });
+
+// ---- a second offer on the same socket (the streamer dropped its sound) ----
+
+for (const outcome of ["rejects", "resolves"]) {
+    test(`the first peer finishing late (${outcome}) never touches the second`, async () => {
+        const env = makeEnv();
+        const { states } = connect(env);
+        const socket = env.sockets[0];
+        socket.deliver({ type: "welcome", host: "box", app: { id: "probe" } });
+        socket.deliver({ type: "offer", sdp: "offer-1" });
+        await env.flush();
+        socket.deliver({ type: "offer", sdp: "offer-2" });
+        await env.flush();
+        const [first, second] = env.peers;
+        assert.equal(first.closed, true, "the replaced peer is closed");
+
+        if (outcome === "rejects") first.remote.reject(new Error("closed"));
+        else first.remote.resolve();
+        await env.flush();
+        await env.flush();
+
+        assert.equal(second.closed, false, "the new peer lives on");
+        assert.equal(socket.closed, false, "and so does the socket");
+        assert.ok(!states.includes("error"));
+        assert.deepEqual(
+            socket.sent.filter((m) => m.type === "answer"), [],
+            "no answer for the old offer",
+        );
+
+        second.remote.resolve();
+        await env.flush();
+        await env.flush();
+        assert.equal(socket.sent.filter((m) => m.type === "answer").length, 1);
+        second.connectionState = "connected";
+        second.onconnectionstatechange();
+        assert.equal(states[states.length - 1], "live");
+        first.connectionState = "failed";
+        first.onconnectionstatechange();
+        assert.equal(states[states.length - 1], "live", "the old peer's failure is ignored");
+    });
+}

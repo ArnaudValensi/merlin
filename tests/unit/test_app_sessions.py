@@ -570,7 +570,7 @@ class TestSupervisor:
         )
         stranger = int(out.stdout.strip())  # reparented away: not ours
         try:
-            monkeypatch.setattr(supervise, "_targets", lambda: [stranger])
+            monkeypatch.setattr(supervise, "_targets", lambda spare=None: [stranger])
             assert supervise.signal_ours(signal.SIGKILL) == 0
             time.sleep(0.2)
             assert sessions._start_time(stranger) is not None

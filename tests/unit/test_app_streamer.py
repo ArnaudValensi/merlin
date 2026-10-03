@@ -566,3 +566,57 @@ trace.append(["negotiated", s.negotiated, s.offered])
     trace = _run(DROP % ("False", script))
     assert trace[-1] == ["negotiated", False, False]
     assert not [t for t in trace if t[:2] in (["send", "ice"], ["send", "offer"])]
+
+
+OFFERS = """
+import threading, time
+
+class Reply:
+    def get_value(self, key):
+        sdp = type("S", (), {"as_text": lambda self: "v=0"})()
+        return type("O", (), {"sdp": sdp})()
+
+class Promise:
+    def __init__(self, gate=None):
+        self.gate = gate
+    def wait(self):
+        if self.gate is not None:
+            self.gate.wait()
+    def get_reply(self):
+        return Reply()
+"""
+
+
+def test_an_offer_finishing_during_the_drop_is_never_sent():
+    """The old webrtcbin's offer passed its first check, then completes after
+    the sound was dropped: it must not reach the browser."""
+    script = (
+        OFFERS
+        + """
+gate = threading.Event()
+old = s.webrtc
+t = threading.Thread(target=s.on_offer_created, args=(Promise(gate), old))
+t.start()
+time.sleep(0.1)  # waiting for its reply, past the early check
+s.on_bus_error(None, Message("audiosrc"))  # the sound fails: drop
+gate.set()
+t.join()
+"""
+    )
+    trace = _run(DROP % ("False", script))
+    assert ["discard"] in trace
+    assert ["send", "ready", False] in trace
+    assert not [t for t in trace if t[:2] == ["send", "offer"]]
+
+
+def test_an_offer_already_out_keeps_the_sound():
+    script = (
+        OFFERS
+        + """
+s.on_offer_created(Promise(), s.webrtc)
+s.on_bus_error(None, Message("audiosrc"))
+"""
+    )
+    trace = _run(DROP % ("False", script))
+    assert ["send", "offer", None] in trace
+    assert ["discard"] not in trace

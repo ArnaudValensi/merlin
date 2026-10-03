@@ -62,6 +62,7 @@ merlin app run --name oob --controls gamepad --keys A=x,B=z,X=r,Y=Tab,Start=Esca
 - The app's sound goes to the user's player (default `--audio stream`; the
   app is then silent on the machine). `--audio local` plays it on the machine
   instead. A note on stderr says when sound cannot be streamed (no PipeWire).
+  An app that names its own output device plays on the machine, unstreamed.
 
 The command's JSON has a `url` (`/apps/<id>/play`): the full-screen player. Give
 the user that path on top of `merlin dashboard-url` when they ask where to

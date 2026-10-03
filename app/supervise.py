@@ -23,24 +23,33 @@ read from /proc may be reused before the signal is sent, a pidfd may not. Each
 pidfd is checked against /proc after opening (still in our group, or still
 our child) before it is used.
 
-With ``--audio-sink``, the app gets a private sink first: the sound helper
-(sound.py, in the group) owns it and keeps the app's streams on it. The
-effective mode, ``stream`` or ``local`` (no sink: the routing variables are
-dropped and the app plays on the machine), goes to the ``--audio-status``
-file before the app starts.
+With ``--audio-sink``, the app's sound gets a sink first (and its guard, see
+sound.py), created through a ``pw-cli`` connection this supervisor holds:
+the nodes die with that connection. The holder is in a process group of its
+own (Merlin's group signals do not reach it), has a parent-death signal (it
+dies with the supervisor), and is signalled only through a pidfd opened
+before anything here reaps. While ending, it is spared until no other
+process of the app is left, so the app's last sound never falls back to the
+speakers; then it is killed. The effective mode, ``stream`` or ``local`` (no
+sink: the routing variables are dropped and the app plays on the machine),
+goes to the ``--audio-status`` file before the app starts.
 """
 
 from __future__ import annotations
 
 import ctypes
 import os
-import select
 import signal
 import subprocess
 import sys
 import time
 
+# Run as a script by sessions.py: the package lives one level up.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app import sound  # noqa: E402
+
 PR_SET_CHILD_SUBREAPER = 36
+PR_SET_PDEATHSIG = 1
 GRACE = 3.0
 POLL = 0.05
 
@@ -62,7 +71,13 @@ def _is_ours(pid: int, me: int, group: int) -> bool:
     return int(fields[2]) == group or int(fields[1]) == me
 
 
-def _targets() -> list[int]:
+def _identity(pid: int) -> tuple[int, int] | None:
+    fields = _stat_fields(pid)
+    return (pid, int(fields[19])) if fields else None
+
+
+def _targets(spare: tuple[int, int] | None = None) -> list[int]:
+    """Our processes now, without ``spare`` (PID plus start time)."""
     me = os.getpid()
     group = os.getpgid(0)
     return [
@@ -71,11 +86,17 @@ def _targets() -> list[int]:
         if entry.name.isdigit()
         and int(entry.name) != me
         and _is_ours(int(entry.name), me, group)
+        and (spare is None or _identity(int(entry.name)) != spare)
     ]
 
 
-def signal_ours(sig: int, already: set[tuple[int, int]] | None = None) -> int:
-    """Signal every process that is ours right now; return how many.
+def signal_ours(
+    sig: int,
+    already: set[tuple[int, int]] | None = None,
+    spare: tuple[int, int] | None = None,
+) -> int:
+    """Signal every process that is ours right now (but ``spare``); return
+    how many.
 
     With ``already``, a process (PID plus start time) signalled before is
     skipped, so each gets SIGTERM once.
@@ -83,7 +104,7 @@ def signal_ours(sig: int, already: set[tuple[int, int]] | None = None) -> int:
     me = os.getpid()
     group = os.getpgid(0)
     sent = 0
-    for pid in _targets():
+    for pid in _targets(spare):
         try:
             fd = os.pidfd_open(pid)
         except OSError:
@@ -94,6 +115,8 @@ def signal_ours(sig: int, already: set[tuple[int, int]] | None = None) -> int:
             if not fields or not _is_ours(pid, me, group):
                 continue
             identity = (pid, int(fields[19]))
+            if identity == spare:
+                continue
             if already is not None:
                 if identity in already:
                     continue
@@ -108,40 +131,70 @@ def signal_ours(sig: int, already: set[tuple[int, int]] | None = None) -> int:
 
 
 AUDIO_ENV = ("PULSE_SINK", "PIPEWIRE_NODE", "SDL_AUDIO_DRIVER", "SDL_AUDIODRIVER")
-SOUND = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sound.py")
-SOUND_TIMEOUT = 5.0  # sound.py gives up on its sink after 3 s
+SOUND_TIMEOUT = 4.0  # for both nodes; sessions.py waits 8 s for the verdict
 
 
-def start_sound(sink: str, description: str) -> subprocess.Popen | None:
-    """Start the app's sound helper (sound.py) and wait for its sink; None
-    when there is no sink (the app then plays on the machine).
+class Holder:
+    """The pw-cli connection that owns the app's sound nodes."""
+
+    def __init__(self, proc: subprocess.Popen, fd: int, identity: tuple[int, int]):
+        self.proc = proc
+        self.fd = fd
+        self.identity = identity
+
+    def kill(self) -> None:
+        try:
+            signal.pidfd_send_signal(self.fd, signal.SIGKILL)
+        except OSError:
+            pass  # gone already; a pidfd never reaches another process
+
+
+def _dies_with_us() -> None:
+    ctypes.CDLL(None, use_errno=True).prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
+
+
+def start_sound(sink: str) -> Holder | None:
+    """Create the app's sink and its guard; None when they cannot be made
+    (the app then plays on the machine).
 
     Runs before the app and before the reaping loop: nothing else reaps
-    here yet, so killing a helper that failed is safe by PID."""
+    here yet, so the pidfd opened right after the fork pins the holder."""
     try:
-        helper = subprocess.Popen(
-            [sys.executable, SOUND, sink, description], stdout=subprocess.PIPE
+        proc = subprocess.Popen(
+            ["pw-cli"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=sound.ENV,
+            process_group=0,
+            preexec_fn=_dies_with_us,
         )
     except OSError:
         return None
-    assert helper.stdout is not None
-    verdict = b""
+    fd = os.pidfd_open(proc.pid)
+    identity = _identity(proc.pid)
+    made = identity is not None and proc.stdin is not None
     deadline = time.monotonic() + SOUND_TIMEOUT
-    while b"\n" not in verdict and time.monotonic() < deadline:
-        ready, _, _ = select.select(
-            [helper.stdout], [], [], deadline - time.monotonic()
-        )
-        if not ready:
-            break
-        chunk = os.read(helper.stdout.fileno(), 64)
-        if not chunk:
-            break
-        verdict += chunk
-    if verdict.strip() == b"ok":
-        return helper
-    if helper.poll() is None:
-        helper.kill()
-    helper.wait()
+    try:
+        for name, spec in sound.specs(sink) if made else []:
+            assert proc.stdin is not None
+            proc.stdin.write(f"create-node adapter {spec}\n".encode())
+            proc.stdin.flush()
+            while not sound.ready(sound.graph(deadline - time.monotonic()), name):
+                if time.monotonic() > deadline or proc.poll() is not None:
+                    made = False
+                    break
+                time.sleep(0.05)
+            if not made:
+                break
+    except OSError:
+        made = False
+    if made and identity is not None:
+        return Holder(proc, fd, identity)
+    if proc.poll() is None:
+        signal.pidfd_send_signal(fd, signal.SIGKILL)
+    proc.wait()
+    os.close(fd)
     return None
 
 
@@ -177,13 +230,13 @@ def main() -> int:
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
     env = dict(os.environ)
-    sound = start_sound(sink, f"Merlin app {sink}") if sink else None
-    if sink and sound is None:
+    holder = start_sound(sink) if sink else None
+    if sink and holder is None:
         for name in AUDIO_ENV:
             env.pop(name, None)
     if status_file:
         with open(status_file + ".tmp", "w") as handle:
-            handle.write("stream\n" if sound else "local\n")
+            handle.write("stream\n" if holder else "local\n")
         os.replace(status_file + ".tmp", status_file)
 
     try:
@@ -192,7 +245,10 @@ def main() -> int:
         print(f"supervise: cannot start {argv[0]}: {exc}", file=sys.stderr, flush=True)
         with open(exit_file, "w") as handle:
             handle.write("127\n")
+        if holder:
+            holder.kill()
         return 127
+    spare = holder.identity if holder else None
 
     code: int | None = None
     ending_since: float | None = None
@@ -215,10 +271,15 @@ def main() -> int:
         if (stopping or code is not None) and ending_since is None:
             ending_since = time.monotonic()
         if ending_since is not None:
-            if time.monotonic() - ending_since < GRACE:
-                signal_ours(signal.SIGTERM, termed)  # newcomers get theirs too
+            if spare is not None and not _targets(spare):
+                # Nothing of the app is left: now its sound nodes can go.
+                assert holder is not None
+                holder.kill()
+                spare = None
+            elif time.monotonic() - ending_since < GRACE:
+                signal_ours(signal.SIGTERM, termed, spare)  # newcomers too
             else:
-                signal_ours(signal.SIGKILL)  # every pass: adopted ones included
+                signal_ours(signal.SIGKILL, spare=spare)  # adopted ones included
         time.sleep(POLL)
 
 

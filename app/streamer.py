@@ -153,7 +153,7 @@ def missing_audio_elements() -> list[str]:
     return [name for name in AUDIO_ELEMENTS if Gst.ElementFactory.find(name) is None]
 
 
-SINK_CLASS = "Audio/Sink/Virtual"  # the class sound.py gives the app's sink
+SINK_CLASS = "Audio/Sink"  # the class sound.py gives the app's sink
 OFFER_WAIT_S = 5  # with sound, for the offer; then the picture goes alone
 
 
@@ -600,6 +600,9 @@ class Streamer:
         self.offered = False
         self.negotiated = False  # an offer exists: sound can no longer hold it up
         self.dropping = False
+        # Publishing an offer and dropping the sound exclude each other: an
+        # offer is either out (the sound stays) or its webrtcbin is gone.
+        self.offer_lock = threading.Lock()
         self.channel = None
         self.encoder, self.codec = choose_encoder(args.codecs.split(","))
         audio = bool(args.audio_sink)
@@ -714,9 +717,12 @@ class Streamer:
         that failed (or never linked) holds up the whole stream: webrtcbin
         offers only once every track has data. Re-attaches under the state
         lock with the display's owner checked again, like the first time."""
-        if self.dropping or not self.audio or self.negotiated:
-            return False
-        self.dropping = True
+        with self.offer_lock:
+            if self.dropping or not self.audio or self.negotiated:
+                return False
+            self.dropping = True
+            # From here an offer still in flight finds no webrtcbin of its own.
+            self.webrtc = None
         ok = False
         log(f"no sound in the stream: {why}")
         self._discard()
@@ -787,14 +793,18 @@ class Streamer:
     def on_offer_created(self, promise, element) -> None:
         if element is not self.webrtc:
             return
-        self.negotiated = True
         promise.wait()
         # Keep the reply referenced: the offer lives inside it, and letting
         # the binding drop it first frees the SDP under webrtcbin (segfault).
         reply = promise.get_reply()
-        offer = reply.get_value("offer")
-        element.emit("set-local-description", offer, Gst.Promise.new())
-        send({"type": "offer", "sdp": offer.sdp.as_text()})
+        with self.offer_lock:
+            if element is not self.webrtc:
+                del reply
+                return  # dropped while the offer was being made
+            self.negotiated = True
+            offer = reply.get_value("offer")
+            element.emit("set-local-description", offer, Gst.Promise.new())
+            send({"type": "offer", "sdp": offer.sdp.as_text()})
         del reply
 
     def on_ice_candidate(self, element, mline: int, candidate: str) -> None:
@@ -813,6 +823,8 @@ class Streamer:
 
     def on_server_message(self, msg: dict) -> bool:
         kind = msg.get("type")
+        if self.webrtc is None and kind != "stop":
+            return False  # between pipelines (restarting without sound)
         if kind == "answer":
             _res, sdp = GstSdp.SDPMessage.new_from_text(msg["sdp"])
             answer = GstWebRTC.WebRTCSessionDescription.new(

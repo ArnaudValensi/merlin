@@ -5,11 +5,11 @@ they own) and disappears with it; the only module loaded is a decoy null sink
 that a test unloads itself.
 """
 
-import json
 import os
 import shutil
 import signal
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -68,7 +68,7 @@ def _links_from(pid: int) -> set[str]:
     """Names of the nodes the playback streams of process ``pid`` feed."""
     objects = sound.graph()
     names = {
-        o["id"]: sound._props(o).get("node.name")
+        o["id"]: sound.props(o).get("node.name")
         for o in objects
         if o.get("type") == "PipeWire:Interface:Node"
     }
@@ -76,8 +76,8 @@ def _links_from(pid: int) -> set[str]:
         o["id"]
         for o in objects
         if o.get("type") == "PipeWire:Interface:Node"
-        and sound._props(o).get("media.class") == "Stream/Output/Audio"
-        and str(sound._props(o).get("application.process.id")) == str(pid)
+        and sound.props(o).get("media.class") == "Stream/Output/Audio"
+        and str(sound.props(o).get("application.process.id")) == str(pid)
     }
     return {
         names.get(o["info"]["input-node-id"])
@@ -87,9 +87,9 @@ def _links_from(pid: int) -> set[str]:
     }
 
 
-def _group_pids(group: int, *, command: str) -> list[int]:
-    """Processes of ``group`` whose command line contains ``command`` (a
-    process keeps its group when its parent dies)."""
+def _pids(*, command: str, group: int | None = None, parent: int | None = None):
+    """Processes whose command line starts with ``command``, in ``group`` or
+    children of ``parent`` (a process keeps its group when its parent dies)."""
     found = []
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
@@ -100,18 +100,33 @@ def _group_pids(group: int, *, command: str) -> list[int]:
         except OSError:
             continue
         fields = stat[stat.rfind(")") + 2 :].split()
-        if command in argv and int(fields[2]) == group:
-            found.append(int(entry.name))
+        if not argv.startswith(command):  # the program, not an argument
+            continue
+        if group is not None and int(fields[2]) != group:
+            continue
+        if parent is not None and int(fields[1]) != parent:
+            continue
+        found.append(int(entry.name))
     return found
+
+
+def _holder(record: dict) -> list[int]:
+    """The pw-cli connection holding the app's nodes (the supervisor's child)."""
+    return _pids(command="pw-cli", parent=record["app_pid"])
 
 
 def _tone_pid(record: dict) -> int:
     """The gst-launch process playing the app's tone."""
     deadline = time.monotonic() + 10
-    while not (pids := _group_pids(record["app_pid"], command="audiotestsrc")):
+    while not (pids := _pids(command="gst-launch-1.0 ", group=record["app_pid"])):
         assert time.monotonic() < deadline, "no tone process"
         time.sleep(0.05)
     return pids[0]
+
+
+def _gone(*names: str) -> bool:
+    objects = sound.graph()
+    return all(sound.find_sink(objects, name) is None for name in names)
 
 
 def _hears(sink: str, timeout: float = 10.0) -> bool:
@@ -159,26 +174,51 @@ def _level(sink: str, seconds: float = 1.5) -> float:
 
 @needs_x11
 @needs_pipewire
-def test_a_stream_app_gets_its_own_sink_and_routing(tmp_path):
+def test_a_stream_app_gets_its_sink_its_guard_and_routing(tmp_path):
     record = _record(_launch(audio="stream")["id"])
     sink = record["audio_sink"]
     assert record["audio"] == "stream"
     assert sink.startswith(f"{sessions.SINK_PREFIX}probe_")
     assert "audio_module" not in record
-    assert _node(sink) is not None  # an Audio/Sink/Virtual node (find_sink)
-    landing = sound.landing_name(sink)
-    assert sound.find_sink(sound.graph(), landing, sound.LANDING_CLASS) is not None
+    objects = sound.graph()
+    assert sound.ready(objects, sink)
+    assert sound.ready(objects, sound.guard_name(sink))
     pulse_sinks = subprocess.run(
         ["pactl", "list", "short", "sinks"], capture_output=True, text=True
     ).stdout
-    assert landing in pulse_sinks  # where pulse clients can start
-    assert sink not in pulse_sinks.replace(landing, "")  # the private one: never
+    assert sink in pulse_sinks  # pulse clients can play into it
     env = _probe_env(tmp_path)
-    assert env["PULSE_SINK"] == landing
-    assert env["PIPEWIRE_NODE"] == landing
-    assert env["SDL_AUDIO_DRIVER"] == "pulseaudio"
-    assert env["SDL_AUDIODRIVER"] == "pulseaudio"
+    assert env["PULSE_SINK"] == sink
+    assert env["PIPEWIRE_NODE"] == sink
+    assert env["SDL_AUDIO_DRIVER"].startswith("pipewire,")
+    assert env["SDL_AUDIODRIVER"].startswith("pipewire,")
     assert sessions.public(record)["audio"] == "stream"
+
+
+@needs_x11
+@needs_pipewire
+def test_the_sink_never_outranks_its_guard():
+    """WirePlumber picks a default output by priority.session, then by age
+    (lower serial). The guard wins both, so when the real outputs go away the
+    silent guard becomes the default, never the captured sink."""
+    record = _record(_launch(audio="stream")["id"])
+    found = {}
+    for obj in sound.graph():
+        props = sound.props(obj)
+        if props.get("node.name") in (
+            record["audio_sink"],
+            sound.guard_name(record["audio_sink"]),
+        ):
+            found[props["node.name"]] = (
+                int(props.get("priority.session", 0)),
+                -int(props["object.serial"]),
+            )
+    sink, guard = (
+        found[record["audio_sink"]],
+        found[sound.guard_name(record["audio_sink"])],
+    )
+    assert guard[0] > sink[0]
+    assert guard[1] > sink[1]  # created first
 
 
 @needs_gst
@@ -195,18 +235,11 @@ def test_the_app_sound_reaches_its_sink_and_nothing_else():
 
 @needs_x11
 @needs_pipewire
-def test_stop_removes_the_sink():
+def test_stop_removes_the_sink_and_its_guard():
     record = _record(_launch(audio="stream")["id"])
+    sink = record["audio_sink"]
     sessions.stop("probe")
-    landing = sound.landing_name(record["audio_sink"])
-    _wait(
-        lambda: (
-            _node(record["audio_sink"]) is None
-            and sound.find_sink(sound.graph(), landing, sound.LANDING_CLASS) is None
-        ),
-        5,
-        "a sink outlived stop",
-    )
+    _wait(lambda: _gone(sink, sound.guard_name(sink)), 5, "a node outlived stop")
 
 
 @needs_gst
@@ -219,31 +252,24 @@ def test_an_exit_removes_the_sink():
         )["id"]
     )
     _wait(lambda: sessions.get("brief")["status"] == "exited", 15, "never exited")
-    _wait(lambda: _node(record["audio_sink"]) is None, 5, "the sink outlived the app")
+    sink = record["audio_sink"]
+    _wait(lambda: _gone(sink, sound.guard_name(sink)), 5, "a node outlived the app")
 
 
 @needs_x11
 @needs_pipewire
-def test_the_sink_dies_with_a_killed_supervisor():
-    """No unload by number, no sweep: the sink is a connection's object, and
-    every process in the chain dies with its parent."""
+def test_the_nodes_die_with_a_killed_supervisor():
+    """Nothing is unloaded by number: the nodes are a connection's objects,
+    and the connection dies with the supervisor (parent-death signal)."""
     record = _record(_launch(audio="stream")["id"])
     group = record["app_pid"]
+    holder = _holder(record)
+    assert holder
     os.kill(group, signal.SIGKILL)
     try:
-        _wait(
-            lambda: _node(record["audio_sink"]) is None,
-            5,
-            "the sink outlived its owner",
-        )
-        _wait(
-            lambda: (
-                not _group_pids(group, command="sound.py")
-                and not _group_pids(group, command="pw-cli")
-            ),
-            5,
-            "the sound helper outlived the supervisor",
-        )
+        sink = record["audio_sink"]
+        _wait(lambda: _gone(sink, sound.guard_name(sink)), 5, "a node outlived it")
+        _wait(lambda: not Path(f"/proc/{holder[0]}").exists(), 5, "the holder lived on")
     finally:
         try:
             os.killpg(group, signal.SIGKILL)  # the probe, now leaderless
@@ -251,48 +277,47 @@ def test_the_sink_dies_with_a_killed_supervisor():
             pass
 
 
-def _defaults() -> tuple[str, str]:
-    def get(what: str) -> str:
-        return subprocess.run(
-            ["pactl", what], capture_output=True, text=True, check=False
-        ).stdout.strip()
-
-    return get("get-default-sink"), get("get-default-source")
-
-
+@needs_gst
 @needs_x11
 @needs_pipewire
-def test_the_sink_is_never_a_default():
-    """Even at the highest priority, WirePlumber never makes an app's sink the
-    default output or input: other programs' sound never lands in it."""
-    name = f"merlin_test_default_{uuid.uuid4().hex[:8]}"
-    spec = sound.node_spec(name, "test").replace(
-        "object.linger=false", "object.linger=false priority.session=2000000"
+def test_a_stopping_app_never_reaches_the_speakers():
+    """The sink stays until every process of the app is gone: an app that
+    ignores SIGTERM and keeps playing (killed after the grace) never falls
+    back to a real output."""
+    record = _record(
+        sessions.launch(
+            [
+                "sh",
+                "-c",
+                "trap '' TERM; exec gst-launch-1.0 -q audiotestsrc volume=0 "
+                "is-live=true ! audioconvert ! pulsesink",
+            ],
+            name="stubborn",
+            gpu="off",
+            wait=0,
+        )["id"]
     )
-    before = _defaults()
-    holder = subprocess.Popen(
-        ["pw-cli"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL
-    )
-    try:
-        assert holder.stdin is not None
-        holder.stdin.write(f"create-node adapter {spec}\n".encode())
-        holder.stdin.flush()
-        _wait(lambda: _node(name) is not None, 5, "no node")
-        time.sleep(1.0)  # WirePlumber rescans the defaults on a new node
-        assert _defaults() == before
-    finally:
-        holder.kill()
-        holder.wait()
-    _wait(lambda: _node(name) is None, 5, "the node outlived its holder")
+    sink = record["audio_sink"]
+    tone = _tone_pid(record)
+    _wait(lambda: _links_from(tone) == {sink}, 10, "the tone never played")
+    seen: set = set()
+    stopper = threading.Thread(target=sessions.stop, args=("stubborn",))
+    stopper.start()
+    while stopper.is_alive() or Path(f"/proc/{tone}").exists():
+        seen |= _links_from(tone)
+        time.sleep(0.03)
+    stopper.join()
+    assert seen == {sink}, f"the stopping app played into {seen - {sink}}"
+    _wait(lambda: _gone(sink, sound.guard_name(sink)), 5, "a node outlived stop")
 
 
 @needs_gst
 @needs_x11
 @needs_pipewire
-def test_a_stream_opened_on_a_named_device_is_moved_to_the_app():
-    """SDL3 opens the default output by name, past PULSE_SINK: sound.py moves
-    the app's streams to its sink, and nobody else's; WirePlumber keeps no
-    target it could restore onto other programs."""
+def test_a_stream_naming_another_output_is_left_alone_and_unheard():
+    """Nothing moves streams: one the app opens on a named output (as SDL's
+    pulse backend does with the default one) plays there, and the capture
+    does not hear it."""
     decoy = f"merlin_test_decoy_{uuid.uuid4().hex[:8]}"
     module = subprocess.run(
         ["pactl", "load-module", "module-null-sink", f"sink_name={decoy}"],
@@ -300,31 +325,14 @@ def test_a_stream_opened_on_a_named_device_is_moved_to_the_app():
         text=True,
         check=True,
     ).stdout.strip()
-    stranger = subprocess.Popen(
-        [
-            "gst-launch-1.0",
-            "-q",
-            "audiotestsrc",
-            "freq=660",
-            "is-live=true",
-            "!",
-            "pulsesink",
-            f"device={decoy}",
-        ]
-    )
     try:
         record = _record(_launch(args=["--tone", "440", "--tone-device", decoy])["id"])
-        sink = record["audio_sink"]
         tone = _tone_pid(record)
-        _wait(lambda: _links_from(tone) == {sink}, 10, "the app's stream never moved")
-        assert _hears(sink)
-        time.sleep(1.0)
-        assert _links_from(stranger.pid) == {decoy}, "only the app's streams move"
-        if WP_STATE.exists():
-            assert sink not in WP_STATE.read_text()
+        _wait(lambda: _links_from(tone) == {decoy}, 10, "the tone never played")
+        assert not _hears(record["audio_sink"], timeout=3)
+        assert _links_from(tone) == {decoy}
     finally:
-        stranger.kill()
-        stranger.wait()
+        sessions.stop("probe")
         subprocess.run(["pactl", "unload-module", module], check=False)
 
 
@@ -338,37 +346,16 @@ def test_wireplumber_keeps_no_state_for_app_sinks():
     time.sleep(1.5)  # WirePlumber saves its state shortly after a change
     if not WP_STATE.exists():
         pytest.skip("no WirePlumber state file")
-    assert record["audio_sink"] not in WP_STATE.read_text()
-
-
-@needs_x11
-@needs_pipewire
-def test_the_sound_helper_ends_with_the_app():
-    record = _record(_launch(audio="stream")["id"])
-    group = record["app_pid"]
-    assert _group_pids(group, command="sound.py")
-    _wait(
-        lambda: _group_pids(group, command="pactl subscribe"),
-        5,
-        "no subscriber started",
-    )
-    sessions.stop("probe")
-    _wait(
-        lambda: (
-            not _group_pids(group, command="sound.py")
-            and not _group_pids(group, command="pw-cli")
-            and not _group_pids(group, command="pactl subscribe")
-        ),
-        10,
-        "the sound helper outlived the app",
-    )
+    state = WP_STATE.read_text()
+    assert record["audio_sink"] not in state
+    assert sound.guard_name(record["audio_sink"]) not in state
 
 
 @needs_x11
 def test_local_mode_leaves_the_sound_alone(tmp_path):
     record = _record(_launch(audio="local")["id"])
     assert record["audio"] == "local" and record["audio_sink"] is None
-    assert not _group_pids(record["app_pid"], command="sound.py")
+    assert not _holder(record)
     env = _probe_env(tmp_path)
     for name in sessions._audio_env("x"):
         assert env.get(name) == os.environ.get(name)  # inherited, untouched
@@ -425,15 +412,18 @@ def test_plain_pulseaudio_does_not_stream(monkeypatch):
     assert sessions.audio_available() is False
 
 
-def test_the_node_spec_keeps_the_sink_private():
-    spec = sound.node_spec("merlin_app_x_1", 'Merlin "app" x\\')
-    for needed in (
-        "node.name=merlin_app_x_1",
-        "media.class=Audio/Sink/Virtual",
-        "object.linger=false",
-        "state.restore-props=false",
-        "state.restore-target=false",
-        'node.description="Merlin app x"',
-    ):
-        assert needed in spec
-    assert json.loads(json.dumps(spec)) == spec
+def test_the_node_specs():
+    (guard, guard_spec), (sink, sink_spec) = sound.specs("merlin_app_x_1")
+    assert (guard, sink) == ("merlin_app_x_1_guard", "merlin_app_x_1")
+    for spec in (guard_spec, sink_spec):
+        for needed in (
+            "media.class=Audio/Sink",
+            "object.linger=false",
+            "state.restore-props=false",
+            "state.restore-target=false",
+        ):
+            assert needed in spec
+    assert f"priority.session={sound.GUARD_PRIORITY}" in guard_spec
+    assert f"priority.session={sound.SINK_PRIORITY}" in sink_spec
+    assert sound.GUARD_PRIORITY > sound.SINK_PRIORITY
+    assert 'node.description="x"' in sound.node_spec("n", 'x"\\', 0)

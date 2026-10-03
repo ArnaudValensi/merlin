@@ -126,9 +126,9 @@ def _record(merlin, name: str) -> dict:
 
 
 def _kill_sink_owner(record: dict) -> None:
-    """End the pw-cli connection that owns the app's sinks (the sinks go with
-    it), as if the sound server lost them."""
-    group = record["app_pid"]
+    """End the pw-cli connection that holds the app's sink (the supervisor's
+    child): the sink and its guard go with it, as if the sound server lost
+    them."""
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
             continue
@@ -137,10 +137,11 @@ def _kill_sink_owner(record: dict) -> None:
             stat = (entry / "stat").read_text()
         except OSError:
             continue
-        if argv == b"pw-cli" and int(stat[stat.rfind(")") + 2 :].split()[2]) == group:
+        parent = int(stat[stat.rfind(")") + 2 :].split()[1])
+        if argv == b"pw-cli" and parent == record["app_pid"]:
             os.kill(int(entry.name), signal.SIGKILL)
             return
-    raise AssertionError("no sink owner")
+    raise AssertionError("no sink holder")
 
 
 def _sink_node_exists(name: str) -> bool:
@@ -381,6 +382,6 @@ def test_stop_and_exit_leave_no_sink(merlin, tmp_path):
     sink = _record(merlin, "tone")["audio_sink"]
     assert cli(merlin, "stop", "tone").returncode == 0
     deadline = time.monotonic() + 5
-    while _sink_node_exists(sink) or _sink_node_exists(f"{sink}_in"):
+    while _sink_node_exists(sink) or _sink_node_exists(f"{sink}_guard"):
         assert time.monotonic() < deadline, "a sink outlived stop"
         time.sleep(0.1)

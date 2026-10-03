@@ -31,7 +31,6 @@ from pathlib import Path
 from typing import Any
 
 import paths
-from app import sound
 
 SUPERVISOR = Path(__file__).resolve().parent / "supervise.py"
 DEFAULT_SIZE = (1280, 720)
@@ -477,10 +476,10 @@ def missing_message(tools: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Audio: a private PipeWire sink per app, owned by its sound helper (sound.py)
+# Audio: a PipeWire sink per app, held by its supervisor (sound.py)
 # ---------------------------------------------------------------------------
 
-AUDIO_TOOLS = ("pactl", "pw-cli", "pw-dump", "pw-metadata")
+AUDIO_TOOLS = ("pactl", "pw-cli", "pw-dump")
 AUDIO_STATUS_TIMEOUT = 8.0  # the supervisor decides within ~5 s
 
 
@@ -500,10 +499,10 @@ def _pactl(*args: str, timeout: float = 5.0) -> subprocess.CompletedProcess | No
 
 
 def audio_available() -> bool:
-    """PipeWire answers and its tools are here. Plain PulseAudio does not
-    qualify: it has no sink a session manager never makes the default, and it
-    moves a capture to the default source (the microphone) when its sink
-    goes away."""
+    """PipeWire answers and its tools are here: the sinks are PipeWire nodes
+    held by a connection, and the capture's guarantees (no fallback, no
+    reconnect) are PipeWire's. Plain PulseAudio would move a capture to the
+    default source (the microphone) when its sink goes away."""
     if any(shutil.which(tool) is None for tool in AUDIO_TOOLS):
         return False
     result = _pactl("info")
@@ -520,14 +519,15 @@ def _audio_status_path(session_id: str) -> Path:
 
 
 def _audio_env(sink: str) -> dict[str, str]:
-    """Point every common audio API at the app's landing sink (sound.py moves
-    its streams from there, or from any output an app names, to ``sink``)."""
-    landing = sound.landing_name(sink)
+    """Point the app's audio at ``sink``, by name only (see sound.py)."""
     return {
-        "PULSE_SINK": landing,  # libpulse, PipeWire's pulse server
-        "PIPEWIRE_NODE": landing,  # native PipeWire clients, its ALSA plugin
-        "SDL_AUDIO_DRIVER": "pulseaudio",  # SDL3: its pulse backend
-        "SDL_AUDIODRIVER": "pulseaudio",  # SDL2
+        "PULSE_SINK": sink,  # libpulse, PipeWire's pulse server
+        "PIPEWIRE_NODE": sink,  # native PipeWire clients, its ALSA plugin
+        # SDL's pulse backend opens the default output by name, past
+        # PULSE_SINK; its pipewire one (and ALSA, through PipeWire's plugin)
+        # honors PIPEWIRE_NODE. SDL3 reads the first, SDL2 the second.
+        "SDL_AUDIO_DRIVER": "pipewire,alsa,pulseaudio",
+        "SDL_AUDIODRIVER": "pipewire,alsa,pulseaudio",
     }
 
 
