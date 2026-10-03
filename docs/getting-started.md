@@ -101,7 +101,7 @@ terminal (or under tmux) restarts and updates itself, exactly as before.
 
 ## Reach it from your phone
 
-Expose the dashboard with your own tunnel or reverse proxy (Tailscale, Cloudflare, nginx, whatever you trust), or use Merlin Cloud (next section), which handles remote access for you. Merlin serves plain HTTP on port 3123 and does not ship a tunnel of its own: whatever fronts it terminates HTTPS. If you set a dashboard password, exposure is safe; without one, keep it local.
+Expose the dashboard with your own tunnel or reverse proxy (Cloudflare, nginx, whatever you trust), or use Merlin Cloud (next section), which handles remote access for you. Merlin serves plain HTTP on port 3123 and does not ship a tunnel of its own: whatever fronts it terminates HTTPS. If you set a dashboard password, exposure is safe; without one, keep it local.
 
 Earlier versions bundled a cloudflared Quick Tunnel; it has been removed. If your `config.env` still has `TUNNEL_ENABLED`, `TUNNEL_TOKEN`, or `TUNNEL_HOSTNAME`, they are ignored, and re-running `merlin setup` cleans them out. To keep using Cloudflare, run cloudflared yourself pointing at `http://localhost:3123`.
 

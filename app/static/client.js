@@ -55,14 +55,13 @@
         address = String(address || '');
         var v4 = ipv4(address);
         if (v4) {
-            if (v4[0] === 100 && v4[1] >= 64 && v4[1] <= 127) return 'Tailscale';
             if (v4[0] === 10 || v4[0] === 127 || (v4[0] === 172 && v4[1] >= 16 && v4[1] <= 31) ||
-                (v4[0] === 192 && v4[1] === 168) || (v4[0] === 169 && v4[1] === 254)) return 'LAN';
+                (v4[0] === 192 && v4[1] === 168) || (v4[0] === 169 && v4[1] === 254) ||
+                (v4[0] === 100 && v4[1] >= 64 && v4[1] <= 127)) return 'LAN';
             return 'Internet · IPv4';
         }
         var v6 = ipv6Head(address);
         if (v6) {
-            if (v6[0] === 0xfd7a && v6[1] === 0x115c && v6[2] === 0xa1e0) return 'Tailscale';
             if ((v6[0] & 0xfe00) === 0xfc00 || (v6[0] & 0xffc0) === 0xfe80) return 'LAN';
             if (address === '::1') return 'LAN';
             return 'Internet · IPv6';

@@ -83,8 +83,9 @@
                 'Connecting…');
         }
         else if (state === 'unreachable') {
-            status("Can't reach " + (detail.host || 'this machine') +
-                ' directly. Join the same Wi-Fi, or use Tailscale.', [retry]);
+            var host = detail.host || 'this machine';
+            status("Can't reach " + host + ' from this network. Join the same Wi-Fi as ' +
+                host + ' and retry.', [retry]);
         } else if (state === 'replaced') {
             status('Opened on another device.', [{label: 'Watch here', run: function () { stream.reconnect(); }}]);
         } else if (state === 'exited') {

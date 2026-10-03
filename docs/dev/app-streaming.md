@@ -40,7 +40,8 @@ help line, skill, or terminal button. Changing it needs `merlin restart`.
 The proxy (merlincloud.dev) only ever carries the signaling. The video and the
 input travel peer to peer with host candidates only: no STUN, no TURN. That
 already works beyond the LAN when one side can reach the other directly
-(Tailscale; IPv6 when the machine has a global address its router lets in);
+(IPv6 when the machine has a global address its router lets in, a private
+network spanning both);
 otherwise the client says the machine is unreachable. See "Beyond the LAN".
 
 ## Code
@@ -334,9 +335,9 @@ UPnP, TURN) are a later step.
   selected pair (`linkstats.classify`): `LAN` for RFC 1918, `fc00::/7`,
   `fe80::/10`, **and a public address on our own network** (the same /64 in
   IPv6, which has no NAT: at home a phone and the machine talk over global
-  addresses; the same /24 for a public IPv4); `Tailscale` for
-  `100.64.0.0/10` and `fd7a:115c:a1e0::/48`; `Internet · IPv4/IPv6`;
-  `Relay`. It goes to the browser as `{"type": "route", "route"}` on each
+  addresses; the same /24 for a public IPv4), and the shared address
+  space `100.64.0.0/10` (carrier NAT, overlay networks);
+  `Internet · IPv4/IPv6`; `Relay`. It goes to the browser as `{"type": "route", "route"}` on each
   change. The browser alone cannot tell (Chrome hides its own address), so
   its own reading (`routeOf`, remote address only) is a fallback.
 - **The chip** (`client.js` `renderChip`, the player and the docked panel):

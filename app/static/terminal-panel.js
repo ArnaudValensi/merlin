@@ -264,8 +264,9 @@
             return;
         }
         if (state === 'unreachable') {
-            showOverlay("Can't reach " + (detail.host || 'this machine') +
-                ' directly. Join the same Wi-Fi, or use Tailscale.',
+            var host = detail.host || 'this machine';
+            showOverlay("Can't reach " + host + ' from this network. Join the same Wi-Fi as ' +
+                host + ' and retry.',
                 {label: 'Retry', run: function () { stream.reconnect(); }});
             return;
         }

@@ -5,8 +5,8 @@ the tests import it from the package. Nothing here talks to GStreamer: the
 streamer turns ``webrtcbin``'s stats into plain dicts, and this module reads
 them.
 
-- ``classify``: names a route from the far end's address (LAN, Tailscale,
-  Internet), the same rule as the browser's chip (client.js ``routeOf``).
+- ``classify``: names a route from the far end's address (LAN, Internet,
+  Relay), the same rule as the browser's chip (client.js ``routeOf``).
 - ``describe_candidate``: an ICE candidate line, reduced to its type,
   protocol and address family (for the log).
 - ``read_snapshot``: the figures that matter from one stats reply.
@@ -23,8 +23,9 @@ from dataclasses import dataclass, field
 
 # --- routes -------------------------------------------------------------------
 
-TAILSCALE_V4 = ipaddress.ip_network("100.64.0.0/10")
-TAILSCALE_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
+# Shared address space (RFC 6598): private, though ipaddress does not call it
+# so (carrier NAT, overlay networks).
+SHARED_V4 = ipaddress.ip_network("100.64.0.0/10")
 
 
 def classify(address: str, candidate_type: str = "", local: str = "") -> str:
@@ -38,11 +39,8 @@ def classify(address: str, candidate_type: str = "", local: str = "") -> str:
         ip = ipaddress.ip_address(address.split("%")[0])
     except ValueError:
         return "?"
-    if ip.version == 4 and ip in TAILSCALE_V4:
-        return "Tailscale"
-    if ip.version == 6 and ip in TAILSCALE_V6:
-        return "Tailscale"
-    if ip.is_private or ip.is_loopback or ip.is_link_local:
+    shared = ip.version == 4 and ip in SHARED_V4
+    if ip.is_private or ip.is_loopback or ip.is_link_local or shared:
         return "LAN"
     if local and _same_network(ip, local):
         return "LAN"

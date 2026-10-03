@@ -11,9 +11,9 @@ keys, while you watch the same app live next to its terminal.
 
 The video goes **directly over your local network** with WebRTC: low latency,
 up to 60 fps, GPU-encoded on NVIDIA machines. Your phone must be on the same
-Wi-Fi as the machine running Merlin, or both must be on
-[Tailscale](https://tailscale.com). Opening the dashboard through
-merlincloud.dev works: only the connection setup goes through it.
+Wi-Fi as the machine running Merlin (beyond it, see below). Opening the
+dashboard through merlincloud.dev works: only the connection setup goes
+through it.
 
 ## Prerequisites
 
@@ -66,7 +66,7 @@ landscape; on iPhone, add Merlin to your Home Screen for that). The **⋯**
 button opens the menu. The chip at the top right shows the connection: bars
 for its quality (four when the stream runs at full quality, fewer as it
 lowers its bitrate for a weak network; yellow, then red), how you are
-connected (`LAN`, `Tailscale`, `Internet · IPv6`…) and the round trip in
+connected (`LAN`, `Internet · IPv6`…) and the round trip in
 milliseconds (a packet's trip to the machine and back). Tap it for the
 numbers. It says "agent is pressing keys" when your agent is.
 
@@ -105,10 +105,10 @@ the machine, and its sound is not streamed.
   them.
 - One screen at a time watches an app: opening it elsewhere takes over.
 - Apps run as you, with your files: a game uses your real saves.
-- From outside your home: Tailscale on both devices works; so does IPv6 when
-  your machine and your phone both have it and your router lets the stream
-  in (try it on 4G with the Wi-Fi off). "Still connecting…" can take a few
-  seconds over the internet; "Can't reach … directly" means no direct path
-  was found: join the same Wi-Fi, or use Tailscale.
+- From outside your home: it works over IPv6 when your machine and your
+  phone both have it and your router lets the stream in (try it on 4G with
+  the Wi-Fi off). "Still connecting…" can take a few seconds over the
+  internet; "Can't reach … from this network" means no path was found: join
+  the same Wi-Fi as the machine.
 - If the connection drops (switching from Wi-Fi to 4G, say), the player
   reconnects by itself, three times, before asking you to retry.
