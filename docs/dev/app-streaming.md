@@ -34,15 +34,14 @@ help line, skill, or terminal button. Changing it needs `merlin restart`.
  Browser ⇄ WS /ws/apps/{id}/stream ⇄ Merlin ⇄ stdin/stdout JSON ⇄ app/streamer.py
    ▲      (signaling only, authed,     (relay)                     (/usr/bin/python3,
    │       works through the proxy)                                 webrtcbin, encoders)
-   └──── WebRTC over the LAN: H.264/VP8 video + Opus sound + "input" data channel ───┘
+   └──── WebRTC, peer to peer or relayed: H.264/VP8 + Opus + "input" channel ────────┘
 ```
 
 The proxy (merlincloud.dev) only ever carries the signaling. The video and the
-input travel peer to peer with host candidates only: no STUN, no TURN. That
-already works beyond the LAN when one side can reach the other directly
-(IPv6 when the machine has a global address its router lets in, a private
-network spanning both);
-otherwise the client says the machine is unreachable. See "Beyond the LAN".
+input travel peer to peer when a path exists: the LAN, the home router opened
+with UPnP, STUN's public addresses punching through both ends' firewalls;
+otherwise through Merlin Cloud's relay (TURN on worker-1, for an account with
+access). See "Beyond the LAN" and "Reaching the machine".
 
 ## Code
 
@@ -59,7 +58,9 @@ otherwise the client says the machine is unreachable. See "Beyond the LAN".
 | `app/cli_support.py`, `app/commands/*.py` | `merlin app run/list/stop/logs/screenshot/input`, `#!/usr/bin/env python3` |
 | `app/routes.py` | `/apps`, `/apps/{id}/play`, `/api/apps/*`, the signaling WebSocket |
 | `app/streamer.py` | WebRTC helper, one per viewer, **system Python** (PyGObject, python-xlib) |
-| `app/linkstats.py` | The link: route names, stats snapshots, rate control, session summary. **Stdlib only** |
+| `app/linkstats.py` | The link: route names, the path, stats snapshots, rate control, session summary. **Stdlib only** |
+| `app/iceservers.py` | The ICE servers: STUN for every Merlin, the portal's TURN credentials (cached), webrtcbin's URIs. **Stdlib only** |
+| `app/upnp.py` | UPnP on the home router: discovery, IPv4 mappings, IPv6 pinholes, one stream's openings. **Stdlib only** |
 | `app/static/client.js` | Browser WebRTC client shared by the player, the panel and the mini-player |
 | `app/static/player.*` | Full-screen player and its touch controls |
 | `app/static/terminal-panel.*` | Terminal button, toast, docked panel, mobile mini-player |
@@ -290,8 +291,8 @@ the browser's jitter buffer aligns them).
 ## Beyond the LAN
 
 What a session does on the network is visible, waits as long as ICE needs,
-recovers from drops, and adapts its bitrate. NAT traversal helpers (STUN,
-UPnP, TURN) are a later step.
+recovers from drops, and adapts its bitrate. How it gets through routers
+(UPnP, STUN, TURN) is the next section.
 
 - **The log** (`merlin.log`, the streamer's lines): `ice: gathering …`,
   `ice: connection …`, `ice: remote host udp mdns` (each browser candidate,
@@ -337,17 +338,23 @@ UPnP, TURN) are a later step.
   IPv6, which has no NAT: at home a phone and the machine talk over global
   addresses; the same /24 for a public IPv4), and the shared address
   space `100.64.0.0/10` (carrier NAT, overlay networks);
-  `Internet · IPv4/IPv6`; `Relay`. It goes to the browser as `{"type": "route", "route"}` on each
+  `Internet · IPv4/IPv6` otherwise (a relay too: the relay is a path, not a
+  route). It goes to the browser as `{"type": "route", "route"}` on each
   change. The browser alone cannot tell (Chrome hides its own address), so
   its own reading (`routeOf`, remote address only) is a fallback.
 - **The chip** (`client.js` `renderChip`, the player and the docked panel):
   a four-bar gauge (the controller's level: 85 / 60 / 35 % of the ceiling;
-  yellow at 2, red at 1; full until the first `rate`), then the route, then
-  the round trip (`<1 ms` on a LAN). A tap on the player's chip adds
-  received and target bitrate, fps, loss, codec.
+  yellow at 2, red at 1; full until the first `rate`), then the route, the
+  path (left out for `LAN` with `Direct`) and the round trip (`<1 ms` on a
+  LAN): `Internet · IPv6 · STUN · 48 ms`. A tap on the player's chip spreads
+  it over lines: received and target bitrate, fps, loss, codec; both
+  candidates of the selected pair; what STUN, UPnP and TURN gave.
 - **Waiting** (`client.js`): from the offer, ICE's own verdict (`failed`)
-  ends a hopeless attempt at once; 30 s bound one that never decides; after
-  4 s the status says "Still connecting…".
+  ends a hopeless attempt 6 s later unless it recovers meanwhile (late
+  candidates, STUN's answer or the router's mapping, revive it: in a
+  relay-only session every early pair is refused at once and Chrome says
+  `failed` within a second); 30 s bound one that never decides; after 4 s
+  the status says "Still connecting…".
 - **Recovering**: a live connection `disconnected` for 5 s, or `failed`,
   gets new sessions after 1, 2 and 4 s ("Reconnecting…"), then
   `unreachable`. A new session that fails counts as the next try; one that
@@ -370,6 +377,77 @@ UPnP, TURN) are a later step.
   dropped, over time) under loss and at 20 fps or more after. Unprivileged,
   no effect on the machine's network. Inside, `UV_OFFLINE=1`, no SaaS
   token, a fresh home.
+
+## Reaching the machine
+
+The browser and the streamer each gather candidates from the ICE servers the
+server hands them, and the streamer asks the home router to let the stream
+in. ICE then tries every pair; the selected one decides the path.
+
+- **The servers** (`app/iceservers.py`): STUN for every Merlin
+  (`MERLIN_APP_STUN`, `stun:turn.merlincloud.dev:3478` by default, empty for
+  none). An instance with `MERLIN_SAAS_TOKEN` also asks the portal
+  (`GET /api/instance/ice`, the instance token) for TURN credentials: six
+  hours, cached until an hour before they end, the last good answer kept
+  while the portal is down, else STUN alone (`turn: portal unreachable`).
+  The portal gives them to an account with access (merlin-saas
+  `docs/turn-relay.md`); otherwise it names the reason, which the chip's
+  detail shows. `routes.stream_ws` fetches them while the browser says
+  hello (at most 4 s), sends the browser `{"type": "servers", "iceServers",
+  "turn", "policy"}` before the streamer exists (it builds its peer with
+  them at the offer), and hands them to the streamer in `MERLIN_APP_ICE`
+  (its environment, never its argv: the credentials would show in `ps`).
+  `iceservers.for_webrtcbin` turns them into `stun-server` and
+  `add-turn-server` URIs, user and password percent-encoded (a TURN REST
+  username has a `:`; webrtcbin decodes them).
+- **UPnP** (`app/upnp.py`, on the streamer's own thread): libnice's UPnP is
+  off (it mapped a port per candidate and never removed it: 317 leftovers on
+  the user's router). The streamer's `Opener` finds the router (SSDP), maps
+  an external UDP port to each IPv4 host candidate on the router's side and
+  opens an IPv6 pinhole for each global one: one hour, renewed every half
+  hour, removed when the viewer leaves; at start it removes the
+  `Merlin <app> <pid>` mappings of streamers that died. The browser gets a
+  `srflx` candidate for the mapped address (`candidate:upnp<port>`). A
+  router that refuses a pinhole for any remote port (MiniUPnPd 1.9, a Bbox:
+  `402 Invalid Args` for `RemotePort` 0) gets one per port the browser
+  announces: its candidates hide the address behind mDNS, not the port, and
+  IPv6 does not translate it. The router's URLs must stay on its private
+  address. `MERLIN_APP_UPNP=0` turns it off.
+- **The path** (`linkstats.path_of`, from the selected pair): `TURN` when
+  either end is a relay; `UPnP` when the far end is not on our network and
+  the router let it in on our port; `STUN` when either end is
+  server-reflexive; `Direct` otherwise. Sent as `{"type": "path", "path",
+  "local", "remote"}` and logged (`ice: path STUN (local host udp ipv6,
+  remote srflx udp ipv6)`); the session summary names it. `{"type":
+  "reach", "stun", "upnp", "turn"}` (when gathering completes, and on each
+  UPnP change) says what each gave: `STUN ok 176.186.26.141`, `UPnP mapped
+  176.186.26.141:42452`, `TURN no access`.
+- **`?ice=relay`** on the player's (or the terminal's) URL forces the relay
+  for that session, to test TURN. On the browser's side only: a relay
+  reaches any public address, but two relays of the same server cannot
+  reach each other (it refuses its own address as a peer), so the streamer
+  keeps every path.
+- **Gotchas**: reading webrtcbin's `ice-agent` from Python takes the
+  agent's only reference (it is held by a floating ref), so the agent dies
+  with the wrapper and `add-turn-server` fails: `streamer._restore_ref`
+  gives it back.
+- **Testing**: `tests/e2e/test_app_reach.py` builds a small internet of
+  network namespaces inside `unshare -rn` (`nat_session.py`): a home and a
+  phone each behind a router that masquerades with `iptables` and drops
+  what nobody inside asked for, coturn and a fake portal in the middle, the
+  home router forwarding Merlin's TCP port (the signaling). Three cases:
+  STUN punching through two NATs (no relay offered), the relay when the
+  phone's NAT changes ports per destination (`--random-fully`), and
+  `?ice=relay`; each checks the path, the chip and its detail, and frames
+  decoded. Needs the `xt_MASQUERADE` and `xt_conntrack` modules loaded
+  (Docker loads them; an unprivileged namespace cannot) and coturn. Two
+  lessons in its routers: one that accepts packets addressed to itself
+  records their flow, and its masquerade then changes the inside host's
+  port, which defeats punching (real routers drop them); and the relay
+  needs a route for everything, or a send to a private peer fails and the
+  relay goes silent. `NAT_DEBUG=1` records flows, pairs and coturn's log.
+  UPnP is tested against a fake router (`tests/unit/test_app_upnp.py`) and
+  was checked on the user's Bbox.
 
 ## UI
 

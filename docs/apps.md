@@ -9,11 +9,11 @@ its own invisible display, and watch or play it from the dashboard, on your
 desktop or your phone. Your agent can run it too, take screenshots and press
 keys, while you watch the same app live next to its terminal.
 
-The video goes **directly over your local network** with WebRTC: low latency,
-up to 60 fps, GPU-encoded on NVIDIA machines. Your phone must be on the same
-Wi-Fi as the machine running Merlin (beyond it, see below). Opening the
-dashboard through merlincloud.dev works: only the connection setup goes
-through it.
+The video goes **straight from the machine to your screen** with WebRTC: low
+latency, up to 60 fps, GPU-encoded on NVIDIA machines. At home it crosses
+your Wi-Fi; from anywhere else Merlin finds a way through your router (see
+"From outside your home" below). Opening the dashboard through
+merlincloud.dev works: only the connection setup goes through it.
 
 ## Prerequisites
 
@@ -66,9 +66,10 @@ landscape; on iPhone, add Merlin to your Home Screen for that). The **⋯**
 button opens the menu. The chip at the top right shows the connection: bars
 for its quality (four when the stream runs at full quality, fewer as it
 lowers its bitrate for a weak network; yellow, then red), how you are
-connected (`LAN`, `Internet · IPv6`…) and the round trip in
-milliseconds (a packet's trip to the machine and back). Tap it for the
-numbers. It says "agent is pressing keys" when your agent is.
+connected (`LAN`, `Internet · IPv6`…), the way through when you are not at
+home (`UPnP`, `STUN`, `TURN`: below) and the round trip in milliseconds (a
+packet's trip to the machine and back). Tap it for the numbers, and for what
+each way through gave. It says "agent is pressing keys" when your agent is.
 
 Three control profiles, switchable from the menu:
 
@@ -105,10 +106,23 @@ the machine, and its sound is not streamed.
   them.
 - One screen at a time watches an app: opening it elsewhere takes over.
 - Apps run as you, with your files: a game uses your real saves.
-- From outside your home: it works over IPv6 when your machine and your
-  phone both have it and your router lets the stream in (try it on 4G with
-  the Wi-Fi off). "Still connecting…" can take a few seconds over the
-  internet; "Can't reach … from this network" means no path was found: join
-  the same Wi-Fi as the machine.
+- From outside your home, Merlin tries every way through, and the chip says
+  which one carries the stream:
+  - `UPnP`: Merlin asks your home router to let the stream in, on the
+    stream's own port and only while you watch (removed when you leave,
+    expiring within the hour if Merlin stops abruptly). Set
+    `MERLIN_APP_UPNP=0` to never ask.
+  - `STUN`: both ends learn their public address from Merlin Cloud's server
+    and reach each other through both routers.
+  - `TURN`: when nothing direct works (a strict mobile network, a network
+    that only lets the web out), the stream goes through Merlin Cloud's
+    relay. Included with a Merlin Cloud subscription.
+  - `Direct`: the machine was reachable as is (IPv6 without a firewall in
+    the way).
+
+  "Still connecting…" can take a few seconds over the internet; "Can't reach
+  … from this network" means no way through was found: join the same Wi-Fi
+  as the machine. To try the relay on purpose, add `?ice=relay` to the
+  player's address.
 - If the connection drops (switching from Wi-Fi to 4G, say), the player
   reconnects by itself, three times, before asking you to retry.
