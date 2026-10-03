@@ -78,6 +78,9 @@ Pinch to zoom in on the picture in any profile. **Keyboard** in the menu opens
 your phone's keyboard plus a row of Esc, Tab, Ctrl, Alt, arrows, Enter and
 Backspace.
 
+When the app ends (you quit the game), the player offers **Logs** (they open
+in the player; **Back** returns) and **Leave**.
+
 ## Sound
 
 The app's sound comes with the picture. Browsers only play sound after you

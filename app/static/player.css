@@ -252,6 +252,63 @@ body.player-body .player-kb {
     pointer-events: none;
 }
 
+/* ---- Logs (over the player: a new tab has no way back in full screen) ---- */
+
+.player-logs {
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+             max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+.player-logs[hidden] { display: none; }
+.player-logs-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+.player-logs-head span {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-secondary);
+    font: 600 14px var(--font-sans, system-ui), sans-serif;
+}
+.player-logs-head button {
+    min-height: 40px;
+    padding: 0 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font: 14px var(--font-sans, system-ui), sans-serif;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+.player-logs pre {
+    flex: 1;
+    margin: 8px 0 0;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text-secondary);
+    font: 12px/1.5 var(--font-mono, monospace);
+    touch-action: pan-x pan-y;
+}
+body.player-body .player-logs pre {
+    -webkit-user-select: text;  /* logs are for copying */
+    user-select: text;
+}
+
 /* ---- iOS hint ----------------------------------------------------------- */
 
 .player-hint {

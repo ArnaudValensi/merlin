@@ -236,7 +236,11 @@
     function loadLogs() {
         fetch('/api/apps/sessions/' + encodeURIComponent(logsFor) + '/logs?tail=200', {credentials: 'same-origin'})
             .then(function (r) { return r.ok ? r.text() : 'No logs.'; })
-            .then(function (text) { logsText.textContent = text || '(empty)'; logsText.scrollTop = logsText.scrollHeight; });
+            .then(function (text) {
+                // Without the colors an app writes to its terminal.
+                logsText.textContent = text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '') || '(empty)';
+                logsText.scrollTop = logsText.scrollHeight;
+            });
     }
     document.getElementById('apps-logs-refresh').addEventListener('click', loadLogs);
 

@@ -296,7 +296,12 @@ the browser's jitter buffer aligns them).
 - **Player** (`/apps/{id}/play`, standalone page): ⋯ sheet, status chip,
   Gamepad / Trackpad / Touch profiles on touch devices (remembered per app),
   client-side pinch zoom, key row and phone keyboard, Wake Lock, fullscreen
-  plus landscape lock on Android, a home-screen hint on iPhone. Desktop gets
+  plus landscape lock on Android, a home-screen hint on iPhone. When the app
+  ends it offers Logs and Leave (the same as Leave in the sheet: back where
+  the player was opened from, else the Apps page). The logs open over the
+  player, never in a new tab (in full screen or from the home screen a tab
+  has no way back): Back, the system back (a history entry) or Escape close
+  them; terminal colors are stripped. Desktop gets
   keyboard (mapped from `KeyboardEvent.key`, so the user's layout types the
   right letters) and mouse.
 - **Apps page**: cards for saved and running apps, thumbnails retried until

@@ -309,3 +309,65 @@ def test_nothing_on_the_player_is_selectable(phone):
         "getComputedStyle(document.getElementById('player-kb')).userSelect"
     )
     assert kb == "text"
+
+
+def test_an_ended_app_offers_its_logs_and_a_way_out(
+    merlin, playwright, browser, server
+):
+    """On a phone the logs open over the player (a new tab has no way back
+    in full screen), Back or the system back close them, and Leave goes back
+    to where the player was opened from."""
+    from app_stream_support import PROBE
+
+    result = cli(
+        merlin,
+        "run",
+        "--name",
+        "quitter",
+        "--gpu",
+        "off",
+        "--",
+        "sh",
+        "-c",
+        f"printf '\\033[0;93mhello from the app\\033[0m\\n'; exec {PROBE} --exit-after 4",
+    )
+    assert result.returncode == 0, result.stderr
+    context = browser.new_context(**playwright.devices["Pixel 7 landscape"])
+    page = context.new_page()
+    try:
+        page.goto(f"{server}/apps/quitter/play")
+        page.wait_for_function(
+            "document.getElementById('player').dataset.streamState === 'exited'",
+            timeout=20000,
+        )
+        buttons = page.locator("#player-status button")
+        assert buttons.all_inner_texts() == ["Logs", "Leave"]
+        url = page.url
+
+        page.tap("#player-status button:has-text('Logs')")
+        page.wait_for_selector("#player-logs:not([hidden])")
+        page.wait_for_function(
+            "document.getElementById('player-logs-text').textContent.includes('hello from the app')"
+        )
+        text = page.inner_text("#player-logs-text")
+        assert "\x1b" not in text and "[0;93m" not in text
+        assert len(context.pages) == 1 and page.url == url  # no tab, no navigation
+        SHOTS.mkdir(exist_ok=True)
+        page.screenshot(path=str(SHOTS / "player-logs.png"))
+
+        page.tap("#player-logs-back")
+        page.wait_for_selector("#player-logs", state="hidden")
+        assert page.url == url
+        assert "exited" in page.inner_text("#player-status")
+
+        page.tap("#player-status button:has-text('Logs')")
+        page.wait_for_selector("#player-logs:not([hidden])")
+        page.go_back()  # the system back closes the logs, not the player
+        page.wait_for_selector("#player-logs", state="hidden")
+        assert page.url == url
+
+        page.tap("#player-status button:has-text('Leave')")
+        page.wait_for_url("**/apps", timeout=10000)
+    finally:
+        context.close()
+        stop_all(merlin)

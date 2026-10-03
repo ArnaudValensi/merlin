@@ -70,7 +70,8 @@
     }
 
     var retry = {label: 'Retry', run: function () { stream.reconnect(); }};
-    var toApps = {label: 'Apps', run: function () { location.href = '/apps'; }};
+    var leaveAction = {label: 'Leave', run: function () { leave(); }};
+    var logsAction = {label: 'Logs', run: function () { openLogs(); }};
 
     function onState(state, detail) {
         updateChip();
@@ -83,11 +84,10 @@
         } else if (state === 'replaced') {
             status('Opened on another device.', [{label: 'Watch here', run: function () { stream.reconnect(); }}]);
         } else if (state === 'exited') {
-            var logs = {label: 'Logs', run: function () { window.open('/api/apps/sessions/' + encodeURIComponent(id) + '/logs', '_blank'); }};
             status(detail.reason === 'stopped' ? 'The app was stopped.' :
                 detail.reason === 'missing' ? 'No app named ' + id + ' is running.' :
                 'The app exited' + (detail.code != null ? ' (code ' + detail.code + ').' : '.'),
-                detail.reason === 'exited' ? [logs, toApps] : [toApps]);
+                detail.reason === 'exited' ? [logsAction, leaveAction] : [leaveAction]);
         } else if (state === 'paused') status('Paused while hidden.', [{label: 'Resume', run: function () { stream.reconnect(); }}]);
         else if (state === 'error') status(detail.message || 'Stream error.', [retry]);
         else if (state === 'closed') status('Disconnected.', [retry]);
@@ -552,6 +552,51 @@
         if (ref && ref.indexOf(location.origin) === 0 && history.length > 1) history.back();
         else location.href = '/apps';
     }
+
+    // ---- logs -------------------------------------------------------------------------
+
+    // Over the player, not in a new tab: in full screen or from the home
+    // screen a tab has no way back. Back (or the system back) closes them.
+    var logsEl = document.getElementById('player-logs');
+    var logsText = document.getElementById('player-logs-text');
+    var logsBack = document.getElementById('player-logs-back');
+    var ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;   // the colors an app writes to its terminal
+
+    function loadLogs() {
+        logsText.textContent = 'Loading…';
+        fetch('/api/apps/sessions/' + encodeURIComponent(id) + '/logs?tail=500', {credentials: 'same-origin'})
+            .then(function (r) {
+                if (!r.ok) throw new Error(r.status === 404 ? 'No logs for this app.' : 'Could not load the logs.');
+                return r.text();
+            })
+            .then(function (text) {
+                logsText.textContent = text.replace(ANSI, '') || '(empty)';
+                logsText.scrollTop = logsText.scrollHeight;
+            })
+            .catch(function (err) { logsText.textContent = err.message; });
+    }
+    function openLogs() {
+        if (!logsEl.hidden) return;
+        document.getElementById('player-logs-title').textContent = 'Logs · ' + (app ? app.name : id);
+        logsEl.hidden = false;
+        try { history.pushState({playerLogs: true}, ''); } catch (e) {}
+        loadLogs();
+        if (fine) logsBack.focus({preventScroll: true});  // Escape closes them
+    }
+    function hideLogs() {
+        logsEl.hidden = true;
+        root.focus({preventScroll: true});
+    }
+    function closeLogs() {
+        if (history.state && history.state.playerLogs) history.back();  // popstate hides them
+        else hideLogs();
+    }
+    window.addEventListener('popstate', function () { if (!logsEl.hidden) hideLogs(); });
+    logsBack.addEventListener('click', closeLogs);
+    document.getElementById('player-logs-refresh').addEventListener('click', loadLogs);
+    logsEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { e.preventDefault(); closeLogs(); }
+    });
 
     // ---- keyboard (phone) ---------------------------------------------------------------
 

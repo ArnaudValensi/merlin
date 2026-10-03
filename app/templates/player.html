@@ -63,6 +63,15 @@
 </div>
 <input id="player-kb" class="player-kb" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Keyboard input">
 
+<div id="player-logs" class="player-logs" role="dialog" aria-labelledby="player-logs-title" hidden>
+    <div class="player-logs-head">
+        <button type="button" id="player-logs-back">‹ Back</button>
+        <span id="player-logs-title">Logs</span>
+        <button type="button" id="player-logs-refresh">Refresh</button>
+    </div>
+    <pre id="player-logs-text"></pre>
+</div>
+
 <div id="player-hint" class="player-hint" hidden>
     <span>For full screen on iPhone, add Merlin to your Home Screen (Share → Add to Home Screen).</span>
     <button type="button" id="player-hint-close">OK</button>
