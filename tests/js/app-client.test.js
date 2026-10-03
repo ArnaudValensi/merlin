@@ -480,6 +480,14 @@ test("the chip names the route and round trip, with the numbers on demand", () =
         "Internet · IPv6 · 48 ms\n3.2 Mbit/s (target 4.8/5.5) · 60 fps · loss 1.2 % · H264 (nvh264enc)");
 });
 
+test("a slow stream's bitrate reads in kbit/s, not as zero megabits", () => {
+    const { chipText } = makeEnv().MerlinApps;
+    const line = (kbps) => chipText({ route: "LAN", kbps }, true).split("\n")[1];
+    assert.equal(line(42), "42 kbit/s");
+    assert.equal(line(999), "999 kbit/s");
+    assert.equal(line(1000), "1.0 Mbit/s");
+});
+
 test("the chip names the path, and its detail what each way of reaching gave", () => {
     const { chipText } = makeEnv().MerlinApps;
     const s = { route: "Internet · IPv6", path: "STUN", rttMs: 48, rateKbps: 4800, rateMax: 5500,

@@ -89,6 +89,9 @@
     }
 
     function mbit(kbps) { return (kbps / 1000).toFixed(1); }
+    /** A received bitrate: kbit/s under one megabit (a still picture sends
+     * almost nothing, and "0.0 Mbit/s" reads like a broken stream). */
+    function bitrate(kbps) { return kbps < 1000 ? kbps + ' kbit/s' : mbit(kbps) + ' Mbit/s'; }
 
     /** The chip's words: route, path and round trip (a plain LAN connection
      * says only LAN). With detail, more lines: the numbers, the selected
@@ -101,7 +104,7 @@
         if (!detail) return text;
         var numbers = [];
         if (s.kbps != null) {
-            numbers.push(mbit(s.kbps) + ' Mbit/s' +
+            numbers.push(bitrate(s.kbps) +
                 (s.rateKbps && s.rateMax ? ' (target ' + mbit(s.rateKbps) + '/' + mbit(s.rateMax) + ')' : ''));
         } else if (s.rateKbps && s.rateMax) {
             numbers.push('target ' + mbit(s.rateKbps) + '/' + mbit(s.rateMax) + ' Mbit/s');
