@@ -46,9 +46,13 @@ diagram with the same toggle.
 
 Images (`.png .jpg .jpeg .gif .svg .webp .bmp .ico`) preview inline with
 their size and MIME type. Audio and video play with native player
-controls, and playback pauses when you go back to the listing. `.stl` and
-`.obj` files open in an interactive 3D viewer: rotate and zoom with orbit
-controls, with a pill showing dimensions as W x D x H in mm.
+controls, and playback pauses when you go back to the listing. `.stl`,
+`.obj`, `.glb` and `.gltf` files open in an interactive 3D viewer: rotate
+and zoom with orbit controls, with a pill showing dimensions as W x D x H
+in mm. STL and OBJ render in a neutral grey. glTF keeps its own materials
+and textures, and since glTF is Y-up and in meters, the model is stood
+upright on Z and its dimensions converted to mm. A `.gltf` loads its
+`.bin` and textures from the same folder.
 
 ![Image preview](files/phone-image-viewer.jpg)
 ![STL 3D model viewer](files/phone-stl-viewer.jpg)
@@ -125,7 +129,8 @@ repo.
   tab close) aborts a zip in progress; the browser warns before you leave.
   Navigating within Files is safe.
 - **A 3D model shows the binary info card**: the model failed to load or
-  the 3D module did not; download it instead.
+  the 3D module did not; download it instead. Draco- or
+  meshopt-compressed glTF files are not supported yet and land here.
 - **"Mermaid rendering failed"**: the diagram source is shown raw below
   the error so you can fix it.
 - **The page suddenly reloads to the login screen**: your session expired;

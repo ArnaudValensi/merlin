@@ -1,4 +1,4 @@
-/* 3D model preview (STL + OBJ) — module entry, exposes window.merlin3D
+/* 3D model preview (STL + OBJ + glTF/GLB) — module entry, exposes window.merlin3D
  *
  * Loaded as <script type="module"> after files.js. Uses the importmap declared
  * in files.html to resolve the `three` bare specifier to the vendored module.
@@ -7,6 +7,8 @@
 import * as THREE from 'three';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // Test-mode handle: enables window.__merlin3DTest for Playwright assertions.
@@ -34,6 +36,7 @@ async function render3DPreview(info, container) {
     const ext = info.name.toLowerCase().split('.').pop();
     let geometry;
     let objectFromLoader = null;
+    let isGltf = false;
 
     try {
         const resp = await fetch(
@@ -49,6 +52,10 @@ async function render3DPreview(info, container) {
         } else if (ext === 'obj') {
             const text = await resp.text();
             objectFromLoader = new OBJLoader().parse(text);
+        } else if (ext === 'glb' || ext === 'gltf') {
+            const data = ext === 'glb' ? await resp.arrayBuffer() : await resp.text();
+            objectFromLoader = await parseGltf(data, info.path);
+            isGltf = true;
         } else {
             throw new Error('Unsupported 3D format: ' + ext);
         }
@@ -58,10 +65,33 @@ async function render3DPreview(info, container) {
         throw err;
     }
 
-    mountModel(wrapper, dimsPill, geometry, objectFromLoader);
+    mountModel(wrapper, dimsPill, geometry, objectFromLoader, isGltf);
 }
 
-function mountModel(wrapper, dimsPill, geometry, objectFromLoader) {
+// glTF is Y-up and in meters: rotate onto our +Z-up convention and scale to
+// mm so the dims pill reads the same as for STL/OBJ. A .gltf references its
+// .bin and textures by relative URI; the URL modifier routes those through
+// the raw-file API next to the .gltf. Draco/meshopt-compressed files reject
+// here (no decoder vendored) and fall back to the binary info card.
+async function parseGltf(data, filePath) {
+    const dir = filePath.slice(0, filePath.lastIndexOf('/') + 1);
+    const manager = new THREE.LoadingManager();
+    manager.setURLModifier((url) => {
+        if (/^(data|blob):/.test(url)) return url;
+        return '/api/files/raw?path=' + encodeURIComponent(dir + decodeURI(url));
+    });
+    const gltf = await new GLTFLoader(manager).parseAsync(data, '');
+    const root = new THREE.Group();
+    root.rotation.x = Math.PI / 2;
+    root.scale.setScalar(1000);
+    root.add(gltf.scene);
+    // Wrap once more so mountModel's re-centering doesn't fight the rotation
+    const outer = new THREE.Group();
+    outer.add(root);
+    return outer;
+}
+
+function mountModel(wrapper, dimsPill, geometry, objectFromLoader, isGltf) {
     const scene = new THREE.Scene();
     const bgColor = readCssColor('--bg-page', '#0d1117');
     scene.background = new THREE.Color(bgColor);
@@ -83,7 +113,17 @@ function mountModel(wrapper, dimsPill, geometry, objectFromLoader) {
     });
 
     let object3d;
-    if (geometry) {
+    let envTexture = null;
+    if (isGltf) {
+        // glTF carries its own PBR materials: keep them, and give metallic
+        // surfaces something to reflect or they render black
+        const pmrem = new THREE.PMREMGenerator(renderer);
+        envTexture = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+        pmrem.dispose();
+        scene.environment = envTexture;
+        material.dispose();
+        object3d = objectFromLoader;
+    } else if (geometry) {
         // STL → BufferGeometry → wrap in a Mesh
         geometry.computeVertexNormals();
         object3d = new THREE.Mesh(geometry, material);
@@ -176,6 +216,7 @@ function mountModel(wrapper, dimsPill, geometry, objectFromLoader) {
         controls,
         observer,
         material,
+        envTexture,
         object3d,
         get raf() {
             return raf;
@@ -217,17 +258,18 @@ function disposeThreeContext() {
         ctx.stop();
         ctx.observer.disconnect();
         ctx.controls.dispose();
-        // Free GPU resources
+        // Free GPU resources (glTF textures hang off the materials)
         ctx.scene.traverse((child) => {
             if (child.geometry) child.geometry.dispose();
             if (child.material) {
-                if (Array.isArray(child.material)) {
-                    child.material.forEach((m) => m.dispose());
-                } else {
-                    child.material.dispose();
-                }
+                const mats = Array.isArray(child.material) ? child.material : [child.material];
+                mats.forEach((m) => {
+                    Object.values(m).forEach((v) => v && v.isTexture && v.dispose());
+                    m.dispose();
+                });
             }
         });
+        if (ctx.envTexture) ctx.envTexture.dispose();
         ctx.renderer.dispose();
         ctx.renderer.forceContextLoss?.();
         if (ctx.renderer.domElement && ctx.renderer.domElement.parentNode) {

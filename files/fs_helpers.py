@@ -19,7 +19,7 @@ AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".webm", ".
 VIDEO_EXTENSIONS = {".mp4", ".webm", ".ogv", ".mov", ".mkv", ".avi"}
 
 # 3D model extensions for inline preview
-MODEL_3D_EXTENSIONS = {".stl", ".obj"}
+MODEL_3D_EXTENSIONS = {".stl", ".obj", ".glb", ".gltf"}
 
 # PDF extension for inline preview (rendered client-side via pdf.js)
 PDF_EXTENSIONS = {".pdf"}

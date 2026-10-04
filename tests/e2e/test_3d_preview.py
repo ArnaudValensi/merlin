@@ -1,4 +1,4 @@
-"""E2E tests for 3D model preview (STL + OBJ).
+"""E2E tests for 3D model preview (STL + OBJ + glTF/GLB).
 
 Run with: uv run scripts.py test-e2e
 (installs the needed browsers automatically — see cmd_test_e2e in scripts.py)
@@ -26,10 +26,12 @@ FIXTURES = Path(__file__).parent.parent / "fixtures"
 
 @pytest.fixture(scope="module")
 def test_files(tmp_path_factory):
-    """Copy STL/OBJ fixtures + a corrupt .stl into a temp dir."""
+    """Copy STL/OBJ/glTF fixtures + a corrupt .stl into a temp dir."""
     root = tmp_path_factory.mktemp("model3dtest")
     shutil.copy(FIXTURES / "cube_20x30x40.stl", root / "cube_20x30x40.stl")
     shutil.copy(FIXTURES / "cube_10x10x10.obj", root / "cube_10x10x10.obj")
+    for name in ("box_20x30x40.glb", "box_20x30x40.gltf", "box_20x30x40.bin"):
+        shutil.copy(FIXTURES / name, root / name)
     # Corrupt STL — header-only, no triangles → loader will fail
     (root / "broken.stl").write_bytes(b"not actually an stl file")
     # A neighbour text file so we can test sibling navigation cleanup
@@ -159,6 +161,35 @@ class Test3DDimensions:
         assert abs(dims["x"] - 10.0) < 1e-3
         assert abs(dims["y"] - 10.0) < 1e-3
         assert abs(dims["z"] - 10.0) < 1e-3
+        page.close()
+
+    @pytest.mark.parametrize("name", ["box_20x30x40.glb", "box_20x30x40.gltf"])
+    def test_gltf_dimensions_upright_in_mm(self, browser_context, test_files, name):
+        """glTF is Y-up in meters. The fixture is 0.04 m tall along +Y, so it
+        must come out 40 mm along +Z: proves the rotation and the scale. The
+        .gltf variant also proves its external .bin resolved."""
+        ctx, url = browser_context
+        page = _open_3d_file(ctx, url, str(test_files / name))
+        dims = page.evaluate("() => window.__merlin3DTest.dims")
+        assert abs(dims["x"] - 20.0) < 1e-3
+        assert abs(dims["y"] - 30.0) < 1e-3
+        assert abs(dims["z"] - 40.0) < 1e-3
+        assert "mm" in page.text_content(".model3d-dims")
+        page.close()
+
+    def test_gltf_keeps_its_own_material(self, browser_context, test_files):
+        """Unlike STL/OBJ, glTF materials are kept, not replaced by grey."""
+        ctx, url = browser_context
+        page = _open_3d_file(ctx, url, str(test_files / "box_20x30x40.glb"))
+        color = page.evaluate("""() => {
+            let hex = null;
+            window.__merlin3DTest.scene.traverse((c) => {
+                if (c.isMesh) hex = c.material.color.getHexString();
+            });
+            return hex;
+        }""")
+        assert color is not None
+        assert color != "b8b8b8"
         page.close()
 
 

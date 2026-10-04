@@ -289,6 +289,13 @@ class TestGetFileInfo:
         info = get_file_info(f)
         assert info["is_3d_model"] is True
 
+    def test_gltf_files_are_3d_models(self, tmp_path):
+        for name in ("scene.glb", "scene.gltf"):
+            f = tmp_path / name
+            f.write_bytes(b"glTF")
+            info = get_file_info(f)
+            assert info["is_3d_model"] is True, name
+
     def test_non_3d_file_is_not_3d_model(self, tmp_path):
         f = tmp_path / "photo.png"
         f.write_bytes(b"\x89PNG\r\n")

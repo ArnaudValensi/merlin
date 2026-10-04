@@ -5,6 +5,9 @@ Sources (downloaded as-is, no modifications):
 - `three.module.min.js` — https://unpkg.com/three@0.160.0/build/three.module.min.js
 - `loaders/STLLoader.js` — https://unpkg.com/three@0.160.0/examples/jsm/loaders/STLLoader.js
 - `loaders/OBJLoader.js` — https://unpkg.com/three@0.160.0/examples/jsm/loaders/OBJLoader.js
+- `loaders/GLTFLoader.js` — https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js
+- `utils/BufferGeometryUtils.js` — https://unpkg.com/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js (imported by GLTFLoader)
+- `environments/RoomEnvironment.js` — https://unpkg.com/three@0.160.0/examples/jsm/environments/RoomEnvironment.js (lighting for glTF PBR materials)
 - `controls/OrbitControls.js` — https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js
 
 The loaders and controls import from the bare specifier `'three'`, resolved
