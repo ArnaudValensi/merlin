@@ -21,7 +21,10 @@ Run: uv run scripts.py test-e2e   (or pytest tests/e2e/test_terminal_paste.py)
 Requires: chromium (clipboard permissions cannot be granted in Firefox) + tmux.
 """
 
+import re
 import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -187,6 +190,73 @@ def test_denied_read_does_not_prompt_twice(terminal):
     terminal.reload()
     terminal.wait_for_selector(".xterm-screen", timeout=30000)
     terminal.wait_for_timeout(2500)
+
+
+# ---------------------------------------------------------------------------
+# Uploads: several files at once land as space-separated paths, in order
+# ---------------------------------------------------------------------------
+
+PNG_BYTES = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082"
+)
+
+# Drop a set of files on the terminal the way a desktop file manager would.
+DROP_FILES = """(names) => {
+    const dt = new DataTransfer();
+    for (const n of names) dt.items.add(new File([n], n, { type: 'text/plain' }));
+    const target = document.getElementById('terminal-container');
+    target.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+}"""
+
+
+def _uploaded_paths(tmux_env, names):
+    """The upload paths now on the shell line for `names`, in order.
+
+    Read from tmux with newlines dropped: several paths overflow one row,
+    and zsh breaks the line with hard newlines that would split a path.
+    """
+    pane = subprocess.run(
+        ["tmux", "capture-pane", "-p"],
+        env=tmux_env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.replace("\n", "")
+    pattern = r"/tmp/merlin-clipboard/[0-9a-f]{6}-(?:%s)" % "|".join(
+        re.escape(n) for n in names
+    )
+    return re.findall(pattern, pane)
+
+
+def test_picker_uploads_several_files(terminal, tmux_env):
+    names = ["pick-one.png", "pick-two.png", "pick-three.png"]
+    _reset_line(terminal)
+    terminal.set_input_files(
+        "#upload-file-input",
+        [{"name": n, "mimeType": "image/png", "buffer": PNG_BYTES} for n in names],
+    )
+    # The flash clears after 1.5s, so catch it rather than sleep past it.
+    terminal.wait_for_function(
+        "() => document.getElementById('status-text').textContent === '3 files ready'",
+        timeout=5000,
+    )
+    terminal.wait_for_timeout(500)
+
+    paths = _uploaded_paths(tmux_env, names)
+    assert [Path(p).name.split("-", 1)[1] for p in paths] == names
+    for p in paths:
+        assert Path(p).read_bytes() == PNG_BYTES
+
+
+def test_drop_uploads_several_files(terminal, tmux_env):
+    names = ["drop-a.txt", "drop-b.txt"]
+    _reset_line(terminal)
+    terminal.evaluate(DROP_FILES, names)
+    terminal.wait_for_timeout(1500)
+
+    paths = _uploaded_paths(tmux_env, names)
+    assert [Path(p).name.split("-", 1)[1] for p in paths] == names
 
 
 # ---------------------------------------------------------------------------
