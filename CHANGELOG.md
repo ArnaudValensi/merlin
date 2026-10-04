@@ -2,6 +2,12 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.40.0 (2026-10-04)
+
+### Added
+- **Upload several files at once in the terminal**: The upload button now lets you pick several files, and dropping or pasting several files uploads them all instead of only the first. Their paths land on the command line together, separated by spaces, in the order given.
+- **Stream graphical apps to your browser (experimental)**: With `MERLIN_FEATURES=app`, Merlin runs GUI apps on private displays and streams their picture and sound to the browser, with touch controls, a full-screen player and an Apps page. Streams reach you from other networks too, through UPnP, STUN and TURN.
+
 ## v0.39.2 (2026-09-30)
 
 ### Fixed
