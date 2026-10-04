@@ -2,8 +2,16 @@
 
 **Status: implemented, experimental, behind the `app` feature flag.** Runs
 Linux GUI apps on private Xvfb displays, lets an agent drive them through the
-`merlin app` CLI, and streams them to the dashboard over WebRTC on the local
-network. The user guide is [`docs/apps.md`](../apps.md).
+`merlin app` CLI, and streams them to the dashboard over WebRTC: on the local
+network, and from anywhere through the home router (UPnP), STUN or Merlin
+Cloud's relay (TURN). The user guide is [`docs/apps.md`](../apps.md).
+
+Design history (the decisions, why, and what each step found) lives in the
+private merlin-saas repo, one epic per step under `epics/cli/archive/`:
+`app-streaming` (LAN streaming), `app-streaming-audio` (sound),
+`app-streaming-remote` (diagnostics, patience, recovery, adaptive bitrate),
+`app-streaming-reach` (UPnP, STUN, TURN, the path in the chip, test modes).
+Each has its `requirements.md` and a dated journal.
 
 ## Feature flag
 
