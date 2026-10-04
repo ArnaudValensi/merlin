@@ -2,6 +2,11 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.41.0 (2026-10-04)
+
+### Added
+- **Preview GLB and glTF models in Files**: `.glb` and `.gltf` files now open in the 3D viewer with their own colors and textures, stood upright, with dimensions in mm like STL and OBJ.
+
 ## v0.40.0 (2026-10-04)
 
 ### Added
