@@ -148,28 +148,37 @@ key state once per frame), text, clicks and moves. Each input stamps
 terminal (`verify_ws_cookie`, close `4401`).
 
 1. Server → browser `welcome` (`host`, the app's public record). Browser →
-   server `hello` with the codecs from `RTCRtpReceiver.getCapabilities`.
+   server `hello` with the codecs from `RTCRtpReceiver.getCapabilities` (and
+   `ice`, a connection test mode, when one is on). Meanwhile the server gets
+   the ICE servers (`iceservers.Cache`, see "Reaching the machine").
 2. Under a per-app lock (so simultaneous viewers still end with one), the
    server stops any previous viewer's streamer (it gets `replaced`), re-reads
    the record (the app may have been relaunched during the handshake), binds
-   the viewer to its `generation`, and starts `/usr/bin/python3
-   app/streamer.py --display :N --codecs ... --fps 60 --bitrate K --xvfb-pid P
-   --xvfb-start T` in its own process group (8 Mbit/s at 1080p, proportional,
-   1.5 to 12). The streamer takes the apps state lock (`--state-lock`, the
+   the viewer to its `generation`, sends the browser `servers` (before any
+   offer: the browser builds its peer with them), and starts
+   `/usr/bin/python3 app/streamer.py --display :N --codecs ... --fps 60
+   --bitrate K --xvfb-pid P --xvfb-start T --app ID ...` in its own process
+   group (8 Mbit/s at 1080p, proportional, 1.5 to 12), its ICE servers in its
+   environment (`MERLIN_APP_ICE`, never argv). The streamer takes the apps state lock (`--state-lock`, the
    one launch and stop take) while it checks that the display's lock still
    names that Xvfb and opens its input and capture connections, so the
    display cannot be torn down and handed to another app in between.
 3. The streamer picks NVENC H.264 (after a one-frame test pipeline, since
    `nvh264enc` can exist and fail to open), else OpenH264, else VP8, builds
-   `ximagesrc ! encoder ! payloader ! webrtcbin`, creates the `input` data
-   channel, then the offer. It drops candidates on `docker*`, `br-*`,
-   `veth*`, `virbr*` interfaces.
-4. The server relays `offer`, `answer` and `ice` both ways and polls the
-   record every 500 ms (`exited`, `agent_input`, and `restarted` when the
-   generation changed: the client reconnects to the new launch). When the
-   socket closes, the streamer is stopped gracefully (stdin closed: it stops
-   typing, releases held input, quits), its group signalled only if it does
-   not, and a thumbnail is captured.
+   `ximagesrc ! encoder ! payloader ! webrtcbin` (libnice's UPnP off, the
+   ICE servers set), creates the `input` data channel, then the offer. It
+   drops candidates on `docker*`, `br-*`, `veth*`, `virbr*` interfaces, and
+   asks the home router to let the stream in (UPnP, "Reaching the machine").
+4. The server relays `offer`, `answer` and `ice` both ways (and every other
+   streamer message to the browser) and polls the record every 500 ms
+   (`exited`, `agent_input`, and `restarted` when the generation changed: the
+   client reconnects to the new launch). A streamer that reports an error
+   or dies while its app was stopped, relaunched or exited is reported as
+   that (`_app_gone`), not as an error the client would retry into "No app
+   named …". When the socket closes, the streamer is stopped gracefully
+   (stdin closed: it stops typing, releases held input, removes what it
+   opened on the router, quits), its group signalled only if it has not
+   after 6 s, and a thumbnail is captured.
 
 Input on the data channel: `key {k, d}` (X keysym names), `move {x, y}`,
 `rel {dx, dy}`, `btn {b, d}` (1-3, 8, 9), `wheel {dy}`, `text {s}`. For
@@ -203,8 +212,9 @@ button when it stops.
 Client states (`client.js`): `connecting`, `live`, `unreachable`, `replaced`,
 `exited`, `paused` (hidden 30 s, except in picture-in-picture: entering and
 leaving it re-arms the timer; pausing cancels a pending reconnect), `error`,
-`closed`. "Unreachable" means ICE failed, or did not connect within 30 s of
-the offer (see "Beyond the LAN"); before the offer the server may be busy
+`closed`. "Unreachable" means ICE failed and did not recover within 6 s, or
+did not connect within 30 s of the offer (see "Beyond the LAN"); before the
+offer the server may be busy
 (another app starting or stopping), bounded separately by 60 s. A dead streamer gets one automatic retry per 20 s; a lost server
 (a Merlin restart) gets seven, with backoff, before `closed`. Every
 connection carries a generation and the client a `destroyed` flag: callbacks
@@ -472,8 +482,11 @@ in. ICE then tries every pair; the selected one decides the path.
   (takes the Sessions slot, gives it back on close) and a draggable
   mini-player on mobile (above the key toolbar, corner persisted, native
   picture-in-picture, tap for the player).
-- **Player** (`/apps/{id}/play`, standalone page): ⋯ sheet, status chip,
+- **Player** (`/apps/{id}/play`, standalone page): ⋯ sheet, status chip
+  (route, path, round trip, gauge; tapped, the details on several lines),
   Gamepad / Trackpad / Touch profiles on touch devices (remembered per app),
+  the "Connection test" row (Auto, Direct, UPnP, STUN, Relay: a fresh session
+  in that mode, until another or leaving; see "Reaching the machine"),
   client-side pinch zoom, key row and phone keyboard, Wake Lock, fullscreen
   plus landscape lock on Android, a home-screen hint on iPhone. When the app
   ends it offers Logs and Leave (the same as Leave in the sheet: back where
@@ -535,7 +548,8 @@ in. ICE then tries every pair; the selected one decides the path.
   provides a clock, and one that stops with a lost sink would stop the
   picture.
 - **Opus in-band FEC needs SILK**; `restricted-lowdelay` is CELT only, so
-  there is no FEC (negligible loss on a LAN).
+  there is no FEC: on a lossy mobile link the sound can crackle while the
+  picture is repaired with keyframes (lower latency was the choice).
 
 ## Tests
 
@@ -548,18 +562,32 @@ in. ICE then tries every pair; the selected one decides the path.
   reaches a real output, a stream naming another output is left alone and
   unheard, no WirePlumber state, local mode, degradation),
   `test_app_streamer.py` (attachment under the lock, the restart without
-  sound, an offer finishing during it, stale webrtcbin callbacks),
-  `tests/js/app-client.test.js` (client states, stereo answer, sound choices).
+  sound, an offer finishing during it, stale webrtcbin callbacks, encoder
+  bitrate units, the ICE servers on webrtcbin and libnice's UPnP off on a real
+  one, the path and reach messages), `test_app_linkstats.py` (routes, paths,
+  snapshots, rate control, keyframe accounting, the summary),
+  `test_app_iceservers.py` (STUN setting, the portal's credentials and their
+  cache, the test modes, webrtcbin URIs), `test_app_upnp.py` (against a fake
+  router: discovery bound to the default gateway, no redirect followed,
+  mappings and pinholes, the per-port fallback, renewal, ownership, the
+  sweep, closing in time), `tests/js/app-client.test.js` (client states,
+  stereo answer, sound choices, patience and recovery, the chip, the servers
+  on the peer, test modes).
 - E2E (`uv run scripts.py test-e2e`): `test_app_stream.py` (pixels, input,
   codecs, single viewer, cleanup), `test_app_terminal.py`,
   `test_app_player.py` (touch profiles through CDP touch events),
   `test_app_page.py`, `test_app_hardening.py` (crash, streamer death, restart,
   no Xvfb), `test_app_network.py` (a bad network in a namespace: route,
   rate down and back up, gauge, round trip, keyframes forced),
+  `test_app_reach.py` (a small internet of namespaces with NAT routers and
+  coturn: STUN, the relay through a symmetric NAT, the forced relay),
   `test_app_audio.py` (a WebAudio analyser hears the probe's
   440 Hz; local mode is picture only; each surface's sound default and
   toggle under Chromium's real autoplay rule; sinks lost mid-stream keep the
   picture coming (decoded frames) and never move the capture; sinks gone
   before the viewer give a silent stream).
 - Tests needing Xvfb or GStreamer skip with a reason on machines without
-  them.
+  them; so do the namespace tests without unprivileged namespaces, `tc`,
+  the `xt_MASQUERADE`/`xt_conntrack` modules (Docker loads them) or coturn's
+  `turnserver`. The E2E servers run with `MERLIN_APP_UPNP=0` and no STUN:
+  tests never touch the machine's real router or the internet.

@@ -1,7 +1,8 @@
 /* App stream client: WebRTC, peer to peer when a path exists (LAN, UPnP,
  * STUN) else through Merlin Cloud's relay (TURN), signaling over Merlin's
  * WebSocket. Shared by the full-screen player, the terminal panel and the
- * mobile mini-player. ?ice=relay on the page forces the relay (a test switch).
+ * mobile mini-player. ?ice=<mode> on the page (or setIce) tries one way at a
+ * time: direct, upnp, stun, relay.
  *
  *   const stream = MerlinApps.connect({id, video, onState, onWelcome, ...});
  *   stream.send({t: 'key', k: 'Right', d: true});
