@@ -21,6 +21,9 @@ VIDEO_EXTENSIONS = {".mp4", ".webm", ".ogv", ".mov", ".mkv", ".avi"}
 # 3D model extensions for inline preview
 MODEL_3D_EXTENSIONS = {".stl", ".obj", ".glb", ".gltf"}
 
+# HTML extensions: run as a sandboxed page (see html_view.py)
+HTML_EXTENSIONS = {".html", ".htm"}
+
 # PDF extension for inline preview (rendered client-side via pdf.js)
 PDF_EXTENSIONS = {".pdf"}
 
@@ -246,6 +249,7 @@ def get_file_info(path: Path) -> dict[str, Any]:
     is_video = ext in VIDEO_EXTENSIONS
     is_3d_model = ext in MODEL_3D_EXTENSIONS
     is_pdf = ext in PDF_EXTENSIONS
+    is_html = ext in HTML_EXTENSIONS
     is_text = _is_text_file(path, mime_type)
 
     return {
@@ -260,6 +264,7 @@ def get_file_info(path: Path) -> dict[str, Any]:
         "is_video": is_video,
         "is_3d_model": is_3d_model,
         "is_pdf": is_pdf,
+        "is_html": is_html,
         "mime_type": mime_type,
     }
 

@@ -14,6 +14,7 @@ from zipstream import ZipStream
 from merlin_ext import make_templates
 
 from .fs_helpers import (
+    HTML_EXTENSIONS,
     create_item,
     delete_item,
     get_file_info,
@@ -23,6 +24,7 @@ from .fs_helpers import (
     sanitize_filename,
     validate_path,
 )
+from .html_view import view_url
 
 FILES_DIR = Path(__file__).parent.resolve()
 FILES_TEMPLATES_DIR = FILES_DIR / "templates"
@@ -142,6 +144,24 @@ def api_raw(path: str = Query(..., description="Filesystem path to serve")):
         )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Permission denied")
+
+
+@api_router.get("/view-url")
+def api_view_url(path: str = Query(..., description="HTML file to preview")):
+    """Mint a sandboxed preview URL for an HTML file (see html_view.py)."""
+    try:
+        resolved = validate_path(path)
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    if resolved.suffix.lower() not in HTML_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Not an HTML file")
+    if resolved.name.startswith("."):
+        raise HTTPException(status_code=403, detail="Hidden files are not previewed")
+
+    return {"url": view_url(resolved)}
 
 
 @api_router.post("/upload")

@@ -3,10 +3,12 @@
 The Files page (**Files** in the sidebar, `/files`) is a web file browser
 over your machine's whole filesystem: a directory listing plus a file
 viewer that renders code with line numbers and syntax highlighting,
-markdown and Mermaid diagrams, images, audio, video, and 3D models, and
+markdown and Mermaid diagrams, HTML pages, images, audio, video, and 3D
+models, and
 lets you upload, download, create, rename, and delete. It is the
 inspection side of the coding environment: your agent produces artifacts
-in the workspace (code, screenshots, docs, 3D models) and Files is how
+in the workspace (code, screenshots, docs, small web apps, 3D models) and
+Files is how
 you review them from any device; upload closes the loop the other way,
 dropping assets in for your agent to act on. It opens in the same
 directory where `merlin` was launched, shared with the
@@ -56,6 +58,32 @@ upright on Z and its dimensions converted to mm. A `.gltf` loads its
 
 ![Image preview](files/phone-image-viewer.jpg)
 ![STL 3D model viewer](files/phone-stl-viewer.jpg)
+
+## Run HTML pages
+
+`.html` and `.htm` files open running, not as source: small apps, demos
+and reports your agent generated work right in the viewer, with their
+scripts, stylesheets, images, data files and ES modules loaded from the
+same folder. A **Source** toggle switches to the highlighted code
+(**Rendered** switches back), and the **open in new tab** button runs the
+page full screen, handy on a phone.
+
+The page runs sandboxed, in its own isolated origin, so a script in it
+can never act as you on the dashboard:
+
+- It can run JavaScript, load from CDNs, call external APIs, submit forms
+  and open popups.
+- It cannot reach Merlin's API, the dashboard page around it, or your
+  login.
+- It can read the files in its own folder and the folders below it, but
+  never hidden files or folders (`.env`, `.git`, `.ssh`, ...). Keep that
+  in mind before opening an HTML file you do not trust in a folder full
+  of private documents: it could read them and send them out.
+- `localStorage`, `sessionStorage` and cookies work, but only in memory:
+  an app's saved state is gone when you reload the page.
+
+Preview links last 12 hours and stop working when Merlin restarts. Reopen
+the file from Files to get a fresh one.
 
 ## Step through a directory
 
@@ -131,6 +159,11 @@ repo.
 - **A 3D model shows the binary info card**: the model failed to load or
   the 3D module did not; download it instead. Draco- or
   meshopt-compressed glTF files are not supported yet and land here.
+- **"This preview link has expired"**: an HTML page opened in its own tab
+  outlived its link (12 hours, or a Merlin restart). Reopen the file from
+  Files.
+- **An HTML app forgets its state on reload**: expected. The sandbox keeps
+  `localStorage` and cookies in memory only.
 - **"Mermaid rendering failed"**: the diagram source is shown raw below
   the error so you can fix it.
 - **The page suddenly reloads to the login screen**: your session expired;

@@ -311,6 +311,43 @@ document.addEventListener('DOMContentLoaded', () => {
 | `GET /api/files/browse?path=` | Directory listing OR file info (auto-detects) |
 | `GET /api/files/content?path=` | Text file content (up to 2 MB, with truncation flag) |
 | `GET /api/files/raw?path=` | Raw file (FileResponse for images/downloads) |
+| `GET /api/files/view-url?path=` | Mints a sandboxed preview URL for an `.html`/`.htm` file |
+| `GET /files-view/{token}/{path}` | **Public, token-gated.** Serves the previewed page and its assets (see below) |
+
+#### Sandboxed HTML preview (`files/html_view.py`)
+
+HTML files run as pages in the viewer, so their scripts must never get the
+dashboard's privileges: same-origin with the dashboard, a previewed script
+could drive `/api/terminal`, a shell. The page therefore runs in an **opaque
+origin**: the viewer's iframe is `sandbox`-ed without `allow-same-origin`,
+and every `/files-view` response carries `Content-Security-Policy: sandbox
+...` with the same flags, so the open-in-new-tab case is sandboxed too.
+
+An opaque-origin page sends no session cookie on its subresource requests,
+so `/files-view` cannot sit behind `require_auth`. It is mounted by the
+files module's `register_routes` escape hatch, outside `/api` (the
+`/webhooks` precedent), and authenticates by a **capability token** in the
+first path segment: `<b64url(root)>.<expiry>.<hmac>`, signed with a
+per-process random secret (a restart invalidates every link), valid 12 h,
+granting read access under one root, the HTML file's folder. Relative URLs
+in the page resolve under the same token. Scope rules: any hidden path
+segment is a 404, the resolved path (after symlinks) must stay inside the
+root, `validate_path`'s blocklist applies, directories are never listed.
+
+Other response headers: `Access-Control-Allow-Origin: *` (the page's
+origin is `null`, and module scripts and `fetch()` are CORS requests; the
+token is the gate), `Referrer-Policy: no-referrer` (the token must not leak
+to CDNs), `nosniff`, `no-store`. HTML documents get a small shim injected
+first in `<head>` that swaps the `localStorage`, `sessionStorage` and
+`document.cookie` the opaque origin refuses for in-memory versions, so apps
+run instead of throwing.
+
+Accepted residual risk (a product decision): a hostile page can read the
+non-hidden files under its folder and send them out, since outbound network
+stays open for CDNs. Rejected alternatives: unsandboxed same-origin (a
+shell from previewing a file), and a second server on another port (does
+not reach through Merlin Cloud or a tunnel, and cookies ignore ports).
+Design history: `epics/cli/html-preview/` in merlin-saas.
 
 ## Modules
 

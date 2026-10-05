@@ -46,7 +46,7 @@
     let dirHeader, selectionHeader, deleteConfirmBar;
     let breadcrumbs, dirEntries, dirEmpty, dirError, dirErrorMsg, dirLoading;
     let fileMeta, fileContent, fileLoading, wrapToggle, downloadLink;
-    let gitCommitsBtn, mdToggle;
+    let gitCommitsBtn, mdToggle, openTabLink;
     let uploadBtn, uploadInput, uploadProgress, uploadProgressFill, uploadProgressText;
     let createBtn, selectBtn;
     let selectionCloseBtn, selectionCount, downloadSelBtn, renameBtn, deleteSelBtn;
@@ -170,6 +170,7 @@
         downloadLink = document.getElementById('download-link');
         gitCommitsBtn = document.getElementById('git-commits-btn');
         mdToggle = document.getElementById('md-toggle');
+        openTabLink = document.getElementById('open-tab-link');
 
         uploadBtn = document.getElementById('upload-btn');
         uploadInput = document.getElementById('upload-input');
@@ -1188,6 +1189,8 @@
         wrapToggle.classList.remove('active');
         wrapToggle.style.display = 'none';
         mdToggle.style.display = 'none';
+        openTabLink.style.display = 'none';
+        openTabLink.removeAttribute('href');
         fileLoading.style.display = 'none';
         mdRawMode = false;
         currentFileInfo = info;
@@ -1226,11 +1229,18 @@
             await render3DPreview(info);
         } else if (info.is_pdf) {
             await renderPdfPreview(info);
+        } else if (info.is_html) {
+            mdToggle.style.display = '';
+            mdToggle.textContent = 'Source';
+            mdToggle.title = 'Show the HTML source';
+            await renderHtmlPreview(info);
         } else if (info.is_text && isMarkdown(info.name)) {
+            mdToggle.title = 'Toggle markdown rendering';
             mdToggle.style.display = '';
             mdToggle.textContent = 'Raw';
             await renderMarkdownFile(info);
         } else if (info.is_text && isMermaidFile(info.name)) {
+            mdToggle.title = 'Toggle diagram rendering';
             mdToggle.style.display = '';
             mdToggle.textContent = 'Raw';
             await renderMermaidFile(info);
@@ -1278,6 +1288,38 @@
         } finally {
             fileLoading.style.display = 'none';
         }
+    }
+
+    // The page runs sandboxed in an opaque origin, served by a token-gated
+    // route scoped to its folder (files/html_view.py), so its scripts never
+    // get the dashboard's privileges. The iframe flags mirror the route's CSP.
+    const HTML_SANDBOX = 'allow-scripts allow-forms allow-popups ' +
+        'allow-popups-to-escape-sandbox allow-modals allow-downloads allow-pointer-lock';
+
+    async function renderHtmlPreview(info) {
+        fileLoading.style.display = '';
+        const data = await API.get('/api/files/view-url?path=' + encodeURIComponent(info.path));
+        fileLoading.style.display = 'none';
+        if (currentFileInfo !== info) return; // navigated away meanwhile
+
+        if (!data || !data.url) {
+            // No preview link: show the source rather than nothing
+            mdToggle.style.display = 'none';
+            wrapToggle.style.display = '';
+            await renderTextFile(info);
+            return;
+        }
+
+        const frame = document.createElement('iframe');
+        frame.className = 'html-preview';
+        frame.setAttribute('sandbox', HTML_SANDBOX);
+        frame.setAttribute('allow', 'fullscreen');
+        frame.title = info.name;
+        frame.src = data.url;
+        fileContent.appendChild(frame);
+
+        openTabLink.href = data.url;
+        openTabLink.style.display = '';
     }
 
     // ---------------------------------------------------------------------------
@@ -1518,6 +1560,10 @@
             mdToggle.textContent = 'Rendered';
             wrapToggle.style.display = '';
             await renderTextFile(currentFileInfo);
+        } else if (currentFileInfo.is_html) {
+            mdToggle.textContent = 'Source';
+            wrapToggle.style.display = 'none';
+            await renderHtmlPreview(currentFileInfo);
         } else {
             mdToggle.textContent = 'Raw';
             wrapToggle.style.display = 'none';

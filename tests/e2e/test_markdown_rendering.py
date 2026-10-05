@@ -360,7 +360,7 @@ class TestMarkdownLinks:
         page.goto(f"{url}/files{test_files}/test.md", wait_until="networkidle")
         time.sleep(0.5)
 
-        ext_link = page.query_selector('a[target="_blank"]')
+        ext_link = page.query_selector('.markdown-body a[target="_blank"]')
         assert ext_link is not None
         assert "example.com" in ext_link.get_attribute("href")
 

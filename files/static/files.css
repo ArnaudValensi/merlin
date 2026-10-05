@@ -844,6 +844,17 @@
     }
 }
 
+/* HTML preview: a sandboxed iframe (see renderHtmlPreview). White behind
+   the page since most pages assume one. */
+.html-preview {
+    display: block;
+    width: 100%;
+    height: calc(100vh - 180px);
+    min-height: 320px;
+    border: 0;
+    background: #fff;
+}
+
 /* PDF preview (pdf.js) */
 /* .pdf-preview is a non-scrolling positioned shell so the counter + zoom
    chrome stays fixed; .pdf-scroll inside it is the element that scrolls. */
@@ -936,7 +947,8 @@
 }
 
 @media (max-width: 768px) {
-    .pdf-preview {
+    .pdf-preview,
+    .html-preview {
         height: calc(100vh - 220px);
     }
     .pdf-counter {
