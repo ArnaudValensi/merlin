@@ -242,7 +242,7 @@ class TestInstall:
             if skills._HOOK_MARKER in h.get("command", "")
         ]
         assert any("agent-state.sh" in c and " idle " in c for c in start_cmds)
-        assert any("agent-session-init.sh" in c for c in start_cmds)
+        assert any('agent-session-init.sh" claude ' in c for c in start_cmds)
         # The other two events stay single-command.
         for ev in ("UserPromptSubmit", "Stop"):
             ev_cmds = [
@@ -429,7 +429,7 @@ class TestCodexInstall:
         assert group["matcher"] == "startup|resume|clear"
         commands = [hook["command"] for hook in group["hooks"]]
         assert any("agent-state.sh" in command for command in commands)
-        assert any("agent-session-init.sh" in command for command in commands)
+        assert any('agent-session-init.sh" codex ' in command for command in commands)
 
     def test_preserves_foreign_codex_hooks(self, codex_file):
         codex_file.parent.mkdir(parents=True, exist_ok=True)

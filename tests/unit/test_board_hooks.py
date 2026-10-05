@@ -81,7 +81,7 @@ class Server:
     def pane_of(self, win: str) -> str:
         return self.tmux("display-message", "-p", "-t", win, "#{pane_id}")
 
-    def run(self, script: Path, *args, pane=None, cwd=None):
+    def run(self, script: Path, *args, pane=None, cwd=None, stdin=None):
         env = self._env()
         env["TMUX"] = self._tmux_var()
         if pane is not None:
@@ -95,7 +95,8 @@ class Server:
             env=env,
             timeout=10,
             check=False,
-            stdin=subprocess.DEVNULL,
+            input=stdin,
+            stdin=subprocess.DEVNULL if stdin is None else None,
             cwd=str(cwd) if cwd else None,
         )
 
@@ -148,6 +149,31 @@ class TestSessionInit:
         s.run(INIT_SH, pane=s.pane_of(w["b"]), cwd=s.home)
         assert s.wopt(w["b"], "@agent_sid") != ""
         assert s.wopt(w["a"], "@agent_sid") == ""
+
+    def test_stamps_provider_and_conversation(self, srv):
+        s, w = srv
+        payload = '{"hook_event_name": "SessionStart", "session_id": "abc-123_x"}'
+        s.run(INIT_SH, "codex", pane=s.pane_of(w["a"]), cwd=s.home, stdin=payload)
+        assert s.wopt(w["a"], "@agent_provider") == "codex"
+        assert s.wopt(w["a"], "@agent_conv") == "abc-123_x"
+
+    def test_conversation_overwritten_on_next_start(self, srv):
+        # /clear and resume start a new conversation in the same window.
+        s, w = srv
+        pane = s.pane_of(w["a"])
+        s.run(INIT_SH, "claude", pane=pane, cwd=s.home, stdin='{"session_id": "first"}')
+        s.run(INIT_SH, "claude", pane=pane, cwd=s.home, stdin='{"session_id":"second"}')
+        assert s.wopt(w["a"], "@agent_conv") == "second"
+
+    def test_no_conversation_without_provider_or_id(self, srv):
+        s, w = srv
+        pane = s.pane_of(w["a"])
+        s.run(INIT_SH, pane=pane, cwd=s.home, stdin='{"session_id": "x1"}')
+        s.run(INIT_SH, "claude", pane=pane, cwd=s.home, stdin="not json")
+        s.run(INIT_SH, "other", pane=pane, cwd=s.home, stdin='{"session_id": "x2"}')
+        assert s.wopt(w["a"], "@agent_conv") == ""
+        assert s.wopt(w["a"], "@agent_provider") == ""
+        assert s.wopt(w["a"], "@agent_sid") != ""  # the rest still runs
 
     def test_noop_outside_tmux(self, tmp_path):
         env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}

@@ -28,6 +28,9 @@ sys.path.insert(0, str(Path(_project_root) / "merlin-bot"))
 # ---------------------------------------------------------------------------
 _session_merlin_home = tempfile.mkdtemp(prefix="merlin-test-")
 os.environ["MERLIN_HOME"] = _session_merlin_home
+# Feature flags too: the suite imports main with no flag set, so an ambient
+# MERLIN_FEATURES (exported by a shell that sourced config.env) must not leak in.
+os.environ.pop("MERLIN_FEATURES", None)
 
 # Clean up stale temp dirs from interrupted runs (Ctrl+C, segfault, etc.)
 _tmp = Path(tempfile.gettempdir())
@@ -40,7 +43,8 @@ for _stale in _tmp.glob("merlin-test-*"):
 def _isolated_merlin_home(monkeypatch, tmp_path):
     """Point MERLIN_HOME to a per-test temp dir so no test touches ~/.merlin/.
 
-    Also clear any ambient MERLIN_DEV so dev-mode detection is deterministic:
+    Also clear any ambient MERLIN_DEV so dev-mode detection is deterministic
+    (and MERLIN_FEATURES, so feature flags start off):
     with the override reset and the env var gone, is_dev_mode() falls back to
     the repo's .git presence (dev mode), so app_dir() resolves to the repo.
     Tests that need a specific mode set it explicitly (MERLIN_DEV in the test
@@ -50,6 +54,7 @@ def _isolated_merlin_home(monkeypatch, tmp_path):
 
     monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
     monkeypatch.delenv("MERLIN_DEV", raising=False)
+    monkeypatch.delenv("MERLIN_FEATURES", raising=False)
     paths._dev_mode_override = None
     yield
     paths._dev_mode_override = None

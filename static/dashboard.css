@@ -1370,6 +1370,12 @@ html.sc .main {
 
 .consent-btn:disabled { opacity: 0.5; cursor: default; }
 
+/* Workspace restore offer (workspace/static/restore.js): the consent banner's
+   shape, green because it brings something back rather than asks a setting. */
+.restore-banner { border-left-color: var(--accent-green); }
+.restore-banner .consent-banner-icon { color: var(--accent-green); }
+.restore-banner .consent-banner-actions[hidden] { display: none; }
+
 @media (max-width: 768px) {
     .consent-banner-actions { width: 100%; }
     .consent-btn { flex: 1 1 auto; }

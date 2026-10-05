@@ -34,6 +34,7 @@ from terminal.tmux import (
     DEFAULT_SESSION_NAME,
     parse_session_identity,
     reconnect_argv,
+    server_spawn_prefix,
     terminal_process_env,
     with_tmux_conf,
 )
@@ -604,7 +605,12 @@ async def terminal_ws(websocket: WebSocket):
     if sessions is None:
         await websocket.close(code=1013, reason="tmux temporarily unavailable")
         return
-    tmux_args = with_tmux_conf(reconnect_argv(sessions, preferred))
+    # With no session there is no server: this client creates it, so it may
+    # need its own scope to outlive a Merlin restart (see server_spawn_prefix).
+    tmux_args = [
+        *server_spawn_prefix(bool(sessions)),
+        *with_tmux_conf(reconnect_argv(sessions, preferred)),
+    ]
     tmux_env = terminal_process_env(os.environ, term="xterm-256color")
 
     # Fork a PTY running tmux. Nothing but exec-prep may run in the child:
@@ -615,7 +621,7 @@ async def terminal_ws(websocket: WebSocket):
     if pid == 0:
         # Child process — start in CWD (or project root)
         os.chdir(_cwd or str(PROJECT_ROOT))
-        os.execvpe("tmux", tmux_args, tmux_env)
+        os.execvpe(tmux_args[0], tmux_args, tmux_env)
         os._exit(1)
 
     # Parent process — bridge WebSocket <-> PTY. All PTY I/O goes through

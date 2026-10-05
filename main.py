@@ -252,11 +252,14 @@ from contextlib import asynccontextmanager
 async def _lifespan(_app: FastAPI):
     """Startup does nothing (background tasks start in ``_run`` below, next to
     the other tasks). Shutdown is the one hook uvicorn runs before it re-raises
-    SIGTERM, so the attention watcher is stopped cleanly here."""
+    SIGTERM, so the attention watcher and the workspace sweep are stopped
+    cleanly here."""
     yield
     from notifications import watcher as _notif_watcher
+    from workspace import service as _workspace_service
 
     await _notif_watcher.stop()
+    await _workspace_service.stop()
 
 
 app = FastAPI(title="Merlin", docs_url=None, redoc_url=None, lifespan=_lifespan)
@@ -1191,6 +1194,13 @@ import notifications
 
 mount_module(notifications, "notifications")
 
+# Workspace restore: core module. A background sweep snapshots the tmux
+# workspace; after a restart the dashboard banner offers to bring back the
+# sessions that are missing. /api/workspace + /static/workspace.
+import workspace
+
+mount_module(workspace, "workspace")
+
 # Webhooks front desk — intentionally mounted WITHOUT require_auth (terminal
 # precedent): /webhooks/* is public and self-authenticating via per-hook
 # secrets, verified inside the module. Everything under /api stays gated.
@@ -1709,6 +1719,12 @@ def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
 
         notif_routes.wire_push()
         tasks.append(notif_watcher.start())
+
+        # Workspace snapshot sweep. Freezes the restore offer before its first
+        # write (see workspace/store.py). Inert without tmux.
+        from workspace import service as workspace_service
+
+        tasks.append(workspace_service.start())
 
         # Start all extensions with start() hooks
         for info in extension_registry.values():

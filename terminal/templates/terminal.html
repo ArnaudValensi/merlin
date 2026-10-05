@@ -154,7 +154,8 @@
    so the desktop split wins regardless of source order. */
 @media (min-width: 769px) { body .main { flex-direction: row; } }
 
-/* The agent-state consent banner is a direct child of .main (see base.html).
+/* The prompt banners (agent-state consent, workspace restore) sit in
+   .main-banners, a direct child of .main (see base.html).
    Every other page lays .main out as a block, so the banner is a normal strip
    at the top. This page makes .main a flex ROW, which turned the banner into a
    third row item that align-items:stretch blew up to full height beside the
@@ -164,7 +165,7 @@
    and the status bar's 210, so it can never be half-covered.
    Mobile keeps the in-flow strip: .main is a column there and stacks fine. */
 @media (min-width: 769px) {
-    body .main > .consent-banner {
+    body .main > .main-banners {
         position: fixed;
         top: 16px;
         left: calc(var(--sidebar-width) + 16px);
@@ -172,7 +173,8 @@
         z-index: 300;
         margin: 0;
     }
-    html.sc body .main > .consent-banner {
+    body .main > .main-banners > .consent-banner { margin: 0 0 8px; }
+    html.sc body .main > .main-banners {
         left: calc(var(--sidebar-collapsed-width) + 16px);
     }
 }

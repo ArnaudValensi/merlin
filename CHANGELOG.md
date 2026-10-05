@@ -2,6 +2,14 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## Unreleased
+
+### Added
+- **Get your workspace back after a reboot or a power cut**: Merlin now keeps a snapshot of your tmux sessions, saved every 15 seconds when something changed. After the machine restarts, the first page you open offers to restore them: every session and window comes back with its layout and directories, and every Claude Code and Codex conversation resumes where it was, with its launch options. Other programs come back as a shell in their directory; Merlin never reruns them.
+
+### Fixed
+- **Test suite no longer picks up your feature flags**: An exported `MERLIN_FEATURES` no longer makes the app-flag tests fail.
+
 ## v0.42.0 (2026-10-05)
 
 ### Added

@@ -538,10 +538,11 @@ def create_or_get_session(directory: str, name: str = "") -> str | None:
     # is open (it talks over HTTP) while the terminal WebSocket is down and the
     # server has died. Imported here rather than at module scope: terminal's
     # package __init__ pulls in terminal.routes, which imports this module.
-    from terminal.tmux import tmux_conf_args
+    from terminal.tmux import server_spawn_prefix, tmux_conf_args
 
     if _run_ok(
-        [*tmux_conf_args(), "new-session", "-d", "-s", session, "-c", directory]
+        [*tmux_conf_args(), "new-session", "-d", "-s", session, "-c", directory],
+        prefix=server_spawn_prefix(bool(existing)),
     ):
         return session
     return None
@@ -562,14 +563,15 @@ def _window_cmd(cmd: str, session: str, window_id: str) -> bool:
     return _run_ok([cmd, "-t", f"{session}:{window_id}"])
 
 
-def _run_ok(args: list[str]) -> bool:
+def _run_ok(args: list[str], prefix: list[str] | None = None) -> bool:
     """Run a mutating tmux command, returning True on exit 0. Best-effort: a
-    stale target or a dead tmux just yields False rather than raising."""
+    stale target or a dead tmux just yields False rather than raising.
+    ``prefix`` wraps the call (``server_spawn_prefix`` for a server creation)."""
     if not shutil.which("tmux"):
         return False
     try:
         proc = subprocess.run(
-            ["tmux", *args],
+            [*(prefix or []), "tmux", *args],
             capture_output=True,
             text=True,
             timeout=5,

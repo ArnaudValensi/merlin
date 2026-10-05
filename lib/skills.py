@@ -500,7 +500,7 @@ def set_agent_state_hooks_mode(mode: str) -> str:
 # ---------------------------------------------------------------------------
 
 _HOOK_MARKER = "merlin:agent-state-pill"
-_HOOK_VERSION = 4  # v4: Codex lifecycle hooks alongside Claude Code
+_HOOK_VERSION = 5  # v5: session-init stamps the provider conversation id
 
 # Tools that open a BLOCKING dialog mid-turn: the agent has stopped and needs an
 # answer from you. Neither ends the turn, so `Stop` never fires and the pill
@@ -577,12 +577,13 @@ def _hook_command(state: str) -> str:
     return f'bash "{script}" {state}  # {_HOOK_MARKER}:v{_HOOK_VERSION}'
 
 
-def _session_init_command() -> str:
-    """The SessionStart companion that mints the board's stable session id and
-    pins the launch cwd (see terminal/hooks/agent-session-init.sh). Carries the
-    same marker so it is found, refreshed, and removed with the state hooks."""
+def _session_init_command(provider: str) -> str:
+    """The SessionStart companion that mints the board's stable session id,
+    pins the launch cwd and stamps the provider's conversation id (see
+    terminal/hooks/agent-session-init.sh). Carries the same marker so it is
+    found, refreshed, and removed with the state hooks."""
     script = paths.app_dir() / "terminal" / "hooks" / "agent-session-init.sh"
-    return f'bash "{script}"  # {_HOOK_MARKER}:v{_HOOK_VERSION}'
+    return f'bash "{script}" {provider}  # {_HOOK_MARKER}:v{_HOOK_VERSION}'
 
 
 def _is_merlin_group(group: object) -> bool:
@@ -598,14 +599,16 @@ def _is_merlin_group(group: object) -> bool:
     return False
 
 
-def _merlin_group(event: str, state: str, matcher: str | None = None) -> dict:
+def _merlin_group(
+    event: str, state: str, matcher: str | None = None, provider: str = "claude"
+) -> dict:
     """The hook entries Merlin owns for one event. SessionStart carries a second
     command (the board session-init) in the same group. A matcher, when the
     event scopes on one, is emitted first so the group reads like both agents'
     documented shape."""
     entries = [{"type": "command", "command": _hook_command(state)}]
     if event == "SessionStart":
-        entries.append({"type": "command", "command": _session_init_command()})
+        entries.append({"type": "command", "command": _session_init_command(provider)})
     group: dict = {"hooks": entries}
     if matcher is not None:
         group = {"matcher": matcher, **group}
@@ -642,15 +645,21 @@ def _hooks_shape_ok(settings: dict, events: dict = _CLAUDE_HOOK_EVENTS) -> bool:
     return True
 
 
+def _provider_of(events: dict) -> str:
+    """The agent a hook-event table belongs to (passed to session-init)."""
+    return "codex" if events is _CODEX_HOOK_EVENTS else "claude"
+
+
 def _reconcile_install(settings: dict, events: dict = _CLAUDE_HOOK_EVENTS) -> dict:
     """Desired settings with Merlin's own groups fresh: strip any existing
     Merlin groups (stale version / old path) and append the shipped ones.
     Foreign groups keep their place and order."""
+    provider = _provider_of(events)
     out = copy.deepcopy(settings)
     hooks = out.setdefault("hooks", {})
     for event, (state, matcher) in events.items():
         groups = [g for g in (hooks.get(event) or []) if not _is_merlin_group(g)]
-        groups.append(_merlin_group(event, state, matcher))
+        groups.append(_merlin_group(event, state, matcher, provider))
         hooks[event] = groups
     return out
 

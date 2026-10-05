@@ -63,11 +63,16 @@ def start_merlin(
     extra_env: dict | None = None,
     ready: str = "/terminal",
     name: str = "merlin",
+    prepare=None,
 ) -> Merlin:
     """Start a throwaway Merlin and wait until ``ready`` answers (a redirect
-    to the login page counts, so the probe works with auth on)."""
+    to the login page counts, so the probe works with auth on). ``prepare``,
+    when given, is called with the new ``MERLIN_HOME`` before the server
+    starts, to seed state the server reads at startup."""
     home = tmp_path_factory.mktemp(f"{name}-home")
     (home / "config.env").write_text(f"DASHBOARD_PASS={password}\n{config}")
+    if prepare is not None:
+        prepare(home)
     user_home = tmp_path_factory.mktemp(f"{name}-userhome")
     # An empty .zshrc keeps zsh's first-run wizard out of the terminal.
     (user_home / ".zshrc").write_text("")

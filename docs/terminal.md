@@ -30,6 +30,37 @@ session when you come back. Multiple browser tabs attach to the same
 session, and SSH access shares it too: phone, desktop browser, and SSH
 are one continuous workspace.
 
+## Get your workspace back after a restart
+
+tmux survives a closed tab, not a reboot or a power cut. Merlin covers that
+case: it keeps a snapshot of your sessions, saved every 15 seconds when
+something changed. After the machine restarts, the first page you open shows
+a banner: *Your last workspace didn't come back*, with the sessions it would
+bring back and when they were saved. **Restore** rebuilds them; **Dismiss**
+drops the offer.
+
+What comes back:
+
+- every session and window, with the same names, window numbers, pane
+  layouts and directories;
+- every Claude Code and Codex conversation, resumed where it was, with the
+  options it was launched with (model, effort, permission mode...).
+
+What does not: scrollback and screen contents, environment variables set
+only at launch (`FOO=1 claude`), and any other program. A pane that ran a dev
+server, an editor or a script comes back as a shell in its directory, and
+Merlin never reruns the command for you: rerunning an arbitrary command can
+have side effects, so that stays your call. An agent cut mid-turn is
+resumed like the others; tell it to continue.
+
+A session whose name is already in use is left as it is. The one exception
+is the session the terminal creates by itself when you open it before
+clicking Restore: Merlin fills it with your saved windows.
+
+The banner also appears after `tmux kill-server`, since Merlin cannot tell a
+deliberate kill from a crash. Dismiss it. Restarting Merlin itself never
+shows it, because your tmux sessions keep running.
+
 ## Manage windows
 
 Each tmux window is a separate shell. F2 creates a window, F3/F4 switch

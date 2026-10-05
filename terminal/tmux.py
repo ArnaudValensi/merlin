@@ -10,10 +10,13 @@ half-configured server depending on which door the user came through.
 """
 
 import re
+import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import paths
 
 if TYPE_CHECKING:  # keeps this module free of a runtime dependency on board
     from board.sweep import TmuxSession
@@ -34,6 +37,21 @@ def tmux_conf_args() -> list[str]:
     the one starting the server.
     """
     return ["-f", str(TMUX_CONF)] if TMUX_CONF.exists() else []
+
+
+def server_spawn_prefix(server_running: bool) -> list[str]:
+    """What to run a server-creating tmux call under.
+
+    Under a service manager (``MERLIN_SUPERVISED=1``, systemd) every process
+    Merlin spawns lives in the service's cgroup, and the unit sets no
+    ``KillMode``, so a tmux server Merlin starts would die with the whole
+    workspace at the next Merlin restart or update. Started in its own
+    transient scope, it survives. Only a call that may create the server needs
+    it: a client attaching to a running server changes nothing.
+    """
+    if server_running or not paths.is_supervised() or not shutil.which("systemd-run"):
+        return []
+    return ["systemd-run", "--user", "--scope", "--quiet", "--collect"]
 
 
 def with_tmux_conf(argv: list[str]) -> list[str]:

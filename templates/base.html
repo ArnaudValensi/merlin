@@ -98,6 +98,22 @@
     </aside>
 
     <main class="main">
+        {# Prompts shown above every page. One container so the terminal page,
+           which floats them over its split, stacks them instead of overlapping. #}
+        <div class="main-banners">
+        <div class="consent-banner restore-banner" id="workspace-restore" hidden>
+            <div class="consent-banner-body">
+                <div class="consent-banner-icon" aria-hidden="true">&#8634;</div>
+                <div class="consent-banner-text">
+                    <strong id="workspace-restore-title">Your last workspace didn't come back</strong>
+                    <span id="workspace-restore-detail"></span>
+                </div>
+            </div>
+            <div class="consent-banner-actions">
+                <button class="consent-btn consent-btn-primary" data-action="restore" type="button">Restore</button>
+                <button class="consent-btn" data-action="dismiss" type="button">Dismiss</button>
+            </div>
+        </div>
         <div class="consent-banner" id="agent-state-consent" hidden>
             <div class="consent-banner-body">
                 <div class="consent-banner-icon" aria-hidden="true">&#9680;</div>
@@ -117,10 +133,13 @@
                 <button class="consent-btn consent-btn-ghost" data-choice="never" type="button">Never</button>
             </div>
         </div>
+        </div>
         {% block content %}{% endblock %}
     </main>
 
     {% block scripts %}{% endblock %}
+
+    <script src="/static/workspace/restore.js"></script>
 
     <script>
     // Agent-state pill consent banner: shown only when the server reports

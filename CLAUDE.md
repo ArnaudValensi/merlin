@@ -46,6 +46,7 @@ merlin/
 ├── commits/                   # Git commit browser module
 ├── sessions/                  # Session transcript viewer (core module, /session/{file})
 ├── board/                     # Sessions board — /api/board + assets for the terminal's Sessions drawer
+├── workspace/                 # Workspace restore: continuous tmux snapshot, restore banner after a restart
 ├── notes/                     # Notes editor module (markdown)
 │   └── commands/              # merlin notes search / kb / remember commands
 ├── timeline/                  # Built-in private agent-activity Timeline extension
@@ -93,6 +94,7 @@ New to the codebase? Read `architecture.md` first, then `extension-system.md` an
 | [`docs/dev/dashboard-architecture.md`](docs/dev/dashboard-architecture.md) | Dashboard theme, CSS variables, JS patterns, API endpoints |
 | [`docs/dev/commit-review.md`](docs/dev/commit-review.md) | Commits page comparisons (`base..head`, ref safety, routes, the sticky header), saved reviews, comments, `merlin review` |
 | [`docs/dev/notifications.md`](docs/dev/notifications.md) | Attention watcher, event cursor, poll transport, in-tab rule, manifest and worker, Web Push, suppression, the seams kept for the hub |
+| [`docs/dev/workspace-restore.md`](docs/dev/workspace-restore.md) | Continuous tmux snapshot, the startup freeze, the restore banner and engine, `@agent_conv` hook stamping |
 | [`docs/dev/notifications-acceptance.md`](docs/dev/notifications-acceptance.md) | What only a person can verify on notifications: real push delivery, real focus, real agent screens, real browsers, the phone as an app |
 | [`docs/dev/claude-code-reference.md`](docs/dev/claude-code-reference.md) | Claude Code CLI flags and options |
 | [`docs/dev/releasing.md`](docs/dev/releasing.md) | Tagging, GitHub Releases, install/update flow, rollback |

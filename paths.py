@@ -173,6 +173,15 @@ def reviews_dir() -> Path:
     return data_dir() / "reviews"
 
 
+def workspace_dir() -> Path:
+    """Workspace restore state: the continuous tmux snapshot (``latest.json``)
+    and the restore frozen at startup (``pending-restore.json``). Under
+    ``~/.merlin/`` rather than ``~/.local/state`` so that in a Merlin Cloud
+    container it lives on the persistent volume with the rest of Merlin's data.
+    """
+    return data_dir() / "data" / "workspace"
+
+
 def extensions_dir() -> Path:
     """User extensions directory. Always ~/.merlin/extensions/."""
     return data_dir() / "extensions"
