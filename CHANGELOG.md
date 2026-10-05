@@ -2,6 +2,11 @@
 
 All notable user-facing changes to Merlin are documented in this file.
 
+## v0.42.0 (2026-10-05)
+
+### Added
+- **HTML files run as pages in Files**: Opening an `.html` file now shows the page running, with its scripts, styles and neighbouring files, instead of its source. A Source toggle shows the code and a button opens it full screen in a new tab. Pages run sandboxed, so they cannot act on your dashboard or read hidden files, and their saved state lasts until reload.
+
 ## v0.41.0 (2026-10-04)
 
 ### Added
