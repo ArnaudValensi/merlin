@@ -317,3 +317,9 @@ def test_an_expired_request_does_not_hide_a_later_answered_one():
     k.asked(1.0)
     k.keyframe(1.1)
     assert (k.forwarded, k.answered) == (2, 1)
+
+
+def test_a_session_gone_before_its_first_stats_still_says_it_connected():
+    session = linkstats.Session()
+    session.connected_at = 100.0
+    assert session.summary(101.2) == "session: 0m01s, ended before its first stats"

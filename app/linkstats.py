@@ -298,10 +298,15 @@ class Session:
     path: str = ""  # the last path_of the selected pair
 
     def summary(self, now: float) -> str:
-        if self.connected_at is None or self.last is None or self.first is None:
+        if self.connected_at is None:
             return "session: never connected"
         seconds = max(now - self.connected_at, 0.001)
         minutes, rest = divmod(int(seconds), 60)
+        if self.last is None or self.first is None:
+            # Connected, but gone before the first stats reading (a viewer
+            # replaced at once, say): no figures to give.
+            return f"session: {minutes}m{rest:02d}s, ended before its first stats"
+
         sent = (self.last.bytes_sent - self.first.bytes_sent) * 8 / seconds / 1000
         lost, packets = self.last.packets_lost, self.last.packets_sent
         loss = 100 * lost / packets if packets else 0.0
