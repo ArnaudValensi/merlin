@@ -1995,6 +1995,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     term.focus();
                     return;
                 }
+                // Nothing captured (a quick tap): never persist it, it would
+                // only come back as a retry that cannot succeed.
+                if (blob.size === 0) {
+                    showVoiceRefused('Voice recording was empty, try again');
+                    term.focus();
+                    return;
+                }
 
                 const language = document.getElementById('mic-lang').value;
                 const autoEnter = autoEnterBtn.classList.contains('active');

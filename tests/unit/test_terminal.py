@@ -498,6 +498,21 @@ class TestTranscribeSizeLimit:
         body = json.loads(result.body)
         assert "too large" in body["error"].lower()
 
+    def test_rejects_empty_audio_as_final(self):
+        """Empty audio returns 422 (dropped by the page), never a retried 500."""
+        with mock.patch("transcribe.transcribe") as mock_transcribe:
+            result = asyncio.run(
+                tr.transcribe_audio(
+                    file=self._make_file(data=b""),
+                    language="en",
+                    auto_enter="false",
+                    target="merlin:@1",
+                )
+            )
+        assert result.status_code == 422
+        assert "empty" in json.loads(result.body)["error"]
+        mock_transcribe.assert_not_called()
+
     def test_accepts_exact_limit(self):
         """Audio exactly 25 MB is accepted."""
         data = b"x" * (25 * 1024 * 1024)

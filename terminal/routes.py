@@ -457,6 +457,13 @@ async def transcribe_audio(
     content = await file.read()
     if len(content) > MAX_AUDIO_SIZE:
         return JSONResponse({"error": "Audio too large (max 25 MB)"}, status_code=413)
+    if not content:
+        # Final, like any unreadable audio: the page drops it instead of
+        # retrying. iOS Safari can hand back an empty blob for a pending
+        # recording, which would otherwise be retried forever.
+        return JSONResponse(
+            {"error": "Voice recording was empty, try again"}, status_code=422
+        )
 
     # Save uploaded audio to a temp file (whisper needs a file path)
     suffix = Path(file.filename or "audio.webm").suffix or ".webm"
