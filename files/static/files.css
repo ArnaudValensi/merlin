@@ -867,6 +867,23 @@
     background: var(--bg-page);
 }
 
+/* The PDF reaches the bottom edge of the viewport (files-pdf.js sets its
+   height), so drop the padding and border that would sit below it. The
+   main's min-height goes too: on mobile it stacks under the topbar and
+   would push the page 100vh + topbar tall. */
+.main:has(.pdf-preview),
+#file-view:has(.pdf-preview) {
+    padding-bottom: 0;
+}
+.main:has(.pdf-preview) {
+    min-height: 0;
+}
+.file-content:has(> .pdf-preview) {
+    border-bottom: 0;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
 .pdf-scroll {
     position: absolute;
     top: 0;

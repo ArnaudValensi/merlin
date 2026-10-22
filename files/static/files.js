@@ -1211,7 +1211,7 @@
         fileMeta.innerHTML = '<div class="file-meta-path" title="' + esc(info.path) + '">' + esc(info.name) + '</div>';
 
         // Download link
-        downloadLink.href = '/api/files/raw?path=' + encodeURIComponent(info.path);
+        downloadLink.href = rawUrl(info);
         downloadLink.download = info.name;
         downloadLink.style.display = '';
 
@@ -1665,7 +1665,7 @@
         const wrapper = document.createElement('div');
         wrapper.className = 'image-preview';
         const img = document.createElement('img');
-        img.src = '/api/files/raw?path=' + encodeURIComponent(info.path);
+        img.src = rawUrl(info);
         img.alt = info.name;
         img.loading = 'lazy';
         wrapper.appendChild(img);
@@ -1682,7 +1682,7 @@
         wrapper.className = 'audio-preview';
         const audio = document.createElement('audio');
         audio.controls = true;
-        audio.src = '/api/files/raw?path=' + encodeURIComponent(info.path);
+        audio.src = rawUrl(info);
         wrapper.appendChild(audio);
         const meta = document.createElement('div');
         meta.className = 'audio-meta';
@@ -1697,7 +1697,7 @@
         wrapper.className = 'video-preview';
         const video = document.createElement('video');
         video.controls = true;
-        video.src = '/api/files/raw?path=' + encodeURIComponent(info.path);
+        video.src = rawUrl(info);
         wrapper.appendChild(video);
         const meta = document.createElement('div');
         meta.className = 'video-meta';
@@ -1732,7 +1732,7 @@
         wrapper.appendChild(details);
         const dlBtn = document.createElement('a');
         dlBtn.className = 'binary-download-btn';
-        dlBtn.href = '/api/files/raw?path=' + encodeURIComponent(info.path);
+        dlBtn.href = rawUrl(info);
         dlBtn.download = info.name;
         dlBtn.textContent = 'Download';
         wrapper.appendChild(dlBtn);
@@ -1864,6 +1864,13 @@
     // ---------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------
+
+    // Raw URL versioned by mtime. /api/files/raw sends Last-Modified with no
+    // Cache-Control, so the browser caches it heuristically and an edited file
+    // would keep showing its old content until that guess expires.
+    function rawUrl(info) {
+        return '/api/files/raw?path=' + encodeURIComponent(info.path) + '&v=' + info.mtime;
+    }
 
     function esc(str) {
         if (str == null) return '';

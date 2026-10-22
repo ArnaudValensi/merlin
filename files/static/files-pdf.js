@@ -25,6 +25,7 @@ const ZOOM_STEP = 0.25;
 const MAX_PAGE_CSS_WIDTH = 900; // cap fit-width on wide desktop panels
 const DPR_CAP = 2; // cap retina backing-store cost
 const RERENDER_DEBOUNCE_MS = 150;
+const MIN_PREVIEW_HEIGHT = 320; // px, matches the CSS min-height
 
 // Test-mode handle: enables window.__merlinPdfTest for Playwright assertions.
 // Initialised to null so tests can `=== null` whether or not a PDF has mounted.
@@ -76,8 +77,10 @@ async function renderPdfPreview(info, container) {
 
     let doc;
     try {
+        // Versioned by mtime so an edited PDF is never served from the
+        // browser's heuristic cache (the raw route sends no Cache-Control).
         const resp = await fetch(
-            '/api/files/raw?path=' + encodeURIComponent(info.path),
+            '/api/files/raw?path=' + encodeURIComponent(info.path) + '&v=' + info.mtime,
         );
         if (!resp.ok) {
             throw new Error('HTTP ' + resp.status);
@@ -123,6 +126,8 @@ async function mountDocument(wrapper, scrollEl, pagesEl, counter, zoomOut, zoomI
         pages: [], // {el, canvas, num, rendered, renderTask, aspect}
         observer: null,
         resizeObserver: null,
+        headerObserver: null, // re-fits the height when the header wraps
+        onWindowResize: null,
         rerenderTimer: null,
         scrollRaf: null,
         destroyed: false,
@@ -133,6 +138,18 @@ async function mountDocument(wrapper, scrollEl, pagesEl, counter, zoomOut, zoomI
         lastTapTime: 0,
     };
     ctx = state;
+
+    // Fill down to the bottom of the viewport. The header above can wrap
+    // (narrow screens, the sibling nav arriving late), so it is measured
+    // rather than guessed in a CSS calc().
+    fitToViewport(state);
+    state.onWindowResize = () => fitToViewport(state);
+    window.addEventListener('resize', state.onWindowResize);
+    const header = document.getElementById('file-header');
+    if (header) {
+        state.headerObserver = new ResizeObserver(() => fitToViewport(state));
+        state.headerObserver.observe(header);
+    }
 
     computeFitScale(state);
 
@@ -208,6 +225,13 @@ async function mountDocument(wrapper, scrollEl, pagesEl, counter, zoomOut, zoomI
 
 function cssScale(state) {
     return state.fitScale * state.zoomFactor;
+}
+
+function fitToViewport(state) {
+    if (state.destroyed) return;
+    const top = state.wrapper.getBoundingClientRect().top + window.scrollY;
+    const height = Math.max(MIN_PREVIEW_HEIGHT, Math.floor(window.innerHeight - top));
+    state.wrapper.style.height = height + 'px';
 }
 
 function computeFitScale(state) {
@@ -489,6 +513,10 @@ function disposePdfContext() {
     try {
         if (state.observer) state.observer.disconnect();
         if (state.resizeObserver) state.resizeObserver.disconnect();
+        if (state.headerObserver) state.headerObserver.disconnect();
+        if (state.onWindowResize) {
+            window.removeEventListener('resize', state.onWindowResize);
+        }
         if (state.rerenderTimer) clearTimeout(state.rerenderTimer);
         if (state.scrollRaf) cancelAnimationFrame(state.scrollRaf);
         if (state.onKeyDown) {

@@ -7,7 +7,9 @@ pdf.js renders to a 2D canvas (no WebGL), so — unlike the 3D suite — no
 swiftshader flags are needed; headless Chromium renders it directly.
 """
 
+import os
 import shutil
+import time
 from pathlib import Path
 
 import pytest
@@ -106,6 +108,30 @@ class TestPdfMount:
             "() => document.querySelector('.pdf-preview').getBoundingClientRect().top"
         )
         assert preview_top >= header_bottom - 1
+        page.close()
+
+    @pytest.mark.parametrize(
+        "viewport",
+        [{"width": 1440, "height": 900}, {"width": 375, "height": 667}],
+        ids=["desktop", "mobile"],
+    )
+    def test_preview_reaches_the_bottom_of_the_viewport(
+        self, browser_context, test_files, viewport
+    ):
+        """Regression: a fixed calc() height left an empty band under the PDF
+        on desktop. The preview now ends exactly at the viewport's bottom edge,
+        without making the page itself scroll."""
+        ctx, url = browser_context
+        page = _open_pdf(
+            ctx, url, str(test_files / "sample_2page.pdf"), viewport=viewport
+        )
+        layout = page.evaluate("""() => ({
+            bottom: document.querySelector('.pdf-preview').getBoundingClientRect().bottom,
+            inner: window.innerHeight,
+            scrollH: document.documentElement.scrollHeight,
+        })""")
+        assert abs(layout["bottom"] - layout["inner"]) <= 1, layout
+        assert layout["scrollH"] <= layout["inner"], layout
         page.close()
 
 
@@ -215,6 +241,37 @@ class TestPdfZoom:
         assert abs(after["ratio"] - before) < 0.05, (
             f"viewport center drifted on zoom ({before:.3f} -> {after['ratio']:.3f})"
         )
+        page.close()
+
+
+# ---------------------------------------------------------------------------
+# An edited PDF is never served from the browser cache
+# ---------------------------------------------------------------------------
+
+
+class TestPdfFreshness:
+    def test_reopening_an_edited_pdf_shows_the_new_content(
+        self, browser_context, tmp_path
+    ):
+        """Regression: /api/files/raw sends Last-Modified and no Cache-Control,
+        so the browser cached the PDF heuristically (10% of its age) and an
+        edited file kept showing its old content. An old mtime makes that
+        heuristic window long; the replacement must still be fetched."""
+        ctx, url = browser_context
+        target = tmp_path / "edited.pdf"
+        shutil.copy(FIXTURES / "sample_2page.pdf", target)
+        year_ago = time.time() - 365 * 24 * 3600
+        os.utime(target, (year_ago, year_ago))
+
+        page = _open_pdf(ctx, url, str(target))
+        assert page.evaluate("() => window.__merlinPdfTest.numPages") == 2
+
+        # Replace it with a corrupt PDF: fresh content shows the fallback,
+        # a cached copy would mount the old 2-page document again.
+        shutil.copy(FIXTURES / "broken.pdf", target)
+        page.goto(f"{url}/files{target}?test=1", wait_until="networkidle")
+        page.wait_for_selector(".binary-info", timeout=15000)
+        assert page.query_selector(".pdf-preview") is None
         page.close()
 
 
