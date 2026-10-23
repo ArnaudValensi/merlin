@@ -83,7 +83,12 @@ until the first space. `followKeyboard()` in `terminal.html` sizes `.main` to
 `window.visualViewport.height` whenever it is smaller than the layout viewport and
 pins the scroll at the top, so the bottom bar and the input line land above the
 keyboard as it animates. It runs only on coarse-pointer devices and leaves a
-pinch-zoomed page alone. The resize to the PTY is coalesced: `fitAddon.fit()` runs
+pinch-zoomed page alone. A backgrounded app loses its keyboard while it is
+suspended, so the closing resize never reaches the page: back in front, the column
+kept the keyboard height, and the terminal kept its focus with no keyboard showing
+until a tap. The page now blurs the focused field when it is hidden and measures
+again on `visibilitychange`, `pageshow` and window `focus` (at once, next frame,
+300 ms later, as the viewport settles). The resize to the PTY is coalesced: `fitAddon.fit()` runs
 on every observer callback, the `resize` message goes out once, 120 ms after the
 last one, so tmux repaints once per keyboard or window movement. Playwright cannot
 open the iOS keyboard: verify on the phone, keyboard opening and closing, in a Safari

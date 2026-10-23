@@ -2278,6 +2278,24 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         vv.addEventListener('resize', apply);
         vv.addEventListener('scroll', apply);
+        // A backgrounded app loses its keyboard while suspended, so the resize
+        // that closes it never reaches the page: back in front, the column kept
+        // the keyboard height and the terminal kept its focus without a keyboard
+        // (a tap brought one back, closing it fixed the layout). Leaving drops
+        // the focus so there is no half-open field to come back to, and
+        // returning measures again, once at once and once the viewport settles.
+        function remeasure() {
+            apply();
+            requestAnimationFrame(apply);
+            setTimeout(apply, 300);
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) { remeasure(); return; }
+            const el = document.activeElement;
+            if (el && el !== document.body && el.blur) el.blur();
+        });
+        window.addEventListener('pageshow', remeasure);
+        window.addEventListener('focus', remeasure);
         apply();
     })();
 
