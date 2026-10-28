@@ -1,0 +1,280 @@
+# Voice Mode: Internals
+
+Voice mode turns one terminal window into a hands-free voice conversation with
+the Claude Code agent running in it. The user talks, the words are transcribed
+and submitted to the agent, the agent answers in a style written for the ear,
+and Merlin reads the prose of the answer aloud, then listens again. While it is
+on, a full-screen voice console covers the terminal (the terminal keeps running
+under it). User side: [`../terminal.md`](../terminal.md#talk-with-the-agent-voice-mode).
+
+## Architecture
+
+```
+Phone (terminal page, voice console)        Merlin server                     TTS server
+────────────────────────────────────        ─────────────                     ──────────
+tap Voice → POST /api/voice/start ──────→  @voice=on on the window
+                                            VoiceSession(target) starts
+VAD: speech ... 1.5 s of silence
+POST /api/terminal/transcribe (dictation) → transcribe, send-keys, Enter
+                                            Claude's UserPromptSubmit hook
+                                              → voice instructions in context
+                                            tail the window's transcript:
+  ←── \x00{voice: heard}                     user line   → caption
+  ←── \x00{voice: activity}                  tool_use    → activity label
+                                             text block  → speakable → Chunker
+                                               → POST {base}/audio/speech ──→  OpenAI-compatible
+  ←── \x00{voice: say id, text}  ←──────────── in-memory audio store  ←──────  audio bytes
+GET /api/voice/audio/{id} → WebAudio, in order, analyser drives the scope
+  ←── \x00{voice: turn_end}                 turn_duration line / state left busy
+last clip played → done earcon → listen again
+```
+
+Everything lives in the `voice/` core module, mounted like the other core
+modules (`mount_module(voice, "voice")` in `main.py`, API under `/api/voice`):
+
+| File | Role |
+|---|---|
+| `voice/tts.py` | The TTS client: config, `synthesize()`, typed errors |
+| `voice/speech.py` | `speakable()` and `Chunker`: markdown to spoken text, sentence-sized pieces |
+| `voice/transcript.py` | The transcript reader (the Codex seam) and `find_transcript()` |
+| `voice/session.py` | `VoiceSession` per window, the audio store, start refusals, the registry |
+| `voice/routes.py` | `/api/voice/*` |
+| `voice/static/voice-core.js` | The console's model (modes, clip queue, resync), pure, node tested |
+| `voice/static/voice-console.js`, `.css` | The console: DOM, VAD, mic, playback, earcons, canvas |
+| `voice/static/vendor/` | Silero VAD (`vad-web` 0.0.30) and `onnxruntime-web` 1.22.0, pinned, with sha256 in `README.md` |
+| `terminal/hooks/agent-voice-context.sh` | The `UserPromptSubmit` hook that injects the voice instructions |
+| `tools/kokoro-tts-server.py` | The reference TTS server (a separate script, never imported) |
+
+## The TTS seam
+
+Merlin speaks one API and nothing else: OpenAI's `POST {base}/audio/speech`,
+JSON `{"model", "input", "voice", "response_format", "speed"}` in, audio bytes
+out. Any server that speaks it works: the reference Kokoro server, another
+local engine behind a compatible shim, or a cloud provider. There is no
+provider-specific code in Merlin, no browser `speechSynthesis`, and no other
+fallback. The URL and key never reach the page: `/api/voice/status` and
+`/api/voice/check` say only whether voice mode is available and why not, and
+the page fetches audio from Merlin by clip id.
+
+Config keys, read from the environment and `~/.merlin/config.env`
+(`tts_config()`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `MERLIN_TTS_URL` | (off) | API root, for example `http://127.0.0.1:8880/v1`. `merlin config tts-url <url>` sets it (validated, no whitespace or control characters) |
+| `MERLIN_TTS_API_KEY` | none | Sent as `Authorization: Bearer` |
+| `MERLIN_TTS_MODEL` | `kokoro` | The `model` field |
+| `MERLIN_TTS_VOICE_EN` | `af_heart` | Voice for English |
+| `MERLIN_TTS_VOICE_FR` | `ff_siwis` | Voice for French |
+| `MERLIN_TTS_SPEED` | `1.05` | The `speed` field |
+| `MERLIN_TTS_FORMAT` | `wav` | `response_format`; start refuses one the browser cannot decode (`pcm`) |
+
+`synthesize(text, lang)` is async (httpx) with an overall 30 s deadline on top
+of the per-operation timeouts. It raises `TtsNotConfigured`, `TtsUnreachable`
+(connection refused, timed out) or `TtsRefused` (an HTTP error, an empty body).
+Each carries `public`, a fixed browser-safe sentence for the console; the
+detail goes to the log with the URL and key redacted.
+
+## Speech text
+
+`speech.speakable(text, lang)` is Nova's function, adapted: fenced code becomes
+one sentence in the voice language ("The code is in the terminal." / "Le code
+est dans le terminal."), links keep their label, URLs, markdown marks, list
+markers, table rows, rules, images and emoji go, `snake_case` is read with
+spaces. It keeps line breaks so a whole text block can be cleaned before it is
+cut. `speech.Chunker` cuts the cleaned text into pieces: a short first piece
+(12 characters minimum) for a fast first sound, then 40, a line break always
+cuts, and no piece is longer than 400 characters. Each assistant text block is
+flushed whole when it lands, so the sentence the agent says before a long tool
+run is heard before the run.
+
+## The hooks and the tmux options
+
+Voice mode rides on the agent-state hooks that `lib/skills.py` reconciles into
+Claude Code's settings (same marker, same `AGENT_STATE_HOOKS` consent, version
+`_HOOK_VERSION` 6):
+
+- **`agent-session-init.sh`** (SessionStart) also stamps `@agent_transcript`
+  from the hook JSON's `transcript_path` (bash regex, no jq), next to
+  `@agent_sid`, `@agent_conv`, `@agent_provider`.
+- **`agent-voice-context.sh`** (UserPromptSubmit) prints the voice instructions
+  on stdout only when its window has `@voice on`; Claude Code adds that stdout
+  to the agent's context. Nothing is prefixed to what the user said, and the
+  next prompt after voice mode ends is back to normal. It drains stdin, makes
+  one tmux read and always exits 0, so it never blocks or fails a prompt.
+- `skills.voice_hooks_installed()` checks both are present and current; start
+  refuses otherwise, with the fix in the reason. An agent started before the
+  hooks were refreshed still runs the old set: restart the agent once.
+
+Window options: `@voice` (`on` while a session runs, set by start, cleared by
+stop and at server startup for windows a previous process left marked),
+`@agent_state` (`busy`, `ask`, `idle`, `done`, from the state hooks),
+`@agent_transcript`, `@agent_conv`, `@agent_provider`.
+
+## The transcript reader and the Codex seam
+
+`transcript.open_reader(provider, path, ...)` returns a `TranscriptReader`
+yielding typed events: `user_prompt`, `assistant_text`, `tool_use(name)`,
+`turn_end`. Only `claude` is implemented (`ClaudeTranscriptReader`); any other
+provider raises `UnsupportedProvider`, and a Codex window shows voice mode as
+unavailable. A Codex reader plugs in here and nowhere else.
+
+The Claude reader reads the JSONL at `~/.claude/projects/<slug>/<session>.jsonl`:
+main chain only (`isSidechain` lines are ignored), a partial last line is
+buffered until its newline, unknown line types are skipped, a `user` line whose
+content is tool results is not a prompt, `system`/`turn_duration` ends the turn.
+A file truncated in place is treated as unread from its start.
+
+Where the transcript is: `find_transcript()` takes `@agent_transcript`, and
+falls back to the conversation id (`@agent_conv`) under the projects dir. The
+session looks again when a turn starts, so `/clear` and resume are followed.
+The reader is anchored at the end of the file when the session starts (old
+turns are never read aloud). A transcript discovered later is read from offset
+0 with a `since` filter on the lines' timestamps, so its first turn is not lost
+and a resumed conversation's history is not spoken.
+
+## The voice session
+
+One `VoiceSession` per target window (`session:@id`, the dictation rule).
+Start (`POST /api/voice/start {target, lang}`) refuses, with a reason the
+console shows: not a terminal window, no voice server configured, a format the
+browser cannot play, the window is gone, Codex, no Claude Code session in the
+window, hooks missing or old. Start and stop are serialized per window; a
+session is registered only once its start completed.
+
+While running, two clocks work side by side:
+
+- **The watch** polls (every 250 ms, off the event loop) the transcript and
+  `@agent_state`. A turn starts with a prompt or the agent going busy and ends
+  with `turn_duration`, or when the state has stayed out of busy for 2 s (Esc
+  writes `idle`). `ask` sends the `ask` frame with the bottom of the pane
+  (`capture-pane`, cleaned, 8 lines) and the fixed sentence ("The agent needs
+  your answer." / "L'agent a besoin de ta réponse."), synthesized within 5 s
+  or left out. A voice prompt that no turn
+  picked up within 20 s gives an error and listening again.
+- **The speaker** drains a FIFO of `(turn, piece)` and `(turn, END)`: every
+  turn is spoken in order and gets its `turn_end`, nothing is dropped unless
+  the user skips it. It synthesizes at most 3 clips ahead of what the page has
+  fetched, and waits, however long, for a fetch. Backpressure: while 64
+  pieces wait to be synthesized or 8 turns wait to be spoken, the watch stops
+  reading the transcript (the reader keeps its place); a single text block that
+  still pushes past 256 waiting pieces says "The rest is in the terminal." and
+  drops what follows.
+
+The **audio store** holds clips by unguessable id (`secrets.token_urlsafe(18)`),
+bounded to 32 MB and 10 minutes, served by `GET /api/voice/audio/{id}`
+(`no-store`).
+
+A dropped page socket does not stop the session: `GET /api/voice/session`
+gives a reconnecting page a snapshot (state, captions, ask, the clips still in
+the store), with a revision so the page folds it in against live frames. A
+window that vanished stops its session. Server shutdown stops every session.
+
+Dictation is unchanged: the console uploads each utterance to
+`/api/terminal/transcribe` with its target and `auto_enter=true`, and the route
+tells a voice window's session about the result (`note_dictation`), so an empty
+transcription or a failure reaches the console as an error frame.
+
+### Control frames
+
+Every frame is a terminal WebSocket text frame `\x00` + JSON, sent to every
+connected page through `terminal.routes.broadcast_control` (a per-page ordered
+outbox, so a stalled page never blocks the others); the page filters by
+`target`. Each carries `type: "voice"`, `event`, `target`, `session` and `rev`
+(grows only).
+
+| `event` | Fields | Meaning |
+|---|---|---|
+| `state` | `state`: `listening`, `thinking`, `speaking`, `ask`, `error`, `off` (+ `reason`) | The session's state |
+| `heard` | `text` | The user's prompt, from the transcript |
+| `activity` | `label` | A tool label (`command`, `editing`, `reading`, ...) |
+| `say` | `id`, `text`, `turn`, `rev` | A clip is ready to fetch |
+| `turn_end` | `turn` | The turn is over, its last clip announced |
+| `ask` | `text`, `excerpt`, `audio` | The agent blocks on a dialog |
+| `error` | `message` | A passing error (nothing heard, voice server down, prompt not taken) |
+
+### Routes
+
+| Route | Does |
+|---|---|
+| `GET /api/voice/status` | Whether a TTS URL is configured (never the URL) |
+| `GET /api/voice/check?target=` | Whether this window can start, and why not |
+| `POST /api/voice/start` `{target, lang}` | Start, or return the running session's snapshot |
+| `POST /api/voice/stop` `{target}` | Stop, clear `@voice` |
+| `GET /api/voice/session?target=` | The snapshot for a reconnecting page |
+| `POST /api/voice/lang` `{target, lang}` | Switch the voice language |
+| `POST /api/voice/skip` `{target, turn}` | Drop the rest of that answer |
+| `POST /api/voice/answer` `{target, yes}` | Yes sends Enter, No sends Escape (and writes `idle`) |
+| `POST /api/voice/interrupt` `{target}` | Stop agent: drop every answer waiting, send Escape |
+| `GET /api/voice/audio/{id}` | A clip's audio |
+
+## The console
+
+The Voice button sits in the terminal status bar. It is always shown, dimmed
+with the reason when TTS or transcription is missing or the window cannot start
+(`/api/voice/check`). Tapping it is the user gesture that creates and resumes
+the one `AudioContext` and opens the mic once for the whole session.
+
+The VAD (Silero through `vad-web`, one wasm thread, no cross-origin isolation
+needed) loads lazily the first time the console opens; the vendored files are
+served immutable for a year (`IMMUTABLE_STATIC_PREFIXES` in `main.py`), safe
+because each directory names its version. End of speech after 1.5 s of
+silence. The utterance goes up as a 16 kHz WAV through dictation's own upload
+(`MerlinTerminal.sendVoice`).
+
+Modes (radio names): `SYNC` (starting), `MON` (listening), `TX` (speech
+detected), `PROC` (the agent works, also while resyncing), `RX` (the answer
+plays), `ASK` (Yes / No / Exit), `ERR` (tap to retry), `HOLD` (after a reload,
+a tap unlocks audio). The VAD runs only in `MON` and `TX` with nothing playing:
+no listening while the agent is busy or the answer plays (no voice barge-in).
+Clips are fetched two ahead of playback, ordered by revision, retried twice;
+a clip that still fails stalls the line with "Part of the answer could not be
+downloaded" (tap retries, SKIP ANSWER drops that answer). Earcons are Nova's,
+synthesized with WebAudio, plus an alert for `ASK`. Captions show the newest
+words of the answer being spoken; older text fades out at the top. Wake lock
+while open; `prefers-reduced-motion` draws a still trace.
+
+## The reference server
+
+`tools/kokoro-tts-server.py` is a PEP 723 script (`uv run --script`), stdlib
+HTTP on top of `kokoro-onnx` with the GPU onnxruntime. It implements
+`POST /v1/audio/speech` (`wav`, or `pcm` raw 16-bit mono 24 kHz; anything else
+is a clear 400; the language comes from the voice id's first letter, `f`
+French, `a` American English, `b` British English), `GET /v1/models`,
+`GET /v1/audio/voices`, `GET /health` (no auth), and an optional bearer key.
+Requests are synthesized one at a time.
+
+It pins its model: `kokoro-v1.0.onnx` and `voices-v1.0.bin` from the
+kokoro-onnx `model-files-v1.0` release, with their sizes and sha256 in the
+script. Startup fails fast, cheapest check first, each failure saying the fix:
+
+1. **The port is bound** before anything slow (a taken port fails in about
+   0.1 s). The handler is installed only once the model is ready; until then a
+   connection waits in the listen backlog.
+2. **The model files** in `--models` (default `~/.local/share/kokoro`): every
+   present file is checked (size, sha256) before anything is downloaded; a
+   wrong file is refused and never overwritten. Missing files are downloaded
+   (about 354 MB, once) through a temporary file in the same directory, checked
+   for size and sha256, then renamed into place; free space and a writable
+   directory are checked first. `--no-download` stops instead, with the URLs.
+3. **The device**: `--device cuda` stops if onnxruntime has no CUDA provider or
+   the session falls back to the CPU; `auto` (default) falls back with a loud
+   warning; `cpu` forces it.
+4. **A warm-up synthesis** must return audio, or the server exits non-zero.
+
+A fresh machine needs only uv and the NVIDIA driver. Measured on an RTX 3090
+Ti: ready in about 2 s with the files present, a sentence synthesized in about
+0.2 s.
+
+## Testing
+
+- Unit: `tests/unit/test_voice_*.py` (client against a fake server and the
+  reference server's HTTP layer, the server's download and preflight,
+  `speakable`/`Chunker`, the reader on real transcript lines, the hooks against
+  a private tmux server, the session lifecycle and bounds, the console server
+  side), `tests/js/voice-core.test.js` (the console model).
+- E2E: `tests/e2e/test_voice_console.py`: Chromium's fake mic plays a spoken
+  WAV so the real VAD fires, `MERLIN_TRANSCRIBE_FAKE` for transcription, a fake
+  TTS server, a fake agent writing a Claude transcript.
+- Tests never write the real `~/.claude/settings.json`: the e2e servers run on
+  their own `HOME`, the unit tests redirect the settings path.

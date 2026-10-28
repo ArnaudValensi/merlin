@@ -47,11 +47,13 @@ merlin/
 ├── sessions/                  # Session transcript viewer (core module, /session/{file})
 ├── board/                     # Sessions board — /api/board + assets for the terminal's Sessions drawer
 ├── workspace/                 # Workspace restore: continuous tmux snapshot, restore banner after a restart
+├── voice/                     # Voice mode: hands-free voice conversation with a window's Claude Code agent (TTS client, transcript reader, sessions, console)
 ├── notes/                     # Notes editor module (markdown)
 │   └── commands/              # merlin notes search / kb / remember commands
 ├── timeline/                  # Built-in private agent-activity Timeline extension
 │   └── commands/emit.py       # Provider-neutral, server-independent emitter
 ├── skills/                    # Core operational skills (merlin/, merlin-jobs/, merlin-notes/, merlin-dashboard/, merlin-review/) — always active, aggregated regardless of the bot
+├── tools/                     # Standalone scripts (kokoro-tts-server.py: the reference voice-mode TTS server)
 ├── tests/                     # Tests for core modules
 ├── agent/
 │   └── MERLIN.md              # Agent brain doc (printed by `merlin agent`)
@@ -94,6 +96,7 @@ New to the codebase? Read `architecture.md` first, then `extension-system.md` an
 | [`docs/dev/dashboard-architecture.md`](docs/dev/dashboard-architecture.md) | Dashboard theme, CSS variables, JS patterns, API endpoints |
 | [`docs/dev/commit-review.md`](docs/dev/commit-review.md) | Commits page comparisons (`base..head`, ref safety, routes, the sticky header), saved reviews, comments, `merlin review` |
 | [`docs/dev/notifications.md`](docs/dev/notifications.md) | Attention watcher, event cursor, poll transport, in-tab rule, manifest and worker, Web Push, suppression, the seams kept for the hub |
+| [`docs/dev/voice-mode.md`](docs/dev/voice-mode.md) | Voice mode: the OpenAI-compatible TTS seam, config keys, the voice context hook and tmux options, the transcript reader (Codex seam), sessions, control frames, the console, the reference Kokoro server |
 | [`docs/dev/workspace-restore.md`](docs/dev/workspace-restore.md) | Continuous tmux snapshot, the startup freeze, the restore banner and engine, `@agent_conv` hook stamping |
 | [`docs/dev/notifications-acceptance.md`](docs/dev/notifications-acceptance.md) | What only a person can verify on notifications: real push delivery, real focus, real agent screens, real browsers, the phone as an app |
 | [`docs/dev/claude-code-reference.md`](docs/dev/claude-code-reference.md) | Claude Code CLI flags and options |
@@ -178,6 +181,7 @@ When creating new scripts:
 | `terminal/` | Web terminal module | [`web-terminal`](docs/dev/web-terminal.md) |
 | `commits/` | Commit browser module | [`dashboard-architecture`](docs/dev/dashboard-architecture.md) |
 | `notes/` | Notes editor module | [`notes-editor`](docs/dev/notes-editor.md) |
+| `voice/` | Voice mode core module (`/api/voice`), plus `tools/kokoro-tts-server.py` | [`voice-mode`](docs/dev/voice-mode.md) |
 | `timeline/` | Built-in private activity-history extension | [`agent-activity-timeline`](docs/dev/agent-activity-timeline.md) |
 | `app/` | Built-in app streaming (GUI apps on Xvfb, `merlin app`, WebRTC), only with `MERLIN_FEATURES=app` | [`app-streaming`](docs/dev/app-streaming.md) |
 | `features.py` | Feature flags (`MERLIN_FEATURES`) for experimental built-ins | [`extension-system`](docs/dev/extension-system.md#feature-flags) |

@@ -249,6 +249,60 @@ nothing to configure), the OpenAI Whisper API
 download, works offline). `merlin setup` prompts for the OpenAI key, or append
 `OPENAI_API_KEY=sk-...` to `~/.merlin/config.env`.
 
+## Talk with the agent (voice mode)
+
+Voice mode turns the window you are on into a hands-free conversation with the
+Claude Code agent running in it, for the car (phone on a mount, screen on) or a
+walk. Tap the **Voice** button in the status bar: a full-screen radio console
+covers the terminal. Talk, pause, and after about a second and a half of silence
+what you said is transcribed and sent to the agent. The agent answers in a style
+written for the ear, Merlin reads the answer aloud, then listens again. Code and
+long output stay in the terminal: the voice says so instead of reading them.
+
+- **Tap anywhere** while you talk to send now; while the answer plays, to skip
+  the rest of it; on an error, to try again.
+- **Stop agent** sends Escape to the agent. **Exit** leaves voice mode, and the
+  next prompt you type is back to normal.
+- When the agent needs a permission, the console plays an alert, says so, and
+  shows the bottom of the pane with **Yes** (Enter) and **No** (Escape).
+- **EN / FR** picks the language you speak and the voice that answers. It
+  follows the dictation language.
+- The microphone is not listened to while the answer plays, so the agent never
+  hears itself through the car speakers. Keep the screen on: the console holds
+  a wake lock while it is open.
+- If the phone loses the connection, voice mode keeps going on the server and
+  the console catches up when it reconnects. After a reload, tap once to give
+  it the audio and the microphone back.
+
+Voice mode needs three things, and the button, dimmed, says which is missing:
+
+1. **A text-to-speech server** that speaks the OpenAI `audio/speech` API. Point
+   Merlin at its API root:
+
+   ```bash
+   merlin config tts-url http://127.0.0.1:8880/v1
+   ```
+
+   Merlin ships one for an NVIDIA GPU, Kokoro behind that API, in its
+   repository (`tools/kokoro-tts-server.py`). It downloads its model on the
+   first run (about 354 MB) and needs only uv and the NVIDIA driver:
+
+   ```bash
+   uv run --script tools/kokoro-tts-server.py --device cuda
+   ```
+
+   Run `--help` for the options (port, models directory, offline, API key).
+   Optional keys in `~/.merlin/config.env`: `MERLIN_TTS_API_KEY`,
+   `MERLIN_TTS_VOICE_EN` (default `af_heart`), `MERLIN_TTS_VOICE_FR` (default
+   `ff_siwis`), `MERLIN_TTS_SPEED` (default `1.05`), `MERLIN_TTS_MODEL`,
+   `MERLIN_TTS_FORMAT`.
+2. **Transcription**, the same backend as dictation (above).
+3. **Claude Code in the window, with Merlin's agent hooks** (the ones behind the
+   [agent-state pills](#agent-state-pills)). Voice mode adds one hook that tells
+   the agent it is being heard. After updating Merlin, restart Merlin, then
+   restart the agent once so it picks up the new hook. Codex windows are not
+   supported yet.
+
 ## Jump to commits
 
 The branch toolbar button looks up the terminal's current directory and
