@@ -1329,6 +1329,69 @@ class TestBackpressure:
         assert len(said) >= n - 1
         assert len(pages.events("turn_end")) == n
 
+    def _done_while_unread(self, tmux, window, monkeypatch, skip_after=None):
+        target, win, path = window
+        monkeypatch.setattr(session, "MAX_QUEUED", 4)
+        monkeypatch.setattr(session, "POLL_EVENTS", 2)
+        pages = Pages()
+        parts = [f"Part number {i} of the one answer." for i in range(12)]
+
+        async def go():
+            running = await _start(target, pages)
+            tmux.set(win, "@agent_state", "busy")
+            append(
+                path,
+                prompt("one long answer", "u1"),
+                *(
+                    say([{"type": "text", "text": t}], f"a{i}")
+                    for i, t in enumerate(parts)
+                ),
+                TURN_END,
+            )
+            await pages.wait(lambda p: len(p.events("say")) >= session.MAX_AHEAD)
+            # The agent finishes while the page is away and lines are unread.
+            tmux.set(win, "@agent_state", "done")
+            await asyncio.sleep(3 * session.END_GRACE)
+            assert pages.events("turn_end") == []
+            # The page comes back and fetches as clips arrive.
+            deadline = time.monotonic() + 20
+            skipped = False
+            while not pages.events("turn_end") and time.monotonic() < deadline:
+                for c in list(running.clips):
+                    session.find_clip(c["id"])
+                if (
+                    skip_after
+                    and not skipped
+                    and len(pages.events("say")) >= skip_after
+                ):
+                    await running.skip()
+                    skipped = True
+                await asyncio.sleep(0.02)
+            await asyncio.sleep(0.3)
+            await session.stop_session(target)
+
+        asyncio.run(go())
+        return pages, parts
+
+    def test_done_while_the_end_is_unread_gives_one_turn(
+        self, tmux, window, tts_server, fast, monkeypatch
+    ):
+        pages, parts = self._done_while_unread(tmux, window, monkeypatch)
+        assert [f["text"] for f in pages.events("say")] == parts
+        assert len(pages.events("turn_end")) == 1
+        assert len({f["turn"] for f in pages.events("say")}) == 1
+        states = pages.states()
+        assert "listening" not in states[states.index("speaking") : -2]
+        assert states[-2:] == ["listening", "off"]
+
+    def test_skip_covers_the_whole_actual_turn(
+        self, tmux, window, tts_server, fast, monkeypatch
+    ):
+        pages, parts = self._done_while_unread(tmux, window, monkeypatch, skip_after=4)
+        said = [f["text"] for f in pages.events("say")]
+        assert said == parts[: len(said)] and len(said) < len(parts)
+        assert len(pages.events("turn_end")) == 1
+
     def test_snapshot_drops_expired_clips_and_the_speaker_moves_on(
         self, tmux, window, tts_server, fast
     ):

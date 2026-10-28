@@ -281,3 +281,21 @@ class TestLimit:
         )
         _append(path, old + "\n", new + "\n")
         assert reader.poll() == [Event("user_prompt", "new")]
+
+
+class TestCaughtUp:
+    def test_caught_up_accounts_for_held_lines_partials_and_unread_bytes(self, path):
+        reader = ClaudeTranscriptReader(path, offset=0)
+        assert reader.caught_up()  # no file yet
+        _append(path, *(_user(f"p{i}", f"u{i}") for i in range(4)))
+        assert not reader.caught_up()  # unread bytes
+        reader.poll(limit=2)
+        assert not reader.caught_up()  # lines held back
+        reader.poll()
+        assert reader.caught_up()
+        _append(path, '{"type": "user"')
+        reader.poll()
+        assert not reader.caught_up()  # a partial line
+        _append(path, ', "uuid": "x", "message": {"content": "done"}}\n')
+        reader.poll()
+        assert reader.caught_up()

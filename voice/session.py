@@ -503,10 +503,13 @@ class VoiceSession:
 
     async def _follow(self, window: dict[str, str]) -> None:
         await self._open_reader(window)
-        if self.reader is not None and not self._backlogged():
-            for event in await asyncio.to_thread(self.reader.poll, POLL_EVENTS):
-                await self._on_event(event)
-        await self._on_agent_state(window["@agent_state"])
+        caught_up = True
+        if self.reader is not None:
+            if not self._backlogged():
+                for event in await asyncio.to_thread(self.reader.poll, POLL_EVENTS):
+                    await self._on_event(event)
+            caught_up = await asyncio.to_thread(self.reader.caught_up)
+        await self._on_agent_state(window["@agent_state"], caught_up)
 
     async def _begin_turn(self) -> _Turn:
         """The turn the transcript is writing, started if there is none. A
@@ -572,7 +575,11 @@ class VoiceSession:
         self._queue.append((turn, _END))
         self._queue_event.set()
 
-    async def _on_agent_state(self, state: str) -> None:
+    async def _on_agent_state(self, state: str, caught_up: bool = True) -> None:
+        """Follow ``@agent_state``. ``caught_up``: the transcript has been read
+        to its end. The fallback that ends a turn without a turn_duration line
+        waits for it, or it would end the turn ahead of lines not read yet
+        (the turn's own end among them) while the speech is backlogged."""
         now = time.monotonic()
         if state == "ask":
             if not self._backlogged():
@@ -601,7 +608,7 @@ class VoiceSession:
             ended = turn.saw_busy and now - turn.idle_since >= END_GRACE
             # No hooks at all: never busy, so give it longer before ending.
             stale = not turn.saw_busy and now - turn.started >= PROMPT_TIMEOUT
-            if ended or stale:
+            if (ended or stale) and caught_up:
                 await self._end_turn()
         elif (
             turn is None

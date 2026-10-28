@@ -40,6 +40,8 @@ class TranscriptReader(Protocol):
 
     def poll(self, limit: int | None = None) -> list[Event]: ...
 
+    def caught_up(self) -> bool: ...
+
 
 class UnsupportedProvider(Exception):
     pass
@@ -147,6 +149,20 @@ class ClaudeTranscriptReader:
         while self._lines and (limit is None or len(events) < limit):
             events.extend(self._parse(self._lines.popleft()))
         return events
+
+    def caught_up(self) -> bool:
+        """True when everything written so far has been read and parsed: no
+        line held back, no partial line, no byte left in the file. Blocking
+        (one stat)."""
+        if self._lines or self._partial:
+            return False
+        try:
+            st = self.path.stat()
+        except OSError:
+            return True
+        if self._inode is not None and st.st_ino != self._inode:
+            return False
+        return st.st_size <= self.offset
 
     def _read(self) -> None:
         try:
