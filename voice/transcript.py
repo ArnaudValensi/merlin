@@ -38,7 +38,7 @@ class Event:
 class TranscriptReader(Protocol):
     path: Path
 
-    def poll(self) -> list[Event]: ...
+    def poll(self, limit: int | None = None) -> list[Event]: ...
 
 
 class UnsupportedProvider(Exception):
@@ -101,10 +101,13 @@ class ClaudeTranscriptReader:
 
     ``offset=None`` starts at the current end of the file (or at 0 when it does
     not exist yet), so nothing said before is read again. ``since`` (an aware
-    datetime) skips the lines stamped earlier: a conversation discovered after
-    it started (``/clear``, a resume) is read from its start without replaying
-    its history. A partial last line is kept until its newline arrives. A file
+    datetime) skips the lines stamped earlier (history a resume may copy into
+    a new file). A partial last line is kept until its newline arrives. A file
     replaced or truncated under the reader is read again from its start.
+
+    ``poll(limit)`` returns at most ``limit`` events; the lines not parsed
+    yet stay queued in the reader, so a caller can stop reading for a while
+    and pick up exactly where it left off.
     """
 
     def __init__(
@@ -123,6 +126,7 @@ class ClaudeTranscriptReader:
             self._inode, size = None, 0
         self.offset = size if offset is None else offset
         self._partial = b""
+        self._lines: deque[bytes] = deque()
         self._seen: set[str] = set()
         self._seen_order: deque[str] = deque()
 
@@ -136,31 +140,37 @@ class ClaudeTranscriptReader:
             self._seen.discard(self._seen_order.popleft())
         return True
 
-    def poll(self) -> list[Event]:
+    def poll(self, limit: int | None = None) -> list[Event]:
+        if not self._lines:
+            self._read()
+        events: list[Event] = []
+        while self._lines and (limit is None or len(events) < limit):
+            events.extend(self._parse(self._lines.popleft()))
+        return events
+
+    def _read(self) -> None:
         try:
             st = self.path.stat()
         except OSError:
-            return []
+            return
         if self._inode is not None and st.st_ino != self._inode:
             self.offset, self._partial = 0, b""
+            self._lines.clear()
         elif st.st_size < self.offset:
             self.offset, self._partial = 0, b""
+            self._lines.clear()
         self._inode = st.st_ino
         if st.st_size == self.offset:
-            return []
+            return
         try:
             with open(self.path, "rb") as f:
                 f.seek(self.offset)
                 chunk = f.read(MAX_READ)
         except OSError:
-            return []
+            return
         self.offset += len(chunk)
-        data = self._partial + chunk
-        *lines, self._partial = data.split(b"\n")
-        events: list[Event] = []
-        for raw in lines:
-            events.extend(self._parse(raw))
-        return events
+        *lines, self._partial = (self._partial + chunk).split(b"\n")
+        self._lines.extend(lines)
 
     def _parse(self, raw: bytes) -> list[Event]:
         try:

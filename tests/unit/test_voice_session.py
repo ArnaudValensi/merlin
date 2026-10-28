@@ -203,6 +203,13 @@ def say(blocks, uid):
 TURN_END = line(type="system", subtype="turn_duration", durationMs=1)
 
 
+def session_start(tmux, win, path):
+    """What session-init does at SessionStart: the mark, then the path."""
+    size = path.stat().st_size if path.exists() else 0
+    tmux.set(win, "@agent_transcript_mark", f"{size} {int(time.time())}")
+    tmux.set(win, "@agent_transcript", str(path))
+
+
 def append(path, *chunks):
     with open(path, "a") as f:
         f.write("".join(chunks))
@@ -568,7 +575,7 @@ class TestTurn:
         async def go():
             await _start(target, pages)
             await asyncio.sleep(0.1)
-            tmux.set(win, "@agent_transcript", str(fresh))  # SessionStart after /clear
+            session_start(tmux, win, fresh)  # SessionStart after /clear
             await asyncio.sleep(0.1)
             append(
                 fresh,
@@ -954,13 +961,31 @@ class TestNewConversation:
             running = await _start(target, pages)
             # Pause the watch so the whole first turn lands before it looks.
             running._tasks[0].cancel()
+            session_start(tmux, win, fresh)  # /clear: the file is not there yet
+            t = now_iso()
             append(
                 fresh,
-                prompt("first after clear", "u1"),
-                say([{"type": "text", "text": "Answer after clear."}], "a1"),
-                TURN_END,
+                stamped(
+                    {
+                        "type": "user",
+                        "uuid": "u1",
+                        "message": {"content": "first after clear"},
+                    },
+                    t,
+                ),
+                stamped(
+                    {
+                        "type": "assistant",
+                        "uuid": "a1",
+                        "message": {
+                            "content": [{"type": "text", "text": "Answer after clear."}]
+                        },
+                    },
+                    t,
+                ),
+                stamped({"type": "system", "subtype": "turn_duration"}, t),
             )
-            tmux.set(win, "@agent_transcript", str(fresh))
+            await asyncio.sleep(3.0)  # however late the watch looks
             window_now = sweep.window_options(target, session._WINDOW_FIELDS)
             await running._follow(window_now)
             await pages.wait(lambda p: p.events("turn_end"))
@@ -976,7 +1001,7 @@ class TestNewConversation:
         target, win, _ = window
         pages = Pages()
         old = tmp_path / "resumed.jsonl"
-        hist = now_iso(-3600)
+        hist = now_iso(-1)  # recent history, inside any fixed lookback
         append(
             old,
             stamped(
@@ -996,7 +1021,7 @@ class TestNewConversation:
 
         async def go():
             await _start(target, pages)
-            tmux.set(win, "@agent_transcript", str(old))  # claude --resume
+            session_start(tmux, win, old)  # claude --resume
             await asyncio.sleep(0.1)
             t = now_iso()
             append(
@@ -1233,26 +1258,76 @@ class TestBackpressure:
 
         assert asyncio.run(go()) == session.MAX_AHEAD
 
-    def test_an_endless_unfetched_answer_is_bounded_and_says_where_the_rest_is(
+    def test_one_huge_text_block_is_cut_with_a_notice(
         self, tmux, window, tts_server, fast, monkeypatch
     ):
         target, win, path = window
-        monkeypatch.setattr(session, "MAX_QUEUED", 5)
+        monkeypatch.setattr(session, "HARD_QUEUED", 6)
         pages = Pages()
 
         async def go():
             running = await _start(target, pages)
-            for i in range(10):
-                append(path, say([{"type": "text", "text": self.LONG}], f"a{i}"))
+            append(path, say([{"type": "text", "text": self.LONG * 5}], "a1"))
             await asyncio.sleep(0.3)
             queued = list(running._queue)
             await session.stop_session(target)
             return queued
 
-        queued = asyncio.run(go())
-        texts = [item for _, item in queued if isinstance(item, str)]
-        assert len(texts) <= 6
+        texts = [item for _, item in asyncio.run(go()) if isinstance(item, str)]
+        assert len(texts) <= 7
         assert texts[-1] == "The rest is in the terminal."
+
+    def test_many_turns_behind_a_blocked_speaker_stay_bounded_then_all_play(
+        self, tmux, window, tts_server, fast, monkeypatch
+    ):
+        target, win, path = window
+        monkeypatch.setattr(session, "MAX_QUEUED", 4)
+        monkeypatch.setattr(session, "MAX_LIVE", 3)
+        monkeypatch.setattr(session, "POLL_EVENTS", 4)
+        pages = Pages()
+        n = 40
+
+        async def go():
+            running = await _start(target, pages)
+            for i in range(n):
+                append(
+                    path,
+                    prompt(f"q{i}", f"u{i}"),
+                    say([{"type": "text", "text": f"Answer {i}."}], f"a{i}"),
+                    TURN_END,
+                )
+            peak = {"queue": 0, "live": 0, "clips": 0}
+            for _ in range(40):  # the page is away: nothing is fetched
+                await asyncio.sleep(0.02)
+                peak["queue"] = max(peak["queue"], len(running._queue))
+                peak["live"] = max(peak["live"], len(running.live))
+                peak["clips"] = max(peak["clips"], len(running.clips))
+            assert len(pages.events("say")) == session.MAX_AHEAD
+            # Stop and skip stay responsive while backlogged.
+            await running.skip()
+            # The page comes back and fetches everything as it arrives.
+            deadline = time.monotonic() + 20
+            while len(pages.events("turn_end")) < n and time.monotonic() < deadline:
+                for c in list(running.clips):
+                    session.find_clip(c["id"])
+                await asyncio.sleep(0.02)
+                peak["queue"] = max(peak["queue"], len(running._queue))
+                peak["live"] = max(peak["live"], len(running.live))
+            await session.stop_session(target)
+            return peak
+
+        peak = asyncio.run(go())
+        # Bounded: the gate stops reading at MAX_QUEUED pieces or MAX_LIVE
+        # turns, and one poll adds at most POLL_EVENTS events.
+        assert peak["live"] <= 3 + 4
+        assert peak["queue"] <= (3 + 4) * 2
+        assert peak["clips"] <= session.MAX_CLIPS
+        said = [f["text"] for f in pages.events("say")]
+        # The first answer was skipped once heard; every other one, in order.
+        assert said == [f"Answer {i}." for i in range(n) if f"Answer {i}." in said]
+        assert said[-1] == f"Answer {n - 1}."
+        assert len(said) >= n - 1
+        assert len(pages.events("turn_end")) == n
 
     def test_snapshot_drops_expired_clips_and_the_speaker_moves_on(
         self, tmux, window, tts_server, fast
@@ -1435,54 +1510,91 @@ class TestBrowserSafeErrors:
         )
 
 
+class FakeSocket:
+    def __init__(self, hold=False):
+        self.got = []
+        self.closed = None
+        self.release = asyncio.Event() if hold else None
+
+    async def send_text(self, frame):
+        if self.release is not None:
+            await self.release.wait()
+        self.got.append(json.loads(frame[1:]))
+
+    async def close(self, code=1000):
+        self.closed = code
+
+
 class TestPageIsolation:
-    def test_a_stalled_page_does_not_hold_the_others(self, monkeypatch):
+    def test_a_stalled_page_is_closed_and_does_not_hold_the_others(self, monkeypatch):
         from terminal import routes as terminal_routes
 
         monkeypatch.setattr(terminal_routes, "CONTROL_SEND_TIMEOUT", 0.3)
 
-        class Stalled:
-            async def send_text(self, frame):
-                await asyncio.sleep(3600)
-
-        class Healthy:
-            def __init__(self):
-                self.got = []
-
-            async def send_text(self, frame):
-                self.got.append(json.loads(frame[1:]))
-
-        stalled, healthy = (
-            terminal_routes.SessionReportState(),
-            terminal_routes.SessionReportState(),
-        )
-        stalled.websocket, healthy.websocket = Stalled(), Healthy()
-        monkeypatch.setattr(terminal_routes, "_client_views", {stalled, healthy})
-
         async def go():
+            stalled_ws, healthy_ws = FakeSocket(hold=True), FakeSocket()
+            stalled, healthy = (
+                terminal_routes.SessionReportState(),
+                terminal_routes.SessionReportState(),
+            )
+            stalled.websocket, healthy.websocket = stalled_ws, healthy_ws
+            monkeypatch.setattr(terminal_routes, "_client_views", {stalled, healthy})
             started = time.monotonic()
             for i in range(3):
                 await terminal_routes.broadcast_control({"n": i})
             returned = time.monotonic() - started
             await asyncio.sleep(0.05)
-            got_quickly = [f["n"] for f in healthy.websocket.got]
+            got_quickly = [f["n"] for f in healthy_ws.got]
             await asyncio.sleep(0.5)
-            return returned, got_quickly, len(stalled.outbox)
+            # The stalled page was closed (it reconnects and resyncs) and
+            # gets no more frames; the healthy one keeps getting them.
+            await terminal_routes.broadcast_control({"n": 3})
+            await asyncio.sleep(0.05)
+            return returned, got_quickly, stalled, stalled_ws, healthy_ws
 
-        returned, got, stalled_left = asyncio.run(go())
+        returned, got, stalled, stalled_ws, healthy_ws = asyncio.run(go())
         assert returned < 0.05
         assert got == [0, 1, 2]
-        assert stalled_left == 0  # dropped after the send timeout
+        assert stalled_ws.closed == terminal_routes.CONTROL_CLOSE_CODE
+        assert stalled.websocket is None and len(stalled.outbox) == 0
+        assert [f["n"] for f in healthy_ws.got] == [0, 1, 2, 3]
+
+    def test_overflow_during_an_in_flight_send(self, monkeypatch):
+        from terminal import routes as terminal_routes
+
+        monkeypatch.setattr(terminal_routes, "CONTROL_OUTBOX_LIMIT", 2)
+        errors = []
+
+        async def go():
+            loop = asyncio.get_running_loop()
+            loop.set_exception_handler(lambda l, c: errors.append(c))
+            ws = FakeSocket(hold=True)
+            state = terminal_routes.SessionReportState()
+            state.websocket = ws
+            monkeypatch.setattr(terminal_routes, "_client_views", {state})
+            await terminal_routes.broadcast_control({"n": 0})
+            await asyncio.sleep(0.01)  # frame 0 is in flight, held
+            await terminal_routes.broadcast_control({"n": 1})
+            await terminal_routes.broadcast_control({"n": 2})
+            await terminal_routes.broadcast_control({"n": 3})  # overflow
+            await asyncio.sleep(0.01)
+            ws.release.set()
+            await asyncio.sleep(0.05)
+            sender = state.sender
+            return ws, state, sender
+
+        ws, state, sender = asyncio.run(go())
+        assert ws.closed == terminal_routes.CONTROL_CLOSE_CODE
+        assert state.websocket is None and len(state.outbox) == 0
+        assert sender.done() and not sender.cancelled() and sender.exception() is None
+        assert errors == []
+        assert [f["n"] for f in ws.got] == [0]  # the in-flight frame, nothing else
 
     def test_injection_does_not_wait_on_pages(self, monkeypatch):
         from terminal import routes as terminal_routes
 
-        class Stalled:
-            async def send_text(self, frame):
-                await asyncio.sleep(3600)
-
         state = terminal_routes.SessionReportState()
-        state.websocket = Stalled()
+        state.websocket = FakeSocket(hold=True)
         monkeypatch.setattr(terminal_routes, "_client_views", {state})
 
         class Running:

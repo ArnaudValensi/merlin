@@ -106,3 +106,23 @@ class TestTranscriptStamp:
         payload = '{"session_id": "c", "transcript_path": "/t/c.jsonl"}'
         s.run(INIT_SH, pane=s.pane_of(w["a"]), cwd=s.home, stdin=payload)
         assert s.wopt(w["a"], "@agent_transcript") == ""
+
+
+class TestTranscriptMark:
+    def test_mark_is_zero_for_a_file_not_yet_written(self, srv):
+        s, w = srv
+        payload = '{"session_id": "c", "transcript_path": "/nonexistent/new.jsonl"}'
+        before = int(time.time())
+        s.run(INIT_SH, "claude", pane=s.pane_of(w["a"]), cwd=s.home, stdin=payload)
+        size, epoch = s.wopt(w["a"], "@agent_transcript_mark").split()
+        assert size == "0"
+        assert before <= int(epoch) <= int(time.time())
+
+    def test_mark_is_the_size_of_a_resumed_transcript(self, srv, tmp_path):
+        s, w = srv
+        resumed = tmp_path / "resumed.jsonl"
+        resumed.write_text("x" * 1234)
+        payload = f'{{"session_id": "c", "transcript_path": "{resumed}"}}'
+        s.run(INIT_SH, "claude", pane=s.pane_of(w["a"]), cwd=s.home, stdin=payload)
+        assert s.wopt(w["a"], "@agent_transcript_mark").split()[0] == "1234"
+        assert s.wopt(w["a"], "@agent_transcript") == str(resumed)

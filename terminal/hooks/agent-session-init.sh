@@ -11,8 +11,11 @@
 #     the conversation. The workspace snapshot reads it to resume the agent
 #     after a restart (see workspace/);
 #   - stamps @agent_transcript, the conversation's transcript file
-#     (`transcript_path` in the hook JSON), also on every SessionStart. Voice
-#     mode reads it to follow the agent's answer (see voice/).
+#     (`transcript_path` in the hook JSON), also on every SessionStart, with
+#     @agent_transcript_mark ("<bytes> <epoch>": the file's size and the time
+#     at this SessionStart). Voice mode reads them to follow the agent's
+#     answer (see voice/): whatever the file held at the mark is history (a
+#     resumed conversation), whatever comes after is the new conversation.
 # No-op outside tmux or if tmux is unavailable, so it can never block a session.
 
 provider="$1"
@@ -62,7 +65,15 @@ if [ -n "$provider" ] && [ -n "$conv" ]; then
   tmux set-option -w -t "$win" @agent_conv "$conv" 2>/dev/null
 fi
 if [ -n "$provider" ] && [ -n "$transcript" ]; then
-  tmux set-option -w -t "$win" @agent_transcript "$transcript" 2>/dev/null
+  size=0
+  if [ -f "$transcript" ]; then
+    size=$(wc -c < "$transcript" 2>/dev/null | tr -d ' ')
+    case "$size" in ''|*[!0-9]*) size=0 ;; esac
+  fi
+  # One tmux call, the mark first: a reader that sees the new path already
+  # sees its mark.
+  tmux set-option -w -t "$win" @agent_transcript_mark "$size $(date +%s)" \; \
+    set-option -w -t "$win" @agent_transcript "$transcript" 2>/dev/null
 fi
 
 exit 0

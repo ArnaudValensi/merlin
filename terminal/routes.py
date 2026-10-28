@@ -361,10 +361,38 @@ _TARGET_RE = re.compile(r"[^:\s]+:@\d+")
 
 
 # A page that has not taken a control frame in this long, or has this many
-# waiting, is stalled: its pending frames are dropped (a reconnecting page
-# asks for the state it missed, see voice/routes.py `/session`).
+# waiting, is stalled: its socket is closed, which makes the page reconnect
+# and ask for the state it missed (voice mode: ``/api/voice/session``).
 CONTROL_SEND_TIMEOUT = 5.0
 CONTROL_OUTBOX_LIMIT = 256
+CONTROL_CLOSE_CODE = 4408
+
+# Sender and close tasks, held so they are not garbage collected mid-run.
+_control_tasks: set[asyncio.Task] = set()
+
+
+def _control_task(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _control_tasks.add(task)
+
+    def done(t: asyncio.Task) -> None:
+        _control_tasks.discard(t)
+        if not t.cancelled() and t.exception() is not None:
+            logger.error("Control frame delivery failed", exc_info=t.exception())
+
+    task.add_done_callback(done)
+    return task
+
+
+async def _drop_stalled_page(state: SessionReportState, websocket: WebSocket) -> None:
+    """Stop broadcasting to a page that cannot keep up, and close its socket
+    so it reconnects and resynchronizes rather than miss frames silently."""
+    if state.websocket is websocket:
+        state.websocket = None
+    state.outbox.clear()
+    logger.warning("Closing a terminal page that stopped taking control frames")
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(websocket.close(code=CONTROL_CLOSE_CODE), 2.0)
 
 
 async def _drain_outbox(state: SessionReportState) -> None:
@@ -373,34 +401,34 @@ async def _drain_outbox(state: SessionReportState) -> None:
         if websocket is None:
             state.outbox.clear()
             return
+        # The sender owns the frame in flight: an overflow clearing the
+        # outbox meanwhile cannot make it send or drop the wrong one.
+        frame = state.outbox.popleft()
         try:
-            await asyncio.wait_for(
-                websocket.send_text(state.outbox[0]), CONTROL_SEND_TIMEOUT
-            )
+            await asyncio.wait_for(websocket.send_text(frame), CONTROL_SEND_TIMEOUT)
         except Exception:
-            # A socket closing or stalled under us is not this function's
-            # problem: its own handler tears it down.
-            state.outbox.clear()
+            await _drop_stalled_page(state, websocket)
             return
-        state.outbox.popleft()
 
 
 async def broadcast_control(payload: dict) -> None:
     """Queue one control frame (``\\x00`` + JSON) for every connected
     terminal page and return without waiting for delivery. Each page has its
     own ordered outbox drained by its own task, so a stalled page never holds
-    up the caller nor the other pages. Pages filter what concerns them (voice
+    up the caller nor the other pages; a page that stalls is disconnected and
+    resynchronizes when it reconnects. Pages filter what concerns them (voice
     mode frames carry their ``target``)."""
     frame = "\x00" + json.dumps(payload)
     for state in list(_client_views):
-        if state.websocket is None:
+        websocket = state.websocket
+        if websocket is None:
             continue
         if len(state.outbox) >= CONTROL_OUTBOX_LIMIT:
-            state.outbox.clear()
+            _control_task(_drop_stalled_page(state, websocket))
             continue
         state.outbox.append(frame)
         if state.sender is None or state.sender.done():
-            state.sender = asyncio.create_task(_drain_outbox(state))
+            state.sender = _control_task(_drain_outbox(state))
 
 
 async def _broadcast_voice_error(message: str) -> None:

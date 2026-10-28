@@ -244,3 +244,40 @@ class TestSeam:
         assert transcript.find_transcript("claude", "", "../x") is None
         assert transcript.find_transcript("claude", "", "*") is None
         assert transcript.find_transcript("codex", "", "abc-1") is None
+
+
+class TestLimit:
+    def test_a_limited_poll_keeps_the_rest_for_later(self, path):
+        reader = ClaudeTranscriptReader(path, offset=0)
+        _append(path, *(_user(f"p{i}", f"u{i}") for i in range(10)))
+        first = reader.poll(limit=3)
+        assert [e.text for e in first] == ["p0", "p1", "p2"]
+        _append(path, _user("p10", "u10"))
+        rest = []
+        for _ in range(10):
+            rest += reader.poll(limit=3)
+        assert [e.text for e in rest] == [f"p{i}" for i in range(3, 11)]
+
+    def test_since_skips_lines_stamped_before(self, path):
+        from datetime import UTC, datetime
+
+        since = datetime(2026, 10, 28, 12, 0, tzinfo=UTC)
+        reader = ClaudeTranscriptReader(path, offset=0, since=since)
+        old = json.dumps(
+            {
+                "type": "user",
+                "uuid": "o",
+                "timestamp": "2026-10-28T11:59:59Z",
+                "message": {"content": "old"},
+            }
+        )
+        new = json.dumps(
+            {
+                "type": "user",
+                "uuid": "n",
+                "timestamp": "2026-10-28T12:00:00.500Z",
+                "message": {"content": "new"},
+            }
+        )
+        _append(path, old + "\n", new + "\n")
+        assert reader.poll() == [Event("user_prompt", "new")]

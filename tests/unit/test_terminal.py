@@ -761,22 +761,34 @@ class TestTranscribeAndInject:
 
 
 class TestBroadcastVoiceError:
-    """_broadcast_voice_error sends one control frame to every connected page."""
+    """_broadcast_voice_error sends one control frame to every connected page.
+
+    Delivery runs in each page's own sender task (see broadcast_control), so
+    the test lets those tasks run before looking."""
 
     def test_sends_frame_to_every_page_and_survives_a_dead_socket(self):
         live = tr.SessionReportState()
         live.websocket = mock.AsyncMock()
         dead = tr.SessionReportState()
-        dead.websocket = mock.AsyncMock()
-        dead.websocket.send_text.side_effect = RuntimeError("closed")
+        dead_socket = mock.AsyncMock()
+        dead_socket.send_text.side_effect = RuntimeError("closed")
+        dead.websocket = dead_socket
         unbound = tr.SessionReportState()
+
+        async def go():
+            await tr._broadcast_voice_error("no sub")
+            await asyncio.sleep(0.05)
+
         with mock.patch.object(tr, "_client_views", {dead, live, unbound}):
-            asyncio.run(tr._broadcast_voice_error("no sub"))
+            asyncio.run(go())
 
         frame = live.websocket.send_text.await_args.args[0]
         assert frame.startswith("\x00")
         assert json.loads(frame[1:]) == {"type": "voice_error", "message": "no sub"}
-        dead.websocket.send_text.assert_awaited_once()
+        dead_socket.send_text.assert_awaited_once()
+        # The failing page is dropped and closed so it reconnects.
+        assert dead.websocket is None
+        dead_socket.close.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

@@ -37,7 +37,8 @@ import time
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
+from pathlib import Path
 
 from board import sweep
 
@@ -57,17 +58,21 @@ PROMPT_TIMEOUT = 20.0
 MAX_AHEAD = 3
 # How often a waiting speaker looks again for clips that expired unfetched.
 ROOM_RECHECK = 5.0
-# Pieces waiting to be synthesized, all turns together. Past it, the turn
-# being written says the rest is in the terminal and drops what follows.
+# Backpressure on the transcript itself: while this many pieces wait to be
+# synthesized, or this many turns wait to be spoken, the watch stops reading
+# the transcript (the reader keeps its place) and still watches the window.
 MAX_QUEUED = 64
+MAX_LIVE = 8
+# Events taken from the transcript per poll, so one poll cannot overshoot.
+POLL_EVENTS = 16
+# One text block can still be huge: past this many waiting pieces, its turn
+# says the rest is in the terminal and drops what follows.
+HARD_QUEUED = 4 * MAX_QUEUED
 # Clip records kept for a reconnecting page.
 MAX_CLIPS = 24
 EXCERPT_LINES = 8
 # The ask sentence is a nicety: a slow voice server must not hold the watch.
 ASK_DEADLINE = 5.0
-# A conversation found after the session started (/clear, resume) is read from
-# its start, without the lines stamped before it was seen minus this margin.
-NEW_CONVERSATION_MARGIN = 2.0
 
 PLAYABLE_FORMATS = {
     "wav": "audio/wav",
@@ -104,11 +109,34 @@ TOOL_LABELS = {
     "Skill": "skill",
 }
 
-_WINDOW_FIELDS = ("@agent_state", "@agent_provider", "@agent_transcript", "@agent_conv")
+_WINDOW_FIELDS = (
+    "@agent_state",
+    "@agent_provider",
+    "@agent_transcript",
+    "@agent_transcript_mark",
+    "@agent_conv",
+)
 _TARGET_RE = re.compile(r"[^:\s]+:@\d+")
 _ANSI = re.compile(
     r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|[\x00-\x08\x0b-\x1f\x7f]"
 )
+
+
+def _boundary(path: Path, mark: str) -> tuple[int, datetime | None]:
+    """Where a conversation found after start begins: the ``"<bytes>
+    <epoch>"`` mark session-init stamped at its SessionStart. Without a mark
+    (an agent whose hooks predate it), a file that exists is history up to
+    now and one that does not exist yet is all new. Blocking."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = 0
+    parts = mark.split()
+    if len(parts) == 2 and all(p.isdigit() for p in parts):
+        offset = int(parts[0])
+        since = datetime.fromtimestamp(int(parts[1]), UTC)
+        return (offset if offset <= size else 0), since
+    return size, None
 
 
 def tool_label(name: str) -> str:
@@ -284,6 +312,8 @@ class VoiceSession:
         self._busy_starts_turn = True
         self.reader: transcript.TranscriptReader | None = None
         self._reader_key: tuple[str, str] | None = None
+        # A conversation seen before its file existed: all of it is new.
+        self._absent_key: tuple[str, str] | None = None
         self._queue: deque[tuple[_Turn, object]] = deque()
         self._queued_pieces = 0
         self._queue_event = asyncio.Event()
@@ -439,35 +469,42 @@ class VoiceSession:
     async def _open_reader(self, window: dict[str, str], initial: bool = False) -> None:
         """Follow the window's current transcript.
 
-        At start, from its end: what was said before is history. A
-        conversation found later (``/clear``, resume, or the conversation-id
-        fallback finding the file late) is read from its start, skipping the
-        lines stamped before it was noticed, so its first turn is never lost
-        and a resumed conversation's history is never read aloud."""
+        At start, from its end: what was said before voice mode is history.
+        A conversation that appears later (``/clear``, resume) is read from
+        the mark session-init stamped at its SessionStart (the file's size and
+        the time then), however late the watch notices it: its first turn is
+        never lost, and the history a resume brings is never read aloud."""
         key = (window["@agent_transcript"], window["@agent_conv"])
         if key == self._reader_key:
             return
         path = await asyncio.to_thread(transcript.find_transcript, self.provider, *key)
-        if path is None:
-            return
+        if path is None or not await asyncio.to_thread(path.exists):
+            # Not written yet (a /clear file appears with its first prompt).
+            if not initial:
+                self._absent_key = key
+            if path is None:
+                return
         if self.reader is None or self.reader.path != path:
             if initial:
-                self.reader = await asyncio.to_thread(
-                    transcript.open_reader, self.provider, path
-                )
+                offset, since = None, None
+            elif self._absent_key == key:
+                offset, since = 0, None
             else:
-                since = datetime.now(UTC) - timedelta(
-                    seconds=POLL_INTERVAL + NEW_CONVERSATION_MARGIN
+                offset, since = await asyncio.to_thread(
+                    _boundary, path, window["@agent_transcript_mark"]
                 )
-                self.reader = await asyncio.to_thread(
-                    transcript.open_reader, self.provider, path, 0, since
-                )
+            self.reader = await asyncio.to_thread(
+                transcript.open_reader, self.provider, path, offset, since
+            )
         self._reader_key = key
+
+    def _backlogged(self) -> bool:
+        return self._queued_pieces >= MAX_QUEUED or len(self.live) >= MAX_LIVE
 
     async def _follow(self, window: dict[str, str]) -> None:
         await self._open_reader(window)
-        if self.reader is not None:
-            for event in await asyncio.to_thread(self.reader.poll):
+        if self.reader is not None and not self._backlogged():
+            for event in await asyncio.to_thread(self.reader.poll, POLL_EVENTS):
                 await self._on_event(event)
         await self._on_agent_state(window["@agent_state"])
 
@@ -512,9 +549,9 @@ class VoiceSession:
     def _enqueue(self, turn: _Turn, piece: str) -> None:
         if turn.truncated:
             return
-        if self._queued_pieces >= MAX_QUEUED:
-            # Nobody is fetching and the answer keeps coming: say where the
-            # rest is (allowed past the bound, once per turn) and drop it.
+        if self._queued_pieces >= HARD_QUEUED:
+            # One text block too long to wait for: say where the rest is
+            # (allowed past the bound, once per turn) and drop it.
             turn.truncated = True
             piece = REST_IN_TERMINAL.get(self.lang, REST_IN_TERMINAL["en"])
         self._queue.append((turn, piece))
@@ -538,7 +575,8 @@ class VoiceSession:
     async def _on_agent_state(self, state: str) -> None:
         now = time.monotonic()
         if state == "ask":
-            await self._begin_turn()
+            if not self._backlogged():
+                await self._begin_turn()
             if self.state != "ask":
                 await self._enter_ask()
             return
@@ -548,7 +586,8 @@ class VoiceSession:
             await self._set_state("speaking" if speaking else "thinking")
         if state == "busy":
             if self.turn is None or self.turn.end_queued:
-                if not self._busy_starts_turn:
+                # The transcript will start the turn once reading resumes.
+                if not self._busy_starts_turn or self._backlogged():
                     return
             turn = await self._begin_turn()
             turn.saw_busy = True
