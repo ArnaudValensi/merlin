@@ -299,3 +299,16 @@ class TestCaughtUp:
         _append(path, ', "uuid": "x", "message": {"content": "done"}}\n')
         reader.poll()
         assert reader.caught_up()
+
+    def test_a_file_truncated_in_place_is_unread_until_read_again(self, path):
+        _append(path, *(_user("old " * 20, f"o{i}") for i in range(5)))
+        reader = ClaudeTranscriptReader(path)
+        assert reader.caught_up()
+        inode = path.stat().st_ino
+        with open(path, "r+") as f:  # same inode, shorter content
+            f.truncate(0)
+            f.write(_user("new prompt", "n1"))
+        assert path.stat().st_ino == inode
+        assert not reader.caught_up()
+        assert reader.poll() == [Event("user_prompt", "new prompt")]
+        assert reader.caught_up()

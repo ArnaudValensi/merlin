@@ -162,7 +162,9 @@ class ClaudeTranscriptReader:
             return True
         if self._inode is not None and st.st_ino != self._inode:
             return False
-        return st.st_size <= self.offset
+        # Smaller than what was read: truncated and rewritten in place, to be
+        # read again from its start, so not caught up either.
+        return st.st_size == self.offset
 
     def _read(self) -> None:
         try:

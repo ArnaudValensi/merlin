@@ -1384,6 +1384,38 @@ class TestBackpressure:
         assert "listening" not in states[states.index("speaking") : -2]
         assert states[-2:] == ["listening", "off"]
 
+    def test_a_truncation_while_paused_does_not_end_the_turn_early(
+        self, tmux, window, tts_server, fast, monkeypatch
+    ):
+        target, win, path = window
+        monkeypatch.setattr(session, "MAX_QUEUED", 1)
+        monkeypatch.setattr(session, "POLL_EVENTS", 2)
+        pages = Pages()
+
+        async def go():
+            running = await _start(target, pages)
+            tmux.set(win, "@agent_state", "busy")
+            append(
+                path,
+                prompt("q", "u1"),
+                *(
+                    say([{"type": "text", "text": f"Part {i} of it."}], f"a{i}")
+                    for i in range(6)
+                ),
+            )
+            await pages.wait(lambda p: len(p.events("say")) >= session.MAX_AHEAD)
+            assert running._backlogged()
+            with open(path, "r+") as f:  # rewritten in place, same inode
+                f.truncate(0)
+                f.write(say([{"type": "text", "text": "Rewritten part."}], "r1"))
+            tmux.set(win, "@agent_state", "done")
+            await asyncio.sleep(3 * session.END_GRACE)
+            ends = len(pages.events("turn_end"))
+            await session.stop_session(target)
+            return ends
+
+        assert asyncio.run(go()) == 0
+
     def test_skip_covers_the_whole_actual_turn(
         self, tmux, window, tts_server, fast, monkeypatch
     ):
