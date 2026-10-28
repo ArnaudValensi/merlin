@@ -41,6 +41,9 @@ class FileHost:
         self.files = dict(files)
         self.hits: list[str] = []
         self.short: set[str] = set()  # paths answered with a truncated body
+        # Called when a path is requested, before its body is sent: a test
+        # holds a download open there, or changes the directory meanwhile.
+        self.before: dict[str, object] = {}
         host = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -53,6 +56,9 @@ class FileHost:
                 if body is None:
                     self.send_error(404)
                     return
+                hook = host.before.get(self.path)
+                if hook is not None:
+                    hook()  # ty: ignore[call-non-callable]
                 if self.path in host.short:
                     body = body[: len(body) // 2]
                 self.send_response(200)
@@ -192,6 +198,77 @@ class TestDownload:
         _ensure(tmp_path, files)
         assert _leftovers(tmp_path) == []
         assert (tmp_path / "v.bin").read_bytes() == VOICES
+
+    def test_overlapping_downloads_wait_and_keep_each_others_files(
+        self, tmp_path, host, files
+    ):
+        """Two servers starting on one empty directory: the second waits for
+        the first, never touches its temp file, and downloads nothing."""
+        inside, release = threading.Event(), threading.Event()
+
+        def hold():
+            inside.set()
+            assert release.wait(10)
+
+        host.before["/m.onnx"] = hold
+        errors: list[BaseException] = []
+        logs_b: list[str] = []
+
+        def run(logs):
+            try:
+                srv.ensure_models(tmp_path, files, log=logs.append)
+            except BaseException as e:  # noqa: BLE001 - reported below
+                errors.append(e)
+
+        a = threading.Thread(target=run, args=([],))
+        a.start()
+        assert inside.wait(10)
+        b = threading.Thread(target=run, args=(logs_b,))
+        b.start()
+        deadline = time.monotonic() + 5
+        while not logs_b and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert any("waiting" in line for line in logs_b)
+        assert len(_leftovers(tmp_path)) == 1  # the first download's, untouched
+        release.set()
+        a.join(10)
+        b.join(10)
+        assert errors == []
+        assert host.hits == ["/m.onnx", "/v.bin"]
+        assert (tmp_path / "m.onnx").read_bytes() == MODEL
+        assert (tmp_path / "v.bin").read_bytes() == VOICES
+        assert _leftovers(tmp_path) == []
+
+    def test_a_right_file_appearing_during_the_download_is_kept(
+        self, tmp_path, host, files
+    ):
+        (tmp_path / "m.onnx").write_bytes(MODEL)
+        host.before["/v.bin"] = lambda: (tmp_path / "v.bin").write_bytes(VOICES)
+        _ensure(tmp_path, files)
+        assert (tmp_path / "v.bin").read_bytes() == VOICES
+        assert _leftovers(tmp_path) == []
+
+    def test_a_wrong_file_appearing_during_the_download_is_never_replaced(
+        self, tmp_path, host, files
+    ):
+        (tmp_path / "m.onnx").write_bytes(MODEL)
+        host.before["/v.bin"] = lambda: (tmp_path / "v.bin").write_bytes(b"theirs")
+        with pytest.raises(PreflightError, match="not the pinned file"):
+            _ensure(tmp_path, files)
+        assert (tmp_path / "v.bin").read_bytes() == b"theirs"
+        assert _leftovers(tmp_path) == []
+
+    def test_a_filesystem_without_hard_links_still_publishes(
+        self, tmp_path, host, files, monkeypatch
+    ):
+        def no_links(src, dst):
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(srv.os, "link", no_links)
+        _ensure(tmp_path, files)
+        assert (tmp_path / "m.onnx").read_bytes() == MODEL
+        assert (tmp_path / "v.bin").read_bytes() == VOICES
+        assert _leftovers(tmp_path) == []
 
     def test_no_download_stops_with_the_urls(self, tmp_path, host, files):
         (tmp_path / "m.onnx").write_bytes(MODEL)

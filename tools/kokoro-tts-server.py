@@ -28,7 +28,9 @@ synthesized one at a time. The output is plain Kokoro, no effect.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import errno
+import fcntl
 import hashlib
 import hmac
 import io
@@ -125,6 +127,48 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+LOCK_FILE = ".kokoro-download.lock"
+
+
+def is_present(path: Path, spec: ModelFile) -> bool:
+    """True when ``path`` is the pinned file, False when it does not exist.
+
+    A file that is there but not the pinned one stops the start: it is never
+    overwritten, the user decides what it is.
+    """
+    if not path.exists():
+        return False
+    size = path.stat().st_size if path.is_file() else -1
+    if size != spec.size or file_sha256(path) != spec.sha256:
+        raise PreflightError(
+            f"{path} is not the pinned file (expected {spec.size} bytes, sha256 "
+            f"{spec.sha256}). It is left untouched: move it aside to let the "
+            f"server download the right one, or pass --models <another dir>."
+        )
+    return True
+
+
+@contextlib.contextmanager
+def download_lock(models: Path, log):
+    """One download at a time per models directory, across processes.
+
+    Two servers started on different ports with the same directory would
+    otherwise fetch the same files and clean up each other's temp files. The
+    lock is released when the file is closed, so a killed holder never leaves
+    it taken.
+    """
+    fd = os.open(models / LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            log(f"Another server is downloading into {models}: waiting for it.")
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
 def ensure_models(
     models: Path,
     files: dict[str, ModelFile] = MODEL_FILES,
@@ -134,28 +178,16 @@ def ensure_models(
     """Make sure every model file is in ``models`` with its pinned sha256.
 
     Every present file is checked before anything is downloaded, so a wrong
-    file stops the start before a long download. A wrong file is never
-    overwritten: the user decides what it is. A missing file is downloaded
-    through a temporary file in the same directory, verified, then renamed
-    into place, so an interrupted download never leaves a half file under the
-    real name.
+    file stops the start before a long download. Missing files are downloaded
+    under the directory's download lock, after looking again (another server
+    may have just fetched them), each through a temporary file in the same
+    directory, verified, then published without ever replacing a file that
+    appeared meanwhile.
     """
     log = log or (lambda msg: print(msg, file=sys.stderr, flush=True))
     if models.exists() and not models.is_dir():
         raise PreflightError(f"{models} is not a directory. Pass --models <dir>.")
-    missing = []
-    for name, spec in files.items():
-        path = models / name
-        if not path.exists():
-            missing.append(name)
-            continue
-        size = path.stat().st_size if path.is_file() else -1
-        if size != spec.size or file_sha256(path) != spec.sha256:
-            raise PreflightError(
-                f"{path} is not the pinned file (expected {spec.size} bytes, sha256 "
-                f"{spec.sha256}). It is left untouched: move it aside to let the "
-                f"server download the right one, or pass --models <another dir>."
-            )
+    missing = [n for n, spec in files.items() if not is_present(models / n, spec)]
     if not missing:
         return
     if not download:
@@ -176,23 +208,52 @@ def ensure_models(
             f"cannot be downloaded there. Fix its permissions or pass --models "
             f"<writable dir>."
         )
-    needed = sum(files[n].size for n in missing)
-    free = shutil.disk_usage(models).free
-    if free < needed:
-        raise PreflightError(
-            f"{models} has {free / 1e6:.0f} MB free, and the missing files "
-            f"({', '.join(missing)}) need {needed / 1e6:.0f} MB. Free some space "
-            f"or pass --models <another dir>."
-        )
-    for name in missing:
-        download_file(files[name], models / name, log)
+    with download_lock(models, log):
+        missing = [n for n in missing if not is_present(models / n, files[n])]
+        if not missing:
+            return
+        needed = sum(files[n].size for n in missing)
+        free = shutil.disk_usage(models).free
+        if free < needed:
+            raise PreflightError(
+                f"{models} has {free / 1e6:.0f} MB free, and the missing files "
+                f"({', '.join(missing)}) need {needed / 1e6:.0f} MB. Free some space "
+                f"or pass --models <another dir>."
+            )
+        for name in missing:
+            # No other download runs while the lock is held: a temp file left
+            # here belongs to a run that was killed mid-download.
+            for stale in models.glob(f".{name}.*.part"):
+                stale.unlink(missing_ok=True)
+            download_file(files[name], models / name, log)
+
+
+def publish(tmp: Path, dest: Path, spec: ModelFile) -> None:
+    """Give the verified ``tmp`` its real name, never replacing a file.
+
+    A hard link fails when ``dest`` exists, atomically, so a file that
+    appeared during the download (put there by hand, by another tool) is kept:
+    if it is the pinned file the download is not needed, otherwise the start
+    stops and the file is left untouched.
+    """
+    try:
+        os.link(tmp, dest)
+    except FileExistsError:
+        is_present(dest, spec)
+    except OSError as e:
+        if e.errno not in (errno.EPERM, errno.EOPNOTSUPP, errno.EMLINK):
+            raise
+        # A filesystem without hard links: look, then rename. Only a writer
+        # outside the download lock could slip into that gap.
+        if not is_present(dest, spec):
+            os.rename(tmp, dest)
 
 
 def download_file(spec: ModelFile, dest: Path, log) -> None:
-    """Download ``spec`` to ``dest``, verifying size and sha256 before the rename."""
-    # A run killed mid-download leaves its temporary file behind.
-    for stale in dest.parent.glob(f".{dest.name}.*.part"):
-        stale.unlink(missing_ok=True)
+    """Download ``spec`` to ``dest``, verifying size and sha256 before publishing.
+
+    Called with the directory's download lock held.
+    """
     log(f"Downloading {dest.name} ({spec.size / 1e6:.0f} MB) from {spec.url}")
     fd, tmp_name = tempfile.mkstemp(
         prefix=f".{dest.name}.", suffix=".part", dir=dest.parent
@@ -202,29 +263,36 @@ def download_file(spec: ModelFile, dest: Path, log) -> None:
     done = 0
     next_report = 10
     try:
-        with (
-            os.fdopen(fd, "wb") as out,
-            urllib.request.urlopen(spec.url, timeout=30) as resp,
-        ):
-            while chunk := resp.read(1 << 20):
-                done += len(chunk)
-                if done > spec.size:
-                    raise PreflightError(
-                        f"{spec.url} sent more than the expected {spec.size} bytes."
-                    )
-                digest.update(chunk)
-                try:
-                    out.write(chunk)
-                except OSError as e:
-                    raise PreflightError(
-                        f"Writing {dest.name} in {dest.parent} failed: "
-                        f"{e.strerror or e}. It needs {spec.size / 1e6:.0f} MB: free "
-                        f"some space or pass --models <another dir>."
-                    ) from None
-                percent = done * 100 // spec.size
-                if percent >= next_report:
-                    log(f"  {dest.name}: {percent}%")
-                    next_report = percent // 10 * 10 + 10
+        try:
+            with (
+                os.fdopen(fd, "wb") as out,
+                urllib.request.urlopen(spec.url, timeout=30) as resp,
+            ):
+                while chunk := resp.read(1 << 20):
+                    done += len(chunk)
+                    if done > spec.size:
+                        raise PreflightError(
+                            f"{spec.url} sent more than the expected {spec.size} bytes."
+                        )
+                    digest.update(chunk)
+                    try:
+                        out.write(chunk)
+                    except OSError as e:
+                        raise PreflightError(
+                            f"Writing {dest.name} in {dest.parent} failed: "
+                            f"{e.strerror or e}. It needs {spec.size / 1e6:.0f} MB: "
+                            f"free some space or pass --models <another dir>."
+                        ) from None
+                    percent = done * 100 // spec.size
+                    if percent >= next_report:
+                        log(f"  {dest.name}: {percent}%")
+                        next_report = percent // 10 * 10 + 10
+        except (urllib.error.URLError, OSError) as e:  # the network side
+            reason = getattr(e, "reason", None) or getattr(e, "strerror", None) or e
+            raise PreflightError(
+                f"Download of {spec.url} failed: {reason}. Check the network and "
+                f"try again, or place the file in {dest.parent} yourself."
+            ) from None
         if done != spec.size:
             raise PreflightError(
                 f"{spec.url} ended after {done} of {spec.size} bytes. Try again."
@@ -237,13 +305,12 @@ def download_file(spec: ModelFile, dest: Path, log) -> None:
         umask = os.umask(0)
         os.umask(umask)
         os.chmod(tmp, 0o644 & ~umask)  # mkstemp creates it private
-        os.replace(tmp, dest)
-    except (urllib.error.URLError, OSError) as e:  # the network side
-        reason = getattr(e, "reason", None) or getattr(e, "strerror", None) or e
-        raise PreflightError(
-            f"Download of {spec.url} failed: {reason}. Check the network and try "
-            f"again, or place the file in {dest.parent} yourself."
-        ) from None
+        try:
+            publish(tmp, dest, spec)
+        except OSError as e:
+            raise PreflightError(
+                f"Cannot put {dest.name} in place in {dest.parent}: {e.strerror or e}."
+            ) from None
     finally:
         tmp.unlink(missing_ok=True)
     log(f"  {dest.name}: verified")

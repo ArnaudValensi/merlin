@@ -95,8 +95,11 @@ Claude Code's settings (same marker, same `AGENT_STATE_HOOKS` consent, version
 `_HOOK_VERSION` 6):
 
 - **`agent-session-init.sh`** (SessionStart) also stamps `@agent_transcript`
-  from the hook JSON's `transcript_path` (bash regex, no jq), next to
-  `@agent_sid`, `@agent_conv`, `@agent_provider`.
+  from the hook JSON's `transcript_path` (bash regex, no jq), and with it
+  `@agent_transcript_mark`, `"<bytes> <epoch>"`: the file's size and the time
+  at this SessionStart, set in the same tmux call (mark first), next to
+  `@agent_sid`, `@agent_conv`, `@agent_provider`. Whatever the file held at
+  the mark is history (a resumed conversation); what comes after is new.
 - **`agent-voice-context.sh`** (UserPromptSubmit) prints the voice instructions
   on stdout only when its window has `@voice on`; Claude Code adds that stdout
   to the agent's context. Nothing is prefixed to what the user said, and the
@@ -109,7 +112,8 @@ Claude Code's settings (same marker, same `AGENT_STATE_HOOKS` consent, version
 Window options: `@voice` (`on` while a session runs, set by start, cleared by
 stop and at server startup for windows a previous process left marked),
 `@agent_state` (`busy`, `ask`, `idle`, `done`, from the state hooks),
-`@agent_transcript`, `@agent_conv`, `@agent_provider`.
+`@agent_transcript`, `@agent_transcript_mark`, `@agent_conv`,
+`@agent_provider` (all from session-init).
 
 ## The transcript reader and the Codex seam
 
@@ -128,10 +132,19 @@ A file truncated in place is treated as unread from its start.
 Where the transcript is: `find_transcript()` takes `@agent_transcript`, and
 falls back to the conversation id (`@agent_conv`) under the projects dir. The
 session looks again when a turn starts, so `/clear` and resume are followed.
-The reader is anchored at the end of the file when the session starts (old
-turns are never read aloud). A transcript discovered later is read from offset
-0 with a `since` filter on the lines' timestamps, so its first turn is not lost
-and a resumed conversation's history is not spoken.
+Where reading starts (`VoiceSession._open_reader`, `_boundary`):
+
+- **At session start**, from the end of the current file: what was said before
+  voice mode is history and is never read aloud.
+- **A conversation that changes later** (`/clear`, resume), from its
+  `@agent_transcript_mark`: the byte offset it holds (0 if the file is now
+  shorter than the mark), with the mark's time as a `since` filter on the
+  lines' timestamps. However late the watch notices the new file, its first
+  turn is not lost and the history a resume brings is not spoken.
+- **A file the session saw absent** (a `/clear` transcript appears with its
+  first prompt), from offset 0 with no filter: everything in it is new.
+- **No valid mark** (an agent whose hooks predate it): an existing file starts
+  at its current size, a missing one at 0.
 
 ## The voice session
 
@@ -254,9 +267,15 @@ script. Startup fails fast, cheapest check first, each failure saying the fix:
 2. **The model files** in `--models` (default `~/.local/share/kokoro`): every
    present file is checked (size, sha256) before anything is downloaded; a
    wrong file is refused and never overwritten. Missing files are downloaded
-   (about 354 MB, once) through a temporary file in the same directory, checked
-   for size and sha256, then renamed into place; free space and a writable
-   directory are checked first. `--no-download` stops instead, with the URLs.
+   (about 354 MB, once) under a lock on the directory
+   (`.kokoro-download.lock`, `flock`), so a second server started on the same
+   directory waits, looks again, and finds them there. Each goes through a
+   temporary file in the same directory, checked for size and sha256, then
+   published with a hard link, which never replaces a file that appeared
+   meanwhile (a right one is kept, a wrong one stops the start). Free space
+   and a writable directory are checked first; temp files left by a killed run
+   are removed only while holding the lock. `--no-download` stops instead,
+   with the URLs.
 3. **The device**: `--device cuda` stops if onnxruntime has no CUDA provider or
    the session falls back to the CPU; `auto` (default) falls back with a loud
    warning; `cpu` forces it.
