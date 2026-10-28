@@ -234,7 +234,9 @@ def publish(tmp: Path, dest: Path, spec: ModelFile) -> None:
     A hard link fails when ``dest`` exists, atomically, so a file that
     appeared during the download (put there by hand, by another tool) is kept:
     if it is the pinned file the download is not needed, otherwise the start
-    stops and the file is left untouched.
+    stops and the file is left untouched. A filesystem without hard links has
+    no such guarantee (a rename replaces whatever appeared since a check), so
+    there the start stops rather than risk overwriting a file.
     """
     try:
         os.link(tmp, dest)
@@ -243,10 +245,12 @@ def publish(tmp: Path, dest: Path, spec: ModelFile) -> None:
     except OSError as e:
         if e.errno not in (errno.EPERM, errno.EOPNOTSUPP, errno.EMLINK):
             raise
-        # A filesystem without hard links: look, then rename. Only a writer
-        # outside the download lock could slip into that gap.
-        if not is_present(dest, spec):
-            os.rename(tmp, dest)
+        raise PreflightError(
+            f"{dest.parent} is on a filesystem without hard links, so {dest.name} "
+            f"cannot be put in place without risking overwriting a file. Pass "
+            f"--models <a directory on a local Linux filesystem>, or download "
+            f"{spec.url} there yourself."
+        ) from None
 
 
 def download_file(spec: ModelFile, dest: Path, log) -> None:

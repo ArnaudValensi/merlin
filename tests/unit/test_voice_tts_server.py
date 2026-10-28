@@ -105,6 +105,10 @@ def _ensure(models, files, **kw):
     return logs
 
 
+def errorcode_name(code: int) -> str:
+    return errno.errorcode[code]
+
+
 def _leftovers(models: Path):
     return sorted(p.name for p in models.iterdir() if p.name.endswith(".part"))
 
@@ -258,16 +262,36 @@ class TestDownload:
         assert (tmp_path / "v.bin").read_bytes() == b"theirs"
         assert _leftovers(tmp_path) == []
 
-    def test_a_filesystem_without_hard_links_still_publishes(
-        self, tmp_path, host, files, monkeypatch
+    @pytest.mark.parametrize(
+        "code", [errno.EPERM, errno.EOPNOTSUPP, errno.EMLINK], ids=errorcode_name
+    )
+    def test_a_filesystem_without_hard_links_refuses_to_publish(
+        self, tmp_path, host, files, monkeypatch, code
     ):
         def no_links(src, dst):
-            raise OSError(errno.EPERM, "Operation not permitted")
+            raise OSError(code, os.strerror(code))
 
+        (tmp_path / "m.onnx").write_bytes(MODEL)
         monkeypatch.setattr(srv.os, "link", no_links)
-        _ensure(tmp_path, files)
-        assert (tmp_path / "m.onnx").read_bytes() == MODEL
-        assert (tmp_path / "v.bin").read_bytes() == VOICES
+        with pytest.raises(PreflightError, match="without hard links"):
+            _ensure(tmp_path, files)
+        assert not (tmp_path / "v.bin").exists()
+        assert _leftovers(tmp_path) == []
+
+    def test_a_file_appearing_at_publication_without_hard_links_is_kept(
+        self, tmp_path, host, files, monkeypatch
+    ):
+        """The boundary a check-then-rename fallback would race on."""
+
+        def appear_then_fail(src, dst):
+            Path(dst).write_bytes(b"theirs")
+            raise OSError(errno.EOPNOTSUPP, "Operation not supported")
+
+        (tmp_path / "m.onnx").write_bytes(MODEL)
+        monkeypatch.setattr(srv.os, "link", appear_then_fail)
+        with pytest.raises(PreflightError, match="without hard links"):
+            _ensure(tmp_path, files)
+        assert (tmp_path / "v.bin").read_bytes() == b"theirs"
         assert _leftovers(tmp_path) == []
 
     def test_no_download_stops_with_the_urls(self, tmp_path, host, files):

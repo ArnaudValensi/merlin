@@ -272,7 +272,8 @@ script. Startup fails fast, cheapest check first, each failure saying the fix:
    directory waits, looks again, and finds them there. Each goes through a
    temporary file in the same directory, checked for size and sha256, then
    published with a hard link, which never replaces a file that appeared
-   meanwhile (a right one is kept, a wrong one stops the start). Free space
+   meanwhile (a right one is kept, a wrong one stops the start); a filesystem
+   without hard links stops the start rather than risk a replacing rename. Free space
    and a writable directory are checked first; temp files left by a killed run
    are removed only while holding the lock. `--no-download` stops instead,
    with the URLs.
