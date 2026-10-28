@@ -16,11 +16,16 @@
  * during a disconnection is queued before the newer ones, and an old state
  * never replaces a newer one.
  *
+ * While syncing, nothing starts playing and the page does not listen (the
+ * frames that would say the agent is busy are the ones held back). The
+ * barrier lifts only with a snapshot: a failed request leaves it up.
+ *
  * Clips: queued, fetching, ready, playing, then remembered as played (a
  * bounded memory). Only the first few are fetched (the playback window), so
  * the server's own prefetch bound follows what is actually heard. A failed
- * download is retried a few times in place; past that it is dropped from the
- * queue but not remembered, so a later snapshot can bring it back.
+ * download is retried a few times in place; past that the clip stays at its
+ * place, stalled, and nothing after it plays until the user retries it or
+ * skips that answer: speech is never heard out of order.
  */
 
 const MerlinVoiceCore = (function () {
@@ -209,19 +214,21 @@ const MerlinVoiceCore = (function () {
         return true;
     }
 
-    /** Hold the frames until the snapshot being fetched has been folded in. */
+    /** Hold the frames until a snapshot has been folded in. Speech the page
+     *  had started detecting is dropped: listening stops with the barrier. */
     function beginSync(m) {
         m.syncing = true;
+        if (m.local === "hearing") m.local = "idle";
     }
 
-    /** Fold a snapshot from GET /api/voice/session in (null: the request
-     *  failed), then the frames that waited behind it. */
+    /** Fold a snapshot from GET /api/voice/session in, then the frames that
+     *  waited behind it, and lift the barrier. */
     function applySnapshot(m, snap) {
         m.syncing = false;
-        if (snap && snap.active === false) {
+        if (snap.active === false) {
             m.server = "off";
             m.offReason = m.offReason || "Voice mode is off";
-        } else if (snap) {
+        } else {
             if (snap.session && m.session && snap.session !== m.session) {
                 // A new session on this window: nothing of the old one holds.
                 m.queue = [];
@@ -244,8 +251,14 @@ const MerlinVoiceCore = (function () {
         waiting.forEach(function (f) { applyFrame(m, f); });
     }
 
-    /** The mode on screen: off, error, ask, rx, tx, proc or listen. */
+    /** The mode on screen: off, error, ask, rx, tx, proc or listen. While
+     *  syncing the page never listens: what would be MON or TX is PROC. */
     function mode(m) {
+        const base = baseMode(m);
+        return m.syncing && (base === "listen" || base === "tx") ? "proc" : base;
+    }
+
+    function baseMode(m) {
         if (m.offReason) return "off";
         if (m.local === "error") return "error";
         if (m.server === "ask" || m.ask) return "ask";
@@ -283,18 +296,29 @@ const MerlinVoiceCore = (function () {
     }
 
     /** A download failed. Returns the wait before the retry, or -1 when the
-     *  clip was given up (out of the queue, not remembered as played). */
+     *  tries are spent: the clip stays at its place, stalled, and holds back
+     *  what follows until retryStalled or a skip of its answer. */
     function fetchFailed(m, clip, now) {
         clip.tries += 1;
         if (clip.tries >= MAX_TRIES) {
-            m.queue = m.queue.filter(function (c) { return c !== clip; });
-            m.notice = "Part of the answer could not be played";
+            clip.status = "stalled";
             return -1;
         }
         const wait = RETRY_MS[Math.min(clip.tries - 1, RETRY_MS.length - 1)];
         clip.status = "failed";
         clip.retryAt = now + wait;
         return wait;
+    }
+
+    function stalled(m) {
+        return m.queue.find(function (c) { return c.status === "stalled"; }) || null;
+    }
+
+    /** Try the stalled clips again, from scratch. */
+    function retryStalled(m) {
+        m.queue.forEach(function (c) {
+            if (c.status === "stalled") { c.status = "queued"; c.tries = 0; c.retryAt = 0; }
+        });
     }
 
     /** The head clip starts playing: only now is it captioned. */
@@ -357,10 +381,13 @@ const MerlinVoiceCore = (function () {
         fetching: fetching,
         fetched: fetched,
         fetchFailed: fetchFailed,
+        stalled: stalled,
+        retryStalled: retryStalled,
         begin: begin,
         clipDone: clipDone,
         requeue: requeue,
         skip: skip,
+        dropTurn: dropTurn,
         silence: silence,
         MAX_CAPTIONS: MAX_CAPTIONS,
         WINDOW: WINDOW,

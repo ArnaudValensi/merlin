@@ -38,6 +38,9 @@ function initVoiceConsole() {
     // An upload the server never answered: ask for the session's state again.
     const WAIT_TIMEOUT_MS = 45000;
     const NOTICE_MS = 5000;
+    // A resync whose request fails tries again after these waits, then says
+    // so (tap to try again). The barrier stays up all along.
+    const SYNC_RETRY_MS = [1000, 2000, 4000, 8000];
     const reduceMotion = window.matchMedia
         ? window.matchMedia("(prefers-reduced-motion: reduce)")
         : { matches: false };
@@ -82,6 +85,8 @@ function initVoiceConsole() {
     let opening = null;        // {gen, promise}: the initialization in flight
     let gen = 0;               // the current open; bumped by open, adopt and close
     let syncReq = 0;           // the latest resync request
+    let askToken = 0;          // the approval playback allowed to start
+    let askFor = null;         // the ask audio id that playback was for
 
     const audio = { ctx: null, out: null, outAnalyser: null, mic: null, micSource: null, micAnalyser: null, wave: null };
     let vad = null;
@@ -130,6 +135,7 @@ function initVoiceConsole() {
         '      <button type="button" class="vc-btn vc-yes" data-act="yes">YES</button>',
         '      <button type="button" class="vc-btn vc-no" data-act="no">NO</button>',
         '      <button type="button" class="vc-btn vc-stop" data-act="stop">STOP AGENT</button>',
+        '      <button type="button" class="vc-btn vc-skip" data-act="skip">SKIP ANSWER</button>',
         '      <button type="button" class="vc-btn vc-exit" data-act="exit">EXIT</button>',
         '    </div>',
         '  </footer>',
@@ -317,6 +323,7 @@ function initVoiceConsole() {
                 } else {
                     const wait = Core.fetchFailed(m, clip, Date.now());
                     if (wait >= 0) setTimeout(function () { if (g === gen) pump(); }, wait + 20);
+                    else fail("Part of the answer could not be downloaded", "clip");
                 }
                 render();
                 pump();
@@ -371,19 +378,28 @@ function initVoiceConsole() {
     }
 
     /** The agent asks: cut the answer (it plays again afterwards), then the
-     *  alert and the ask sentence, in the slot like any speech. */
+     *  alert and the ask sentence, in the slot like any speech. Each attempt
+     *  has its own token: an answer, a new dialog, leaving ASK, Stop or Exit
+     *  revoke it, so a download that lands late never starts. */
     function playAsk(id) {
         if (speech && speech.kind === "answer") {
             stopSpeech();
             Core.requeue(m);
         }
+        cancelAskSpeech();
+        askFor = id || "";
+        const token = askToken;
         const wait = earcon("alert");
         if (!id) return;
-        const g = gen;
         download(id).then(function (buf) {
-            if (!buf || g !== gen || !m || Core.mode(m) !== "ask" || speech) return;
+            if (!buf || token !== askToken || !m || Core.mode(m) !== "ask" || speech) return;
             own(buf, "ask", audio.ctx.currentTime + wait + 0.1);
         });
+    }
+
+    function cancelAskSpeech() {
+        askToken++;
+        if (speech && speech.kind === "ask") stopSpeech();
     }
 
     // -- VAD ------------------------------------------------------------------
@@ -473,6 +489,7 @@ function initVoiceConsole() {
         const forced = sendNow;
         sendNow = false;
         if (!m || phase !== "live" || (!listening && !forced)) return;   // not ours to send
+        if (m.syncing) return;   // the agent may be busy: its frames are held back
         if (m.local !== "idle" && m.local !== "hearing") return;
         m.local = "sending";
         earcon("send");
@@ -613,6 +630,8 @@ function initVoiceConsole() {
         opening = null;
         listening = false;
         stopSpeech();
+        askToken++;
+        askFor = null;
         if (vad) { try { vad.destroy(); } catch (_) { /* gone */ } vad = null; }
         closeMic();
         buffers.clear();
@@ -631,20 +650,32 @@ function initVoiceConsole() {
     }
 
     /** Take the session's state again (a reconnected socket may have missed
-     *  frames). Frames arriving meanwhile wait behind the snapshot; only the
-     *  latest of overlapping requests is folded in. */
+     *  frames). Until a snapshot is folded in, frames wait behind it, nothing
+     *  starts playing and the page does not listen; a failed request is tried
+     *  again, then reported (tap to try again). Only the latest of
+     *  overlapping resyncs completes. */
     async function resync() {
         if (!m || phase === "off") return;
         const g = gen;
         const t = target;
         const req = ++syncReq;
+        const current = function () { return g === gen && m && req === syncReq; };
         Core.beginSync(m);
-        const res = await api("GET", "session?target=" + encodeURIComponent(t));
-        if (g !== gen || !m || req !== syncReq) return;
-        if (res.ok && res.data.active === false) { close("the session ended", false); return; }
-        Core.applySnapshot(m, res.ok ? res.data : null);
         render();
-        pump();
+        for (let attempt = 0; ; attempt++) {
+            const res = await api("GET", "session?target=" + encodeURIComponent(t));
+            if (!current()) return;
+            if (res.ok) {
+                if (res.data.active === false) { close("the session ended", false); return; }
+                Core.applySnapshot(m, res.data);
+                render();
+                pump();
+                return;
+            }
+            if (attempt >= SYNC_RETRY_MS.length) { fail("Lost contact with Merlin", "sync"); return; }
+            await new Promise(function (r) { setTimeout(r, SYNC_RETRY_MS[attempt]); });
+            if (!current()) return;
+        }
     }
 
     /** A page opened on a window whose session is running: hold until a tap
@@ -702,6 +733,8 @@ function initVoiceConsole() {
             if (kind === "start") { phase = "tune"; render(); connectSession(true); }
             else if (kind === "vad") { phase = "tune"; render(); connectSession(false); }
             else if (kind === "upload" && retryBlob) { m.local = "sending"; render(); upload(retryBlob); }
+            else if (kind === "sync") resync();
+            else if (kind === "clip") { Core.retryStalled(m); pump(); }
         }
     }
 
@@ -711,6 +744,21 @@ function initVoiceConsole() {
         if (b.dataset.lang) { setLang(b.dataset.lang); return; }
         const act = b.dataset.act;
         if (act === "exit") close("", true);
+        else if (act === "skip" && m) {
+            // The answer whose clip could not be downloaded: drop it here
+            // and on the server, and carry on.
+            const stuck = Core.stalled(m);
+            if (stuck) {
+                Core.dropTurn(m, stuck.turn);
+                api("POST", "skip", { target: target, turn: stuck.turn });
+            }
+            m.local = "idle";
+            m.error = "";
+            retry = null;
+            dropBuffers();
+            render();
+            pump();
+        }
         else if (act === "stop" && m) {
             Core.silence(m);
             stopSpeech();
@@ -718,7 +766,7 @@ function initVoiceConsole() {
             api("POST", "interrupt", { target: target });
             render();
         } else if ((act === "yes" || act === "no") && m) {
-            if (speech && speech.kind === "ask") stopSpeech();
+            cancelAskSpeech();
             b.disabled = true;
             api("POST", "answer", { target: target, yes: act === "yes" }).then(function (res) {
                 b.disabled = false;
@@ -796,6 +844,7 @@ function initVoiceConsole() {
         mode: function () { return m ? (phase === "live" ? Core.mode(m) : phase) : "off"; },
         model: function () { return m; },
         speaking: function () { return speech ? speech.kind : null; },
+        listening: function () { return listening; },
         target: function () { return target; },
     };
     renderButton();
@@ -810,14 +859,12 @@ function initVoiceConsole() {
 
     function onModeChange(mode, prev) {
         modeSince = Date.now();
-        if (prev === "ask" && speech && speech.kind === "ask") stopSpeech();
+        if (prev === "ask") { cancelAskSpeech(); askFor = null; }
         if (mode === "listen" && (prev === "rx" || prev === "proc")) {
             const wait = earcon("done");
             setTimeout(function () { if (m && currentMode() === "listen") earcon("listen"); }, wait * 1000 + 120);
         } else if (mode === "listen" && prev !== "tx") {
             earcon("listen");
-        } else if (mode === "ask") {
-            playAsk(m.ask && m.ask.audio);
         } else if (mode === "error") {
             earcon("error");
         }
@@ -847,7 +894,8 @@ function initVoiceConsole() {
         el.name.textContent = mode === "proc" && m.local === "sending" ? "UPLINK" : spec.name;
         el.hint.textContent = spec.hint;
         let readout = "";
-        if (mode === "proc") readout = m.local === "sending" ? "sending what you said" : (m.activity || "thinking");
+        if (mode === "proc" && m.syncing) readout = "reconnecting";
+        else if (mode === "proc") readout = m.local === "sending" ? "sending what you said" : (m.activity || "thinking");
         else if (mode === "rx") readout = m.activity ? m.activity : "voice";
         else if (mode === "listen") readout = "mic open";
         else if (mode === "tx") readout = "voice detected";
@@ -880,7 +928,7 @@ function initVoiceConsole() {
         }
         el.error.hidden = mode !== "error";
         if (mode === "error") el.error.textContent = m.error || m.notice || "The voice server failed";
-        const shown = BUTTONS[mode] || ["exit"];
+        const shown = mode === "error" && retry === "clip" ? ["skip", "exit"] : BUTTONS[mode] || ["exit"];
         Object.keys(actionButtons).forEach(function (k) { actionButtons[k].hidden = shown.indexOf(k) < 0; });
 
         showNotice();
@@ -889,6 +937,8 @@ function initVoiceConsole() {
             lastMode = mode;
             onModeChange(mode, prev);
         }
+        // The dialog's sentence, once per dialog (a new dialog plays its own).
+        if (mode === "ask" && m.ask && askFor !== (m.ask.audio || "")) playAsk(m.ask.audio);
         syncListening(mode);
         if (reduceMotion.matches) drawFrame(true);
     }

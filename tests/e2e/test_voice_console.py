@@ -318,6 +318,18 @@ def test_ask_shows_yes_and_no_and_they_send_enter_and_escape(
     try:
         session = page.evaluate("() => window.MerlinTerminal.currentSession()")
         target, _ = _agent_window(tmux_env, session, tmp_path, mode="ask")
+        # Hold the first ask sentence's download (the only long clip) until
+        # after Yes: it must never start once the user has answered.
+        held = []
+
+        def hold_ask_audio(route):
+            response = route.fetch()
+            if len(response.body()) > 100_000 and not held:
+                held.append((route, response))
+                return
+            route.fulfill(response=response)
+
+        page.route("**/api/voice/audio/*", hold_ask_audio)
         _start_voice(page, target)
 
         _wait_mode(page, ["ask"], timeout=40000)
@@ -325,12 +337,21 @@ def test_ask_shows_yes_and_no_and_they_send_enter_and_escape(
         assert page.is_visible("#voice-console [data-act=yes]")
         assert page.is_visible("#voice-console [data-act=no]")
         assert not page.is_visible("#voice-console [data-act=stop]")
-        # The ask sentence plays in the one speech slot, and Yes cuts it.
-        page.wait_for_function(
-            "() => window.MerlinVoice.speaking() === 'ask'", timeout=10000
-        )
+        _wait(lambda: held, 10, "the ask sentence was never requested")
+        # Hold the answer too, so the dialog is still up when the download
+        # lands: only the revoked token keeps the sentence from starting.
+        answers = []
+        page.route("**/api/voice/answer", lambda r: answers.append(r))
         page.click("#voice-console [data-act=yes]")
+        _wait(lambda: answers, 5, "Yes was never sent")
+        route, response = held[0]
+        route.fulfill(response=response)
+        page.unroute("**/api/voice/audio/*")
+        page.wait_for_timeout(1000)
+        assert _mode(page) == "ask"
         assert page.evaluate("() => window.MerlinVoice.speaking()") is None
+        answers[0].continue_()
+        page.unroute("**/api/voice/answer")
         _wait(
             lambda: "ANSWER:YES" in _capture(tmux_env, target),
             10,
@@ -340,7 +361,12 @@ def test_ask_shows_yes_and_no_and_they_send_enter_and_escape(
         # The fake mic loops, so the next turn comes by itself: answer No.
         _wait_mode(page, ["listen", "tx", "proc", "rx"], timeout=20000)
         _wait_mode(page, ["ask"], timeout=60000)
+        # This time the sentence is playing, in the one speech slot: No cuts it.
+        page.wait_for_function(
+            "() => window.MerlinVoice.speaking() === 'ask'", timeout=10000
+        )
         page.click("#voice-console [data-act=no]")
+        assert page.evaluate("() => window.MerlinVoice.speaking()") is None
         _wait(
             lambda: "ANSWER:NO" in _capture(tmux_env, target),
             10,
@@ -360,6 +386,46 @@ def test_ask_shows_yes_and_no_and_they_send_enter_and_escape(
             "@voice was not cleared",
         )
 
+    finally:
+        ctx.close()
+
+
+def test_a_resync_holds_listening_until_a_snapshot_lands(
+    browser, server, tmux_env, tts, tmp_path
+):
+    """A reconnect asks for the session's state; while that request fails
+    the page neither listens nor plays, then carries on once it succeeds."""
+    ctx, page, _ = _open(browser, server)
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        _start_voice(page, target)
+        calls = []
+
+        def flaky_session(route):
+            calls.append(route.request.url)
+            if len(calls) <= 2:
+                route.abort()
+            else:
+                route.continue_()
+
+        page.route("**/api/voice/session?*", flaky_session)
+        state = page.evaluate(
+            """() => {
+                document.dispatchEvent(new CustomEvent('merlin:terminal-socket'));
+                return [window.MerlinVoice.mode(), window.MerlinVoice.listening(),
+                        window.MerlinVoice.model().syncing];
+            }"""
+        )
+        assert state == ["proc", False, True], state
+        page.wait_for_timeout(1500)
+        assert page.evaluate("() => window.MerlinVoice.listening()") is False
+        page.wait_for_function(
+            "() => !window.MerlinVoice.model().syncing", timeout=15000
+        )
+        assert len(calls) >= 3
+        _wait_mode(page, ["listen", "tx", "proc", "rx"], timeout=10000)
+        page.click("#voice-console [data-act=exit]")
     finally:
         ctx.close()
 

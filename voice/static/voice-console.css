@@ -316,6 +316,7 @@ body.voice-console-open { overflow: hidden; }
 .vc-btn:disabled { opacity: 0.5; }
 .vc-exit { flex: 0 1 34%; color: var(--vc-dim); }
 .vc-stop { color: var(--vc-red); border-color: rgba(248, 113, 113, 0.6); }
+.vc-skip { color: var(--vc-amber); border-color: rgba(251, 191, 36, 0.6); }
 .vc-yes { background: var(--vc-green); color: var(--vc-bg); border-color: var(--vc-green); min-height: 76px; font-size: 22px; }
 .vc-no { background: var(--vc-red); color: var(--vc-bg); border-color: var(--vc-red); min-height: 76px; font-size: 22px; }
 #voice-console[data-mode="ask"] .vc-buttons { flex-wrap: wrap; }

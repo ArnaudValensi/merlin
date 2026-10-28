@@ -121,29 +121,51 @@ test("only the playback window is fetched, and it moves as clips are heard", () 
     assert.ok(m.played.length <= Core.MAX_PLAYED);
 });
 
-test("a failed download is retried in place, then given up but recoverable", () => {
+test("a download that keeps failing stalls in place: nothing after it plays", () => {
     const m = Core.createModel(T);
     Core.applyFrame(m, frame("say", { id: "a", text: "first", turn: 1 }));
     Core.applyFrame(m, frame("say", { id: "b", text: "second", turn: 1 }));
-    const [a] = Core.toFetch(m, 0);
+    const [a, b] = Core.toFetch(m, 0);
     Core.fetching(m, a);
-    const wait = Core.fetchFailed(m, a, 1000);
-    assert.ok(wait > 0);
-    assert.equal(m.queue[0].id, "a", "still first in line");
-    assert.equal(Core.nextReady(m), null, "b never jumps ahead");
-    assert.deepEqual(Core.toFetch(m, 1000).map((c) => c.id), ["b"], "a waits for its retry");
-    assert.ok(Core.toFetch(m, 1000 + wait).some((c) => c.id === "a"));
-    assert.equal(m.captions.length, 0, "nothing captioned before it plays");
-    for (let i = 1; i < Core.MAX_TRIES; i++) { Core.fetching(m, a); Core.fetchFailed(m, a, 5000); }
-    assert.deepEqual(m.queue.map((c) => c.id), ["b"]);
-    assert.match(m.notice, /could not be played/);
-    assert.ok(!m.played.includes("a"));
-    // A snapshot that still lists it brings it back, ahead of b.
+    Core.fetching(m, b);
+    Core.fetched(m, b);
+    let wait = 0;
+    for (let i = 0; i < Core.MAX_TRIES; i++) {
+        Core.fetching(m, a);
+        wait = Core.fetchFailed(m, a, 1000 * i);
+    }
+    assert.equal(wait, -1);
+    assert.equal(Core.stalled(m), a);
+    assert.deepEqual(m.queue.map((c) => c.id), ["a", "b"], "a keeps its place");
+    assert.equal(Core.nextReady(m), null, "b never passes a");
+    assert.ok(!Core.toFetch(m, 1e9).includes(a), "no automatic download");
+    // A snapshot later changes nothing in line.
     Core.beginSync(m);
     Core.applySnapshot(m, { active: true, session: "s1", rev: REV, state: "speaking",
         clips: [{ id: "a", text: "first", turn: 1, rev: 1 }, { id: "b", text: "second", turn: 1, rev: 2 }] });
     assert.deepEqual(m.queue.map((c) => c.id), ["a", "b"]);
-    assert.equal(m.queue[0].tries, 0);
+    assert.equal(Core.nextReady(m), null);
+    // Tap to retry: a downloads again and plays first.
+    Core.retryStalled(m);
+    assert.deepEqual(Core.toFetch(m, 0).map((c) => c.id), ["a"]);
+    Core.fetching(m, a);
+    Core.fetched(m, a);
+    const heard = [];
+    let clip;
+    while ((clip = Core.nextReady(m))) { Core.begin(m, clip); heard.push(clip.id); Core.clipDone(m); }
+    assert.deepEqual(heard, ["a", "b"]);
+});
+
+test("a stalled answer can be skipped; the next answer plays", () => {
+    const m = Core.createModel(T);
+    Core.applyFrame(m, frame("say", { id: "a", text: "first", turn: 1 }));
+    Core.applyFrame(m, frame("say", { id: "b", text: "more", turn: 1 }));
+    Core.applyFrame(m, frame("say", { id: "c", text: "next answer", turn: 2 }));
+    const a = m.queue[0];
+    for (let i = 0; i < Core.MAX_TRIES; i++) { Core.fetching(m, a); Core.fetchFailed(m, a, 0); }
+    Core.dropTurn(m, Core.stalled(m).turn);
+    assert.deepEqual(m.queue.map((c) => c.id), ["c"]);
+    assert.equal(playNext(m).id, "c");
 });
 
 test("a snapshot is folded in before the frames that waited behind it", () => {
@@ -293,4 +315,27 @@ test("a download that fails once plays after its retry, each clip once, in order
     while ((clip = Core.nextReady(m))) { Core.begin(m, clip); heard.push(clip.id); Core.clipDone(m); }
     assert.deepEqual(heard, ["a", "b"]);
     assert.equal(m.captions.filter((c) => c.who === "agent")[0].text, "first second");
+});
+
+test("while syncing the page never listens, and a failed snapshot keeps the barrier", () => {
+    const m = Core.createModel(T);
+    m.local = "hearing";
+    assert.equal(Core.mode(m), "tx");
+    Core.beginSync(m);
+    assert.equal(m.local, "idle", "speech being detected is dropped");
+    assert.equal(Core.mode(m), "proc");
+    Core.applyFrame(m, frame("state", { state: "thinking" }));
+    assert.equal(m.server, "listening", "held back");
+    assert.equal(Core.mode(m), "proc", "not listening meanwhile");
+    // The request failed: no snapshot is folded in, the barrier stays.
+    const missed = ++REV;   // a clip said and missed
+    Core.applyFrame(m, frame("say", { id: "B", text: "two", turn: 1 }));
+    assert.equal(Core.nextReady(m), null);
+    assert.equal(Core.mode(m), "proc");
+    assert.ok(m.syncing);
+    // The retry succeeds.
+    Core.applySnapshot(m, { active: true, session: "s1", rev: missed, state: "thinking",
+        clips: [{ id: "A", text: "one", turn: 1, rev: missed }] });
+    assert.deepEqual(m.queue.map((c) => c.id), ["A", "B"]);
+    assert.equal(m.server, "thinking");
 });
