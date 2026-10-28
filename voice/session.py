@@ -291,6 +291,12 @@ class VoiceSession:
         audio: AudioStore | None = None,
     ) -> None:
         self.target = target
+        # Every frame carries the session id and a revision that only grows,
+        # and the snapshot carries the revision it reflects: a page orders a
+        # snapshot against the frames around it, and tells a new session on
+        # the same window from the old one.
+        self.id = secrets.token_urlsafe(9)
+        self.rev = 0
         self.lang = lang
         self.config = config
         self.provider = provider
@@ -391,10 +397,22 @@ class VoiceSession:
 
     # -- frames --------------------------------------------------------------
 
+    def _next_rev(self) -> int:
+        self.rev += 1
+        return self.rev
+
     async def _send(self, event: str, **fields) -> None:
+        rev = fields.pop("rev", None) or self._next_rev()
         try:
             await self.broadcast(
-                {"type": "voice", "event": event, "target": self.target, **fields}
+                {
+                    "type": "voice",
+                    "event": event,
+                    "target": self.target,
+                    "session": self.id,
+                    "rev": rev,
+                    **fields,
+                }
             )
         except Exception:
             logger.exception("voice frame failed: %s", event)
@@ -409,6 +427,8 @@ class VoiceSession:
         return {
             "active": not self._stopped,
             "target": self.target,
+            "session": self.id,
+            "rev": self.rev,
             "lang": self.lang,
             "state": self.state,
             "heard": self.heard,
@@ -425,12 +445,31 @@ class VoiceSession:
             self._fetched.add(clip_id)
             self._room_event.set()
 
-    async def skip(self) -> None:
-        """Drop the rest of the answer being heard (the oldest turn not yet
-        fully spoken); listening resumes when that turn ends."""
-        turn = next((t for t in self.live if not t.skipped), None)
+    async def skip(self, turn_id: int | None = None) -> None:
+        """Drop the rest of one answer; listening resumes when that turn ends.
+
+        ``turn_id``: the answer the page is playing. Its synthesis may be
+        over while its audio still plays, so it is looked up by id, never
+        guessed: a newer turn being written stays intact. Without an id, the
+        oldest turn not yet fully spoken. Idempotent."""
+        if turn_id is None:
+            turn = next((t for t in self.live if not t.skipped), None)
+        else:
+            turn = next((t for t in self.live if t.id == turn_id), None)
         if turn is not None:
-            self._drop_turn(turn)
+            if not turn.skipped:
+                self._drop_turn(turn)
+        elif turn_id is not None:
+            # Fully synthesized already: its unfetched clips still hold the
+            # prefetch bound, so they go.
+            self._drop_clips(lambda c: c["turn"] == turn_id)
+
+    async def silence(self) -> None:
+        """Drop every answer waiting to be spoken (the agent was stopped)."""
+        for turn in list(self.live):
+            if not turn.skipped:
+                self._drop_turn(turn)
+        self._drop_clips(lambda c: True)
 
     async def note_dictation(self, text: str | None, error: str | None) -> None:
         """The voice utterance this session's page uploaded was transcribed."""
@@ -656,15 +695,17 @@ class VoiceSession:
             else:
                 kept.append(item)
         self._queue = kept
+        self._drop_clips(lambda c: c["turn"] == turn.id)
+        self._queue_event.set()
+
+    def _drop_clips(self, which) -> None:
+        """Forget the clips the page has not fetched among ``which``."""
         dropped = [
-            c["id"]
-            for c in self.clips
-            if c["turn"] == turn.id and c["id"] not in self._fetched
+            c["id"] for c in self.clips if which(c) and c["id"] not in self._fetched
         ]
         self.audio.drop(dropped)
         self.clips = [c for c in self.clips if c["id"] not in dropped]
         self._room_event.set()
-        self._queue_event.set()
 
     def _unfetched(self) -> int:
         return sum(
@@ -754,6 +795,7 @@ class VoiceSession:
                 "id": self.audio.put(data, self._content_type()),
                 "text": item,
                 "turn": turn.id,
+                "rev": self._next_rev(),
             }
             self.clips.append(clip)
             self._prune_clips()

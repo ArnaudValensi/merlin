@@ -8,6 +8,19 @@
  * The server says what the agent is doing (state frames, the clips to speak);
  * the page knows what it is still playing. Listening comes back only when both
  * are done: the server's turn is over and the last clip has been played.
+ *
+ * Ordering: every frame carries its session id and a revision that only
+ * grows, and a snapshot carries the revision it reflects. Frames older than
+ * what the model holds are dropped; while a snapshot is being fetched, frames
+ * wait behind it (syncing) and are folded in after it, so a clip missed
+ * during a disconnection is queued before the newer ones, and an old state
+ * never replaces a newer one.
+ *
+ * Clips: queued, fetching, ready, playing, then remembered as played (a
+ * bounded memory). Only the first few are fetched (the playback window), so
+ * the server's own prefetch bound follows what is actually heard. A failed
+ * download is retried a few times in place; past that it is dropped from the
+ * queue but not remembered, so a later snapshot can bring it back.
  */
 
 const MerlinVoiceCore = (function () {
@@ -72,6 +85,15 @@ const MerlinVoiceCore = (function () {
     // -- the console model -------------------------------------------------------
 
     const MAX_CAPTIONS = 4;
+    // Clips fetched ahead of playback, the one about to play included.
+    const WINDOW = 2;
+    // Download attempts for one clip, and the wait before each retry.
+    const MAX_TRIES = 3;
+    const RETRY_MS = [600, 1500];
+    // What the model remembers to tell a replayed clip or turn from a new one.
+    const MAX_PLAYED = 64;
+    const MAX_SKIPPED = 32;
+    const MAX_PENDING = 512;
 
     /**
      * server: the last state frame (listening, thinking, speaking, ask, error, off).
@@ -82,6 +104,10 @@ const MerlinVoiceCore = (function () {
     function createModel(target) {
         return {
             target: target,
+            session: null,      // the server session's id, once known
+            rev: 0,             // the newest revision folded in
+            syncing: false,     // a snapshot is on its way: frames wait
+            pending: [],
             server: "listening",
             local: "idle",
             error: "",          // shown in the error mode
@@ -90,12 +116,17 @@ const MerlinVoiceCore = (function () {
             heard: "",
             activity: "",
             ask: null,
-            queue: [],          // clips to play, in say order: {id, text, turn}
+            queue: [],          // clips to play, by revision: {id, text, turn, rev, status, tries, retryAt}
             playing: null,
-            seen: new Set(),    // clip ids ever queued: a snapshot never replays them
-            skipped: new Set(), // turns skipped here
+            played: [],         // ids heard (bounded), never queued again
+            skipped: [],        // turns skipped here (bounded)
             captions: [],       // [{who: 'you' | 'agent', text}]
         };
+    }
+
+    function remember(list, value, max) {
+        if (list.indexOf(value) < 0) list.push(value);
+        while (list.length > max) list.shift();
     }
 
     function caption(m, who, text) {
@@ -110,16 +141,42 @@ const MerlinVoiceCore = (function () {
         while (m.captions.length > MAX_CAPTIONS) m.captions.shift();
     }
 
+    function known(m, id) {
+        return m.played.indexOf(id) >= 0
+            || (m.playing && m.playing.id === id)
+            || m.queue.some(function (c) { return c.id === id; });
+    }
+
+    /** Queue a clip in revision order, unless it was heard, is queued, or
+     *  belongs to a skipped turn. */
     function enqueue(m, clip) {
-        if (!clip || !clip.id || m.seen.has(clip.id) || m.skipped.has(clip.turn)) return false;
-        m.seen.add(clip.id);
-        m.queue.push({ id: clip.id, text: clip.text || "", turn: clip.turn });
+        if (!clip || !clip.id || known(m, clip.id) || m.skipped.indexOf(clip.turn) >= 0) return false;
+        const item = {
+            id: clip.id, text: clip.text || "", turn: clip.turn, rev: clip.rev || 0,
+            status: "queued", tries: 0, retryAt: 0,
+        };
+        let at = m.queue.length;
+        while (at > 0 && m.queue[at - 1].rev > item.rev) at--;
+        m.queue.splice(at, 0, item);
         return true;
     }
 
     /** Fold one voice frame in. Returns false for another window's frame. */
     function applyFrame(m, f) {
         if (!f || f.type !== "voice" || f.target !== m.target) return false;
+        if (m.syncing) {
+            m.pending.push(f);
+            if (m.pending.length > MAX_PENDING) m.pending.shift();
+            return true;
+        }
+        if (f.session) {
+            if (!m.session) m.session = f.session;
+            if (f.session !== m.session) return true;   // an older session's frame
+        }
+        if (f.rev) {
+            if (f.rev <= m.rev) return true;            // already folded in
+            m.rev = f.rev;
+        }
         // Nothing runs while the page listens, so any frame after an upload
         // is the server's answer to it (or says why there is none).
         if (m.local === "waiting") m.local = "idle";
@@ -152,20 +209,39 @@ const MerlinVoiceCore = (function () {
         return true;
     }
 
-    /** A (re)connected page picks the session up from GET /api/voice/session. */
+    /** Hold the frames until the snapshot being fetched has been folded in. */
+    function beginSync(m) {
+        m.syncing = true;
+    }
+
+    /** Fold a snapshot from GET /api/voice/session in (null: the request
+     *  failed), then the frames that waited behind it. */
     function applySnapshot(m, snap) {
-        if (!snap) return;
-        if (snap.active === false) {
+        m.syncing = false;
+        if (snap && snap.active === false) {
             m.server = "off";
             m.offReason = m.offReason || "Voice mode is off";
-            return;
+        } else if (snap) {
+            if (snap.session && m.session && snap.session !== m.session) {
+                // A new session on this window: nothing of the old one holds.
+                m.queue = [];
+                m.rev = 0;
+            }
+            if (snap.session) m.session = snap.session;
+            const rev = snap.rev || 0;
+            if (rev >= m.rev) {
+                m.rev = rev;
+                m.server = snap.state || m.server;
+                m.heard = snap.heard || "";
+                m.activity = snap.activity || "";
+                m.ask = snap.ask || null;
+                if (m.local === "waiting" && m.server !== "listening") m.local = "idle";
+            }
+            (snap.clips || []).forEach(function (c) { enqueue(m, c); });
         }
-        m.server = snap.state || m.server;
-        m.heard = snap.heard || "";
-        m.activity = snap.activity || "";
-        m.ask = snap.ask || null;
-        if (m.local === "waiting" && m.server !== "listening") m.local = "idle";
-        (snap.clips || []).forEach(function (c) { enqueue(m, c); });
+        const waiting = m.pending;
+        m.pending = [];
+        waiting.forEach(function (f) { applyFrame(m, f); });
     }
 
     /** The mode on screen: off, error, ask, rx, tx, proc or listen. */
@@ -183,34 +259,88 @@ const MerlinVoiceCore = (function () {
         return "listen";
     }
 
-    /** Take the next clip to play, or null. */
-    function nextClip(m) {
-        m.playing = m.queue.shift() || null;
-        if (m.playing) caption(m, "agent", m.playing.text);
-        return m.playing;
+    /** The clips to download now: the first few in line not fetched yet
+     *  (a failed one once its retry time has come). */
+    function toFetch(m, now) {
+        return m.queue.slice(0, WINDOW).filter(function (c) {
+            return c.status === "queued" || (c.status === "failed" && c.retryAt <= now);
+        });
     }
 
+    /** The next clip, if it can play now: the head of the line, downloaded. */
+    function nextReady(m) {
+        if (m.playing || m.syncing) return null;
+        const head = m.queue[0];
+        return head && head.status === "ready" ? head : null;
+    }
+
+    function fetching(m, clip) {
+        clip.status = "fetching";
+    }
+
+    function fetched(m, clip) {
+        if (clip.status === "fetching") clip.status = "ready";
+    }
+
+    /** A download failed. Returns the wait before the retry, or -1 when the
+     *  clip was given up (out of the queue, not remembered as played). */
+    function fetchFailed(m, clip, now) {
+        clip.tries += 1;
+        if (clip.tries >= MAX_TRIES) {
+            m.queue = m.queue.filter(function (c) { return c !== clip; });
+            m.notice = "Part of the answer could not be played";
+            return -1;
+        }
+        const wait = RETRY_MS[Math.min(clip.tries - 1, RETRY_MS.length - 1)];
+        clip.status = "failed";
+        clip.retryAt = now + wait;
+        return wait;
+    }
+
+    /** The head clip starts playing: only now is it captioned. */
+    function begin(m, clip) {
+        m.queue = m.queue.filter(function (c) { return c !== clip; });
+        m.playing = clip;
+        if (!clip.captioned) {
+            clip.captioned = true;
+            caption(m, "agent", clip.text);
+        }
+    }
+
+    /** The playing clip was heard to its end. */
     function clipDone(m) {
+        if (m.playing) remember(m.played, m.playing.id, MAX_PLAYED);
         m.playing = null;
+    }
+
+    /** The playing clip was cut (the agent asked something): it goes back to
+     *  the head of the line, still downloaded, and plays again afterwards. */
+    function requeue(m) {
+        const clip = m.playing;
+        if (!clip) return;
+        m.playing = null;
+        m.queue.unshift(clip);
+    }
+
+    function dropTurn(m, turn) {
+        remember(m.skipped, turn, MAX_SKIPPED);
+        m.queue = m.queue.filter(function (c) { return c.turn !== turn; });
+        if (m.playing && m.playing.turn === turn) m.playing = null;
     }
 
     /** Drop the rest of the answer being heard. Returns the skipped turn. */
     function skip(m) {
         const current = m.playing || m.queue[0];
         if (!current) return null;
-        const turn = current.turn;
-        m.skipped.add(turn);
-        m.queue = m.queue.filter(function (c) { return c.turn !== turn; });
-        m.playing = null;
-        return turn;
+        dropTurn(m, current.turn);
+        return current.turn;
     }
 
     /** Drop everything waiting to be spoken (the agent was stopped). */
     function silence(m) {
-        if (m.playing) m.skipped.add(m.playing.turn);
-        m.queue.forEach(function (c) { m.skipped.add(c.turn); });
-        m.queue = [];
-        m.playing = null;
+        const turns = m.queue.map(function (c) { return c.turn; });
+        if (m.playing) turns.push(m.playing.turn);
+        turns.forEach(function (t) { dropTurn(m, t); });
     }
 
     return {
@@ -219,13 +349,23 @@ const MerlinVoiceCore = (function () {
         frequency: frequency,
         createModel: createModel,
         applyFrame: applyFrame,
+        beginSync: beginSync,
         applySnapshot: applySnapshot,
         mode: mode,
-        nextClip: nextClip,
+        toFetch: toFetch,
+        nextReady: nextReady,
+        fetching: fetching,
+        fetched: fetched,
+        fetchFailed: fetchFailed,
+        begin: begin,
         clipDone: clipDone,
+        requeue: requeue,
         skip: skip,
         silence: silence,
         MAX_CAPTIONS: MAX_CAPTIONS,
+        WINDOW: WINDOW,
+        MAX_TRIES: MAX_TRIES,
+        MAX_PLAYED: MAX_PLAYED,
     };
 })();
 

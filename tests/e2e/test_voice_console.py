@@ -91,15 +91,18 @@ def _beep(seconds=0.35, rate=24000) -> bytes:
 class _Tts(BaseHTTPRequestHandler):
     inputs: list[str] = []
     audio = _beep()
+    # The ask sentence lasts long enough to be caught playing.
+    ask_audio = _beep(seconds=4.0)
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         type(self).inputs.append(body["input"])
+        audio = self.ask_audio if "needs your answer" in body["input"] else self.audio
         self.send_response(200)
         self.send_header("Content-Type", "audio/wav")
-        self.send_header("Content-Length", str(len(self.audio)))
+        self.send_header("Content-Length", str(len(audio)))
         self.end_headers()
-        self.wfile.write(self.audio)
+        self.wfile.write(audio)
 
     def log_message(self, *args):
         pass
@@ -322,7 +325,12 @@ def test_ask_shows_yes_and_no_and_they_send_enter_and_escape(
         assert page.is_visible("#voice-console [data-act=yes]")
         assert page.is_visible("#voice-console [data-act=no]")
         assert not page.is_visible("#voice-console [data-act=stop]")
+        # The ask sentence plays in the one speech slot, and Yes cuts it.
+        page.wait_for_function(
+            "() => window.MerlinVoice.speaking() === 'ask'", timeout=10000
+        )
         page.click("#voice-console [data-act=yes]")
+        assert page.evaluate("() => window.MerlinVoice.speaking()") is None
         _wait(
             lambda: "ANSWER:YES" in _capture(tmux_env, target),
             10,
@@ -339,12 +347,69 @@ def test_ask_shows_yes_and_no_and_they_send_enter_and_escape(
             "No did not send Escape",
         )
 
+        # Exit while the ask sentence plays stops it.
+        _wait_mode(page, ["ask"], timeout=60000)
+        page.wait_for_function(
+            "() => window.MerlinVoice.speaking() === 'ask'", timeout=10000
+        )
         page.click("#voice-console [data-act=exit]")
+        assert page.evaluate("() => window.MerlinVoice.speaking()") is None
         _wait(
             lambda: _option(tmux_env, target, "@voice") == "",
             5,
             "@voice was not cleared",
         )
+
+    finally:
+        ctx.close()
+
+
+def test_exit_while_starting_then_open_another_window(
+    browser, server, tmux_env, tts, tmp_path
+):
+    """Exit lands while the start request is held: the late answer must not
+    take over, and the next open (on another window) runs its own start."""
+    ctx, page, _ = _open(browser, server)
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        (tmp_path / "a").mkdir()
+        (tmp_path / "b").mkdir()
+        first, _ = _agent_window(tmux_env, session, tmp_path / "a")
+        second, _ = _agent_window(tmux_env, session, tmp_path / "b")
+        held = []
+
+        def hold_first_start(route):
+            if (
+                json.loads(route.request.post_data or "{}").get("target") == first
+                and not held
+            ):
+                held.append(route)
+                return
+            route.continue_()
+
+        page.route("**/api/voice/start", hold_first_start)
+        _switch(page, first)
+        page.wait_for_function(
+            "() => !document.getElementById('voice-btn').classList.contains('voice-mode-unavailable')",
+            timeout=10000,
+        )
+        page.click("#voice-btn")
+        _wait(lambda: held, 10, "the first start never went out")
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+
+        _start_voice(page, second)
+        assert page.evaluate("() => window.MerlinVoice.target()") == second
+        held[0].continue_()
+        page.wait_for_timeout(1500)
+        assert page.evaluate("() => window.MerlinVoice.target()") == second
+        _wait_mode(page, ["listen", "tx", "proc", "rx"], timeout=10000)
+        page.click("#voice-console [data-act=exit]")
+        _wait(
+            lambda: _option(tmux_env, second, "@voice") == "", 5, "second kept @voice"
+        )
+        # The held start reached the server after Exit: the page stops it.
+        _wait(lambda: _option(tmux_env, first, "@voice") == "", 10, "first kept @voice")
     finally:
         ctx.close()
 

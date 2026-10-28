@@ -299,7 +299,10 @@ class TestStart:
         asyncio.run(go())
         assert tmux.wopt(win, "@voice") == ""
         assert pages.states()[0] == "listening"
-        assert pages.frames[-1] == {
+        last = dict(pages.frames[-1])
+        assert last.pop("session") == pages.frames[0]["session"]
+        assert last.pop("rev") == len(pages.frames)
+        assert last == {
             "type": "voice",
             "event": "state",
             "target": target,
@@ -809,8 +812,11 @@ class TestRoutes:
         class Fake:
             lang = "en"
 
-            async def skip(self):
-                calls.append("skip")
+            async def skip(self, turn=None):
+                calls.append(("skip", turn))
+
+            async def silence(self):
+                calls.append("silence")
 
             def set_lang(self, lang):
                 self.lang = lang
@@ -854,12 +860,18 @@ class TestRoutes:
         r = client.post("/api/voice/answer", json={"target": "s:@2", "yes": True})
         assert r.status_code == 404 and calls == []
 
-    def test_interrupt_skips_and_escapes(self, client, monkeypatch):
+    def test_interrupt_silences_and_escapes(self, client, monkeypatch):
         calls = self._fake_session(monkeypatch)
         assert client.post("/api/voice/interrupt", json={"target": "s:@1"}).json() == {
             "ok": True
         }
-        assert calls[:2] == ["skip", ("escape", "s:@1")]
+        assert calls[:2] == ["silence", ("escape", "s:@1")]
+
+    def test_skip_names_the_turn(self, client, monkeypatch):
+        calls = self._fake_session(monkeypatch)
+        client.post("/api/voice/skip", json={"target": "s:@1", "turn": 7})
+        client.post("/api/voice/skip", json={"target": "s:@1"})
+        assert calls == [("skip", 7), ("skip", None)]
 
     def test_session_and_lang(self, client, monkeypatch):
         self._fake_session(monkeypatch)
@@ -1232,6 +1244,109 @@ class TestTurnOwnership:
 
         asyncio.run(go())
         assert [f["text"] for f in pages.events("say")] == ["Second answer."]
+
+    def test_skip_names_the_answer_and_spares_the_next(
+        self, tmux, window, tts_server, fast
+    ):
+        """The page still plays turn one after its synthesis ended, while turn
+        two is being written: skipping turn one by id leaves turn two whole
+        (the oldest live turn is turn two by then)."""
+        target, win, path = window
+        pages = Pages()
+
+        async def go():
+            running = await _start(target, pages)
+            append(
+                path,
+                prompt("one", "u1"),
+                say([{"type": "text", "text": "First answer."}], "a1"),
+                TURN_END,
+            )
+            await pages.wait(lambda p: len(p.events("turn_end")) == 1)
+            first = pages.events("say")[0]["turn"]
+            append(
+                path,
+                prompt("two", "u2"),
+                say([{"type": "text", "text": "Second answer."}], "a2"),
+            )
+            await pages.wait(lambda p: len(p.events("say")) == 2)
+            await running.skip(first)
+            await running.skip(first)
+            append(
+                path,
+                say([{"type": "text", "text": "Still the second."}], "a3"),
+                TURN_END,
+            )
+            await pages.wait(lambda p: len(p.events("turn_end")) == 2)
+            snap = running.snapshot()
+            await session.stop_session(target)
+            return first, snap
+
+        first, snap = asyncio.run(go())
+        assert [f["text"] for f in pages.events("say")] == [
+            "First answer.",
+            "Second answer.",
+            "Still the second.",
+        ]
+        # Turn one's unfetched clip went with the skip: it no longer holds
+        # the prefetch bound.
+        assert all(c["turn"] != first for c in snap["clips"])
+
+    def test_silence_drops_every_answer_and_frees_the_bound(
+        self, tmux, window, tts_server, fast
+    ):
+        target, win, path = window
+        pages = Pages()
+
+        async def go():
+            running = await _start(target, pages)
+            append(
+                path,
+                prompt("one", "u1"),
+                say([{"type": "text", "text": "First answer."}], "a1"),
+                TURN_END,
+                prompt("two", "u2"),
+                say([{"type": "text", "text": "Second answer."}], "a2"),
+            )
+            await pages.wait(lambda p: len(p.events("say")) == 2)
+            await running.silence()
+            unfetched = running._unfetched()
+            clips = running.snapshot()["clips"]
+            append(path, TURN_END)
+            await pages.wait(lambda p: p.states()[-1:] == ["listening"])
+            await session.stop_session(target)
+            return unfetched, clips
+
+        unfetched, clips = asyncio.run(go())
+        assert unfetched == 0 and clips == []
+
+    def test_frames_carry_the_session_and_a_growing_revision(
+        self, tmux, window, tts_server, fast
+    ):
+        target, win, path = window
+        pages = Pages()
+
+        async def go():
+            running = await _start(target, pages)
+            append(
+                path,
+                prompt("one", "u1"),
+                say([{"type": "text", "text": "An answer."}], "a1"),
+            )
+            await pages.wait(lambda p: len(p.events("say")) == 1)
+            snap = running.snapshot()
+            await session.stop_session(target)
+            return snap
+
+        snap = asyncio.run(go())
+        frames = pages.frames
+        revs = [f["rev"] for f in frames]
+        assert revs == sorted(revs) and len(set(revs)) == len(revs)
+        assert {f["session"] for f in frames} == {snap["session"]}
+        live = [f for f in frames if f["rev"] <= snap["rev"]]
+        assert live[-1]["rev"] == snap["rev"]
+        said = pages.events("say")[0]
+        assert snap["clips"][0]["rev"] == said["rev"]
 
 
 class TestBackpressure:
@@ -1696,7 +1811,11 @@ class TestPageIsolation:
             async def note_dictation(self, text, error):
                 await session.VoiceSession._send(self, "state", state="thinking")
 
+            def _next_rev(self):
+                return 1
+
             target = "s:@1"
+            id = "fake"
 
             async def broadcast(self, payload):
                 await terminal_routes.broadcast_control(payload)

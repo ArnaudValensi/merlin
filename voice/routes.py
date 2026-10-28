@@ -54,6 +54,10 @@ class AnswerBody(Target):
     yes: bool
 
 
+class SkipBody(Target):
+    turn: int | None = None
+
+
 def _lang(value: str) -> str:
     value = (value or "").strip().lower()[:2]
     return value if value in LANGS else "en"
@@ -122,12 +126,13 @@ async def api_lang(body: StartBody):
 
 
 @api_router.post("/skip")
-async def api_skip(body: Target):
-    """Drop the rest of the answer being spoken."""
+async def api_skip(body: SkipBody):
+    """Drop the rest of the answer being spoken: ``turn``, the one the page
+    is playing."""
     running = session.get(body.target)
     if running is None:
         return _no_session()
-    await running.skip()
+    await running.skip(body.turn)
     return {"ok": True}
 
 
@@ -161,11 +166,11 @@ async def api_answer(body: AnswerBody):
 
 @api_router.post("/interrupt")
 async def api_interrupt(body: Target):
-    """Stop the agent (Escape), and drop the rest of the answer."""
+    """Stop the agent (Escape), and drop every answer waiting to be spoken."""
     running = session.get(body.target)
     if running is None:
         return _no_session()
-    await running.skip()
+    await running.silence()
     if not await _escape(body.target):
         return JSONResponse(
             {"error": "The window did not take the key"}, status_code=502

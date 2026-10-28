@@ -52,6 +52,13 @@ function initVoiceConsole() {
         ask:    { badge: "ASK",  name: "STANDBY",    hint: "Yes sends Enter, No sends Escape" },
         error:  { badge: "ERR",  name: "FAULT",      hint: "Tap anywhere to retry" },
     };
+    // The text area before anything was said.
+    const IDLE_LINES = {
+        tune: "Opening the channel, one moment.",
+        resume: "Voice mode is still on for this window. Tap anywhere to pick it up.",
+        listen: "Go ahead, I am listening. Pause when you are done.",
+        tx: "Go ahead, I am listening. Pause when you are done.",
+    };
     const BUTTONS = {
         tune: ["exit"], resume: ["exit"], listen: ["exit"], tx: ["exit"],
         proc: ["stop", "exit"], rx: ["stop", "exit"], ask: ["yes", "no", "exit"], error: ["exit"],
@@ -72,13 +79,15 @@ function initVoiceConsole() {
     let waitTimer = null;
     let noticeTimer = null;
     let wakeLock = null;
-    let opening = null;
+    let opening = null;        // {gen, promise}: the initialization in flight
+    let gen = 0;               // the current open; bumped by open, adopt and close
+    let syncReq = 0;           // the latest resync request
 
     const audio = { ctx: null, out: null, outAnalyser: null, mic: null, micSource: null, micAnalyser: null, wave: null };
     let vad = null;
     let vadLoading = null;
-    let source = null;          // the clip playing
-    const buffers = new Map();  // clip id -> Promise<AudioBuffer | null>
+    let speech = null;          // {src, kind: answer | ask}: the one voice playing
+    const buffers = new Map();  // clip id -> AudioBuffer, the playback window only
 
     // -- markup ---------------------------------------------------------------
 
@@ -199,27 +208,30 @@ function initVoiceConsole() {
         return !!(audio.mic && audio.mic.getAudioTracks().some(function (t) { return t.readyState === "live"; }));
     }
 
-    /** Open the mic once for the whole session. */
-    async function ensureMic() {
+    /** Open the mic once for the whole session. ``g``: the open it serves; a
+     *  stream that arrives after that open ended is closed at once. */
+    async function ensureMic(g) {
         if (micLive()) return;
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             throw new Error("Voice mode needs HTTPS: the microphone is unavailable over HTTP");
         }
+        let stream;
         try {
-            audio.mic = await navigator.mediaDevices.getUserMedia({
+            stream = await navigator.mediaDevices.getUserMedia({
                 audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
             });
         } catch (e) {
             if (e && e.name === "NotAllowedError") throw new Error("Microphone permission denied");
             throw new Error("Microphone unavailable: " + ((e && e.message) || e));
         }
-        if (phase === "off") {
-            // Exit landed while the permission prompt was up.
-            audio.mic.getTracks().forEach(function (t) { t.stop(); });
-            audio.mic = null;
-            throw new Error("closed");
+        if (g !== gen || micLive()) {
+            // Exit landed while the prompt was up, or another open got there first.
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            if (g !== gen) throw new Error("closed");
+            return;
         }
-        audio.micSource = audio.ctx.createMediaStreamSource(audio.mic);
+        audio.mic = stream;
+        audio.micSource = audio.ctx.createMediaStreamSource(stream);
         audio.micAnalyser = audio.ctx.createAnalyser();
         audio.micAnalyser.fftSize = 1024;
         audio.micSource.connect(audio.micAnalyser);
@@ -272,23 +284,70 @@ function initVoiceConsole() {
         });
     }
 
-    /** Fetching a clip is what lets the server synthesize the next ones. */
-    function fetchClip(id) {
-        if (!audio.ctx) return Promise.resolve(null);
-        if (!buffers.has(id)) {
-            buffers.set(id, fetch("/api/voice/audio/" + encodeURIComponent(id), { cache: "no-store" })
-                .then(function (r) { return r.ok ? r.arrayBuffer() : null; })
-                .then(function (b) { return b ? decode(b) : null; })
-                .catch(function () { return null; }));
+    /** Download and decode one clip: an AudioBuffer, or null on any failure. */
+    async function download(id) {
+        try {
+            const r = await fetch("/api/voice/audio/" + encodeURIComponent(id), { cache: "no-store" });
+            if (!r.ok) return null;
+            return await decode(await r.arrayBuffer());
+        } catch (_) {
+            return null;
         }
-        return buffers.get(id);
     }
 
-    function stopSource() {
-        if (!source) return;
-        const s = source;
-        source = null;
-        try { s.onended = null; s.stop(); } catch (_) { /* never started */ }
+    // -- speech: one owner ----------------------------------------------------
+    //
+    // Answer clips and the ask sentence share one slot, `speech`: never two
+    // voices at once, every source stoppable, and the VAD never runs while
+    // the slot is taken. Only the playback window is downloaded (the server
+    // makes the next clips as these are fetched), failures retry in place.
+
+    function fetchWindow() {
+        if (!m || phase !== "live" || !audio.ctx) return;
+        const g = gen;
+        const model = m;
+        Core.toFetch(m, Date.now()).forEach(function (clip) {
+            Core.fetching(m, clip);
+            download(clip.id).then(function (buf) {
+                // Closed, or the clip was skipped while it downloaded.
+                if (g !== gen || m !== model || m.queue.indexOf(clip) < 0) return;
+                if (buf) {
+                    buffers.set(clip.id, buf);
+                    Core.fetched(m, clip);
+                } else {
+                    const wait = Core.fetchFailed(m, clip, Date.now());
+                    if (wait >= 0) setTimeout(function () { if (g === gen) pump(); }, wait + 20);
+                }
+                render();
+                pump();
+            });
+        });
+    }
+
+    function stopSpeech() {
+        if (!speech) return;
+        const s = speech;
+        speech = null;
+        try { s.src.onended = null; s.src.stop(); } catch (_) { /* never started */ }
+    }
+
+    function own(buf, kind, at) {
+        const s = audio.ctx.createBufferSource();
+        s.buffer = buf;
+        s.connect(audio.out);
+        const mine = { src: s, kind: kind };
+        speech = mine;
+        stopListening();
+        s.onended = function () {
+            if (speech !== mine) return;
+            speech = null;
+            if (kind === "answer" && m) Core.clipDone(m);
+            if (kind === "answer") buffers.delete(mine.id);
+            render();
+            pump();
+        };
+        s.start(at || 0);
+        return mine;
     }
 
     function dropBuffers() {
@@ -296,40 +355,34 @@ function initVoiceConsole() {
         Array.from(buffers.keys()).forEach(function (id) { if (!keep.has(id)) buffers.delete(id); });
     }
 
-    /** Play the next clip when nothing plays. Clips play back to back, in say order. */
+    /** Start the next clip when the slot is free and the head is downloaded. */
     function pump() {
-        if (!m || phase !== "live" || m.playing) return;
-        if (Core.mode(m) === "ask") return;   // the answer waits while the agent asks
-        m.queue.forEach(function (c) { fetchClip(c.id); });
-        const clip = Core.nextClip(m);
+        if (!m || phase !== "live") return;
+        fetchWindow();
+        if (speech || Core.mode(m) === "ask") return;   // the answer waits while the agent asks
+        const clip = Core.nextReady(m);
+        if (!clip) { render(); return; }
+        const buf = buffers.get(clip.id);
+        if (!buf) { clip.status = "queued"; fetchWindow(); return; }
+        Core.begin(m, clip);
+        own(buf, "answer").id = clip.id;
         render();
-        if (!clip) return;
-        fetchClip(clip.id).then(function (buf) {
-            buffers.delete(clip.id);
-            if (!m || m.playing !== clip) return;   // skipped meanwhile
-            if (!buf || !audio.ctx) { Core.clipDone(m); pump(); return; }
-            const s = audio.ctx.createBufferSource();
-            s.buffer = buf;
-            s.connect(audio.out);
-            s.onended = function () {
-                if (source === s) source = null;
-                if (m && m.playing === clip) { Core.clipDone(m); pump(); }
-            };
-            source = s;
-            s.start();
-        });
+        fetchWindow();
     }
 
+    /** The agent asks: cut the answer (it plays again afterwards), then the
+     *  alert and the ask sentence, in the slot like any speech. */
     function playAsk(id) {
+        if (speech && speech.kind === "answer") {
+            stopSpeech();
+            Core.requeue(m);
+        }
         const wait = earcon("alert");
         if (!id) return;
-        fetchClip(id).then(function (buf) {
-            buffers.delete(id);
-            if (!buf || !m || Core.mode(m) !== "ask") return;
-            const s = audio.ctx.createBufferSource();
-            s.buffer = buf;
-            s.connect(audio.out);
-            s.start(audio.ctx.currentTime + wait + 0.1);
+        const g = gen;
+        download(id).then(function (buf) {
+            if (!buf || g !== gen || !m || Core.mode(m) !== "ask" || speech) return;
+            own(buf, "ask", audio.ctx.currentTime + wait + 0.1);
         });
     }
 
@@ -362,9 +415,11 @@ function initVoiceConsole() {
         return vadLoading;
     }
 
-    async function ensureVad() {
+    async function ensureVad(g) {
         if (vad) return vad;
         const lib = await loadVad();
+        if (g !== gen) throw new Error("closed");
+        if (vad) return vad;
         const made = await lib.MicVAD.new({
             model: "legacy",
             baseAssetPath: VAD_DIR,
@@ -387,13 +442,23 @@ function initVoiceConsole() {
             },
             onSpeechEnd: function (samples) { onUtterance(samples); },
         });
-        if (phase === "off") { made.destroy(); throw new Error("closed"); }
+        if (g !== gen || vad) {
+            made.destroy();
+            if (g !== gen) throw new Error("closed");
+            return vad;
+        }
         vad = made;
         return vad;
     }
 
+    /** Listen only in MON or TX, with the VAD loaded and no speech playing. */
+    function syncListening(mode) {
+        const want = phase === "live" && !!vad && !speech && (mode === "listen" || mode === "tx");
+        if (want) startListening(); else stopListening();
+    }
+
     function startListening() {
-        if (listening || !vad) return;
+        if (listening || !vad || speech) return;
         listening = true;
         vad.start();
     }
@@ -417,6 +482,7 @@ function initVoiceConsole() {
 
     async function upload(blob) {
         const t = target;
+        const g = gen;
         retryBlob = null;
         uploadRefusal = "";
         const hooks = {
@@ -425,7 +491,7 @@ function initVoiceConsole() {
             refused: function (message) { uploadRefusal = message || ""; },
         };
         const outcome = await T.sendVoice(blob, lang(), t, hooks);
-        if (!m || target !== t || m.local !== "sending") return;
+        if (g !== gen || !m || m.local !== "sending") return;
         if (outcome === "accepted") {
             // A frame that arrived during the upload already answered it.
             m.local = m.server === "listening" ? "waiting" : "idle";
@@ -443,12 +509,17 @@ function initVoiceConsole() {
 
     function armWait() {
         clearTimeout(waitTimer);
+        const g = gen;
         waitTimer = setTimeout(function () {
-            if (m && m.local === "waiting") { m.local = "idle"; resync(); }
+            if (g === gen && m && m.local === "waiting") { m.local = "idle"; resync(); }
         }, WAIT_TIMEOUT_MS);
     }
 
     // -- lifecycle ------------------------------------------------------------
+    //
+    // Every open (and every close) starts a new generation. Work begun for an
+    // older one (a mic prompt, the VAD load, a request) finds the generation
+    // changed when it completes, disposes what it made and stops there.
 
     function show() {
         root.hidden = false;
@@ -462,8 +533,10 @@ function initVoiceConsole() {
     async function acquireWakeLock() {
         if (!("wakeLock" in navigator) || wakeLock || document.hidden) return;
         try {
-            wakeLock = await navigator.wakeLock.request("screen");
-            wakeLock.addEventListener("release", function () { wakeLock = null; });
+            const lock = await navigator.wakeLock.request("screen");
+            if (phase === "off") { lock.release().catch(function () {}); return; }
+            wakeLock = lock;
+            wakeLock.addEventListener("release", function () { if (wakeLock === lock) wakeLock = null; });
         } catch (_) { /* refused (battery saver): the screen may sleep */ }
     }
 
@@ -480,6 +553,7 @@ function initVoiceConsole() {
         const t = T.currentTarget();
         if (!t) { T.notice("Voice mode: not connected to a window yet"); return; }
         try { ensureAudio(); } catch (e) { T.notice(e.message); return; }
+        gen++;
         target = t;
         m = Core.createModel(t);
         phase = "tune";
@@ -489,34 +563,44 @@ function initVoiceConsole() {
         await connectSession(true);
     }
 
-    /** Mic, session and VAD, in parallel where they can be. */
-    async function connectSession(starting) {
-        if (opening) return opening;
-        opening = (async function () {
-            const t = target;
-            const vadReady = (async function () { await ensureMic(); await ensureVad(); })();
-            vadReady.catch(function () {});   // reported below
+    /** Mic, session and VAD for the current generation, in parallel where
+     *  they can be. A second call in the same generation joins the first. */
+    function connectSession(starting) {
+        if (opening && opening.gen === gen) return opening.promise;
+        const g = gen;
+        const t = target;
+        const model = m;
+        const current = function () { return g === gen && m === model; };
+        const promise = (async function () {
+            const ready = (async function () { await ensureMic(g); await ensureVad(g); })();
+            ready.catch(function () {});   // reported below
             if (starting) {
                 const res = await api("POST", "start", { target: t, lang: lang() });
-                if (!m || target !== t) return;
+                if (!current()) {
+                    // Exit came first: a session this start made is nobody's,
+                    // unless the console reopened on that same window.
+                    if (res.ok && !(phase !== "off" && target === t)) api("POST", "stop", { target: t });
+                    return;
+                }
                 if (!res.ok) { phase = "live"; fail(res.data.error || "Voice mode could not start", "start"); return; }
                 Core.applySnapshot(m, res.data);
             }
             try {
-                await vadReady;
+                await ready;
             } catch (e) {
-                if (!m || target !== t) return;
+                if (!current()) return;
                 phase = "live";
                 const reason = e.message === "closed" ? "" : e.message;
                 fail(/Microphone|HTTPS/.test(reason) ? reason : "Voice detection failed to load: " + reason, "vad");
                 return;
             }
-            if (!m || target !== t) return;
+            if (!current()) return;
             phase = "live";
             render();
             pump();
         })();
-        try { await opening; } finally { opening = null; }
+        opening = { gen: g, promise: promise };
+        return promise.finally(function () { if (opening && opening.promise === promise) opening = null; });
     }
 
     /** Exit, or the session ended on the server's side (post = false). */
@@ -524,10 +608,12 @@ function initVoiceConsole() {
         if (phase === "off") return;
         const t = target;
         if (post) api("POST", "stop", { target: t });
+        gen++;
         phase = "off";
+        opening = null;
         listening = false;
+        stopSpeech();
         if (vad) { try { vad.destroy(); } catch (_) { /* gone */ } vad = null; }
-        stopSource();
         closeMic();
         buffers.clear();
         clearTimeout(waitTimer);
@@ -544,15 +630,19 @@ function initVoiceConsole() {
         if (reason) T.notice("Voice mode: " + reason);
     }
 
-    /** A (re)connected socket may have missed frames: take the state again. */
+    /** Take the session's state again (a reconnected socket may have missed
+     *  frames). Frames arriving meanwhile wait behind the snapshot; only the
+     *  latest of overlapping requests is folded in. */
     async function resync() {
         if (!m || phase === "off") return;
+        const g = gen;
         const t = target;
+        const req = ++syncReq;
+        Core.beginSync(m);
         const res = await api("GET", "session?target=" + encodeURIComponent(t));
-        if (!m || target !== t || !res.ok) return;
-        if (res.data.active === false) { close("the session ended", false); return; }
-        Core.applySnapshot(m, res.data);
-        m.queue.forEach(function (c) { fetchClip(c.id); });
+        if (g !== gen || !m || req !== syncReq) return;
+        if (res.ok && res.data.active === false) { close("the session ended", false); return; }
+        Core.applySnapshot(m, res.ok ? res.data : null);
         render();
         pump();
     }
@@ -560,8 +650,9 @@ function initVoiceConsole() {
     /** A page opened on a window whose session is running: hold until a tap
      *  unlocks audio and the mic again. */
     async function adopt(t) {
+        const g = ++gen;
         const res = await api("GET", "session?target=" + encodeURIComponent(t));
-        if (phase !== "off" || !res.ok || !res.data.active) return;
+        if (g !== gen || phase !== "off" || !res.ok || !res.data.active) return;
         target = t;
         m = Core.createModel(t);
         Core.applySnapshot(m, res.data);
@@ -596,10 +687,11 @@ function initVoiceConsole() {
             if (m.local === "hearing") m.local = "idle";
             render();
         } else if (mode === "rx") {
-            Core.skip(m);
-            stopSource();
+            const turn = Core.skip(m);
+            if (speech && speech.kind === "answer") stopSpeech();
             dropBuffers();
-            api("POST", "skip", { target: target });
+            api("POST", "skip", { target: target, turn: turn });
+            render();
             pump();
         } else if (mode === "error" && m.local === "error") {
             const kind = retry;
@@ -621,11 +713,12 @@ function initVoiceConsole() {
         if (act === "exit") close("", true);
         else if (act === "stop" && m) {
             Core.silence(m);
-            stopSource();
+            stopSpeech();
             dropBuffers();
             api("POST", "interrupt", { target: target });
             render();
         } else if ((act === "yes" || act === "no") && m) {
+            if (speech && speech.kind === "ask") stopSpeech();
             b.disabled = true;
             api("POST", "answer", { target: target, yes: act === "yes" }).then(function (res) {
                 b.disabled = false;
@@ -696,15 +789,13 @@ function initVoiceConsole() {
         onFrame: function (f) {
             if (!m || phase === "off") return;
             if (!Core.applyFrame(m, f)) return;
-            // On hold (no AudioContext yet) the clip waits: the resync after
-            // the tap fetches it.
-            if (f.event === "say" && phase === "live") fetchClip(f.id);
             render();
             pump();
         },
         // For tests and the screenshots: the console's mode and model.
         mode: function () { return m ? (phase === "live" ? Core.mode(m) : phase) : "off"; },
         model: function () { return m; },
+        speaking: function () { return speech ? speech.kind : null; },
         target: function () { return target; },
     };
     renderButton();
@@ -719,7 +810,7 @@ function initVoiceConsole() {
 
     function onModeChange(mode, prev) {
         modeSince = Date.now();
-        if (mode === "listen" || mode === "tx") startListening(); else stopListening();
+        if (prev === "ask" && speech && speech.kind === "ask") stopSpeech();
         if (mode === "listen" && (prev === "rx" || prev === "proc")) {
             const wait = earcon("done");
             setTimeout(function () { if (m && currentMode() === "listen") earcon("listen"); }, wait * 1000 + 120);
@@ -764,8 +855,9 @@ function initVoiceConsole() {
         else if (mode === "resume") readout = "audio paused";
         el.readout.textContent = readout ? "▸ " + readout : "";
 
-        const lines = m.captions.length || (mode !== "listen" && mode !== "tx") ? m.captions
-            : [{ who: "idle", text: "Go ahead, I am listening. Pause when you are done." }];
+        const idle = IDLE_LINES[mode];
+        const lines = m.captions.length && mode !== "resume" ? m.captions
+            : idle ? [{ who: "idle", text: idle }] : m.captions;
         el.captions.replaceChildren.apply(el.captions, lines.map(function (c, i) {
             const line = document.createElement("div");
             line.className = "vc-line vc-" + c.who + (i === lines.length - 1 ? " vc-last" : "");
@@ -797,6 +889,7 @@ function initVoiceConsole() {
             lastMode = mode;
             onModeChange(mode, prev);
         }
+        syncListening(mode);
         if (reduceMotion.matches) drawFrame(true);
     }
 
