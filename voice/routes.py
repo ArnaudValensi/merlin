@@ -8,6 +8,7 @@ terminal socket. See ``docs/dev/voice-mode.md``.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
@@ -18,6 +19,8 @@ from board import sweep
 from . import session, tts
 
 URL_SLUG = "voice"
+# The console and the vendored VAD, at /static/voice.
+STATIC_DIR = Path(__file__).parent / "static"
 
 api_router = APIRouter()
 
@@ -69,6 +72,16 @@ def _no_session() -> JSONResponse:
 @api_router.get("/status")
 async def api_status():
     return capability()
+
+
+@api_router.get("/check")
+async def api_check(target: str):
+    """Whether voice mode can start on this window, and why not."""
+    try:
+        await session.preflight(target)
+    except session.StartRefused as e:
+        return {"available": False, "reason": str(e), "target": target}
+    return {"available": True, "reason": None, "target": target}
 
 
 @api_router.post("/start")

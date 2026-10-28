@@ -1,0 +1,391 @@
+/*
+ * The voice console: a two-way radio faceplate over the terminal.
+ * Phosphor signal on near-black, one signal colour per mode (--vc-sig),
+ * monospace everywhere, big thumb targets. Mobile first; a car mount in
+ * landscape gets two columns; a desktop gets the faceplate centred.
+ */
+
+/* The Voice button in the status bar, a sibling of the mic button. */
+#voice-btn {
+    position: relative;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    padding: 2px 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    height: 24px;
+}
+#voice-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+#voice-btn:not(.voice-mode-unavailable) { color: var(--accent-green); border-color: rgba(74, 222, 128, 0.35); }
+#voice-btn.voice-mode-unavailable { opacity: 0.45; }
+
+#voice-console {
+    --vc-bg: #040907;
+    --vc-plate: #07100c;
+    --vc-line: rgba(74, 222, 128, 0.16);
+    --vc-text: #d7f7e3;
+    --vc-dim: #5f8a72;
+    --vc-green: #4ade80;
+    --vc-hot: #b8ffd4;
+    --vc-cyan: #5eead4;
+    --vc-amber: #fbbf24;
+    --vc-red: #f87171;
+    --vc-sig: var(--vc-green);
+    --vc-font: "GeistMono Nerd Font", "JetBrains Mono", ui-monospace, monospace;
+
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    display: flex;
+    justify-content: center;
+    background:
+        radial-gradient(ellipse at 50% 30%, rgba(74, 222, 128, 0.07), transparent 60%),
+        var(--vc-bg);
+    color: var(--vc-text);
+    font-family: var(--vc-font);
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overflow: hidden;
+    cursor: pointer;
+}
+#voice-console[hidden] { display: none; }
+body.voice-console-open { overflow: hidden; }
+
+/* Scanlines and a vignette over everything, never in the way of a tap. */
+#voice-console::before,
+#voice-console::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 2;
+}
+#voice-console::before {
+    background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 3px);
+}
+#voice-console::after {
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+}
+
+#voice-console[data-mode="listen"] { --vc-sig: var(--vc-green); }
+#voice-console[data-mode="tx"]     { --vc-sig: var(--vc-hot); }
+#voice-console[data-mode="proc"],
+#voice-console[data-mode="tune"]   { --vc-sig: var(--vc-cyan); }
+#voice-console[data-mode="rx"]     { --vc-sig: var(--vc-green); }
+#voice-console[data-mode="ask"]    { --vc-sig: var(--vc-amber); }
+#voice-console[data-mode="error"]  { --vc-sig: var(--vc-red); }
+#voice-console[data-mode="resume"] { --vc-sig: var(--vc-dim); }
+
+.vc-plate {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-rows: auto auto auto 1fr auto;
+    gap: 14px;
+    width: 100%;
+    max-width: 880px;
+    height: 100%;
+    padding: max(14px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+             max(14px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    box-sizing: border-box;
+}
+
+/* -- header ----------------------------------------------------------------- */
+
+.vc-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.vc-brand {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.32em;
+    color: var(--vc-text);
+}
+.vc-slash { color: var(--vc-sig); margin: 0 0.15em; letter-spacing: 0; }
+.vc-led {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--vc-sig);
+    box-shadow: 0 0 10px var(--vc-sig), 0 0 2px var(--vc-sig);
+}
+#voice-console[data-mode="tx"] .vc-led,
+#voice-console[data-mode="ask"] .vc-led { animation: vc-blink 0.9s steps(2, start) infinite; }
+
+.vc-lang { display: flex; border: 1px solid var(--vc-line); border-radius: 3px; overflow: hidden; }
+.vc-lang button {
+    font: 600 13px var(--vc-font);
+    letter-spacing: 0.12em;
+    color: var(--vc-dim);
+    background: transparent;
+    border: 0;
+    padding: 9px 13px;
+    min-width: 46px;
+    cursor: pointer;
+}
+.vc-lang button.active { color: var(--vc-bg); background: var(--vc-sig); }
+
+.vc-id {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: var(--vc-dim);
+    padding-bottom: 12px;
+    border-bottom: 1px dashed var(--vc-line);
+}
+.vc-id b { color: var(--vc-text); font-weight: 600; }
+.vc-clock { margin-left: auto; color: var(--vc-sig); font-variant-numeric: tabular-nums; }
+
+/* -- mode plate, meter, scope ------------------------------------------------- */
+
+.vc-main { display: flex; flex-direction: column; gap: 14px; }
+.vc-mode { display: flex; align-items: center; gap: 16px; }
+.vc-badge {
+    min-width: 3.1em;
+    padding: 8px 12px 7px;
+    border: 2px solid var(--vc-sig);
+    border-radius: 4px;
+    font-size: 36px;
+    font-weight: 900;
+    line-height: 1;
+    text-align: center;
+    letter-spacing: 0.06em;
+    color: var(--vc-sig);
+    text-shadow: 0 0 14px var(--vc-sig);
+    box-shadow: 0 0 22px -6px var(--vc-sig), inset 0 0 18px -8px var(--vc-sig);
+}
+#voice-console[data-mode="tx"] .vc-badge,
+#voice-console[data-mode="ask"] .vc-badge {
+    background: var(--vc-sig);
+    color: var(--vc-bg);
+    text-shadow: none;
+}
+.vc-mode-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+.vc-mode-name { font-size: 15px; font-weight: 700; letter-spacing: 0.34em; color: var(--vc-text); }
+
+/* An S-meter: sixteen segments, the last four in the red. */
+.vc-meter { display: grid; grid-template-columns: repeat(16, 1fr); gap: 3px; height: 14px; }
+.vc-meter i { background: rgba(74, 222, 128, 0.1); border-radius: 1px; }
+.vc-meter i.on { background: var(--vc-sig); box-shadow: 0 0 6px var(--vc-sig); }
+.vc-meter i:nth-child(n+13).on { background: var(--vc-amber); box-shadow: 0 0 6px var(--vc-amber); }
+
+.vc-scope {
+    position: relative;
+    height: clamp(110px, 22vh, 210px);
+    border: 1px solid var(--vc-line);
+    border-radius: 4px;
+    overflow: hidden;
+    background: #040907;
+}
+/* The graticule, drawn once in CSS rather than on every frame. */
+.vc-scope::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+        linear-gradient(to right, var(--vc-line) 1px, transparent 1px) 0 0 / 10% 100%,
+        linear-gradient(to bottom, var(--vc-line) 1px, transparent 1px) 0 0 / 100% 25%,
+        linear-gradient(to bottom, transparent calc(50% - 1px), rgba(74, 222, 128, 0.28) 50%, transparent calc(50% + 1px));
+}
+.vc-scope canvas { display: block; width: 100%; height: 100%; }
+.vc-readout {
+    position: absolute;
+    left: 10px;
+    bottom: 7px;
+    z-index: 1;
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--vc-sig);
+    text-shadow: 0 0 8px var(--vc-sig);
+}
+
+/* -- captions, ask, error ------------------------------------------------------- */
+
+.vc-text {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 12px;
+    overflow: hidden;
+    /* Older lines fade out at the top instead of being cut. */
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 2.4em);
+    mask-image: linear-gradient(to bottom, transparent, #000 2.4em);
+}
+.vc-captions { display: flex; flex-direction: column; gap: 12px; }
+.vc-line { display: grid; grid-template-columns: 76px 1fr; gap: 10px; font-size: 18px; line-height: 1.42; color: var(--vc-dim); }
+.vc-line.vc-last { color: var(--vc-text); font-size: 21px; }
+.vc-who { font-size: 11px; letter-spacing: 0.24em; padding-top: 0.55em; color: var(--vc-dim); }
+.vc-you .vc-who::before { content: "\25B8 "; }
+.vc-agent .vc-who { color: var(--vc-green); }
+.vc-agent .vc-who::before { content: "\25C2 "; }
+.vc-said { overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.vc-last .vc-said { -webkit-line-clamp: 8; }
+.vc-idle { grid-template-columns: 1fr; text-align: center; }
+.vc-idle .vc-who { display: none; }
+.vc-line.vc-idle.vc-last { color: var(--vc-dim); font-size: 19px; }
+#voice-console[data-mode="rx"] .vc-agent.vc-last .vc-said::after {
+    content: "\2588";
+    margin-left: 4px;
+    color: var(--vc-sig);
+    animation: vc-blink 1s steps(2, start) infinite;
+}
+
+.vc-ask {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border: 1px solid var(--vc-amber);
+    border-radius: 4px;
+    padding: 12px 14px;
+    background: rgba(251, 191, 36, 0.05);
+}
+.vc-ask-title { font-size: 17px; font-weight: 700; color: var(--vc-amber); letter-spacing: 0.04em; margin-bottom: 10px; }
+.vc-excerpt {
+    margin: 0;
+    max-height: 13em;
+    min-height: 2.9em;
+    flex: 0 1 auto;
+    overflow: hidden;
+    font: 13px/1.45 var(--vc-font);
+    color: var(--vc-text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.vc-error {
+    font-size: 19px;
+    line-height: 1.4;
+    color: var(--vc-red);
+    border-left: 3px solid var(--vc-red);
+    padding: 4px 0 4px 12px;
+}
+.vc-error[hidden], .vc-ask[hidden] { display: none; }
+/* The dialog takes the text area: the captions wait behind it. */
+#voice-console[data-mode="ask"] .vc-captions,
+#voice-console[data-mode="error"] .vc-captions { display: none; }
+#voice-console[data-mode="ask"] .vc-text { -webkit-mask-image: none; mask-image: none; }
+.vc-notice {
+    min-height: 1.4em;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    color: var(--vc-amber);
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+.vc-notice.on { opacity: 1; }
+.vc-notice:empty { display: none; }
+
+/* -- footer ------------------------------------------------------------------------ */
+
+.vc-foot { display: flex; flex-direction: column; gap: 12px; position: relative; }
+.vc-foot::before {
+    /* The upload of an utterance, as a thin bar over the buttons. */
+    content: "";
+    position: absolute;
+    left: 0;
+    top: -8px;
+    height: 2px;
+    width: calc(var(--vc-upload, 0) * 100%);
+    background: var(--vc-sig);
+    box-shadow: 0 0 8px var(--vc-sig);
+}
+.vc-hint { text-align: center; font-size: 11px; letter-spacing: 0.26em; text-transform: uppercase; color: var(--vc-dim); }
+.vc-buttons { display: flex; gap: 12px; justify-content: center; }
+.vc-btn {
+    flex: 1;
+    min-height: 60px;
+    border-radius: 4px;
+    font: 800 15px var(--vc-font);
+    letter-spacing: 0.24em;
+    cursor: pointer;
+    background: transparent;
+    color: var(--vc-text);
+    border: 1px solid rgba(215, 247, 227, 0.28);
+}
+.vc-btn[hidden] { display: none; }
+.vc-btn:active { transform: translateY(1px); }
+.vc-btn:disabled { opacity: 0.5; }
+.vc-exit { flex: 0 1 34%; color: var(--vc-dim); }
+.vc-stop { color: var(--vc-red); border-color: rgba(248, 113, 113, 0.6); }
+.vc-yes { background: var(--vc-green); color: var(--vc-bg); border-color: var(--vc-green); min-height: 76px; font-size: 22px; }
+.vc-no { background: var(--vc-red); color: var(--vc-bg); border-color: var(--vc-red); min-height: 76px; font-size: 22px; }
+#voice-console[data-mode="ask"] .vc-buttons { flex-wrap: wrap; }
+#voice-console[data-mode="ask"] .vc-exit { flex-basis: 100%; min-height: 48px; }
+
+@keyframes vc-blink { to { visibility: hidden; } }
+
+/* -- a car mount in landscape: two columns ---------------------------------------- */
+
+@media (orientation: landscape) and (max-height: 560px) {
+    .vc-plate {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+        grid-template-rows: auto auto 1fr auto;
+        column-gap: 22px;
+        row-gap: 10px;
+        max-width: none;
+    }
+    .vc-head, .vc-id { grid-column: 1 / -1; }
+    .vc-id { padding-bottom: 8px; }
+    .vc-main { grid-column: 1; grid-row: 3 / 5; }
+    .vc-text { grid-column: 2; grid-row: 3; }
+    .vc-foot { grid-column: 2; grid-row: 4; }
+    .vc-scope { height: auto; flex: 1; min-height: 80px; }
+    .vc-badge { font-size: 30px; }
+    .vc-btn { min-height: 54px; }
+    .vc-yes, .vc-no { min-height: 60px; }
+    .vc-line.vc-last { font-size: 19px; }
+    .vc-ask { flex: 1 1 auto; }
+    .vc-excerpt { max-height: none; flex: 1 1 auto; }
+    .vc-ask-title { margin-bottom: 6px; }
+    #voice-console[data-mode="ask"] .vc-buttons { flex-wrap: nowrap; }
+    #voice-console[data-mode="ask"] .vc-exit { flex: 0 1 26%; min-height: 60px; }
+    #voice-console[data-mode="ask"] .vc-hint { display: none; }
+}
+
+/* -- desktop: a faceplate, rack screws included ------------------------------------- */
+
+@media (min-width: 900px) and (min-height: 600px) {
+    #voice-console { align-items: center; }
+    .vc-plate {
+        height: min(860px, calc(100% - 48px));
+        padding: 26px 30px;
+        border: 1px solid var(--vc-line);
+        border-radius: 10px;
+        background:
+            linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 18%),
+            var(--vc-plate);
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+    .vc-plate::before,
+    .vc-plate::after {
+        content: "";
+        position: absolute;
+        top: 10px;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 35% 35%, #3a4a42, #121a16);
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+    .vc-plate::before { left: 10px; }
+    .vc-plate::after { right: 10px; }
+    .vc-badge { font-size: 44px; }
+    .vc-scope { height: 210px; }
+    .vc-line.vc-last { font-size: 23px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #voice-console .vc-led,
+    #voice-console .vc-badge,
+    #voice-console .vc-said::after { animation: none !important; }
+    .vc-notice { transition: none; }
+}

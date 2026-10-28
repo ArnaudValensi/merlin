@@ -803,9 +803,16 @@ async def start_session(
         return session
 
 
-async def _new_session(target: str, lang: str, broadcast: Broadcast) -> VoiceSession:
+async def preflight(target: str) -> tuple[tts.TtsConfig, str]:
+    """What start checks before it touches the window: the voice server is
+    configured with a format the browser plays, the window exists and runs
+    Claude Code, the hooks are current. Returns the config and the provider,
+    or raises StartRefused with the reason. The Voice button asks this when
+    the page shows a window, to say why it cannot start there."""
     from lib import skills
 
+    if not valid_target(target):
+        raise StartRefused("Not a terminal window")
     config = tts.tts_config()
     if config is None:
         raise StartRefused("No voice server configured (merlin config tts-url <url>)")
@@ -826,6 +833,11 @@ async def _new_session(target: str, lang: str, broadcast: Broadcast) -> VoiceSes
             "Merlin's agent hooks are missing or out of date: "
             "merlin config agent-state-hooks auto, then restart Merlin and the agent"
         )
+    return config, provider
+
+
+async def _new_session(target: str, lang: str, broadcast: Broadcast) -> VoiceSession:
+    config, provider = await preflight(target)
     return VoiceSession(
         target, lang, config=config, provider=provider, broadcast=broadcast
     )

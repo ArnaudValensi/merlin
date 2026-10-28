@@ -64,6 +64,13 @@
         <svg id="mic-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
         <span id="mic-warn-badge">!</span>
     </button>
+    <!-- Voice mode: a hands-free conversation with this window's agent, in a
+         full-screen console (voice/static/voice-console.js). -->
+    <button id="voice-btn" title="Voice mode" aria-label="Voice mode"
+            data-mode="{{ voice_mode | tojson | forceescape }}"
+            data-dictation="{{ 'true' if voice_available else 'false' }}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>
+    </button>
     <button id="toolbar-toggle" title="Toggle keyboard toolbar">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M6 16h12"/></svg>
     </button>
@@ -98,6 +105,9 @@
 <!-- Notifications popover: opened by the bell in the status bar. -->
 <div id="notif-popover" class="notif-popover" role="dialog" aria-label="Notifications" hidden></div>
 
+<!-- Voice console: covers the terminal while voice mode is on. -->
+<div id="voice-console" role="dialog" aria-modal="true" aria-label="Voice mode" hidden></div>
+
 <!-- Folder picker modal (shared component) — used here to cd the terminal -->
 <div id="folder-picker-modal" class="picker-modal" role="dialog" aria-modal="true" aria-label="Change directory" style="display:none">
     <div class="picker-overlay"></div>
@@ -127,7 +137,10 @@
 <link rel="stylesheet" href="/static/board/board.css">
 <link rel="stylesheet" href="/static/notifications/notifications.css">
 <link rel="stylesheet" href="/static/folder-picker.css">
+<link rel="stylesheet" href="/static/voice/voice-console.css">
 <script src="/static/folder-picker.js"></script>
+<script defer src="/static/voice/voice-core.js"></script>
+<script defer src="/static/voice/voice-console.js"></script>
 <script src="/static/vendor/xterm.min.js"></script>
 <script src="/static/vendor/xterm-addon-fit.min.js"></script>
 <script src="/static/vendor/xterm-addon-web-links.min.js"></script>
@@ -1805,7 +1818,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // Upload with retry
     // -------------------------------------------------------------------
 
-    function uploadVoice(blob, language, autoEnter, target) {
+    // How an upload reports its progress and a final refusal. Dictation shows
+    // both on the mic button and in the terminal; the voice console passes
+    // its own (MerlinTerminal.sendVoice).
+    const micUploadHooks = {
+        progress: (fraction) => micBtn.style.setProperty('--upload-progress', fraction.toString()),
+        done: () => micBtn.style.removeProperty('--upload-progress'),
+        refused: (message) => showVoiceRefused(message),
+    };
+
+    function uploadVoice(blob, language, autoEnter, target, hooks) {
+        hooks = hooks || micUploadHooks;
         return new Promise((resolve, reject) => {
             const ext = blob.type.includes('mp4') ? '.mp4' : blob.type.includes('wav') ? '.wav' : '.webm';
             const formData = new FormData();
@@ -1821,13 +1844,11 @@ document.addEventListener('DOMContentLoaded', () => {
             xhr.open('POST', '/api/terminal/transcribe');
 
             xhr.upload.onprogress = (e) => {
-                if (e.lengthComputable) {
-                    micBtn.style.setProperty('--upload-progress', (e.loaded / e.total).toString());
-                }
+                if (e.lengthComputable) hooks.progress(e.loaded / e.total);
             };
 
             xhr.onload = () => {
-                micBtn.style.removeProperty('--upload-progress');
+                hooks.done();
                 if (xhr.status === 202) {
                     resolve('accepted');
                 } else if (xhr.status === 200) {
@@ -1855,7 +1876,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     // why and let the caller drop it.
                     let message = '';
                     try { message = JSON.parse(xhr.responseText).error; } catch (e) { /* keep default */ }
-                    showVoiceRefused(message);
+                    hooks.refused(message);
                     resolve('refused');
                 } else {
                     reject(new Error(`server ${xhr.status}`));
@@ -1863,7 +1884,7 @@ document.addEventListener('DOMContentLoaded', () => {
             };
 
             xhr.onerror = () => {
-                micBtn.style.removeProperty('--upload-progress');
+                hooks.done();
                 reject(new Error('network error'));
             };
 
@@ -1873,33 +1894,51 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-    async function uploadWithRetry(blob, language, autoEnter, target) {
-        micBtn.classList.add('uploading');
-        micBtn.style.setProperty('--upload-progress', '0');
-
+    // Three attempts with backoff. Resolves 'accepted' (202, the server
+    // injects), 'fallback' (200, written here), 'refused' (final) or 'failed'
+    // (every attempt hit the network or a 5xx).
+    async function sendVoiceWithRetry(blob, language, autoEnter, target, hooks) {
+        hooks = hooks || micUploadHooks;
+        hooks.progress(0);
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
-                const outcome = await uploadVoice(blob, language, autoEnter, target);
-                // Success or a final refusal: clean up either way
-                micBtn.classList.remove('uploading');
-                await deleteVoiceFromDB();
-                if (outcome !== 'refused') showUploadDone();
-                term.focus();
-                return;
+                return await uploadVoice(blob, language, autoEnter, target, hooks);
             } catch (err) {
                 if (attempt < 2) {
-                    micBtn.style.setProperty('--upload-progress', '0');
+                    hooks.progress(0);
                     await sleep(RETRY_BACKOFF[attempt]);
                 }
             }
         }
+        hooks.done();
+        return 'failed';
+    }
 
-        // All 3 retries failed — enter retry state
+    async function uploadWithRetry(blob, language, autoEnter, target) {
+        micBtn.classList.add('uploading');
+        const outcome = await sendVoiceWithRetry(blob, language, autoEnter, target, micUploadHooks);
         micBtn.classList.remove('uploading');
-        micBtn.style.removeProperty('--upload-progress');
-        enterRetryState();
+        if (outcome === 'failed') {
+            // All 3 attempts failed: enter the retry state
+            enterRetryState();
+            term.focus();
+            return;
+        }
+        // Success or a final refusal: clean up either way
+        await deleteVoiceFromDB();
+        if (outcome !== 'refused') showUploadDone();
         term.focus();
     }
+
+    // Voice mode posts each utterance through this same path, auto-enter on,
+    // to the console's own target (voice/static/voice-console.js).
+    window.MerlinTerminal.sendVoice = function (blob, language, target, hooks) {
+        return sendVoiceWithRetry(blob, language, true, target, hooks);
+    };
+    window.MerlinTerminal.notice = showVoiceRefused;
+    window.MerlinTerminal.currentTarget = function () {
+        return (currentSession && currentWindowId) ? currentSession + ':' + currentWindowId : '';
+    };
 
     // -------------------------------------------------------------------
     // Retry state — orange pulsing mic, tap to retry
@@ -2084,6 +2123,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 socket.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
             }
             sendVisibility(socket);
+            // A (re)connected page may have missed frames: voice mode asks
+            // for its session's state again.
+            document.dispatchEvent(new CustomEvent('merlin:terminal-socket'));
         };
 
         socket.onmessage = (e) => {
@@ -2098,6 +2140,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     // A background transcription (the 202 path) was lost after
                     // the page was told it was accepted.
                     if (ctl && ctl.type === 'voice_error') { showVoiceRefused(ctl.message); return; }
+                    // Voice mode frames: the console filters by its target.
+                    if (ctl && ctl.type === 'voice') {
+                        if (window.MerlinVoice) window.MerlinVoice.onFrame(ctl);
+                        return;
+                    }
                     if (ctl && ctl.type === 'session') {
                         currentSession = ctl.name || '';
                         currentWindowId = ctl.window_id || '';

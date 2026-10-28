@@ -16,6 +16,13 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "activity_hooks"
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _no_inherited_handoff(monkeypatch):
+    """An agent launched by a chain handoff carries MERLIN_TIMELINE_HANDOFF_ID,
+    which adds a handoff event to SessionStart: the tests that want it set it."""
+    monkeypatch.delenv("MERLIN_TIMELINE_HANDOFF_ID", raising=False)
+
+
 def cases(provider: str) -> dict[str, dict]:
     return {
         item["case"]: item["payload"]

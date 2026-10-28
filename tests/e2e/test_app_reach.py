@@ -89,9 +89,13 @@ def test_the_picture_moves_through_it(session):
 
 
 def test_the_detail_says_what_each_way_gave(session):
-    reach = session["detail"].splitlines()[-1]
+    # The reach line, not the last one: a test mode adds "Test mode: ..." after it.
+    lines = session["detail"].splitlines()
+    reach = next((line for line in lines if line.startswith("STUN ")), lines[-1])
     turn = "TURN no access" if session["case"] == "stun" else "TURN ok"
     assert reach == f"STUN ok 82.66.10.2 · UPnP no router · {turn}", reach
+    if session["case"] == "relay":
+        assert lines[-1] == "Test mode: relay", lines
     servers = [line for line in session["log"] if line.startswith("ice: servers ")]
     expected = (
         "ice: servers stun (turn: no access)"

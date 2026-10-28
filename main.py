@@ -267,10 +267,19 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(title="Merlin", docs_url=None, redoc_url=None, lifespan=_lifespan)
 
 
+# Vendored files whose directory names their exact version: a new version is
+# a new path, so these may be cached for good. The voice console's VAD weighs
+# about 13 MB, which a phone on a mobile network should download once.
+IMMUTABLE_STATIC_PREFIXES = ("/static/voice/vendor/",)
+
+
 class NoCacheStaticMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
-        if request.url.path.startswith("/static/"):
+        path = request.url.path
+        if path.startswith(IMMUTABLE_STATIC_PREFIXES) and response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif path.startswith("/static/"):
             response.headers["Cache-Control"] = "no-store"
         return response
 

@@ -323,11 +323,14 @@ def terminal_page(request: Request):
             f"<p>Install: <code>{_main._install_cmd('tmux')}</code></p>",
             status_code=503,
         )
+    from voice.routes import capability as voice_mode_capability
+
     return templates.TemplateResponse(
         request,
         "terminal.html",
         {
             "voice_available": _voice_available(),
+            "voice_mode": voice_mode_capability(),
             "home_dir": os.path.expanduser("~"),
             "app_enabled": _app_enabled(),
         },
