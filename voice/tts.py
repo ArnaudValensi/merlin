@@ -98,9 +98,13 @@ def validate_url(value: str) -> str:
     if not value:
         return ""
     # urlsplit drops embedded newlines while parsing, and config.env is one
-    # KEY=VALUE per line: a control character would write a second key.
-    if any(ord(c) < 32 or ord(c) == 127 for c in value):
-        raise ValueError("invalid tts-url: it contains control characters")
+    # KEY=VALUE per line, split with str.splitlines(), which also breaks on
+    # U+0085, U+2028 and U+2029: any such character would write a second key.
+    # A URL carries no raw whitespace either (spaces are percent-encoded).
+    if any(c.isspace() or not c.isprintable() for c in value):
+        raise ValueError(
+            "invalid tts-url: it contains whitespace or control characters"
+        )
     parts = urlsplit(value)
     if parts.scheme not in ("http", "https") or not parts.netloc:
         raise ValueError(

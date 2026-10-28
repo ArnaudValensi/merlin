@@ -807,9 +807,10 @@ class TestTtsUrlConfig:
         assert exc_info.value.code == 1
         assert "MERLIN_TTS_URL" not in (home / "config.env").read_text()
 
-    def test_rejects_an_embedded_newline_and_leaves_the_file_alone(self, home):
-        before = (home / "config.env").read_text()
+    @pytest.mark.parametrize("sep", ["\n", "\r", "\u0085", "\u2028", "\u2029"])
+    def test_rejects_a_line_separator_and_leaves_the_file_alone(self, home, sep):
+        before = (home / "config.env").read_bytes()
         with pytest.raises(SystemExit) as exc_info:
-            run_config("tts-url", "http://localhost:8880/v1\nUNRELATED_KEY=changed")
+            run_config("tts-url", f"http://localhost:8880/v1{sep}UNRELATED_KEY=changed")
         assert exc_info.value.code == 1
-        assert (home / "config.env").read_text() == before
+        assert (home / "config.env").read_bytes() == before

@@ -142,6 +142,10 @@ class TestConfig:
             "http://localhost:8880/v1\rX=1",
             "http://local\x00host/v1",
             "http://localhost/v1\x7f",
+            "http://localhost/v1\u0085X=1",
+            "http://localhost/v1\u2028X=1",
+            "http://localhost/v1\u2029X=1",
+            "http://localhost/my v1",
         ],
     )
     def test_validate_url_rejects(self, value):
