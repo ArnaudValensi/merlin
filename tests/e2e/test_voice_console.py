@@ -166,20 +166,37 @@ def _agent_window(env, session, tmp_path, mode="answer"):
     return target, control
 
 
+FAKE_MEDIA = [
+    "--use-fake-device-for-media-stream",
+    "--use-fake-ui-for-media-stream",
+    "--autoplay-policy=no-user-gesture-required",
+]
+
+
 @pytest.fixture(scope="module")
-def browser():
+def playwright():
     with sync_playwright() as p:
-        b = p.chromium.launch(
-            headless=True,
-            args=[
-                "--use-fake-device-for-media-stream",
-                "--use-fake-ui-for-media-stream",
-                f"--use-file-for-fake-audio-capture={UTTERANCE}",
-                "--autoplay-policy=no-user-gesture-required",
-            ],
-        )
-        yield b
-        b.close()
+        yield p
+
+
+@pytest.fixture(scope="module")
+def browser(playwright):
+    """The fake mic plays the spoken sentence, looped."""
+    b = playwright.chromium.launch(
+        headless=True,
+        args=[*FAKE_MEDIA, f"--use-file-for-fake-audio-capture={UTTERANCE}"],
+    )
+    yield b
+    b.close()
+
+
+@pytest.fixture(scope="module")
+def quiet_browser(playwright):
+    """Chromium's default fake mic (a beep, never speech): the VAD stays
+    quiet, so the clips a test announces are all that happens."""
+    b = playwright.chromium.launch(headless=True, args=FAKE_MEDIA)
+    yield b
+    b.close()
 
 
 def _open(browser, server, viewport=None):
@@ -476,6 +493,98 @@ def test_exit_while_starting_then_open_another_window(
         )
         # The held start reached the server after Exit: the page stops it.
         _wait(lambda: _option(tmux_env, first, "@voice") == "", 10, "first kept @voice")
+    finally:
+        ctx.close()
+
+
+SAY = """([target, clips]) => {
+    const m = window.MerlinVoice.model();
+    for (const [id, turn] of clips) {
+        window.MerlinVoice.onFrame({type: 'voice', event: 'say', target, session: m.session,
+                                    rev: m.rev + 1, id, turn, text: 'clip ' + id});
+    }
+}"""
+
+
+def _serve_clips(page, plan):
+    """Answer /api/voice/audio/<id> per ``plan[id]``: 'long' (a 4 s clip),
+    'short', or 'fail' (aborted). Returns the ids requested, in order."""
+    long_clip, short_clip = _beep(4.0), _beep(0.3)
+    asked = []
+
+    def handle(route):
+        clip = route.request.url.rsplit("/", 1)[1]
+        asked.append(clip)
+        how = plan.get(clip, "fail")
+        if how == "fail":
+            route.abort()
+        else:
+            body = long_clip if how == "long" else short_clip
+            route.fulfill(status=200, body=body, headers={"Content-Type": "audio/wav"})
+
+    page.route("**/api/voice/audio/*", handle)
+    return asked
+
+
+def test_skip_answer_stops_the_clip_of_that_answer_still_playing(
+    quiet_browser, server, tmux_env, tts, tmp_path
+):
+    ctx, page, _ = _open(quiet_browser, server)
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        _start_voice(page, target)
+        # Clip A of answer 101 plays for 4 s while its clip B fails three times.
+        _serve_clips(page, {"clipA": "long"})
+        page.evaluate(SAY, [target, [["clipA", 101], ["clipB", 101]]])
+        _wait_mode(page, ["error"], timeout=10000)
+        assert page.evaluate("() => window.MerlinVoice.speaking()") == "answer"
+        assert "could not be downloaded" in page.inner_text("#voice-console .vc-error")
+        assert page.is_visible("#voice-console [data-act=skip]")
+        page.click("#voice-console [data-act=skip]")
+        assert page.evaluate("() => window.MerlinVoice.speaking()") is None
+        assert page.evaluate("() => window.MerlinVoice.model().queue.length") == 0
+        _wait_mode(page, ["listen", "tx"], timeout=5000)
+        page.click("#voice-console [data-act=exit]")
+    finally:
+        ctx.close()
+
+
+def test_skipping_one_stalled_answer_keeps_the_other_recoverable(
+    quiet_browser, server, tmux_env, tts, tmp_path
+):
+    ctx, page, _ = _open(quiet_browser, server)
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        _start_voice(page, target)
+        plan = {}
+        asked = _serve_clips(page, plan)
+        page.evaluate(SAY, [target, [["clipX", 201], ["clipY", 202]]])
+        page.wait_for_function(
+            "() => window.MerlinVoice.model().queue.every(c => c.status === 'stalled')",
+            timeout=10000,
+        )
+        _wait_mode(page, ["error"], timeout=5000)
+        page.click("#voice-console [data-act=skip]")
+        # Y is still stuck: the error, its retry and its skip stay.
+        assert _mode(page) == "error"
+        assert page.is_visible("#voice-console [data-act=skip]")
+        queue = page.evaluate(
+            "() => window.MerlinVoice.model().queue.map(c => [c.id, c.status])"
+        )
+        assert queue == [["clipY", "stalled"]]
+        # The network is back for Y: a tap retries it and it is heard once.
+        plan["clipY"] = "short"
+        page.click("#voice-console .vc-scope")
+        page.wait_for_function(
+            "() => window.MerlinVoice.model().played.includes('clipY')", timeout=10000
+        )
+        played = page.evaluate("() => window.MerlinVoice.model().played")
+        assert played.count("clipY") == 1 and "clipX" not in played
+        assert asked.count("clipY") == 4  # three failures, then the retry
+        _wait_mode(page, ["listen", "tx"], timeout=5000)
+        page.click("#voice-console [data-act=exit]")
     finally:
         ctx.close()
 

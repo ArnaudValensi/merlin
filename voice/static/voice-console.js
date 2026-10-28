@@ -372,7 +372,9 @@ function initVoiceConsole() {
         const buf = buffers.get(clip.id);
         if (!buf) { clip.status = "queued"; fetchWindow(); return; }
         Core.begin(m, clip);
-        own(buf, "answer").id = clip.id;
+        const mine = own(buf, "answer");
+        mine.id = clip.id;
+        mine.turn = clip.turn;
         render();
         fetchWindow();
     }
@@ -749,14 +751,21 @@ function initVoiceConsole() {
             // and on the server, and carry on.
             const stuck = Core.stalled(m);
             if (stuck) {
+                // An earlier clip of that answer may still be playing.
+                if (speech && speech.kind === "answer" && speech.turn === stuck.turn) stopSpeech();
                 Core.dropTurn(m, stuck.turn);
                 api("POST", "skip", { target: target, turn: stuck.turn });
             }
-            m.local = "idle";
-            m.error = "";
-            retry = null;
             dropBuffers();
-            render();
+            if (Core.stalled(m)) {
+                // Another answer is stuck too: its retry and skip stay on screen.
+                fail("Part of the answer could not be downloaded", "clip");
+            } else {
+                m.local = "idle";
+                m.error = "";
+                retry = null;
+                render();
+            }
             pump();
         }
         else if (act === "stop" && m) {

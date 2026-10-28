@@ -1519,7 +1519,9 @@ class TestBackpressure:
                 ),
             )
             await pages.wait(lambda p: len(p.events("say")) >= session.MAX_AHEAD)
-            assert running._backlogged()
+            # The watch reads two events a poll: the piece that fills the
+            # queue may land a poll after the third clip was announced.
+            await pages.wait(lambda _: running._backlogged())
             with open(path, "r+") as f:  # rewritten in place, same inode
                 f.truncate(0)
                 f.write(say([{"type": "text", "text": "Rewritten part."}], "r1"))
