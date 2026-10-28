@@ -9,19 +9,28 @@
 #     conversation id (`session_id` in the hook JSON on stdin). Unlike the sid,
 #     @agent_conv is overwritten on every SessionStart: /clear and resume change
 #     the conversation. The workspace snapshot reads it to resume the agent
-#     after a restart (see workspace/).
+#     after a restart (see workspace/);
+#   - stamps @agent_transcript, the conversation's transcript file
+#     (`transcript_path` in the hook JSON), also on every SessionStart. Voice
+#     mode reads it to follow the agent's answer (see voice/).
 # No-op outside tmux or if tmux is unavailable, so it can never block a session.
 
 provider="$1"
 case "$provider" in claude|codex) ;; *) provider="" ;; esac
 
-# Read the hook JSON. Only `session_id` is used: a uuid-like token, matched with
-# a bash regex so the hook needs no jq.
+# Read the hook JSON with bash regexes, so the hook needs no jq. `session_id` is
+# a uuid-like token. `transcript_path` must be an absolute path without a quote
+# or a backslash: a path JSON had to escape is skipped rather than half decoded.
 payload=$(cat 2>/dev/null) || payload=""
 conv=""
 re='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9_-]+)"'
 if [[ $payload =~ $re ]]; then
   conv="${BASH_REMATCH[1]}"
+fi
+transcript=""
+re='"transcript_path"[[:space:]]*:[[:space:]]*"(/[^"\\]*)"'
+if [[ $payload =~ $re ]]; then
+  transcript="${BASH_REMATCH[1]}"
 fi
 
 command -v tmux >/dev/null 2>&1 || exit 0
@@ -51,6 +60,9 @@ fi
 if [ -n "$provider" ] && [ -n "$conv" ]; then
   tmux set-option -w -t "$win" @agent_provider "$provider" 2>/dev/null
   tmux set-option -w -t "$win" @agent_conv "$conv" 2>/dev/null
+fi
+if [ -n "$provider" ] && [ -n "$transcript" ]; then
+  tmux set-option -w -t "$win" @agent_transcript "$transcript" 2>/dev/null
 fi
 
 exit 0

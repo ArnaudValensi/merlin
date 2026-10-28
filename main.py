@@ -252,14 +252,16 @@ from contextlib import asynccontextmanager
 async def _lifespan(_app: FastAPI):
     """Startup does nothing (background tasks start in ``_run`` below, next to
     the other tasks). Shutdown is the one hook uvicorn runs before it re-raises
-    SIGTERM, so the attention watcher and the workspace sweep are stopped
-    cleanly here."""
+    SIGTERM, so the attention watcher, the workspace sweep and the voice
+    sessions are stopped cleanly here."""
     yield
     from notifications import watcher as _notif_watcher
+    from voice import session as _voice_session
     from workspace import service as _workspace_service
 
     await _notif_watcher.stop()
     await _workspace_service.stop()
+    await _voice_session.stop_all()
 
 
 app = FastAPI(title="Merlin", docs_url=None, redoc_url=None, lifespan=_lifespan)
@@ -1731,6 +1733,14 @@ def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
         from workspace import service as workspace_service
 
         tasks.append(workspace_service.start())
+
+        # Voice mode: a previous process may have died with windows still
+        # marked @voice, which would keep their agent talking for the ear.
+        from voice import session as voice_session
+
+        cleared = await asyncio.to_thread(voice_session.clear_stale_marks)
+        if cleared:
+            logger.info("Voice mode: cleared @voice on %s", ", ".join(cleared))
 
         # Start all extensions with start() hooks
         for info in extension_registry.values():

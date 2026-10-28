@@ -243,16 +243,16 @@ class TestInstall:
         ]
         assert any("agent-state.sh" in c and " idle " in c for c in start_cmds)
         assert any('agent-session-init.sh" claude ' in c for c in start_cmds)
-        # The other two events stay single-command.
-        for ev in ("UserPromptSubmit", "Stop"):
+        # Stop stays single-command; UserPromptSubmit adds the voice hook.
+        for ev, count in (("UserPromptSubmit", 2), ("Stop", 1)):
             ev_cmds = [
                 h["command"]
                 for g in data["hooks"][ev]
                 for h in g["hooks"]
                 if skills._HOOK_MARKER in h.get("command", "")
             ]
-            assert len(ev_cmds) == 1
-            assert "agent-session-init.sh" not in ev_cmds[0]
+            assert len(ev_cmds) == count
+            assert not any("agent-session-init.sh" in c for c in ev_cmds)
 
     def test_bails_on_invalid_json(self, settings_file):
         settings_file.parent.mkdir(parents=True, exist_ok=True)
@@ -485,3 +485,66 @@ class TestMarkerComment:
             ["bash", "-c", cmd], capture_output=True, text=True, check=False
         )
         assert r.stdout == "[busy]"  # only the state, comment stripped by shell
+
+
+# ---------------------------------------------------------------------------
+# Voice mode: the context hook rides Claude's UserPromptSubmit group
+# ---------------------------------------------------------------------------
+class TestVoiceHook:
+    @staticmethod
+    def _commands(data, event):
+        return [
+            h["command"]
+            for g in data.get("hooks", {}).get(event, [])
+            for h in g["hooks"]
+            if skills._HOOK_MARKER in h.get("command", "")
+        ]
+
+    def test_installed_in_claudes_prompt_group(self, settings_file):
+        skills.install_interactive_hooks()
+        cmds = self._commands(read(settings_file), "UserPromptSubmit")
+        assert any("agent-state.sh" in c and " busy " in c for c in cmds)
+        voice = [c for c in cmds if "agent-voice-context.sh" in c]
+        assert voice == [skills._voice_context_command()]
+        assert f"{skills._HOOK_MARKER}:v{skills._HOOK_VERSION}" in voice[0]
+
+    def test_not_installed_for_codex(self, codex_file):
+        skills.install_interactive_hooks()
+        data = read(codex_file)
+        assert not any(
+            "agent-voice-context.sh" in c
+            for event in data.get("hooks", {})
+            for c in self._commands(data, event)
+        )
+
+    def test_version_bumped_for_the_new_hooks(self):
+        assert skills._HOOK_VERSION >= 6
+
+    def test_refreshes_an_older_install(self, settings_file, monkeypatch):
+        # Never monkeypatch.undo() here: it would also undo the fixture that
+        # keeps these tests off the real ~/.claude/settings.json.
+        current = skills._HOOK_VERSION
+        monkeypatch.setattr(skills, "_HOOK_VERSION", current - 1)
+        skills.install_interactive_hooks()
+        monkeypatch.setattr(skills, "_HOOK_VERSION", current)
+        assert not skills.voice_hooks_installed()
+        assert skills.interactive_hooks_drift()
+        skills.install_interactive_hooks()
+        assert skills.voice_hooks_installed()
+
+    def test_installed_check(self, settings_file):
+        assert not skills.voice_hooks_installed()  # no settings file
+        skills.install_interactive_hooks()
+        assert skills.voice_hooks_installed()
+        skills.remove_interactive_hooks()
+        assert not skills.voice_hooks_installed()
+
+    def test_installed_check_survives_a_malformed_file(self, settings_file):
+        settings_file.parent.mkdir(parents=True, exist_ok=True)
+        settings_file.write_text('{"hooks": {"UserPromptSubmit": "nope"}}')
+        assert not skills.voice_hooks_installed()
+
+    def test_removal_takes_the_voice_hook_too(self, settings_file):
+        skills.install_interactive_hooks()
+        skills.remove_interactive_hooks()
+        assert "agent-voice-context.sh" not in settings_file.read_text()

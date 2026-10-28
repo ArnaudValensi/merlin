@@ -355,14 +355,11 @@ def _unlink_safe(path: str) -> None:
 _TARGET_RE = re.compile(r"[^:\s]+:@\d+")
 
 
-async def _broadcast_voice_error(message: str) -> None:
-    """Tell every connected terminal page that a background transcription
-    was lost. The 202 already told the recording page it was accepted, and the
-    tmux target has no way to show an error, so the pages are the only place
-    the user can learn about it. Every page, not only the recording one: the
-    user may have moved to another device while the audio was in flight.
-    """
-    frame = "\x00" + json.dumps({"type": "voice_error", "message": message})
+async def broadcast_control(payload: dict) -> None:
+    """Send one control frame (``\\x00`` + JSON) to every connected terminal
+    page. Pages filter what concerns them (voice mode frames carry their
+    ``target``)."""
+    frame = "\x00" + json.dumps(payload)
     for state in list(_client_views):
         if state.websocket is None:
             continue
@@ -372,6 +369,27 @@ async def _broadcast_voice_error(message: str) -> None:
             # A socket closing under us is not this function's problem: its
             # own handler tears it down.
             pass
+
+
+async def _broadcast_voice_error(message: str) -> None:
+    """Tell every connected terminal page that a background transcription
+    was lost. The 202 already told the recording page it was accepted, and the
+    tmux target has no way to show an error, so the pages are the only place
+    the user can learn about it. Every page, not only the recording one: the
+    user may have moved to another device while the audio was in flight.
+    """
+    await broadcast_control({"type": "voice_error", "message": message})
+
+
+async def _note_voice(target: str, text: str | None, error: str | None) -> None:
+    """Tell the window's voice session, if it has one, how its utterance
+    went (voice mode needs to know when nothing was heard). Nothing changes
+    for a window without voice mode."""
+    from voice import session as voice_session
+
+    running = voice_session.get(target)
+    if running is not None:
+        await running.note_dictation(text, error)
 
 
 async def _transcribe_and_inject(
@@ -394,6 +412,7 @@ async def _transcribe_and_inject(
     loop = asyncio.get_event_loop()
     try:
         text = await loop.run_in_executor(None, transcribe, tmp_path, language)
+        await _note_voice(target, text, None)
         if text:
             # If the target window's pane is scrolled it is in tmux copy-mode, a
             # modal keyboard grab, and the injected text would fire copy-mode key
@@ -426,9 +445,11 @@ async def _transcribe_and_inject(
     except TranscriptionRefused as e:
         logger.warning("Background transcription refused: %s", e)
         await _broadcast_voice_error(str(e))
+        await _note_voice(target, None, str(e))
     except Exception:
         logger.exception("Background transcription failed")
         await _broadcast_voice_error("Voice transcription failed, see Merlin logs")
+        await _note_voice(target, None, "Voice transcription failed")
     finally:
         _unlink_safe(tmp_path)
 

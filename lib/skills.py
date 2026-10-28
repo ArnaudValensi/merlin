@@ -500,7 +500,7 @@ def set_agent_state_hooks_mode(mode: str) -> str:
 # ---------------------------------------------------------------------------
 
 _HOOK_MARKER = "merlin:agent-state-pill"
-_HOOK_VERSION = 5  # v5: session-init stamps the provider conversation id
+_HOOK_VERSION = 6  # v6: session-init stamps the transcript, voice context hook
 
 # Tools that open a BLOCKING dialog mid-turn: the agent has stopped and needs an
 # answer from you. Neither ends the turn, so `Stop` never fires and the pill
@@ -586,6 +586,16 @@ def _session_init_command(provider: str) -> str:
     return f'bash "{script}" {provider}  # {_HOOK_MARKER}:v{_HOOK_VERSION}'
 
 
+def _voice_context_command() -> str:
+    """The UserPromptSubmit companion that adds the voice instructions to the
+    agent's context when voice mode is on for its window (see
+    terminal/hooks/agent-voice-context.sh). Claude Code only: it is the agent
+    that adds a UserPromptSubmit hook's stdout to the context. Same marker, so
+    it is found, refreshed, and removed with the state hooks."""
+    script = paths.app_dir() / "terminal" / "hooks" / "agent-voice-context.sh"
+    return f'bash "{script}"  # {_HOOK_MARKER}:v{_HOOK_VERSION}'
+
+
 def _is_merlin_group(group: object) -> bool:
     """True if a hook matcher-group is one Merlin owns (marked command)."""
     if not isinstance(group, dict):
@@ -603,12 +613,15 @@ def _merlin_group(
     event: str, state: str, matcher: str | None = None, provider: str = "claude"
 ) -> dict:
     """The hook entries Merlin owns for one event. SessionStart carries a second
-    command (the board session-init) in the same group. A matcher, when the
-    event scopes on one, is emitted first so the group reads like both agents'
-    documented shape."""
+    command (the board session-init) in the same group, and Claude's
+    UserPromptSubmit the voice context hook. A matcher, when the event scopes
+    on one, is emitted first so the group reads like both agents' documented
+    shape."""
     entries = [{"type": "command", "command": _hook_command(state)}]
     if event == "SessionStart":
         entries.append({"type": "command", "command": _session_init_command(provider)})
+    if event == "UserPromptSubmit" and provider == "claude":
+        entries.append({"type": "command", "command": _voice_context_command()})
     group: dict = {"hooks": entries}
     if matcher is not None:
         group = {"matcher": matcher, **group}
@@ -747,6 +760,29 @@ def _hook_file_drift(path: Path, events: dict) -> bool:
     if settings is None or not _hooks_shape_ok(settings, events):
         return False
     return _reconcile_install(settings, events) != settings
+
+
+def voice_hooks_installed() -> bool:
+    """True when Claude Code's settings carry the current voice context hook and
+    session-init (the one that stamps @agent_transcript). Voice mode needs both:
+    without them the agent never learns it is being heard, and the session
+    cannot find the transcript."""
+    settings = _read_hook_file(claude_settings_path())
+    if not settings or not isinstance(settings.get("hooks"), dict):
+        return False
+    commands: set[str] = set()
+    for event in ("UserPromptSubmit", "SessionStart"):
+        groups = settings["hooks"].get(event)
+        for group in groups if isinstance(groups, list) else []:
+            if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                continue
+            for entry in group["hooks"]:
+                if isinstance(entry, dict):
+                    commands.add(str(entry.get("command", "")))
+    return (
+        _voice_context_command() in commands
+        and _session_init_command("claude") in commands
+    )
 
 
 def interactive_hooks_drift() -> bool:

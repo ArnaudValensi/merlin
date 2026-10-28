@@ -403,6 +403,80 @@ def send_enter(target: str) -> bool:
     return _run_ok(["send-keys", "-t", target, "Enter"])
 
 
+def send_escape(target: str) -> bool:
+    """Send a standalone Escape to the active pane of ``target``
+    (``session:window_id``). ``send-keys`` bypasses the client key table, so
+    the Escape binding of terminal/tmux.conf (which writes idle on a busy
+    window) does not run: callers that interrupt an agent mirror it with
+    ``set_window_option``. Best-effort bool."""
+    if not target:
+        return False
+    return _run_ok(["send-keys", "-t", target, "Escape"])
+
+
+def window_options(target: str, names: tuple[str, ...]) -> dict[str, str] | None:
+    """The values of ``names`` (window options or formats, without ``#{}``)
+    for the window at ``target``, in one tmux call. None when the window is
+    gone or tmux fails, so it doubles as an existence check. Unset options
+    read as empty strings. Blocking: run it off the event loop."""
+    if not target or not names:
+        return None
+    fmt = "\t".join("#{" + n + "}" for n in ("window_id", *names))
+    out = _tmux_capture(["display-message", "-p", "-t", target, fmt])
+    if out is None:
+        return None
+    values = out.rstrip("\n").split("\t")
+    # display-message on a target that does not resolve prints nothing useful:
+    # the window id is the proof the window exists.
+    if len(values) != len(names) + 1 or not values[0].startswith("@"):
+        return None
+    if ":" in target and values[0] != target.rsplit(":", 1)[1]:
+        return None
+    return dict(zip(names, values[1:]))
+
+
+def _window_id(target: str) -> str:
+    """The ``@id`` of a ``session:window_id`` target (or a bare ``@id``)."""
+    return target.rsplit(":", 1)[-1]
+
+
+def set_window_option(target: str, name: str, value: str) -> bool:
+    """Set a window option on the window of ``target``. Best-effort bool.
+
+    Addressed by the bare window id: ``set-option -t session:@gone`` falls
+    back to the session's current window and succeeds there, while
+    ``-t @gone`` fails, so the option can never land on another window."""
+    window = _window_id(target or "")
+    if not window.startswith("@"):
+        return False
+    return _run_ok(["set-option", "-w", "-t", window, name, value])
+
+
+def unset_window_option(target: str, name: str) -> bool:
+    """Unset a window option on the window of ``target`` (by its bare id, see
+    ``set_window_option``). Best-effort bool."""
+    window = _window_id(target or "")
+    if not window.startswith("@"):
+        return False
+    return _run_ok(["set-option", "-w", "-u", "-t", window, name])
+
+
+def windows_with_option(name: str) -> list[str]:
+    """``session:window_id`` of every window where option ``name`` is set to
+    a non-empty value. Empty when tmux is unavailable or has no server."""
+    out = _tmux_capture(
+        ["list-windows", "-a", "-F", "#{session_name}:#{window_id}\t#{" + name + "}"]
+    )
+    if not out:
+        return []
+    found = []
+    for row in out.splitlines():
+        target, _, value = row.partition("\t")
+        if value:
+            found.append(target)
+    return found
+
+
 def rename_session(old: str, new: str) -> bool:
     """Rename a tmux session. Best-effort; returns False on any failure."""
     if not old or not new:
