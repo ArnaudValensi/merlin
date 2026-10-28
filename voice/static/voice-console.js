@@ -56,12 +56,6 @@ function initVoiceConsole() {
         error:  { badge: "ERR",  name: "FAULT",      hint: "Tap anywhere to retry" },
     };
     // The text area before anything was said.
-    const IDLE_LINES = {
-        tune: "Opening the channel, one moment.",
-        resume: "Voice mode is still on for this window. Tap anywhere to pick it up.",
-        listen: "Go ahead, I am listening. Pause when you are done.",
-        tx: "Go ahead, I am listening. Pause when you are done.",
-    };
     const BUTTONS = {
         tune: ["exit"], resume: ["exit"], listen: ["exit"], tx: ["exit"],
         proc: ["stop", "exit"], rx: ["stop", "exit"], ask: ["yes", "no", "exit"], error: ["exit"],
@@ -123,10 +117,8 @@ function initVoiceConsole() {
         '  <section class="vc-text">',
         '    <div class="vc-ask" data-el="ask" hidden>',
         '      <div class="vc-ask-title" data-el="askTitle"></div>',
-        '      <pre class="vc-excerpt" data-el="excerpt"></pre>',
         '    </div>',
         '    <div class="vc-error" data-el="error" hidden></div>',
-        '    <div class="vc-captions" data-el="captions" aria-live="polite"></div>',
         '    <div class="vc-notice" data-el="notice" role="status"></div>',
         '  </section>',
         '  <footer class="vc-foot">',
@@ -915,36 +907,20 @@ function initVoiceConsole() {
         el.hint.textContent = spec.hint;
         let readout = "";
         if (mode === "proc" && m.syncing) readout = "reconnecting";
-        else if (mode === "proc") readout = m.local === "sending" ? "sending what you said" : (m.activity || "thinking");
-        else if (mode === "rx") readout = m.activity ? m.activity : "voice";
+        else if (mode === "proc") readout = m.local === "sending" ? "sending" : "thinking";
+        else if (mode === "rx") readout = "voice";
         else if (mode === "listen") readout = "mic open";
         else if (mode === "tx") readout = "voice detected";
         else if (mode === "tune") readout = "loading voice detection";
         else if (mode === "resume") readout = "audio paused";
         el.readout.textContent = readout ? "▸ " + readout : "";
 
-        const idle = IDLE_LINES[mode];
-        const lines = m.captions.length && mode !== "resume" ? m.captions
-            : idle ? [{ who: "idle", text: idle }] : m.captions;
-        el.captions.replaceChildren.apply(el.captions, lines.map(function (c, i) {
-            const line = document.createElement("div");
-            line.className = "vc-line vc-" + c.who + (i === lines.length - 1 ? " vc-last" : "");
-            const who = document.createElement("span");
-            who.className = "vc-who";
-            who.textContent = c.who === "you" ? "YOU" : c.who === "agent" ? "AGENT" : "";
-            const text = document.createElement("span");
-            text.className = "vc-said";
-            text.textContent = c.text;
-            line.append(who, text);
-            return line;
-        }));
+        // No conversation text on screen: the console reads as a voice call, not
+        // something to read while driving. Captions stay in the model only.
 
         el.ask.hidden = mode !== "ask";
         if (mode === "ask" && m.ask) {
             el.askTitle.textContent = m.ask.text || "The agent needs your answer.";
-            el.excerpt.textContent = m.ask.excerpt || "";
-            // The question sits at the bottom of the pane: keep it in view.
-            el.excerpt.scrollTop = el.excerpt.scrollHeight;
         }
         el.error.hidden = mode !== "error";
         if (mode === "error") el.error.textContent = m.error || m.notice || "The voice server failed";

@@ -22,7 +22,7 @@ win=$(agent_window)
 cat <<'EOF'
 Voice mode is on: the user is talking to you by voice, from a phone, often driving or walking. Their message was transcribed from speech, and the prose of your answer will be read aloud by a speech synthesizer.
 - Answer in the language of the question.
-- Keep the spoken prose short and direct: two to four sentences, unless the user asks for more.
+- Be short by default: a sentence or two for a simple question. When the content needs more (a report on work done, an explanation, a choice to make), take the room it needs, but organize it for the ear: say how many points there are, then go through them in order. No padding, no repetition. End with what you need from the user, if anything.
 - Write for the ear: no markdown, no bullet lists, no tables, no emoji, no URLs in the prose.
 - Write numbers, units and symbols the way they are pronounced.
 - The transcription may get words wrong: guess what was meant rather than pointing it out.

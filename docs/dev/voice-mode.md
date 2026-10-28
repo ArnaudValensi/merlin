@@ -251,9 +251,16 @@ no listening while the agent is busy or the answer plays (no voice barge-in).
 Clips are fetched two ahead of playback, ordered by revision, retried twice;
 a clip that still fails stalls the line with "Part of the answer could not be
 downloaded" (tap retries, SKIP ANSWER drops that answer). Earcons are Nova's,
-synthesized with WebAudio, plus an alert for `ASK`. Captions show the newest
-words of the answer being spoken; older text fades out at the top. Wake lock
-while open; `prefers-reduced-motion` draws a still trace.
+synthesized with WebAudio, plus an alert for `ASK`. Wake lock while open;
+`prefers-reduced-motion` draws a still trace.
+
+**No conversation text on screen.** The console shows no captions (neither what
+the user said nor the answer), no tool label and no pane excerpt on `ASK`, only
+the radio mode, the scope, a short hint and the buttons. It reads as a voice
+call, not something to read while driving (the founder's call, 2026-10-28). The
+`heard`, `say` and `activity` frames still feed the model (`m.captions`,
+`m.activity`), which is bounded and tested, so captions can come back as an
+option without touching the server.
 
 ## The reference server
 

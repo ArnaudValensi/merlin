@@ -328,8 +328,10 @@ def test_a_spoken_turn_goes_round_and_the_console_listens_again(
         assert "Running the tests now." in tts.inputs
         assert not any("*" in text for text in tts.inputs)
 
-        captions = page.inner_text("#voice-console .vc-captions")
-        assert MARKER in captions and "Nothing else to do." in captions
+        # No conversation text on screen: neither what was said nor the answer.
+        shown = page.inner_text("#voice-console")
+        assert MARKER not in shown and "Nothing else to do." not in shown
+        assert "command" not in shown.lower()
 
         # The mic was closed while the answer played, and reopened after it.
         assert page.evaluate("() => window.__answerSeen")
@@ -379,7 +381,9 @@ def test_ask_shows_yes_and_no_and_they_send_enter_and_escape(
         _start_voice(page, target)
 
         _wait_mode(page, ["ask"], timeout=40000)
-        assert "Allow Bash: pytest?" in page.inner_text("#voice-console .vc-excerpt")
+        shown = page.inner_text("#voice-console")
+        assert "The agent needs your answer." in shown
+        assert "Allow Bash: pytest?" not in shown  # no pane excerpt on screen
         assert page.is_visible("#voice-console [data-act=yes]")
         assert page.is_visible("#voice-console [data-act=no]")
         assert not page.is_visible("#voice-console [data-act=stop]")

@@ -264,11 +264,14 @@ long output stay in the terminal: the voice says so instead of reading them.
 - **Stop agent** sends Escape to the agent. **Exit** leaves voice mode, and the
   next prompt you type is back to normal.
 - When the agent needs a permission, the console plays an alert, says so, and
-  shows the bottom of the pane with **Yes** (Enter) and **No** (Escape).
+  shows **Yes** (Enter) and **No** (Escape).
+- The console shows no text of the conversation, neither what you said nor the
+  answer: it reads as a voice call, not as something to read while driving. The
+  terminal under it keeps everything.
 - **EN / FR** picks the language you speak and the voice that answers. It
   follows the dictation language.
-- The microphone is not listened to while the answer plays, so the agent never
-  hears itself through the car speakers. Keep the screen on: the console holds
+- The microphone is closed while the agent works and while the answer plays, so
+  the agent never hears itself and the phone does not lower the voice's volume. Keep the screen on: the console holds
   a wake lock while it is open.
 - If the phone loses the connection, voice mode keeps going on the server and
   the console catches up when it reconnects. After a reload, tap once to give
