@@ -204,6 +204,30 @@ def _open(browser, server, viewport=None):
         viewport=viewport or {"width": 1100, "height": 760}, permissions=["microphone"]
     )
     page = ctx.new_page()
+    # Track every mic stream, and whether one was live while an answer played:
+    # an open mic puts a phone in call mode, which ducks the answer's volume.
+    page.add_init_script(
+        """(() => {
+            window.__mics = [];
+            window.__micDuringAnswer = false;
+            window.__answerSeen = false;
+            const md = navigator.mediaDevices;
+            const get = md.getUserMedia.bind(md);
+            md.getUserMedia = async (c) => {
+                const s = await get(c);
+                window.__mics.push(s);
+                return s;
+            };
+            setInterval(() => {
+                const v = window.MerlinVoice;
+                if (!v || v.speaking() !== "answer") return;
+                window.__answerSeen = true;
+                if (window.__mics.some(s => s.getAudioTracks().some(t => t.readyState === "live"))) {
+                    window.__micDuringAnswer = true;
+                }
+            }, 20);
+        })();"""
+    )
     page.goto(f"{server}/terminal")
     page.wait_for_selector(".xterm-screen", timeout=30000)
     page.wait_for_function(
@@ -306,6 +330,11 @@ def test_a_spoken_turn_goes_round_and_the_console_listens_again(
 
         captions = page.inner_text("#voice-console .vc-captions")
         assert MARKER in captions and "Nothing else to do." in captions
+
+        # The mic was closed while the answer played, and reopened after it.
+        assert page.evaluate("() => window.__answerSeen")
+        assert not page.evaluate("() => window.__micDuringAnswer")
+        assert page.evaluate("() => window.__mics.length") >= 2
 
         # A reload finds the session still running: the console holds until a
         # tap unlocks audio and the mic again, then carries on.

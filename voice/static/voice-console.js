@@ -443,11 +443,12 @@ function initVoiceConsole() {
             baseAssetPath: VAD_DIR,
             onnxWASMBasePath: ORT_DIR,
             audioContext: audio.ctx,
-            // The session's one stream: pausing never closes it, so no
-            // permission prompt comes back between turns.
-            getStream: async function () { return audio.mic; },
-            pauseStream: async function () {},
-            resumeStream: async function () { return audio.mic; },
+            // The mic is open only while listening. An open mic puts the phone
+            // in call mode, which ducks the answer's volume, so a pause closes
+            // it and a start reopens it (a granted permission is not asked again).
+            getStream: async function () { await ensureMic(gen); return audio.mic; },
+            pauseStream: async function () { closeMic(); },
+            resumeStream: async function () { await ensureMic(gen); return audio.mic; },
             startOnLoad: false,
             redemptionMs: REDEMPTION_MS,
             submitUserSpeechOnPause: true,
@@ -478,13 +479,23 @@ function initVoiceConsole() {
     function startListening() {
         if (listening || !vad || speech) return;
         listening = true;
-        vad.start();
+        const g = gen;
+        vad.start().catch(function (e) {   // the mic could not be reopened
+            if (g !== gen || !listening) return;
+            listening = false;
+            if (e && e.message !== "closed") fail(e.message || "Microphone unavailable", "vad");
+        });
     }
 
     function stopListening() {
-        if (!listening) return;
+        if (!listening) {
+            // Opened for the session but not listening yet (the agent is busy
+            // or answering): release it so the answer plays at full volume.
+            if (phase === "live" && vad) closeMic();
+            return;
+        }
         listening = false;
-        if (vad) vad.pause();   // a pause mid-speech hands the audio to onUtterance
+        if (vad) vad.pause();   // closes the mic. A pause mid-speech hands the audio to onUtterance
     }
 
     function onUtterance(samples) {

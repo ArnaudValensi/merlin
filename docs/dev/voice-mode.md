@@ -226,7 +226,15 @@ outbox, so a stalled page never blocks the others); the page filters by
 The Voice button sits in the terminal status bar. It is always shown, dimmed
 with the reason when TTS or transcription is missing or the window cannot start
 (`/api/voice/check`). Tapping it is the user gesture that creates and resumes
-the one `AudioContext` and opens the mic once for the whole session.
+the one `AudioContext` and asks for the mic permission.
+
+The mic is open only while the console listens (`MON`, `TX`). An open mic with
+echo cancellation puts a phone in call mode, which lowers the answer's volume
+(or routes it to the earpiece), so the VAD's `pauseStream` closes the tracks
+and its `resumeStream` reopens them with `getUserMedia`. A granted permission
+is not asked again within the page. A reopen that fails is the `ERR` mode, and
+a tap retries. The e2e round-trip test asserts no live mic track while an
+answer plays.
 
 The VAD (Silero through `vad-web`, one wasm thread, no cross-origin isolation
 needed) loads lazily the first time the console opens; the vendored files are
