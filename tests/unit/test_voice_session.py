@@ -157,10 +157,11 @@ def fast(monkeypatch):
     monkeypatch.setattr(session, "POLL_INTERVAL", 0.02)
     monkeypatch.setattr(session, "END_GRACE", 0.3)
     monkeypatch.setattr(session, "PROMPT_TIMEOUT", 1.0)
-    monkeypatch.setattr(session, "FETCH_WAIT", 1.0)
+    monkeypatch.setattr(session, "ROOM_RECHECK", 0.05)
     monkeypatch.setattr(skills, "voice_hooks_installed", lambda: True)
     monkeypatch.setattr(session, "store", AudioStore())
     monkeypatch.setattr(session, "_sessions", {})
+    monkeypatch.setattr(session, "_locks", {})
 
 
 class Pages:
@@ -263,14 +264,11 @@ class TestStart:
         pages = Pages()
 
         async def go():
-            results = await asyncio.gather(
-                _start(target, pages), _start(target, pages), return_exceptions=True
+            first, second = await asyncio.gather(
+                _start(target, pages), _start(target, pages)
             )
-            sessions = [r for r in results if isinstance(r, VoiceSession)]
-            refused = [r for r in results if isinstance(r, session.StartRefused)]
-            assert len(sessions) == 1 and len(refused) == 1
-            assert "already starting" in str(refused[0])
-            assert session.get(target) is sessions[0]
+            assert isinstance(first, VoiceSession) and first is second
+            assert session.get(target) is first
             await session.stop_session(target)
 
         asyncio.run(go())
@@ -922,3 +920,585 @@ class TestDictationNote:
         # A window without voice mode: nothing happens, nothing fails.
         asyncio.run(terminal_routes._note_voice("s:@2", "hello", None))
         assert notes == [("hello", None), (None, "refused")]
+
+
+# ---------------------------------------------------------------------------
+# Review m2-004: conversation anchor, turn ownership, backpressure,
+# lifecycle, browser-safe errors, page isolation
+# ---------------------------------------------------------------------------
+
+
+def stamped(fields, when):
+    return json.dumps({**fields, "timestamp": when}) + "\n"
+
+
+def now_iso(offset=0.0):
+    from datetime import UTC, datetime, timedelta
+
+    return (
+        (datetime.now(UTC) + timedelta(seconds=offset))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+class TestNewConversation:
+    def test_first_turn_already_written_when_the_new_path_is_seen(
+        self, tmux, window, tts_server, fast, tmp_path
+    ):
+        target, win, _ = window
+        pages = Pages()
+        fresh = tmp_path / "cleared.jsonl"
+
+        async def go():
+            running = await _start(target, pages)
+            # Pause the watch so the whole first turn lands before it looks.
+            running._tasks[0].cancel()
+            append(
+                fresh,
+                prompt("first after clear", "u1"),
+                say([{"type": "text", "text": "Answer after clear."}], "a1"),
+                TURN_END,
+            )
+            tmux.set(win, "@agent_transcript", str(fresh))
+            window_now = sweep.window_options(target, session._WINDOW_FIELDS)
+            await running._follow(window_now)
+            await pages.wait(lambda p: p.events("turn_end"))
+            await session.stop_session(target)
+
+        asyncio.run(go())
+        assert pages.events("heard")[0]["text"] == "first after clear"
+        assert [f["text"] for f in pages.events("say")] == ["Answer after clear."]
+
+    def test_a_resumed_conversation_does_not_replay_its_history(
+        self, tmux, window, tts_server, fast, tmp_path
+    ):
+        target, win, _ = window
+        pages = Pages()
+        old = tmp_path / "resumed.jsonl"
+        hist = now_iso(-3600)
+        append(
+            old,
+            stamped(
+                {"type": "user", "uuid": "h1", "message": {"content": "old question"}},
+                hist,
+            ),
+            stamped(
+                {
+                    "type": "assistant",
+                    "uuid": "h2",
+                    "message": {"content": [{"type": "text", "text": "Old answer."}]},
+                },
+                hist,
+            ),
+            stamped({"type": "system", "subtype": "turn_duration"}, hist),
+        )
+
+        async def go():
+            await _start(target, pages)
+            tmux.set(win, "@agent_transcript", str(old))  # claude --resume
+            await asyncio.sleep(0.1)
+            t = now_iso()
+            append(
+                old,
+                stamped(
+                    {
+                        "type": "user",
+                        "uuid": "n1",
+                        "message": {"content": "new question"},
+                    },
+                    t,
+                ),
+                stamped(
+                    {
+                        "type": "assistant",
+                        "uuid": "n2",
+                        "message": {
+                            "content": [{"type": "text", "text": "New answer."}]
+                        },
+                    },
+                    t,
+                ),
+                stamped({"type": "system", "subtype": "turn_duration"}, t),
+            )
+            await pages.wait(lambda p: p.events("turn_end"))
+            await session.stop_session(target)
+
+        asyncio.run(go())
+        assert [f["text"] for f in pages.events("heard")] == ["new question"]
+        assert [f["text"] for f in pages.events("say")] == ["New answer."]
+
+    def test_fallback_finds_the_file_late_with_its_first_turn(
+        self, tmux, window, tts_server, fast, tmp_path, monkeypatch
+    ):
+        target, win, _ = window
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cc"))
+        tmux("set-option", "-w", "-u", "-t", win, "@agent_transcript")
+        tmux.set(win, "@agent_conv", "late-conv")
+        pages = Pages()
+
+        async def go():
+            await _start(target, pages)
+            await asyncio.sleep(0.1)  # the file does not exist yet
+            conv = tmp_path / "cc" / "projects" / "-p" / "late-conv.jsonl"
+            conv.parent.mkdir(parents=True)
+            append(
+                conv,
+                prompt("found late", "u1"),
+                say([{"type": "text", "text": "Still heard."}], "a1"),
+                TURN_END,
+            )
+            await pages.wait(lambda p: p.events("turn_end"))
+            await session.stop_session(target)
+
+        asyncio.run(go())
+        assert [f["text"] for f in pages.events("say")] == ["Still heard."]
+
+
+class SlowSynth:
+    """Replaces tts.synthesize: the first call waits for a release."""
+
+    def __init__(self):
+        self.calls = []
+        self.release = asyncio.Event()
+        self.fail_on = set()
+
+    async def __call__(self, text, lang, *, config=None, client=None, deadline=None):
+        self.calls.append(text)
+        if len(self.calls) == 1:
+            await self.release.wait()
+        if text in self.fail_on:
+            from voice import tts
+
+            raise tts.TtsUnreachable("down", "The voice server is unreachable")
+        return text.encode()
+
+
+class TestTurnOwnership:
+    def test_two_turns_in_one_poll_are_both_spoken(
+        self, tmux, window, tts_server, fast
+    ):
+        target, win, path = window
+        pages = Pages()
+
+        async def go():
+            running = await _start(target, pages)
+            running._tasks[0].cancel()  # drive the watch by hand: one poll
+            append(
+                path,
+                prompt("one", "u1"),
+                say([{"type": "text", "text": "First answer."}], "a1"),
+                TURN_END,
+                prompt("two", "u2"),
+                say([{"type": "text", "text": "Second answer."}], "a2"),
+                TURN_END,
+            )
+            await running._follow(sweep.window_options(target, session._WINDOW_FIELDS))
+            await pages.wait(lambda p: len(p.events("turn_end")) == 2)
+            await session.stop_session(target)
+
+        asyncio.run(go())
+        assert [f["text"] for f in pages.events("say")] == [
+            "First answer.",
+            "Second answer.",
+        ]
+        ends = [f["turn"] for f in pages.events("turn_end")]
+        assert len(set(ends)) == 2
+        assert pages.states()[-2:] == ["listening", "off"]
+
+    def test_turn_two_arrives_while_turn_one_is_synthesizing(
+        self, tmux, window, tts_server, fast, monkeypatch
+    ):
+        target, win, path = window
+        pages = Pages()
+        slow = SlowSynth()
+        monkeypatch.setattr(session.tts, "synthesize", slow)
+
+        async def go():
+            await _start(target, pages)
+            append(
+                path,
+                prompt("one", "u1"),
+                say([{"type": "text", "text": "First answer."}], "a1"),
+                TURN_END,
+            )
+            while not slow.calls:
+                await asyncio.sleep(0.02)
+            append(
+                path,
+                prompt("two", "u2"),
+                say([{"type": "text", "text": "Second answer."}], "a2"),
+                TURN_END,
+            )
+            await asyncio.sleep(0.2)
+            slow.release.set()
+            await pages.wait(lambda p: len(p.events("turn_end")) == 2)
+            await session.stop_session(target)
+
+        asyncio.run(go())
+        assert [f["text"] for f in pages.events("say")] == [
+            "First answer.",
+            "Second answer.",
+        ]
+
+    def test_an_old_turns_failure_keeps_the_new_turns_speech(
+        self, tmux, window, tts_server, fast, monkeypatch
+    ):
+        target, win, path = window
+        pages = Pages()
+        slow = SlowSynth()
+        slow.fail_on = {"First answer."}
+        monkeypatch.setattr(session.tts, "synthesize", slow)
+
+        async def go():
+            await _start(target, pages)
+            append(
+                path,
+                prompt("one", "u1"),
+                say([{"type": "text", "text": "First answer."}], "a1"),
+                TURN_END,
+            )
+            while not slow.calls:
+                await asyncio.sleep(0.02)
+            append(
+                path,
+                prompt("two", "u2"),
+                say([{"type": "text", "text": "Second answer."}], "a2"),
+                TURN_END,
+            )
+            await asyncio.sleep(0.2)
+            slow.release.set()
+            await pages.wait(lambda p: len(p.events("turn_end")) == 2)
+            await session.stop_session(target)
+
+        asyncio.run(go())
+        assert [f["text"] for f in pages.events("say")] == ["Second answer."]
+        assert pages.events("error")[0]["message"] == "The voice server is unreachable"
+
+    def test_skip_is_scoped_to_the_answer_being_heard(
+        self, tmux, window, tts_server, fast, monkeypatch
+    ):
+        target, win, path = window
+        pages = Pages()
+        slow = SlowSynth()
+        monkeypatch.setattr(session.tts, "synthesize", slow)
+
+        async def go():
+            running = await _start(target, pages)
+            append(
+                path,
+                prompt("one", "u1"),
+                say([{"type": "text", "text": "First answer."}], "a1"),
+                TURN_END,
+            )
+            while not slow.calls:
+                await asyncio.sleep(0.02)
+            append(
+                path,
+                prompt("two", "u2"),
+                say([{"type": "text", "text": "Second answer."}], "a2"),
+            )
+            await asyncio.sleep(0.2)
+            await running.skip()
+            slow.release.set()
+            append(path, TURN_END)
+            await pages.wait(lambda p: len(p.events("turn_end")) == 2)
+            await session.stop_session(target)
+
+        asyncio.run(go())
+        assert [f["text"] for f in pages.events("say")] == ["Second answer."]
+
+
+class TestBackpressure:
+    LONG = " ".join(f"This is sentence number {i} of a long answer." for i in range(12))
+
+    def test_the_bound_holds_long_after_the_page_stopped_fetching(
+        self, tmux, window, tts_server, fast
+    ):
+        target, win, path = window
+        pages = Pages()
+
+        async def go():
+            await _start(target, pages)
+            append(
+                path,
+                prompt("long", "u1"),
+                say([{"type": "text", "text": self.LONG}], "a1"),
+            )
+            await pages.wait(lambda p: len(p.events("say")) >= session.MAX_AHEAD)
+            await asyncio.sleep(10 * session.ROOM_RECHECK)
+            count = len(pages.events("say"))
+            await session.stop_session(target)
+            return count
+
+        assert asyncio.run(go()) == session.MAX_AHEAD
+
+    def test_an_endless_unfetched_answer_is_bounded_and_says_where_the_rest_is(
+        self, tmux, window, tts_server, fast, monkeypatch
+    ):
+        target, win, path = window
+        monkeypatch.setattr(session, "MAX_QUEUED", 5)
+        pages = Pages()
+
+        async def go():
+            running = await _start(target, pages)
+            for i in range(10):
+                append(path, say([{"type": "text", "text": self.LONG}], f"a{i}"))
+            await asyncio.sleep(0.3)
+            queued = list(running._queue)
+            await session.stop_session(target)
+            return queued
+
+        queued = asyncio.run(go())
+        texts = [item for _, item in queued if isinstance(item, str)]
+        assert len(texts) <= 6
+        assert texts[-1] == "The rest is in the terminal."
+
+    def test_snapshot_drops_expired_clips_and_the_speaker_moves_on(
+        self, tmux, window, tts_server, fast
+    ):
+        target, win, path = window
+        pages = Pages()
+
+        async def go():
+            running = await _start(target, pages)
+            append(
+                path,
+                prompt("long", "u1"),
+                say([{"type": "text", "text": self.LONG}], "a1"),
+            )
+            await pages.wait(lambda p: len(p.events("say")) >= session.MAX_AHEAD)
+            assert len(running.snapshot()["clips"]) == session.MAX_AHEAD
+            session.store.drop([c["id"] for c in running.clips])  # retention expired
+            assert running.snapshot()["clips"] == []
+            await pages.wait(lambda p: len(p.events("say")) > session.MAX_AHEAD)
+            await session.stop_session(target)
+
+        asyncio.run(go())
+
+
+class TestLifecycle:
+    @pytest.fixture
+    def fake_tmux(self, monkeypatch, tts_server, fast):
+        """Mocked window helpers: a mark that can be watched, and a set-option
+        that can be held."""
+        state = {"marks": {}, "hold": None}
+
+        def set_opt(target, name, value):
+            if state["hold"] is not None:
+                state["hold"].wait(5)
+            state["marks"][(target, name)] = value
+            return True
+
+        def unset_opt(target, name):
+            state["marks"].pop((target, name), None)
+            return True
+
+        monkeypatch.setattr(sweep, "set_window_option", set_opt)
+        monkeypatch.setattr(sweep, "unset_window_option", unset_opt)
+        monkeypatch.setattr(
+            sweep,
+            "window_options",
+            lambda t, n: {k: ("claude" if k == "@agent_provider" else "") for k in n},
+        )
+        monkeypatch.setenv("MERLIN_TTS_FORMAT", "wav")
+        return state
+
+    def test_a_stop_during_start_leaves_nothing_behind(self, fake_tmux):
+        hold = threading.Event()
+        fake_tmux["hold"] = hold
+        pages = Pages()
+
+        async def go():
+            starting = asyncio.create_task(
+                session.start_session("s:@1", "en", broadcast=pages)
+            )
+            await asyncio.sleep(0.1)  # start is held inside set-option
+            stopping = asyncio.create_task(session.stop_session("s:@1", "off"))
+            await asyncio.sleep(0.1)
+            hold.set()
+            running = await starting
+            await stopping
+            return running
+
+        running = asyncio.run(go())
+        assert running.stopped
+        assert session.get("s:@1") is None
+        assert fake_tmux["marks"] == {}
+        assert all(t.done() for t in running._tasks)
+
+    @pytest.mark.parametrize("cancel_after", [0.05, 0.3])
+    def test_a_cancelled_start_rolls_back(self, fake_tmux, cancel_after):
+        hold = threading.Event()
+        fake_tmux["hold"] = hold if cancel_after < 0.1 else None
+        pages = Pages()
+        created = []
+        real_init = VoiceSession.__init__
+
+        def spy(self, *a, **kw):
+            real_init(self, *a, **kw)
+            created.append(self)
+
+        async def go():
+            VoiceSession.__init__ = spy
+            try:
+                task = asyncio.create_task(
+                    session.start_session("s:@2", "en", broadcast=pages)
+                )
+                await asyncio.sleep(cancel_after if cancel_after < 0.1 else 0)
+                task.cancel()
+                await asyncio.sleep(0.1)  # the held write lands after the cancel
+                hold.set()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                await asyncio.sleep(0.1)
+            finally:
+                VoiceSession.__init__ = real_init
+
+        asyncio.run(go())
+        assert fake_tmux["marks"] == {}
+        assert session.get("s:@2") is None
+        for s in created:
+            assert s.stopped and all(t.done() for t in s._tasks)
+
+
+class TestBrowserSafeErrors:
+    def test_upstream_details_never_reach_the_pages(
+        self, tmux, window, fast, monkeypatch
+    ):
+        from http.server import BaseHTTPRequestHandler
+
+        target, win, path = window
+
+        class Leaky(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                body = json.dumps(
+                    {
+                        "error": {
+                            "message": f"bad key sk-SECRET-KEY for {self.server.url}"
+                        }
+                    }
+                ).encode()
+                self.send_response(401)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), Leaky)
+        host, port = srv.server_address[:2]
+        srv.url = f"http://{host}:{port}/v1"
+        threading.Thread(
+            target=srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        ).start()
+        monkeypatch.setenv("MERLIN_TTS_URL", srv.url)
+        monkeypatch.setenv("MERLIN_TTS_API_KEY", "sk-SECRET-KEY")
+        monkeypatch.setenv("MERLIN_TTS_FORMAT", "wav")
+        pages = Pages()
+
+        async def go():
+            running = await session.start_session(target, "en", broadcast=pages)
+            append(
+                path,
+                prompt("q", "u1"),
+                say([{"type": "text", "text": "Hello there."}], "a1"),
+            )
+            await pages.wait(lambda p: p.events("error"))
+            snap = running.snapshot()
+            await session.stop_session(target)
+            return snap
+
+        try:
+            snap = asyncio.run(go())
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        everything = json.dumps(pages.frames) + json.dumps(snap)
+        assert "sk-SECRET-KEY" not in everything and srv.url not in everything
+        assert (
+            pages.events("error")[0]["message"]
+            == "The voice server refused the key (401)"
+        )
+
+    def test_the_log_detail_is_redacted(self):
+        from voice import tts
+
+        config = tts.TtsConfig("http://h:1/v1", "k3y", "m", "f", "e", 1.0, "wav")
+        assert (
+            tts.redact("key k3y at http://h:1/v1", config)
+            == "key [redacted] at [redacted]"
+        )
+
+
+class TestPageIsolation:
+    def test_a_stalled_page_does_not_hold_the_others(self, monkeypatch):
+        from terminal import routes as terminal_routes
+
+        monkeypatch.setattr(terminal_routes, "CONTROL_SEND_TIMEOUT", 0.3)
+
+        class Stalled:
+            async def send_text(self, frame):
+                await asyncio.sleep(3600)
+
+        class Healthy:
+            def __init__(self):
+                self.got = []
+
+            async def send_text(self, frame):
+                self.got.append(json.loads(frame[1:]))
+
+        stalled, healthy = (
+            terminal_routes.SessionReportState(),
+            terminal_routes.SessionReportState(),
+        )
+        stalled.websocket, healthy.websocket = Stalled(), Healthy()
+        monkeypatch.setattr(terminal_routes, "_client_views", {stalled, healthy})
+
+        async def go():
+            started = time.monotonic()
+            for i in range(3):
+                await terminal_routes.broadcast_control({"n": i})
+            returned = time.monotonic() - started
+            await asyncio.sleep(0.05)
+            got_quickly = [f["n"] for f in healthy.websocket.got]
+            await asyncio.sleep(0.5)
+            return returned, got_quickly, len(stalled.outbox)
+
+        returned, got, stalled_left = asyncio.run(go())
+        assert returned < 0.05
+        assert got == [0, 1, 2]
+        assert stalled_left == 0  # dropped after the send timeout
+
+    def test_injection_does_not_wait_on_pages(self, monkeypatch):
+        from terminal import routes as terminal_routes
+
+        class Stalled:
+            async def send_text(self, frame):
+                await asyncio.sleep(3600)
+
+        state = terminal_routes.SessionReportState()
+        state.websocket = Stalled()
+        monkeypatch.setattr(terminal_routes, "_client_views", {state})
+
+        class Running:
+            async def note_dictation(self, text, error):
+                await session.VoiceSession._send(self, "state", state="thinking")
+
+            target = "s:@1"
+
+            async def broadcast(self, payload):
+                await terminal_routes.broadcast_control(payload)
+
+        monkeypatch.setattr(session, "_sessions", {"s:@1": Running()})
+
+        async def go():
+            started = time.monotonic()
+            await terminal_routes._note_voice("s:@1", "hello", None)
+            return time.monotonic() - started
+
+        assert asyncio.run(go()) < 0.05

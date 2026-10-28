@@ -22,6 +22,7 @@ import os
 import re
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -84,17 +85,36 @@ def _prompt_text(line: dict) -> str | None:
     return text
 
 
+def _line_time(line: dict) -> datetime | None:
+    raw = line.get("timestamp")
+    if not isinstance(raw, str):
+        return None
+    try:
+        when = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return when if when.tzinfo else None
+
+
 class ClaudeTranscriptReader:
     """Tail one Claude Code transcript from a byte offset.
 
     ``offset=None`` starts at the current end of the file (or at 0 when it does
-    not exist yet), so nothing said before is read again. A partial last line
-    is kept until its newline arrives. A file replaced or truncated under the
-    reader is read again from its start.
+    not exist yet), so nothing said before is read again. ``since`` (an aware
+    datetime) skips the lines stamped earlier: a conversation discovered after
+    it started (``/clear``, a resume) is read from its start without replaying
+    its history. A partial last line is kept until its newline arrives. A file
+    replaced or truncated under the reader is read again from its start.
     """
 
-    def __init__(self, path: Path | str, offset: int | None = None) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        offset: int | None = None,
+        since: datetime | None = None,
+    ) -> None:
         self.path = Path(path)
+        self.since = since
         try:
             st = self.path.stat()
             self._inode: int | None = st.st_ino
@@ -149,6 +169,10 @@ class ClaudeTranscriptReader:
             return []
         if not isinstance(line, dict) or line.get("isSidechain"):
             return []
+        if self.since is not None:
+            when = _line_time(line)
+            if when is not None and when < self.since:
+                return []
         kind = line.get("type")
         uid = str(line.get("uuid") or "")
         if kind == "system" and line.get("subtype") == "turn_duration":
@@ -180,11 +204,14 @@ class ClaudeTranscriptReader:
 
 
 def open_reader(
-    provider: str, path: Path | str, offset: int | None = None
+    provider: str,
+    path: Path | str,
+    offset: int | None = None,
+    since: datetime | None = None,
 ) -> TranscriptReader:
     """The transcript reader for an agent. Only ``claude`` exists for now."""
     if provider == "claude":
-        return ClaudeTranscriptReader(path, offset)
+        return ClaudeTranscriptReader(path, offset, since)
     raise UnsupportedProvider(provider)
 
 

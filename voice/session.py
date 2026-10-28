@@ -8,13 +8,20 @@ frames for the pages (``{"type": "voice", "event": ..., "target": ...}``):
 - it watches ``@agent_state`` with a light poll for ``ask`` and for a turn that
   ends without a ``turn_duration`` line (Esc writes ``idle``);
 - it makes the answer speakable, cuts it into pieces and synthesizes them in
-  order through the TTS endpoint, a few ahead of what the page has fetched,
-  into a small in-memory audio store the page reads by unguessable id.
+  order through the TTS endpoint, at most a few ahead of what the page has
+  fetched, into a small in-memory audio store the page reads by unguessable id.
+
+Two clocks run side by side. The *watch* follows the transcript: a turn starts
+with a prompt (or the agent going busy) and its end is queued when the
+transcript says so. The *speaker* drains a FIFO of the turns' pieces and ends:
+a turn whose generation is over may still have speech to deliver, and the next
+turn's speech waits behind it, so nothing is dropped unless the user skips it.
 
 Pages may come and go (a phone's socket drops in a car): the session keeps
-running and ``snapshot()`` gives a reconnecting page its state back. A window
-that disappears stops its session. ``@voice`` is set on start, cleared on stop,
-and cleared at server startup for windows a previous process left marked.
+running, waits for a page to fetch before synthesizing more, and ``snapshot()``
+gives a reconnecting page its state back. A window that disappears stops its
+session. ``@voice`` is set on start, cleared on stop, and cleared at server
+startup for windows a previous process left marked.
 
 Every tmux call and file read runs off the event loop.
 """
@@ -22,13 +29,15 @@ Every tmux call and file read runs off the event loop.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 import re
 import secrets
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 from board import sweep
 
@@ -42,14 +51,23 @@ POLL_INTERVAL = 0.25
 END_GRACE = 2.0
 # A prompt sent by voice that no turn picked up in this long is given up on.
 PROMPT_TIMEOUT = 20.0
-# Pieces synthesized ahead of what the page has fetched.
+# Clips synthesized ahead of what the page has fetched. The speaker waits,
+# however long, for a fetch (or for an unfetched clip to expire) before making
+# another one: the bound holds while no page is connected.
 MAX_AHEAD = 3
-# How long the speaker waits for the page to fetch before going on anyway
-# (no page connected): the audio store bounds what piles up.
-FETCH_WAIT = 30.0
+# How often a waiting speaker looks again for clips that expired unfetched.
+ROOM_RECHECK = 5.0
+# Pieces waiting to be synthesized, all turns together. Past it, the turn
+# being written says the rest is in the terminal and drops what follows.
+MAX_QUEUED = 64
+# Clip records kept for a reconnecting page.
+MAX_CLIPS = 24
 EXCERPT_LINES = 8
 # The ask sentence is a nicety: a slow voice server must not hold the watch.
 ASK_DEADLINE = 5.0
+# A conversation found after the session started (/clear, resume) is read from
+# its start, without the lines stamped before it was seen minus this margin.
+NEW_CONVERSATION_MARGIN = 2.0
 
 PLAYABLE_FORMATS = {
     "wav": "audio/wav",
@@ -62,6 +80,11 @@ PLAYABLE_FORMATS = {
 ASK_SENTENCE = {
     "en": "The agent needs your answer.",
     "fr": "L'agent a besoin de ta réponse.",
+}
+
+REST_IN_TERMINAL = {
+    "en": "The rest is in the terminal.",
+    "fr": "La suite est dans le terminal.",
 }
 
 TOOL_LABELS = {
@@ -133,6 +156,10 @@ class AudioStore:
     def __len__(self) -> int:
         return len(self._clips)
 
+    def __contains__(self, clip_id: object) -> bool:
+        self._evict()
+        return clip_id in self._clips
+
     @property
     def total_bytes(self) -> int:
         return self._bytes
@@ -169,10 +196,17 @@ store = AudioStore()
 
 
 # ---------------------------------------------------------------------------
-# Frames
+# Frames and background tasks
 # ---------------------------------------------------------------------------
 
 Broadcast = Callable[[dict], Awaitable[None]]
+
+
+async def _broadcast_to_pages(payload: dict) -> None:
+    from terminal import routes as terminal_routes
+
+    await terminal_routes.broadcast_control(payload)
+
 
 # Tasks started without an owner to await them (a session stopping itself):
 # held here so they are not garbage collected mid-run.
@@ -185,12 +219,6 @@ def _spawn(coro) -> None:
     task.add_done_callback(_background.discard)
 
 
-async def _broadcast_to_pages(payload: dict) -> None:
-    from terminal import routes as terminal_routes
-
-    await terminal_routes.broadcast_control(payload)
-
-
 # ---------------------------------------------------------------------------
 # Session
 # ---------------------------------------------------------------------------
@@ -200,15 +228,22 @@ class StartRefused(Exception):
     """Voice mode cannot start for this window; the message says why."""
 
 
+_turn_ids = itertools.count(1)
+
+
 @dataclass
 class _Turn:
+    id: int = field(default_factory=lambda: next(_turn_ids))
     started: float = field(default_factory=time.monotonic)
     saw_busy: bool = False
-    saw_prompt: bool = False
     idle_since: float | None = None
-    skipped: bool = False
-    spoke: bool = False
+    # Generation is over: the end is queued behind the turn's pieces.
     end_queued: bool = False
+    # The speaker reached the end: the turn is gone.
+    finished: bool = False
+    skipped: bool = False
+    truncated: bool = False
+    spoke: bool = False
     chunker: speech.Chunker = field(default_factory=speech.Chunker)
 
 
@@ -238,40 +273,60 @@ class VoiceSession:
         self.activity = ""
         self.ask: dict | None = None
         self.clips: list[dict] = []
+        # The turn the transcript is writing, and every turn not yet fully
+        # spoken, oldest first (the generating one is last when it exists).
         self.turn: _Turn | None = None
+        self.live: list[_Turn] = []
         self.prompt_sent_at: float | None = None
+        # Whether `busy` may start a turn: not right after a turn ended while
+        # the state still said busy (turn_duration lands before the Stop hook
+        # writes done), only once the state has been seen out of busy.
+        self._busy_starts_turn = True
         self.reader: transcript.TranscriptReader | None = None
         self._reader_key: tuple[str, str] | None = None
-        self._pieces: asyncio.Queue = asyncio.Queue()
+        self._queue: deque[tuple[_Turn, object]] = deque()
+        self._queued_pieces = 0
+        self._queue_event = asyncio.Event()
         self._fetched: set[str] = set()
-        self._fetch_event = asyncio.Event()
+        self._room_event = asyncio.Event()
         self._ask_audio: dict[str, bytes] = {}
         self._tasks: list[asyncio.Task] = []
+        # The in-flight @voice write: a cancelled start must let it land
+        # before clearing it, or the clear could run first.
+        self._marking: asyncio.Future | None = None
         self._stopped = False
 
     # -- lifecycle ---------------------------------------------------------
 
     async def start(self) -> None:
-        if not await asyncio.to_thread(
-            sweep.set_window_option, self.target, "@voice", "on"
-        ):
-            raise StartRefused("Could not mark the window for voice mode")
-        # Anchor the transcript now: everything written before voice mode
-        # turned on is history, everything after is followed.
-        window = await asyncio.to_thread(
-            sweep.window_options, self.target, _WINDOW_FIELDS
-        )
-        if window is not None:
-            await self._open_reader(window)
-        self._tasks = [
-            asyncio.create_task(self._watch(), name=f"voice-watch {self.target}"),
-            asyncio.create_task(self._speak(), name=f"voice-speak {self.target}"),
-        ]
-        await self._set_state("listening")
+        """Mark the window, anchor the transcript, start the tasks. Anything
+        failing or cancelled on the way rolls all of it back."""
+        try:
+            self._marking = asyncio.ensure_future(
+                asyncio.to_thread(sweep.set_window_option, self.target, "@voice", "on")
+            )
+            if not await asyncio.shield(self._marking):
+                raise StartRefused("Could not mark the window for voice mode")
+            # Anchor the transcript now: everything written before voice mode
+            # turned on is history, everything after is followed.
+            window = await asyncio.to_thread(
+                sweep.window_options, self.target, _WINDOW_FIELDS
+            )
+            if window is not None:
+                await self._open_reader(window, initial=True)
+            if self._stopped:
+                raise StartRefused("Voice mode was turned off while starting")
+            self._tasks = [
+                asyncio.create_task(self._watch(), name=f"voice-watch {self.target}"),
+                asyncio.create_task(self._speak(), name=f"voice-speak {self.target}"),
+            ]
+            await self._set_state("listening")
+        except BaseException:
+            await asyncio.shield(self._teardown())
+            raise
 
-    async def stop(self, reason: str = "") -> None:
-        if self._stopped:
-            return
+    async def _teardown(self) -> None:
+        """Cancel the tasks, clear the mark, drop the audio. Idempotent."""
         self._stopped = True
         current = asyncio.current_task()
         for task in self._tasks:
@@ -283,9 +338,18 @@ class VoiceSession:
                     await task
                 except BaseException:
                     pass
+        if self._marking is not None:
+            await asyncio.wait([self._marking])
         await asyncio.to_thread(sweep.unset_window_option, self.target, "@voice")
         self.audio.drop(c["id"] for c in self.clips)
         self.clips = []
+        self._queue.clear()
+
+    async def stop(self, reason: str = "") -> None:
+        if self._stopped and not self._tasks:
+            return
+        await self._teardown()
+        self._tasks = []
         if _sessions.get(self.target) is self:
             _sessions.pop(self.target, None)
         self.state = "off"
@@ -310,7 +374,8 @@ class VoiceSession:
         await self._send("state", state=state)
 
     def snapshot(self) -> dict:
-        """Everything a page that just (re)connected needs to pick up."""
+        """Everything a page that just (re)connected needs to pick up. Clips
+        whose audio expired are left out."""
         return {
             "active": not self._stopped,
             "target": self.target,
@@ -319,7 +384,7 @@ class VoiceSession:
             "heard": self.heard,
             "activity": self.activity,
             "ask": self.ask,
-            "clips": list(self.clips),
+            "clips": [c for c in self.clips if c["id"] in self.audio],
             "turn": self.turn is not None,
         }
 
@@ -328,18 +393,14 @@ class VoiceSession:
     def mark_fetched(self, clip_id: str) -> None:
         if any(c["id"] == clip_id for c in self.clips):
             self._fetched.add(clip_id)
-            self._fetch_event.set()
+            self._room_event.set()
 
     async def skip(self) -> None:
-        """Drop the rest of this answer; listening resumes when the turn ends."""
-        if self.turn is None:
-            return
-        self.turn.skipped = True
-        self._drain_pieces()
-        unplayed = [c["id"] for c in self.clips if c["id"] not in self._fetched]
-        self.audio.drop(unplayed)
-        self.clips = [c for c in self.clips if c["id"] in self._fetched]
-        self._fetch_event.set()
+        """Drop the rest of the answer being heard (the oldest turn not yet
+        fully spoken); listening resumes when that turn ends."""
+        turn = next((t for t in self.live if not t.skipped), None)
+        if turn is not None:
+            self._drop_turn(turn)
 
     async def note_dictation(self, text: str | None, error: str | None) -> None:
         """The voice utterance this session's page uploaded was transcribed."""
@@ -364,7 +425,7 @@ class VoiceSession:
                     sweep.window_options, self.target, _WINDOW_FIELDS
                 )
                 if window is None:
-                    _spawn(self.stop("The window was closed"))
+                    _spawn(stop_session(self.target, "The window was closed", self))
                     return
                 await self._follow(window)
                 await asyncio.sleep(POLL_INTERVAL)
@@ -373,12 +434,16 @@ class VoiceSession:
         except Exception:
             logger.exception("voice session failed: %s", self.target)
             await self._send("error", message="Voice mode failed, see Merlin logs")
-            _spawn(self.stop("Voice mode failed"))
+            _spawn(stop_session(self.target, "Voice mode failed", self))
 
-    async def _open_reader(self, window: dict[str, str]) -> None:
-        """Follow the window's current transcript. A new one (``/clear``,
-        resume) is followed from its end as it is now, or from its start when
-        it does not exist yet."""
+    async def _open_reader(self, window: dict[str, str], initial: bool = False) -> None:
+        """Follow the window's current transcript.
+
+        At start, from its end: what was said before is history. A
+        conversation found later (``/clear``, resume, or the conversation-id
+        fallback finding the file late) is read from its start, skipping the
+        lines stamped before it was noticed, so its first turn is never lost
+        and a resumed conversation's history is never read aloud."""
         key = (window["@agent_transcript"], window["@agent_conv"])
         if key == self._reader_key:
             return
@@ -386,9 +451,17 @@ class VoiceSession:
         if path is None:
             return
         if self.reader is None or self.reader.path != path:
-            self.reader = await asyncio.to_thread(
-                transcript.open_reader, self.provider, path
-            )
+            if initial:
+                self.reader = await asyncio.to_thread(
+                    transcript.open_reader, self.provider, path
+                )
+            else:
+                since = datetime.now(UTC) - timedelta(
+                    seconds=POLL_INTERVAL + NEW_CONVERSATION_MARGIN
+                )
+                self.reader = await asyncio.to_thread(
+                    transcript.open_reader, self.provider, path, 0, since
+                )
         self._reader_key = key
 
     async def _follow(self, window: dict[str, str]) -> None:
@@ -398,25 +471,25 @@ class VoiceSession:
                 await self._on_event(event)
         await self._on_agent_state(window["@agent_state"])
 
-    async def _begin_turn(self) -> None:
-        # A turn whose end is already queued is over: whatever comes now
-        # belongs to the next one.
+    async def _begin_turn(self) -> _Turn:
+        """The turn the transcript is writing, started if there is none. A
+        turn whose end is queued is over for the transcript: what comes now
+        belongs to the next one, while its speech keeps its place in line."""
         if self.turn is not None and not self.turn.end_queued:
-            return
-        self.turn = _Turn()
+            return self.turn
+        turn = _Turn()
+        self.turn = turn
+        self.live.append(turn)
         self.prompt_sent_at = None
         self.activity = ""
         self.ask = None
-        self.audio.drop(c["id"] for c in self.clips)
-        self.clips = []
-        self._fetched.clear()
-        await self._set_state("thinking")
+        if len(self.live) == 1:
+            await self._set_state("thinking")
+        return turn
 
     async def _on_event(self, event: transcript.Event) -> None:
         if event.kind == "user_prompt":
             await self._begin_turn()
-            assert self.turn is not None
-            self.turn.saw_prompt = True
             self.heard = event.text
             await self._send("heard", text=event.text)
         elif event.kind == "tool_use":
@@ -424,54 +497,66 @@ class VoiceSession:
             self.activity = tool_label(event.text)
             await self._send("activity", label=self.activity)
         elif event.kind == "assistant_text":
-            await self._begin_turn()
-            assert self.turn is not None
-            if self.turn.skipped:
+            turn = await self._begin_turn()
+            if turn.skipped or turn.truncated:
                 return
             # A text block is complete when it lands: speak all of it now,
             # so the sentence said before a long tool run is heard before the
             # run, not after it.
-            chunker = self.turn.chunker
             text = speech.speakable(event.text, self.lang)
-            for piece in chunker.feed(text + "\n") + chunker.flush():
-                self._pieces.put_nowait((self.turn, piece))
+            for piece in turn.chunker.feed(text + "\n") + turn.chunker.flush():
+                self._enqueue(turn, piece)
         elif event.kind == "turn_end":
             await self._end_turn()
 
+    def _enqueue(self, turn: _Turn, piece: str) -> None:
+        if turn.truncated:
+            return
+        if self._queued_pieces >= MAX_QUEUED:
+            # Nobody is fetching and the answer keeps coming: say where the
+            # rest is (allowed past the bound, once per turn) and drop it.
+            turn.truncated = True
+            piece = REST_IN_TERMINAL.get(self.lang, REST_IN_TERMINAL["en"])
+        self._queue.append((turn, piece))
+        self._queued_pieces += 1
+        self._queue_event.set()
+
     async def _end_turn(self) -> None:
-        """Queue the end of the current turn, once (a turn_duration line and
-        the state fallback may both get here)."""
+        """Queue the end of the turn being written, once (a turn_duration line
+        and the state fallback may both get here)."""
         turn = self.turn
         if turn is None or turn.end_queued:
             return
         turn.end_queued = True
+        self._busy_starts_turn = False
         if not turn.skipped:
             for piece in turn.chunker.flush():
-                self._pieces.put_nowait((turn, piece))
-        self._pieces.put_nowait((turn, _END))
+                self._enqueue(turn, piece)
+        self._queue.append((turn, _END))
+        self._queue_event.set()
 
     async def _on_agent_state(self, state: str) -> None:
         now = time.monotonic()
-        turn = self.turn
         if state == "ask":
-            if turn is None:
-                await self._begin_turn()
+            await self._begin_turn()
             if self.state != "ask":
                 await self._enter_ask()
             return
         if self.state == "ask":
             self.ask = None
-            spoke = self.turn is not None and self.turn.spoke
-            await self._set_state("speaking" if spoke else "thinking")
+            speaking = any(t.spoke and not t.skipped for t in self.live)
+            await self._set_state("speaking" if speaking else "thinking")
         if state == "busy":
-            if turn is None:
-                await self._begin_turn()
-                turn = self.turn
-            assert turn is not None
+            if self.turn is None or self.turn.end_queued:
+                if not self._busy_starts_turn:
+                    return
+            turn = await self._begin_turn()
             turn.saw_busy = True
             turn.idle_since = None
             return
-        if turn is not None:
+        self._busy_starts_turn = True
+        turn = self.turn
+        if turn is not None and not turn.end_queued:
             if turn.idle_since is None:
                 turn.idle_since = now
             ended = turn.saw_busy and now - turn.idle_since >= END_GRACE
@@ -479,7 +564,11 @@ class VoiceSession:
             stale = not turn.saw_busy and now - turn.started >= PROMPT_TIMEOUT
             if ended or stale:
                 await self._end_turn()
-        elif self.prompt_sent_at and now - self.prompt_sent_at >= PROMPT_TIMEOUT:
+        elif (
+            turn is None
+            and self.prompt_sent_at
+            and now - self.prompt_sent_at >= PROMPT_TIMEOUT
+        ):
             self.prompt_sent_at = None
             await self._send("error", message="The agent did not take the prompt")
             await self._set_state("listening")
@@ -510,60 +599,118 @@ class VoiceSession:
     def _content_type(self) -> str:
         return PLAYABLE_FORMATS.get(self.config.format, "application/octet-stream")
 
-    def _drain_pieces(self) -> None:
-        """Drop queued pieces, keeping the turn ends."""
-        kept = []
-        while not self._pieces.empty():
-            item = self._pieces.get_nowait()
-            if item[1] is _END:
+    def _drop_turn(self, turn: _Turn) -> None:
+        """Skip one turn: its queued pieces and the clips the page has not
+        fetched go; its end stays queued so the page hears the turn end."""
+        turn.skipped = True
+        kept: deque[tuple[_Turn, object]] = deque()
+        for item in self._queue:
+            if item[0] is turn and item[1] is not _END:
+                self._queued_pieces -= 1
+            else:
                 kept.append(item)
-        for item in kept:
-            self._pieces.put_nowait(item)
+        self._queue = kept
+        dropped = [
+            c["id"]
+            for c in self.clips
+            if c["turn"] == turn.id and c["id"] not in self._fetched
+        ]
+        self.audio.drop(dropped)
+        self.clips = [c for c in self.clips if c["id"] not in dropped]
+        self._room_event.set()
+        self._queue_event.set()
 
-    async def _wait_for_room(self) -> None:
-        deadline = time.monotonic() + FETCH_WAIT
-        while time.monotonic() < deadline:
+    def _unfetched(self) -> int:
+        return sum(
+            1
+            for c in self.clips
+            if c["id"] not in self._fetched and c["id"] in self.audio
+        )
+
+    async def _wait_for_room(self, turn: _Turn) -> None:
+        """Wait until fewer than MAX_AHEAD clips are waiting for the page, or
+        the turn is skipped. No deadline: with no page, synthesis stops."""
+        while not turn.skipped:
             # Clear before counting: a fetch landing after the count still
             # sets the event, so the wait below cannot miss it.
-            self._fetch_event.clear()
-            ahead = sum(1 for c in self.clips if c["id"] not in self._fetched)
-            if ahead < MAX_AHEAD:
+            self._room_event.clear()
+            if self._unfetched() < MAX_AHEAD:
                 return
             try:
-                await asyncio.wait_for(
-                    self._fetch_event.wait(), deadline - time.monotonic()
-                )
+                await asyncio.wait_for(self._room_event.wait(), ROOM_RECHECK)
             except TimeoutError:
-                break
+                pass  # look again: an unfetched clip may have expired
+
+    async def _next_item(self) -> tuple[_Turn, object]:
+        while not self._queue:
+            self._queue_event.clear()
+            await self._queue_event.wait()
+        turn, item = self._queue.popleft()
+        if item is not _END:
+            self._queued_pieces -= 1
+        return turn, item
+
+    def _prune_clips(self) -> None:
+        """Keep the clip records a reconnecting page could still use."""
+        live = {t.id for t in self.live}
+        self.clips = [
+            c
+            for c in self.clips
+            if c["id"] in self.audio
+            and not (c["id"] in self._fetched and c["turn"] not in live)
+        ]
+        while len(self.clips) > MAX_CLIPS:
+            oldest_fetched = next(
+                (c for c in self.clips if c["id"] in self._fetched), self.clips[0]
+            )
+            self.clips.remove(oldest_fetched)
+        self._fetched &= {c["id"] for c in self.clips}
+
+    async def _finish_turn(self, turn: _Turn) -> None:
+        turn.finished = True
+        if turn in self.live:
+            self.live.remove(turn)
+        self._prune_clips()
+        await self._send("turn_end", turn=turn.id)
+        if self.turn is turn:
+            self.turn = None
+            self.activity = ""
+        if self.state == "ask":
+            return
+        if not self.live:
+            await self._set_state("listening")
+        elif not any(t.spoke for t in self.live):
+            await self._set_state("thinking")
 
     async def _speak(self) -> None:
         while True:
-            turn, item = await self._pieces.get()
+            turn, item = await self._next_item()
             if item is _END:
-                if self.turn is turn:
-                    self.turn = None
-                    self.activity = ""
-                    await self._send("turn_end")
-                    await self._set_state("listening")
+                await self._finish_turn(turn)
                 continue
-            if turn.skipped or self.turn is not turn:
+            if turn.skipped:
                 continue
-            await self._wait_for_room()
-            if turn.skipped or self.turn is not turn:
+            await self._wait_for_room(turn)
+            if turn.skipped:
                 continue
+            assert isinstance(item, str)
             try:
                 data = await tts.synthesize(item, self.lang, config=self.config)
             except tts.TtsError as e:
                 logger.warning("voice synthesis failed: %s", e)
-                turn.skipped = True
-                self._drain_pieces()
-                await self._send("error", message=str(e))
+                self._drop_turn(turn)
+                await self._send("error", message=e.public)
                 await self._set_state("error")
                 continue
-            if turn.skipped or self.turn is not turn:
+            if turn.skipped:
                 continue
-            clip = {"id": self.audio.put(data, self._content_type()), "text": item}
+            clip = {
+                "id": self.audio.put(data, self._content_type()),
+                "text": item,
+                "turn": turn.id,
+            }
             self.clips.append(clip)
+            self._prune_clips()
             await self._send("say", **clip)
             if not turn.spoke:
                 turn.spoke = True
@@ -576,8 +723,16 @@ class VoiceSession:
 # ---------------------------------------------------------------------------
 
 _sessions: dict[str, VoiceSession] = {}
-# Targets with a start in flight: a double tap must not make two sessions.
-_starting: set[str] = set()
+# One lock per window: a start and a stop for the same window never overlap,
+# and a double tap gets the session the first tap made.
+_locks: dict[str, asyncio.Lock] = {}
+
+
+def _lock(target: str) -> asyncio.Lock:
+    lock = _locks.get(target)
+    if lock is None:
+        lock = _locks[target] = asyncio.Lock()
+    return lock
 
 
 def get(target: str) -> VoiceSession | None:
@@ -591,20 +746,18 @@ async def start_session(
     language updated). Raises StartRefused with the reason it cannot run."""
     if not valid_target(target):
         raise StartRefused("Not a terminal window")
-    existing = _sessions.get(target)
-    if existing is not None and not existing.stopped:
-        existing.set_lang(lang)
-        return existing
-    if target in _starting:
-        raise StartRefused("Voice mode is already starting for this window")
-    _starting.add(target)
-    try:
-        return await _start_new(target, lang, broadcast)
-    finally:
-        _starting.discard(target)
+    async with _lock(target):
+        existing = _sessions.get(target)
+        if existing is not None and not existing.stopped:
+            existing.set_lang(lang)
+            return existing
+        session = await _new_session(target, lang, broadcast)
+        await session.start()  # rolls itself back on failure
+        _sessions[target] = session
+        return session
 
 
-async def _start_new(target: str, lang: str, broadcast: Broadcast) -> VoiceSession:
+async def _new_session(target: str, lang: str, broadcast: Broadcast) -> VoiceSession:
     from lib import skills
 
     config = tts.tts_config()
@@ -627,32 +780,34 @@ async def _start_new(target: str, lang: str, broadcast: Broadcast) -> VoiceSessi
             "Merlin's agent hooks are missing or out of date: "
             "merlin config agent-state-hooks auto, then restart Merlin and the agent"
         )
-    session = VoiceSession(
+    return VoiceSession(
         target, lang, config=config, provider=provider, broadcast=broadcast
     )
-    _sessions[target] = session
-    try:
-        await session.start()
-    except BaseException:
-        _sessions.pop(target, None)
-        raise
-    return session
 
 
-async def stop_session(target: str, reason: str = "") -> bool:
-    session = _sessions.get(target)
-    if session is None:
-        # Nothing running here (a restart, or a stale page): still make sure
-        # the window is not left marked.
-        await asyncio.to_thread(sweep.unset_window_option, target, "@voice")
-        return False
-    await session.stop(reason)
-    return True
+async def stop_session(
+    target: str, reason: str = "", only: VoiceSession | None = None
+) -> bool:
+    """Stop the window's session. ``only``: stop it only if it is still that
+    session (a session stopping itself must not stop a newer one)."""
+    async with _lock(target):
+        session = _sessions.get(target)
+        if only is not None and session is not only:
+            if not only.stopped:
+                await only.stop(reason)
+            return False
+        if session is None:
+            # Nothing running here (a restart, or a stale page): still make
+            # sure the window is not left marked.
+            await asyncio.to_thread(sweep.unset_window_option, target, "@voice")
+            return False
+        await session.stop(reason)
+        return True
 
 
 async def stop_all() -> None:
-    for session in list(_sessions.values()):
-        await session.stop("Merlin is stopping")
+    for target in list(_sessions):
+        await stop_session(target, "Merlin is stopping")
 
 
 def clear_stale_marks() -> list[str]:

@@ -47,9 +47,18 @@ class TtsConfig:
 
 
 class TtsError(Exception):
-    """A synthesis that failed, with a message fit for the voice console."""
+    """A synthesis that failed.
+
+    ``str(e)`` carries the detail for the server log, which may quote the
+    voice server's own answer. ``public`` is the browser-safe message: it
+    never holds what the server said, nor the URL or the key.
+    """
 
     kind = "error"
+
+    def __init__(self, detail: str, public: str = "The voice failed") -> None:
+        super().__init__(detail)
+        self.public = public
 
 
 class TtsNotConfigured(TtsError):
@@ -62,6 +71,15 @@ class TtsUnreachable(TtsError):
 
 class TtsRefused(TtsError):
     kind = "refused"
+
+
+def redact(text: str, config: TtsConfig | None) -> str:
+    """``text`` without the configured URL or key, for the server log."""
+    if config is not None:
+        for secret in (config.api_key, config.url):
+            if secret:
+                text = text.replace(secret, "[redacted]")
+    return text
 
 
 def _speed(raw: str | None) -> float:
@@ -143,7 +161,9 @@ async def synthesize(
     """
     config = config or tts_config()
     if config is None:
-        raise TtsNotConfigured("voice server not configured")
+        raise TtsNotConfigured(
+            "voice server not configured", "No voice server configured"
+        )
     headers = {"Authorization": f"Bearer {config.api_key}"} if config.api_key else {}
     body = {
         "model": config.model,
@@ -161,14 +181,27 @@ async def synthesize(
             else:
                 response = await client.post(url, json=body, headers=headers)
     except (httpx.TimeoutException, TimeoutError) as e:
-        raise TtsUnreachable("voice server timed out") from e
+        raise TtsUnreachable(
+            "voice server timed out", "The voice server timed out"
+        ) from e
     except httpx.HTTPError as e:
-        raise TtsUnreachable("voice server unreachable") from e
-    if response.status_code != 200:
-        raise TtsRefused(
-            f"voice server refused the request ({response.status_code}: "
-            f"{_refusal_detail(response)})"
+        raise TtsUnreachable(
+            "voice server unreachable", "The voice server is unreachable"
+        ) from e
+    status = response.status_code
+    if status != 200:
+        public = (
+            f"The voice server refused the key ({status})"
+            if status in (401, 403)
+            else f"The voice server refused the request ({status})"
         )
+        detail = redact(
+            f"voice server refused the request ({status}: {_refusal_detail(response)})",
+            config,
+        )
+        raise TtsRefused(detail, public)
     if not response.content:
-        raise TtsRefused("voice server returned no audio")
+        raise TtsRefused(
+            "voice server returned no audio", "The voice server returned no audio"
+        )
     return response.content

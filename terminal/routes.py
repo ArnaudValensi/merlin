@@ -14,6 +14,7 @@ import struct
 import tempfile
 import termios
 import time
+from collections import deque
 from pathlib import Path
 
 from fastapi import (
@@ -113,6 +114,10 @@ class SessionReportState:
         # The page's socket, for control frames not tied to its own tmux
         # client (a background voice failure). Set on connect.
         self.websocket: WebSocket | None = None
+        # Broadcast control frames waiting for this page, in order, and the
+        # task sending them (see broadcast_control).
+        self.outbox: deque[str] = deque()
+        self.sender: asyncio.Task | None = None
 
 
 # One entry per connected terminal socket: what its tmux client displays, as
@@ -355,20 +360,47 @@ def _unlink_safe(path: str) -> None:
 _TARGET_RE = re.compile(r"[^:\s]+:@\d+")
 
 
+# A page that has not taken a control frame in this long, or has this many
+# waiting, is stalled: its pending frames are dropped (a reconnecting page
+# asks for the state it missed, see voice/routes.py `/session`).
+CONTROL_SEND_TIMEOUT = 5.0
+CONTROL_OUTBOX_LIMIT = 256
+
+
+async def _drain_outbox(state: SessionReportState) -> None:
+    while state.outbox:
+        websocket = state.websocket
+        if websocket is None:
+            state.outbox.clear()
+            return
+        try:
+            await asyncio.wait_for(
+                websocket.send_text(state.outbox[0]), CONTROL_SEND_TIMEOUT
+            )
+        except Exception:
+            # A socket closing or stalled under us is not this function's
+            # problem: its own handler tears it down.
+            state.outbox.clear()
+            return
+        state.outbox.popleft()
+
+
 async def broadcast_control(payload: dict) -> None:
-    """Send one control frame (``\\x00`` + JSON) to every connected terminal
-    page. Pages filter what concerns them (voice mode frames carry their
-    ``target``)."""
+    """Queue one control frame (``\\x00`` + JSON) for every connected
+    terminal page and return without waiting for delivery. Each page has its
+    own ordered outbox drained by its own task, so a stalled page never holds
+    up the caller nor the other pages. Pages filter what concerns them (voice
+    mode frames carry their ``target``)."""
     frame = "\x00" + json.dumps(payload)
     for state in list(_client_views):
         if state.websocket is None:
             continue
-        try:
-            await state.websocket.send_text(frame)
-        except Exception:
-            # A socket closing under us is not this function's problem: its
-            # own handler tears it down.
-            pass
+        if len(state.outbox) >= CONTROL_OUTBOX_LIMIT:
+            state.outbox.clear()
+            continue
+        state.outbox.append(frame)
+        if state.sender is None or state.sender.done():
+            state.sender = asyncio.create_task(_drain_outbox(state))
 
 
 async def _broadcast_voice_error(message: str) -> None:
@@ -794,6 +826,9 @@ async def terminal_ws(websocket: WebSocket):
         # Sync teardown first, so hooks and fds are gone even if this
         # handler is itself cancelled (server shutdown).
         _client_views.discard(session_report_state)
+        session_report_state.outbox.clear()
+        if session_report_state.sender is not None:
+            session_report_state.sender.cancel()
         bridge.close()
         for task in (pty_reader, ws_reader, session_watcher):
             task.cancel()
