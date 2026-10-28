@@ -1201,6 +1201,12 @@ import workspace
 
 mount_module(workspace, "workspace")
 
+# Voice mode: core module. Talks to the configured OpenAI-compatible TTS
+# endpoint on the page's behalf. /api/voice.
+import voice
+
+mount_module(voice, "voice")
+
 # Webhooks front desk — intentionally mounted WITHOUT require_auth (terminal
 # precedent): /webhooks/* is public and self-authenticating via per-hook
 # secrets, verified inside the module. Everything under /api stays gated.

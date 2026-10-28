@@ -776,3 +776,33 @@ class TestDelegatedCommandsTable:
                 cli_main([name, "--help"])
             assert exc_info.value.code == 0
             assert f"merlin {name}" in capsys.readouterr().out
+
+
+class TestTtsUrlConfig:
+    """`merlin config tts-url` writes MERLIN_TTS_URL and keeps other keys."""
+
+    @pytest.fixture
+    def home(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        monkeypatch.delenv("MERLIN_TTS_URL", raising=False)
+        (tmp_path / "config.env").write_text("DASHBOARD_PASS=keep-me\n")
+        return tmp_path
+
+    def test_sets_the_url(self, home, capsys):
+        run_config("tts-url", "http://127.0.0.1:8880/v1/")
+        assert "tts-url = http://127.0.0.1:8880/v1" in capsys.readouterr().out
+        assert (home / "config.env").read_text() == (
+            "DASHBOARD_PASS=keep-me\nMERLIN_TTS_URL=http://127.0.0.1:8880/v1\n"
+        )
+
+    def test_empty_turns_it_off(self, home, capsys):
+        run_config("tts-url", "http://127.0.0.1:8880/v1")
+        run_config("tts-url", "")
+        assert "MERLIN_TTS_URL=\n" in (home / "config.env").read_text()
+        assert "(off)" in capsys.readouterr().out
+
+    def test_rejects_a_non_url(self, home):
+        with pytest.raises(SystemExit) as exc_info:
+            run_config("tts-url", "localhost:8880")
+        assert exc_info.value.code == 1
+        assert "MERLIN_TTS_URL" not in (home / "config.env").read_text()

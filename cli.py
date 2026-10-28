@@ -633,6 +633,9 @@ Read-only keys (resolved paths / info):
 Settable keys:
   agent-state-hooks   Consent for installing the tmux agent-state pill hook
                       into ~/.claude/settings.json: auto | ask | off (default ask)
+  tts-url             Voice mode text-to-speech server, the root of an
+                      OpenAI-compatible API (POST <url>/audio/speech);
+                      an empty value turns voice mode off
 
 Examples:
   merlin config notes-dir                        # Print notes directory
@@ -641,6 +644,7 @@ Examples:
   merlin config agent-state-hooks                # Print current consent mode
   merlin config agent-state-hooks auto           # Always install the pill hook
   merlin config agent-state-hooks off            # Remove it and stop asking
+  merlin config tts-url http://127.0.0.1:8880/v1  # Voice mode via a local Kokoro
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -687,13 +691,14 @@ def _get_config_values() -> dict[str, str]:
         "jobs-dir": str(paths.jobs_dir()),
         "extensions-dir": str(paths.extensions_dir()),
         "agent-state-hooks": skills.agent_state_hooks_mode(),
+        "tts-url": os.environ.get("MERLIN_TTS_URL", ""),
         "version": get_version(),
     }
 
 
 # Config keys the CLI can write (everything else in _get_config_values is a
 # resolved path / read-only info).
-_SETTABLE_CONFIG_KEYS = ("agent-state-hooks",)
+_SETTABLE_CONFIG_KEYS = ("agent-state-hooks", "tts-url")
 
 
 def run_agent(personality: bool = False, user: bool = False) -> None:
@@ -794,6 +799,17 @@ def _set_config(key: str | None, value: str) -> None:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
         print(f"agent-state-hooks = {normalized}")
+    elif key == "tts-url":
+        from voice import tts
+
+        try:
+            url = tts.validate_url(value)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        skills._config_env_write(tts.URL_KEY, url)
+        print(f"tts-url = {url or '(off)'}")
+        print("Restart Merlin to apply it (merlin restart).")
 
 
 def _skills_use_color() -> bool:

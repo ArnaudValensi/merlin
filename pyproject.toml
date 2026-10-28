@@ -47,6 +47,9 @@ exclude = [
     # Runs under the system Python (PyGObject + python-xlib), which the
     # project environment does not have: see app/deps.py.
     "app/streamer.py",
+    # A PEP 723 script with its own dependencies (kokoro-onnx, onnxruntime),
+    # run with `uv run --script`, never imported by Merlin.
+    "tools/kokoro-tts-server.py",
 ]
 
 [tool.ty.environment]
