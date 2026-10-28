@@ -5,7 +5,7 @@ deliberate: the code phrase follows the voice language, and line breaks survive
 ``speakable`` so a list still ends its pieces at each item.
 """
 
-from voice.speech import CODE_PHRASE, Chunker, speakable
+from voice.speech import CODE_PHRASE, MAX_PIECE, Chunker, speakable
 
 
 class TestSpeakable:
@@ -121,3 +121,56 @@ class TestChunker:
     def test_pieces_carry_no_line_breaks(self):
         c = Chunker()
         assert c.feed("Done.\nThe code is ready. ") == ["Done. The code is ready."]
+
+
+class TestChunkerBounds:
+    """No piece longer than MAX_PIECE, every word kept, in order."""
+
+    @staticmethod
+    def _check(pieces, text):
+        assert pieces
+        assert all(0 < len(p) <= MAX_PIECE for p in pieces)
+        assert " ".join(pieces).split() == text.split()
+
+    def test_one_long_sentence(self):
+        text = "word " * 1000 + "done."
+        c = Chunker()
+        pieces = c.feed(speakable(text) + "\n") + c.flush()
+        self._check(pieces, text)
+
+    def test_long_run_is_spoken_before_its_end_arrives(self):
+        c = Chunker()
+        pieces = []
+        for i in range(300):
+            pieces += c.feed(f"w{i} ")
+        assert pieces, "a long unpunctuated stream must not wait for its end"
+        pieces += c.flush()
+        self._check(pieces, " ".join(f"w{i}" for i in range(300)))
+
+    def test_streamed_words_are_not_glued(self):
+        c = Chunker()
+        pieces = []
+        for _ in range(200):
+            pieces += c.feed("abc ")
+        pieces += c.feed("tail")
+        pieces += c.flush()
+        assert all(set(p.split()) <= {"abc", "tail"} for p in pieces)
+
+    def test_a_giant_token_is_cut(self):
+        text = "x" * (MAX_PIECE * 2 + 5)
+        c = Chunker()
+        pieces = c.feed(text) + c.flush()
+        assert all(len(p) <= MAX_PIECE for p in pieces)
+        assert "".join(pieces) == text
+
+    def test_flush_is_bounded(self):
+        c = Chunker()
+        c.buf = "a " * MAX_PIECE
+        pieces = c.flush()
+        assert len(pieces) == 2
+        assert all(len(p) <= MAX_PIECE for p in pieces)
+
+    def test_first_piece_stays_short(self):
+        c = Chunker()
+        pieces = c.feed("Okay, on it. " + "word " * 500 + "end.\n")
+        assert pieces[0] == "Okay, on it."

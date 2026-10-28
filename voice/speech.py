@@ -54,13 +54,36 @@ def speakable(text: str, lang: str = "en") -> str:
 
 _BOUNDARY = re.compile(r"([.!?…:;]+[\"»)]?\s)|(\n+)")
 
+# No piece longer than this reaches the voice server: servers cap their input
+# (OpenAI at 4096 characters) and a long piece delays the voice anyway.
+MAX_PIECE = 400
+
+
+def _bounded(piece: str, limit: int = MAX_PIECE) -> list[str]:
+    """Split ``piece`` into parts of at most ``limit`` characters, at word
+    boundaries when there are any. Words are kept whole and in order; a single
+    word longer than ``limit`` is cut."""
+    parts: list[str] = []
+    piece = " ".join(piece.split())
+    while len(piece) > limit:
+        cut = piece.rfind(" ", 0, limit + 1)
+        if cut <= 0:
+            cut = limit
+        parts.append(piece[:cut].strip())
+        piece = piece[cut:].strip()
+    if piece:
+        parts.append(piece)
+    return parts
+
 
 class Chunker:
     """Cut text into sentence-sized pieces for low-latency synthesis.
 
     The first piece may be short (12 characters) so the voice starts early;
     later pieces gather sentences up to 40 characters, so the voice does not
-    stutter on many tiny clips. A line break always ends a piece.
+    stutter on many tiny clips. A line break always ends a piece, and no piece
+    is longer than MAX_PIECE: a long run without a boundary is cut between
+    words, as soon as it is long enough, without waiting for its end.
     """
 
     FIRST_MIN = 12
@@ -87,12 +110,24 @@ class Chunker:
                 cut += nxt.end()
                 piece = self.buf[:cut]
             self.buf = self.buf[cut:]
-            piece = " ".join(piece.split())
-            if piece:
-                out.append(piece)
-                self.first = False
+            out.extend(self._emit(piece))
+        # A run with no boundary in sight: speak its full-length parts now and
+        # keep the tail, which the next boundary may still end.
+        if len(self.buf) > MAX_PIECE:
+            parts = _bounded(self.buf)
+            # The tail goes back to the buffer with its trailing space, so the
+            # next delta does not glue onto its last word.
+            self.buf = parts.pop() + (" " if self.buf[-1].isspace() else "")
+            for part in parts:
+                out.extend(self._emit(part))
         return out
 
+    def _emit(self, piece: str) -> list[str]:
+        parts = _bounded(piece)
+        if parts:
+            self.first = False
+        return parts
+
     def flush(self) -> list[str]:
-        piece, self.buf = " ".join(self.buf.split()), ""
-        return [piece] if piece else []
+        piece, self.buf = self.buf, ""
+        return _bounded(piece)

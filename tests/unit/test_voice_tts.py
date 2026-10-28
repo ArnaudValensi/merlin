@@ -132,7 +132,18 @@ class TestConfig:
     def test_validate_url(self, value, expected):
         assert tts.validate_url(value) == expected
 
-    @pytest.mark.parametrize("value", ["localhost:8880", "ftp://x/v1", "http://"])
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "localhost:8880",
+            "ftp://x/v1",
+            "http://",
+            "http://localhost:8880/v1\nUNRELATED_KEY=changed",
+            "http://localhost:8880/v1\rX=1",
+            "http://local\x00host/v1",
+            "http://localhost/v1\x7f",
+        ],
+    )
     def test_validate_url_rejects(self, value):
         with pytest.raises(ValueError):
             tts.validate_url(value)
@@ -247,6 +258,71 @@ class TestSynthesize:
                     )
 
             with pytest.raises(tts.TtsUnreachable, match="timed out"):
+                asyncio.run(go())
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def _trickle_server(self):
+        class Trickle(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(200)
+                self.send_header("Content-Length", "40")
+                self.end_headers()
+                try:
+                    for _ in range(40):
+                        self.wfile.write(b"x")
+                        self.wfile.flush()
+                        time.sleep(0.04)
+                except OSError:
+                    pass
+
+        return _serve(Trickle)
+
+    def test_a_trickling_body_hits_the_overall_deadline(self):
+        srv = self._trickle_server()
+        try:
+            started = time.monotonic()
+            with pytest.raises(tts.TtsUnreachable, match="timed out"):
+                _say("Hi.", "en", _config(srv), deadline=0.3)
+            assert time.monotonic() - started < 1.0
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_deadline_holds_for_an_injected_client_without_timeout(self):
+        srv = self._trickle_server()
+        try:
+
+            async def go():
+                async with httpx.AsyncClient(timeout=None) as client:
+                    await tts.synthesize(
+                        "Hi.", "en", config=_config(srv), client=client, deadline=0.3
+                    )
+
+            with pytest.raises(tts.TtsUnreachable, match="timed out"):
+                asyncio.run(go())
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_external_cancellation_is_not_a_tts_error(self):
+        srv = self._trickle_server()
+        try:
+
+            async def go():
+                task = asyncio.create_task(
+                    tts.synthesize("Hi.", "en", config=_config(srv), deadline=5)
+                )
+                await asyncio.sleep(0.2)
+                task.cancel()
+                await task
+
+            with pytest.raises(asyncio.CancelledError):
                 asyncio.run(go())
         finally:
             srv.shutdown()
