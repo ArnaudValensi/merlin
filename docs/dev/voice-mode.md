@@ -236,6 +236,15 @@ is not asked again within the page. A reopen that fails is the `ERR` mode, and
 a tap retries. The e2e round-trip test asserts no live mic track while an
 answer plays.
 
+Closing the mic has an iOS consequence. Safari plays Web Audio as "ambient",
+which the silent switch mutes; an open mic forces "play-and-record", which
+ignores it, so the answer was audible in silent mode only by accident of the
+open mic. The console sets `navigator.audioSession.type` (Safari 17+) itself:
+`"play-and-record"` just before `getUserMedia`, `"playback"` when the mic
+closes and when the `AudioContext` is created. Browsers without the API keep
+their default (Android does not mute media in silent mode). The round-trip
+test stubs the API and asserts the answer plays under `"playback"`.
+
 The VAD (Silero through `vad-web`, one wasm thread, no cross-origin isolation
 needed) loads lazily the first time the console opens; the vendored files are
 served immutable for a year (`IMMUTABLE_STATIC_PREFIXES` in `main.py`), safe

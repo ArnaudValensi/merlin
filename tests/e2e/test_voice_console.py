@@ -206,14 +206,22 @@ def _open(browser, server, viewport=None):
     page = ctx.new_page()
     # Track every mic stream, and whether one was live while an answer played:
     # an open mic puts a phone in call mode, which ducks the answer's volume.
+    # Stub Safari's navigator.audioSession too: the answer must play under
+    # "playback", or the iPhone silent switch mutes it.
     page.add_init_script(
         """(() => {
             window.__mics = [];
             window.__micDuringAnswer = false;
             window.__answerSeen = false;
+            window.__sessionAtMic = [];
+            window.__sessionDuringAnswer = new Set();
+            if (!navigator.audioSession) {
+                Object.defineProperty(navigator, "audioSession", { value: { type: "auto" } });
+            }
             const md = navigator.mediaDevices;
             const get = md.getUserMedia.bind(md);
             md.getUserMedia = async (c) => {
+                window.__sessionAtMic.push(navigator.audioSession.type);
                 const s = await get(c);
                 window.__mics.push(s);
                 return s;
@@ -222,6 +230,7 @@ def _open(browser, server, viewport=None):
                 const v = window.MerlinVoice;
                 if (!v || v.speaking() !== "answer") return;
                 window.__answerSeen = true;
+                window.__sessionDuringAnswer.add(navigator.audioSession.type);
                 if (window.__mics.some(s => s.getAudioTracks().some(t => t.readyState === "live"))) {
                     window.__micDuringAnswer = true;
                 }
@@ -337,6 +346,10 @@ def test_a_spoken_turn_goes_round_and_the_console_listens_again(
         assert page.evaluate("() => window.__answerSeen")
         assert not page.evaluate("() => window.__micDuringAnswer")
         assert page.evaluate("() => window.__mics.length") >= 2
+        # The silent switch: the answer played under "playback", the mic
+        # opened under "play-and-record".
+        assert page.evaluate("() => [...window.__sessionDuringAnswer]") == ["playback"]
+        assert set(page.evaluate("() => window.__sessionAtMic")) == {"play-and-record"}
 
         # A reload finds the session still running: the console holds until a
         # tap unlocks audio and the mic again, then carries on.

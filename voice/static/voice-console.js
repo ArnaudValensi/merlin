@@ -180,10 +180,21 @@ function initVoiceConsole() {
 
     // -- audio ----------------------------------------------------------------
 
+    /** iOS plays Web Audio as "ambient", muted by the silent switch, unless
+     *  the page's audio session says otherwise. An open mic forces
+     *  play-and-record, which ignores the switch; with the mic closed for the
+     *  answer, the session must say "playback" or the answer is silent. */
+    function audioSession(type) {
+        const s = navigator.audioSession;
+        if (!s) return;
+        try { if (s.type !== type) s.type = type; } catch (_) { /* not settable */ }
+    }
+
     /** Create or wake the one AudioContext. Called from a tap, which unlocks it. */
     function ensureAudio() {
         const AC = window.AudioContext || window.webkitAudioContext;
         if (!AC) throw new Error("This browser cannot play audio");
+        if (!micLive()) audioSession("playback");
         if (!audio.ctx || audio.ctx.state === "closed") {
             const ctx = new AC();
             audio.ctx = ctx;
@@ -213,6 +224,7 @@ function initVoiceConsole() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             throw new Error("Voice mode needs HTTPS: the microphone is unavailable over HTTP");
         }
+        audioSession("play-and-record");
         let stream;
         try {
             stream = await navigator.mediaDevices.getUserMedia({
@@ -239,6 +251,7 @@ function initVoiceConsole() {
         if (audio.micSource) { try { audio.micSource.disconnect(); } catch (_) { /* gone */ } }
         if (audio.mic) audio.mic.getTracks().forEach(function (t) { t.stop(); });
         audio.mic = audio.micSource = audio.micAnalyser = null;
+        audioSession("playback");
     }
 
     function tone(freqs, dur, at, amp) {
