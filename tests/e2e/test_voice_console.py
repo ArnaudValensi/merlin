@@ -199,9 +199,11 @@ def quiet_browser(playwright):
     b.close()
 
 
-def _open(browser, server, viewport=None):
+def _open(browser, server, viewport=None, scale=1):
     ctx = browser.new_context(
-        viewport=viewport or {"width": 1100, "height": 760}, permissions=["microphone"]
+        viewport=viewport or {"width": 1100, "height": 760},
+        device_scale_factor=scale,
+        permissions=["microphone"],
     )
     page = ctx.new_page()
     # Track every mic stream, and whether one was live while an answer played:
@@ -368,6 +370,44 @@ def test_a_spoken_turn_goes_round_and_the_console_listens_again(
             5,
             "@voice was not cleared",
         )
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize(
+    "viewport,scale",
+    [({"width": 1600, "height": 980}, 2), ({"width": 390, "height": 844}, 3)],
+    ids=["desktop", "phone"],
+)
+def test_the_console_fits_the_screen_at_a_high_pixel_ratio(
+    browser, server, tmux_env, tts, tmp_path, viewport, scale
+):
+    # The scope's canvas buffer follows its displayed size times the pixel
+    # ratio: in the flow, it grew the scope every frame and pushed EXIT off.
+    ctx, page, _ = _open(browser, server, viewport=viewport, scale=scale)
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        _start_voice(page, target)
+        box = "() => document.querySelector('#voice-console .vc-scope').getBoundingClientRect().height"
+        first = page.evaluate(box)
+        page.wait_for_timeout(800)
+        assert page.evaluate(box) == first
+        exit_box = page.locator("#voice-console .vc-exit").bounding_box()
+        plate = page.locator("#voice-console .vc-plate").bounding_box()
+        assert exit_box and plate
+        assert exit_box["y"] + exit_box["height"] <= plate["y"] + plate["height"] + 0.5
+        assert plate["y"] + plate["height"] <= viewport["height"] + 0.5
+        # End the session and drop the window: the server and the tmux session
+        # outlive this page, and a later test lands on a neighbouring window.
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+        _wait(
+            lambda: _option(tmux_env, target, "@voice") == "",
+            5,
+            "@voice was not cleared",
+        )
+        _tmux(tmux_env, "kill-window", "-t", target)
     finally:
         ctx.close()
 
@@ -659,10 +699,19 @@ def test_a_window_without_claude_says_why_and_a_closed_window_ends_the_console(
 
         target, _ = _agent_window(tmux_env, session, tmp_path)
         _start_voice(page, target)
+        # Record the notices rather than read the screen: tmux redraws it on
+        # the window it lands on, and that redraw can wipe the line.
+        page.evaluate(
+            """() => {
+                const T = window.MerlinTerminal, show = T.notice;
+                window.__notices = [];
+                T.notice = (msg) => { window.__notices.push(msg); show(msg); };
+            }"""
+        )
         _tmux(tmux_env, "kill-window", "-t", target)
         page.wait_for_selector("#voice-console", state="hidden", timeout=10000)
         page.wait_for_function(
-            "() => document.querySelector('.xterm-rows').innerText.includes('The window was closed')",
+            "() => window.__notices.some(n => n.includes('The window was closed'))",
             timeout=5000,
         )
     finally:
