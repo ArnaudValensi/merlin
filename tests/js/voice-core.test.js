@@ -339,3 +339,32 @@ test("while syncing the page never listens, and a failed snapshot keeps the barr
     assert.deepEqual(m.queue.map((c) => c.id), ["A", "B"]);
     assert.equal(m.server, "thinking");
 });
+
+test("endWord: the end word ends a message only as a clause of its own", () => {
+    const cases = [
+        ["VOICEPROMPT77, terminé", "VOICEPROMPT77", true],
+        ["Terminé.", "", true],
+        ["Lance les tests. Terminé !", "Lance les tests.", true],
+        ["Lance les tests, terminé, terminé.", "Lance les tests", true],
+        ["Run the tests. Over.", "Run the tests.", true],
+        ["Run the tests, over and out", "Run the tests", true],
+        ["ok — Terminer", "ok", true],
+        ["c'est terminé", "c'est terminé", false],
+        ["La tâche est terminée.", "La tâche est terminée.", false],
+        ["it is over", "it is over", false],
+        ["Je réfléchis", "Je réfléchis", false],
+        ["", "", false],
+    ];
+    for (const [input, text, end] of cases) {
+        assert.deepEqual(Core.endWord(input), { text, end }, input);
+    }
+});
+
+test("a message held between two pieces keeps the console in TX", () => {
+    const m = Core.createModel(T);
+    assert.equal(Core.mode(m), "listen");
+    m.held = true;
+    assert.equal(Core.mode(m), "tx");
+    m.local = "sending";
+    assert.equal(Core.mode(m), "proc");
+});

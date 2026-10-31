@@ -61,6 +61,37 @@ const MerlinVoiceCore = (function () {
         return buffer;
     }
 
+    // -- the end word ---------------------------------------------------------
+    //
+    // A pause does not end a message: what is said is cut at every pause and
+    // transcribed piece by piece, and the message goes to the agent when a
+    // piece ends with the end word, radio style ("terminé", "over"), in
+    // either language.
+
+    const END_CLAUSE = /^(termin(e|er|ee|es|ees|ez)|over|over and out)( (termin(e|er|ee|es|ees|ez)|over))*$/;
+    const LAST_CLAUSE = /([^.!?,;:…—–]*)[.!?,;:…—–\s]*$/;
+
+    function fold(text) {
+        return text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+            .replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+    }
+
+    /** One transcribed piece: {text, end}, what was said without the end
+     *  word, and whether it was there. The end word counts only as a clause
+     *  of its own at the end of the piece ("Terminé.", "..., terminé"), so
+     *  "c'est terminé" in a sentence never sends. */
+    function endWord(text) {
+        let rest = String(text || "").trim();
+        let end = false;
+        for (;;) {
+            const match = LAST_CLAUSE.exec(rest);
+            if (!match || !END_CLAUSE.test(fold(match[1]))) break;
+            end = true;
+            rest = rest.slice(0, match.index).replace(/[\s,;:—–]+$/, "").trim();
+        }
+        return { text: rest, end: end };
+    }
+
     // -- identity -------------------------------------------------------------
 
     function hash(text) {
@@ -115,6 +146,7 @@ const MerlinVoiceCore = (function () {
             pending: [],
             server: "listening",
             local: "idle",
+            held: false,        // part of a message said, its end word not yet
             error: "",          // shown in the error mode
             notice: "",         // a passing message (nothing heard, voice server down)
             offReason: null,    // set once the session is over
@@ -268,7 +300,8 @@ const MerlinVoiceCore = (function () {
         // the terminal while the user was talking.
         if (m.server === "thinking" || m.server === "speaking") return "proc";
         if (m.server === "error") return "error";
-        if (m.local === "hearing") return "tx";
+        // Speaking, or between two pieces of a message not ended yet.
+        if (m.local === "hearing" || m.held) return "tx";
         return "listen";
     }
 
@@ -369,6 +402,7 @@ const MerlinVoiceCore = (function () {
 
     return {
         encodeWav: encodeWav,
+        endWord: endWord,
         callSign: callSign,
         frequency: frequency,
         createModel: createModel,

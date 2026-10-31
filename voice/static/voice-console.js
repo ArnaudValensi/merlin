@@ -4,14 +4,17 @@
  *
  * The Voice button starts a session on the window the page shows (its target
  * is captured then, like dictation's). From there the console loops on its
- * own: listen with the VAD, upload the utterance through dictation's path
- * (MerlinTerminal.sendVoice, auto-enter on), wait while the agent works, play
- * the clips the server announces in order, then listen again. The model in
+ * own: listen with the VAD, transcribe what is said piece by piece (cut at
+ * each pause), send the message once a piece ends with the end word
+ * ("terminé", "over") or on a tap, wait while the agent works, play the clips
+ * the server announces in order, then listen again. The model in
  * voice-core.js decides the mode; this file runs the effects (mic, VAD, audio,
  * requests, drawing).
  *
- * The mic stream is opened once per session and stays open; the VAD is paused
- * whenever the console is not listening, so the agent never hears itself.
+ * The mic stream is opened once per session and stays open: reopening it
+ * asks Safari's permission again, and a reopen without a tap can be refused.
+ * The VAD is paused whenever the console is not listening, so the agent
+ * never hears itself.
  */
 
 // The terminal page builds MerlinTerminal on DOMContentLoaded, which fires
@@ -33,8 +36,16 @@ function initVoiceConsole() {
     const VENDOR = "/static/voice/vendor/";
     const ORT_DIR = VENDOR + "onnxruntime-web-1.22.0/";
     const VAD_DIR = VENDOR + "vad-web-0.0.30/";
-    // End of speech after this much silence.
-    const REDEMPTION_MS = 1500;
+    // A piece of what is said ends after this much silence (the message
+    // itself ends with the end word).
+    const REDEMPTION_MS = 1200;
+    // A message held this long without its end word: one soft reminder.
+    const REMIND_MS = 7000;
+    // A piece whose transcription failed is tried again after these waits.
+    const PIECE_RETRY_MS = [1000, 2000];
+    // An open mic puts iOS in call mode, which turns the answer down: Safari
+    // (navigator.audioSession) plays louder, with a limiter against clipping.
+    const OUT_GAIN = navigator.audioSession ? 2.5 : 1;
     // An upload the server never answered: ask for the session's state again.
     const WAIT_TIMEOUT_MS = 45000;
     const NOTICE_MS = 5000;
@@ -48,8 +59,8 @@ function initVoiceConsole() {
     const MODES = {
         tune:   { badge: "SYNC", name: "TUNING",     hint: "Opening the channel" },
         resume: { badge: "HOLD", name: "ON HOLD",    hint: "Tap anywhere to resume" },
-        listen: { badge: "MON",  name: "LISTENING",  hint: "Speak when ready" },
-        tx:     { badge: "TX",   name: "TRANSMIT",   hint: "Pause to send, or tap to send now" },
+        listen: { badge: "MON",  name: "LISTENING",  hint: "" },
+        tx:     { badge: "TX",   name: "TRANSMIT",   hint: "" },
         proc:   { badge: "PROC", name: "PROCESSING", hint: "The agent is working" },
         rx:     { badge: "RX",   name: "RECEIVING",  hint: "Tap anywhere to skip this answer" },
         ask:    { badge: "ASK",  name: "STANDBY",    hint: "Yes sends Enter, No sends Escape" },
@@ -69,8 +80,12 @@ function initVoiceConsole() {
     let lastMode = "";
     let modeSince = 0;
     let retry = null;          // what a tap does in a local error: start | vad | upload
-    let retryBlob = null;
-    let uploadRefusal = "";
+    let retryPiece = null;     // {blob, forced}: the piece a tap transcribes again
+    let retryText = "";        // the message a tap sends again
+    let held = [];             // the pieces of the message said so far
+    let inflight = 0;          // pieces being transcribed
+    let pieces = Promise.resolve();   // their handling, in the order said
+    let remindTimer = null;
     let sendNow = false;
     let listening = false;     // the VAD is running for us
     let waitTimer = null;
@@ -168,6 +183,7 @@ function initVoiceConsole() {
             micLang.dispatchEvent(new Event("change"));   // saves it, like a pick
         }
         renderLang();
+        render();   // the hint names the end word of the language
         if (m && phase !== "off") api("POST", "lang", { target: target, lang: value });
     }
 
@@ -180,10 +196,9 @@ function initVoiceConsole() {
 
     // -- audio ----------------------------------------------------------------
 
-    /** iOS plays Web Audio as "ambient", muted by the silent switch, unless
-     *  the page's audio session says otherwise. An open mic forces
-     *  play-and-record, which ignores the switch; with the mic closed for the
-     *  answer, the session must say "playback" or the answer is silent. */
+    /** iOS plays Web Audio as "ambient", muted by the silent switch. The
+     *  session's mic sets play-and-record, which ignores the switch; on exit
+     *  the page goes back to "auto", or dictation's mic would be refused. */
     function audioSession(type) {
         const s = navigator.audioSession;
         if (!s) return;
@@ -194,14 +209,21 @@ function initVoiceConsole() {
     function ensureAudio() {
         const AC = window.AudioContext || window.webkitAudioContext;
         if (!AC) throw new Error("This browser cannot play audio");
-        if (!micLive()) audioSession("playback");
         if (!audio.ctx || audio.ctx.state === "closed") {
             const ctx = new AC();
             audio.ctx = ctx;
             audio.out = ctx.createGain();
+            audio.out.gain.value = OUT_GAIN;
+            const limiter = ctx.createDynamicsCompressor();
+            limiter.threshold.value = -3;
+            limiter.knee.value = 0;
+            limiter.ratio.value = 20;
+            limiter.attack.value = 0.002;
+            limiter.release.value = 0.12;
             audio.outAnalyser = ctx.createAnalyser();
             audio.outAnalyser.fftSize = 1024;
-            audio.out.connect(audio.outAnalyser);
+            audio.out.connect(limiter);
+            limiter.connect(audio.outAnalyser);
             audio.outAnalyser.connect(ctx.destination);
             // Nova's earcon timbre: a sine with a little of its second and
             // third harmonics.
@@ -251,7 +273,7 @@ function initVoiceConsole() {
         if (audio.micSource) { try { audio.micSource.disconnect(); } catch (_) { /* gone */ } }
         if (audio.mic) audio.mic.getTracks().forEach(function (t) { t.stop(); });
         audio.mic = audio.micSource = audio.micAnalyser = null;
-        audioSession("playback");
+        audioSession("auto");
     }
 
     function tone(freqs, dur, at, amp) {
@@ -279,6 +301,7 @@ function initVoiceConsole() {
             case "send":   tone([1320], 0.06, t); tone([880], 0.12, t + 0.07); return 0.19;
             case "done":   tone([784], 0.08, t, 0.1); tone([1175], 0.16, t + 0.08, 0.08); return 0.24;
             case "error":  tone([330], 0.1, t); tone([247], 0.18, t + 0.13); return 0.31;
+            case "remind": tone([523], 0.08, t, 0.07); tone([523], 0.08, t + 0.16, 0.07); return 0.3;
             case "alert":
                 tone([880, 1175], 0.08, t); tone([880, 1175], 0.08, t + 0.14); tone([1568], 0.2, t + 0.28);
                 return 0.5;
@@ -448,17 +471,18 @@ function initVoiceConsole() {
             baseAssetPath: VAD_DIR,
             onnxWASMBasePath: ORT_DIR,
             audioContext: audio.ctx,
-            // The mic is open only while listening. An open mic puts the phone
-            // in call mode, which ducks the answer's volume, so a pause closes
-            // it and a start reopens it (a granted permission is not asked again).
+            // One mic for the session: a pause keeps it open (a reopen asks
+            // the permission again on iOS), a start reopens it only if it
+            // died (a phone call took it).
             getStream: async function () { await ensureMic(gen); return audio.mic; },
-            pauseStream: async function () { closeMic(); },
+            pauseStream: async function () {},
             resumeStream: async function () { await ensureMic(gen); return audio.mic; },
             startOnLoad: false,
             redemptionMs: REDEMPTION_MS,
             submitUserSpeechOnPause: true,
             onSpeechStart: function () {},
             onSpeechRealStart: function () {
+                clearTimeout(remindTimer);
                 if (m && listening && m.local === "idle") { m.local = "hearing"; render(); }
             },
             onVADMisfire: function () {
@@ -493,14 +517,9 @@ function initVoiceConsole() {
     }
 
     function stopListening() {
-        if (!listening) {
-            // Opened for the session but not listening yet (the agent is busy
-            // or answering): release it so the answer plays at full volume.
-            if (phase === "live" && vad) closeMic();
-            return;
-        }
+        if (!listening) return;
         listening = false;
-        if (vad) vad.pause();   // closes the mic. A pause mid-speech hands the audio to onUtterance
+        if (vad) vad.pause();   // a pause mid-speech hands the audio to onUtterance
     }
 
     function onUtterance(samples) {
@@ -509,37 +528,107 @@ function initVoiceConsole() {
         if (!m || phase !== "live" || (!listening && !forced)) return;   // not ours to send
         if (m.syncing) return;   // the agent may be busy: its frames are held back
         if (m.local !== "idle" && m.local !== "hearing") return;
+        m.local = "idle";
+        piece(new Blob([Core.encodeWav(samples, 16000)], { type: "audio/wav" }), forced);
+    }
+
+    /** One piece of what is said, cut at a pause: transcribe it now, while
+     *  the user goes on, and handle the pieces in the order said. The message
+     *  goes when a piece ends with the end word, or when a tap asked for it. */
+    function piece(blob, forced) {
+        const g = gen;
+        inflight++;
+        m.held = true;
+        clearTimeout(remindTimer);
+        render();
+        const result = transcribePiece(blob);
+        pieces = pieces.then(function () { return result; }).then(function (r) {
+            if (g !== gen || !m) return;
+            inflight--;
+            if (r.error) {
+                if (r.retry) retryPiece = { blob: blob, forced: forced };
+                else held = [];
+                m.held = held.length > 0 || inflight > 0;
+                fail(r.error, r.retry ? "piece" : null);
+                return;
+            }
+            const said = Core.endWord(r.text);
+            if (said.text) held.push(said.text);
+            if (said.end || forced) { sendHeld(); return; }
+            m.held = held.length > 0 || inflight > 0;
+            armRemind();
+            render();
+        });
+    }
+
+    /** The text of one piece through the transcription route (no target: the
+     *  text comes back instead of going to the window). {text} or {error, retry}. */
+    async function transcribePiece(blob) {
+        for (let attempt = 0; ; attempt++) {
+            const form = new FormData();
+            form.append("file", blob, "piece.wav");
+            form.append("language", lang());
+            let status = 0;
+            let data = {};
+            try {
+                const res = await fetch("/api/terminal/transcribe", { method: "POST", body: form, cache: "no-store" });
+                status = res.status;
+                try { data = await res.json(); } catch (_) { /* empty body */ }
+            } catch (_) { /* unreachable: tried again */ }
+            if (status === 200) return { text: String(data.text || "") };
+            if (status === 422) return { text: "" };   // unreadable or empty audio: nothing said
+            if (status === 402 || status === 413) return { error: data.error || "The transcription was refused", retry: false };
+            if (attempt >= PIECE_RETRY_MS.length) {
+                return { error: "Could not reach Merlin to send what you said", retry: true };
+            }
+            await new Promise(function (r) { setTimeout(r, PIECE_RETRY_MS[attempt]); });
+        }
+    }
+
+    /** After the pieces in flight, send what was said, end word or not (a tap). */
+    function sendWhenTranscribed() {
+        const g = gen;
+        pieces = pieces.then(function () { if (g === gen && m) sendHeld(); });
+    }
+
+    function sendHeld() {
+        clearTimeout(remindTimer);
+        const text = held.join(" ").trim();
+        held = [];
+        m.held = inflight > 0;
+        if (!text || (m.local !== "idle" && m.local !== "hearing")) { render(); return; }
         m.local = "sending";
         earcon("send");
         render();
-        upload(new Blob([Core.encodeWav(samples, 16000)], { type: "audio/wav" }));
+        say(text);
     }
 
-    async function upload(blob) {
-        const t = target;
+    async function say(text) {
         const g = gen;
-        retryBlob = null;
-        uploadRefusal = "";
-        const hooks = {
-            progress: function (f) { root.style.setProperty("--vc-upload", String(f)); },
-            done: function () { root.style.removeProperty("--vc-upload"); },
-            refused: function (message) { uploadRefusal = message || ""; },
-        };
-        const outcome = await T.sendVoice(blob, lang(), t, hooks);
+        retryText = "";
+        const res = await api("POST", "say", { target: target, text: text });
         if (g !== gen || !m || m.local !== "sending") return;
-        if (outcome === "accepted") {
-            // A frame that arrived during the upload already answered it.
+        if (res.ok) {
+            // A frame that arrived during the request already answered it.
             m.local = m.server === "listening" ? "waiting" : "idle";
             if (m.local === "waiting") armWait();
-        } else if (outcome === "refused") {
-            fail(uploadRefusal || "The transcription was refused", null);
-        } else if (outcome === "failed") {
-            retryBlob = blob;
-            fail("Could not reach Merlin to send what you said", "upload");
+        } else if (res.status === 0 || res.status >= 500) {
+            retryText = text;
+            fail(res.data.error || "Could not reach Merlin to send what you said", "say");
         } else {
-            m.local = "idle";
+            fail(res.data.error || "The message was refused", null);
         }
         render();
+    }
+
+    /** A message said but not ended: one soft reminder of the end word. */
+    function armRemind() {
+        clearTimeout(remindTimer);
+        if (!held.length) return;
+        const g = gen;
+        remindTimer = setTimeout(function () {
+            if (g === gen && m && held.length && m.local === "idle" && Core.mode(m) === "tx") earcon("remind");
+        }, REMIND_MS);
     }
 
     function armWait() {
@@ -661,7 +750,12 @@ function initVoiceConsole() {
         m = null;
         lastMode = "";
         retry = null;
-        retryBlob = null;
+        retryPiece = null;
+        retryText = "";
+        held = [];
+        inflight = 0;
+        pieces = Promise.resolve();
+        clearTimeout(remindTimer);
         root.hidden = true;
         document.body.classList.remove("voice-console-open");
         if (reason) T.notice("Voice mode: " + reason);
@@ -728,12 +822,16 @@ function initVoiceConsole() {
         if (audio.ctx && audio.ctx.state === "suspended") audio.ctx.resume().catch(function () {});
         const mode = Core.mode(m);
         if (mode === "tx" && vad) {
-            // Send now, without waiting for the silence.
-            sendNow = true;
-            listening = false;
-            vad.pause();
-            sendNow = false;
-            if (m.local === "hearing") m.local = "idle";
+            // Send now, without the end word: the speech in progress, if
+            // any, then everything said so far.
+            if (m.local === "hearing") {
+                sendNow = true;
+                listening = false;
+                vad.pause();
+                sendNow = false;
+                if (m.local === "hearing") m.local = "idle";
+            }
+            sendWhenTranscribed();
             render();
         } else if (mode === "rx") {
             const turn = Core.skip(m);
@@ -750,7 +848,8 @@ function initVoiceConsole() {
             render();
             if (kind === "start") { phase = "tune"; render(); connectSession(true); }
             else if (kind === "vad") { phase = "tune"; render(); connectSession(false); }
-            else if (kind === "upload" && retryBlob) { m.local = "sending"; render(); upload(retryBlob); }
+            else if (kind === "piece" && retryPiece) { const p = retryPiece; retryPiece = null; piece(p.blob, p.forced); }
+            else if (kind === "say" && retryText) { m.local = "sending"; render(); say(retryText); }
             else if (kind === "sync") resync();
             else if (kind === "clip") { Core.retryStalled(m); pump(); }
         }
@@ -917,7 +1016,9 @@ function initVoiceConsole() {
         root.dataset.mode = mode;
         el.badge.textContent = spec.badge;
         el.name.textContent = mode === "proc" && m.local === "sending" ? "UPLINK" : spec.name;
-        el.hint.textContent = spec.hint;
+        const endWord = lang() === "fr" ? "terminé" : "over";
+        el.hint.textContent = mode === "listen" ? "Speak, then say \u201c" + endWord + "\u201d"
+            : mode === "tx" ? "Say \u201c" + endWord + "\u201d to send, or tap" : spec.hint;
         let readout = "";
         if (mode === "proc" && m.syncing) readout = "reconnecting";
         else if (mode === "proc") readout = m.local === "sending" ? "sending" : "thinking";

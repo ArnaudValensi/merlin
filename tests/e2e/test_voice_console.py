@@ -58,7 +58,8 @@ MERLIN_OPTIONS = {
     "config": "AGENT_STATE_HOOKS=auto\n",
     "extra_env": {
         "OPENAI_API_KEY": "sk-e2e-test",
-        "MERLIN_TRANSCRIBE_FAKE": MARKER,
+        # Each piece ends with the end word: one piece, one message.
+        "MERLIN_TRANSCRIBE_FAKE": f"{MARKER}, terminé",
         "MERLIN_TRANSCRIBE_DELAY": "0.3",
         "MERLIN_TTS_URL": f"http://127.0.0.1:{TTS_PORT}/v1",
     },
@@ -206,14 +207,13 @@ def _open(browser, server, viewport=None, scale=1):
         permissions=["microphone"],
     )
     page = ctx.new_page()
-    # Track every mic stream, and whether one was live while an answer played:
-    # an open mic puts a phone in call mode, which ducks the answer's volume.
-    # Stub Safari's navigator.audioSession too: the answer must play under
-    # "playback", or the iPhone silent switch mutes it.
+    # Track every mic stream: one per session, since a reopen asks Safari's
+    # permission again. Stub Safari's navigator.audioSession too: the answer
+    # must play under "play-and-record" (the open mic), which the iPhone
+    # silent switch does not mute, and exit must go back to "auto".
     page.add_init_script(
         """(() => {
             window.__mics = [];
-            window.__micDuringAnswer = false;
             window.__answerSeen = false;
             window.__sessionAtMic = [];
             window.__sessionDuringAnswer = new Set();
@@ -233,9 +233,6 @@ def _open(browser, server, viewport=None, scale=1):
                 if (!v || v.speaking() !== "answer") return;
                 window.__answerSeen = true;
                 window.__sessionDuringAnswer.add(navigator.audioSession.type);
-                if (window.__mics.some(s => s.getAudioTracks().some(t => t.readyState === "live"))) {
-                    window.__micDuringAnswer = true;
-                }
             }, 20);
         })();"""
     )
@@ -311,8 +308,8 @@ def test_a_spoken_turn_goes_round_and_the_console_listens_again(
         _start_voice(page, target)
         assert _option(tmux_env, target, "@voice") == "on"
 
-        # The VAD hears the sentence, the utterance is uploaded with this
-        # window as target, and the transcription lands at its prompt.
+        # The VAD hears the sentence, its piece is transcribed, ends with the
+        # end word, and the message lands at this window's prompt without it.
         _wait(
             lambda: MARKER in _capture(tmux_env, target), 30, "the prompt never landed"
         )
@@ -344,14 +341,15 @@ def test_a_spoken_turn_goes_round_and_the_console_listens_again(
         assert MARKER not in shown and "Nothing else to do." not in shown
         assert "command" not in shown.lower()
 
-        # The mic was closed while the answer played, and reopened after it.
+        # One mic for the whole session, open while the answer played, under
+        # play-and-record (the silent switch does not mute it).
         assert page.evaluate("() => window.__answerSeen")
-        assert not page.evaluate("() => window.__micDuringAnswer")
-        assert page.evaluate("() => window.__mics.length") >= 2
-        # The silent switch: the answer played under "playback", the mic
-        # opened under "play-and-record".
-        assert page.evaluate("() => [...window.__sessionDuringAnswer]") == ["playback"]
-        assert set(page.evaluate("() => window.__sessionAtMic")) == {"play-and-record"}
+        assert page.evaluate("() => window.__mics.length") == 1
+        assert page.evaluate("() => [...window.__sessionDuringAnswer]") == [
+            "play-and-record"
+        ]
+        assert page.evaluate("() => window.__sessionAtMic") == ["play-and-record"]
+        assert "terminé" not in _capture(tmux_env, target)
 
         # A reload finds the session still running: the console holds until a
         # tap unlocks audio and the mic again, then carries on.
@@ -362,7 +360,8 @@ def test_a_spoken_turn_goes_round_and_the_console_listens_again(
         page.click("#voice-console .vc-scope")
         _wait_mode(page, ["listen", "tx", "proc", "rx"], timeout=30000)
 
-        # Exit clears the mark and hides the console.
+        # Exit clears the mark, hides the console, closes the mic and gives
+        # the audio session back (dictation's mic would be refused otherwise).
         page.click("#voice-console [data-act=exit]")
         page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
         _wait(
@@ -370,6 +369,60 @@ def test_a_spoken_turn_goes_round_and_the_console_listens_again(
             5,
             "@voice was not cleared",
         )
+        assert page.evaluate("() => navigator.audioSession.type") == "auto"
+        assert not page.evaluate(
+            "() => window.__mics.some(s => s.getAudioTracks().some(t => t.readyState === 'live'))"
+        )
+    finally:
+        ctx.close()
+
+
+def test_a_message_waits_for_its_end_word(browser, server, tmux_env, tts, tmp_path):
+    """Pauses do not send: the pieces said are held until one ends with the
+    end word, then go as one message, without it."""
+    ctx, page, _ = _open(browser, server)
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        # Two pieces without the end word, then (once the test checked that
+        # nothing was sent) one with it. Pieces in between hear nothing.
+        texts = ["Lance les tests", "puis le lint."]
+        served = []
+        release = []
+
+        def transcribe(route):
+            if texts:
+                text = texts.pop(0)
+            else:
+                text = "Terminé." if release else ""
+            served.append(text)
+            route.fulfill(json={"text": text})
+
+        def pump_until(predicate, message):
+            # The route handler runs only while Playwright has control: wait
+            # through the page, not with sleep.
+            for _ in range(150):
+                if predicate():
+                    return
+                page.wait_for_timeout(200)
+            raise AssertionError(message)
+
+        page.route("**/api/terminal/transcribe", transcribe)
+        _start_voice(page, target)
+        pump_until(lambda: len(served) >= 3, "the pieces never came")
+        assert "Lance les tests" not in _capture(tmux_env, target)
+        assert _mode(page) == "tx" and page.evaluate(
+            "() => window.MerlinVoice.model().held"
+        )
+        release.append(True)
+        pump_until(
+            lambda: "Lance les tests puis le lint." in _capture(tmux_env, target),
+            "the message never landed",
+        )
+        assert "Terminé" not in _capture(tmux_env, target)
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+        _tmux(tmux_env, "kill-window", "-t", target)
     finally:
         ctx.close()
 

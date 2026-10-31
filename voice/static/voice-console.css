@@ -253,18 +253,7 @@ body.voice-console-open { overflow: hidden; }
 
 /* -- footer ------------------------------------------------------------------------ */
 
-.vc-foot { display: flex; flex-direction: column; gap: 12px; position: relative; }
-.vc-foot::before {
-    /* The upload of an utterance, as a thin bar over the buttons. */
-    content: "";
-    position: absolute;
-    left: 0;
-    top: -8px;
-    height: 2px;
-    width: calc(var(--vc-upload, 0) * 100%);
-    background: var(--vc-sig);
-    box-shadow: 0 0 8px var(--vc-sig);
-}
+.vc-foot { display: flex; flex-direction: column; gap: 12px; }
 .vc-hint { text-align: center; font-size: 11px; letter-spacing: 0.26em; text-transform: uppercase; color: var(--vc-dim); }
 .vc-buttons { display: flex; gap: 12px; justify-content: center; }
 .vc-btn {

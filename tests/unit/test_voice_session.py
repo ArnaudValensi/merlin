@@ -821,6 +821,9 @@ class TestRoutes:
             def set_lang(self, lang):
                 self.lang = lang
 
+            async def note_dictation(self, text, error):
+                calls.append(("noted", text, error))
+
             def snapshot(self):
                 return {"active": True, "target": target}
 
@@ -854,6 +857,46 @@ class TestRoutes:
             ("escape", "s:@1"),
             ("set", "s:@1", "@agent_state", "idle"),
         ]
+
+    def test_say_types_the_message_then_enter_and_tells_the_session(
+        self, client, monkeypatch
+    ):
+        calls = self._fake_session(monkeypatch)
+        monkeypatch.setattr(
+            sweep, "exit_copy_mode", lambda t: calls.append(("copy", t)) or True
+        )
+        monkeypatch.setattr(
+            sweep,
+            "send_literal",
+            lambda t, text: calls.append(("text", t, text)) or True,
+        )
+        r = client.post(
+            "/api/voice/say", json={"target": "s:@1", "text": " Run the tests. "}
+        )
+        assert r.json() == {"ok": True}
+        assert calls == [
+            ("copy", "s:@1"),
+            ("text", "s:@1", "Run the tests."),
+            ("enter", "s:@1"),
+            ("noted", "Run the tests.", None),
+        ]
+
+    def test_say_refuses_nothing_and_windows_without_voice(self, client, monkeypatch):
+        calls = self._fake_session(monkeypatch)
+        assert (
+            client.post("/api/voice/say", json={"target": "s:@1", "text": "  "})
+        ).status_code == 400
+        assert (
+            client.post("/api/voice/say", json={"target": "s:@2", "text": "hi"})
+        ).status_code == 404
+        assert calls == []
+
+    def test_say_reports_a_window_that_did_not_take_it(self, client, monkeypatch):
+        calls = self._fake_session(monkeypatch)
+        monkeypatch.setattr(sweep, "exit_copy_mode", lambda t: True)
+        monkeypatch.setattr(sweep, "send_literal", lambda t, text: False)
+        r = client.post("/api/voice/say", json={"target": "s:@1", "text": "hi"})
+        assert r.status_code == 502 and calls == []
 
     def test_answer_only_reaches_a_voice_window(self, client, monkeypatch):
         calls = self._fake_session(monkeypatch)

@@ -1818,9 +1818,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Upload with retry
     // -------------------------------------------------------------------
 
-    // How an upload reports its progress and a final refusal. Dictation shows
-    // both on the mic button and in the terminal; the voice console passes
-    // its own (MerlinTerminal.sendVoice).
+    // How an upload reports its progress and a final refusal: on the mic
+    // button and in the terminal.
     const micUploadHooks = {
         progress: (fraction) => micBtn.style.setProperty('--upload-progress', fraction.toString()),
         done: () => micBtn.style.removeProperty('--upload-progress'),
@@ -1930,11 +1929,6 @@ document.addEventListener('DOMContentLoaded', () => {
         term.focus();
     }
 
-    // Voice mode posts each utterance through this same path, auto-enter on,
-    // to the console's own target (voice/static/voice-console.js).
-    window.MerlinTerminal.sendVoice = function (blob, language, target, hooks) {
-        return sendVoiceWithRetry(blob, language, true, target, hooks);
-    };
     window.MerlinTerminal.notice = showVoiceRefused;
     window.MerlinTerminal.currentTarget = function () {
         return (currentSession && currentWindowId) ? currentSession + ':' + currentWindowId : '';
@@ -2011,6 +2005,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 term.write('\r\n\x1b[31m[Voice requires HTTPS — mic API unavailable over HTTP]\x1b[0m\r\n');
                 return;
+            }
+            // Safari refuses the mic while the page's audio session says
+            // "playback": give it back to the default first.
+            if (navigator.audioSession && navigator.audioSession.type === 'playback') {
+                try { navigator.audioSession.type = 'auto'; } catch (e) { /* not settable */ }
             }
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             audioChunks = [];

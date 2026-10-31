@@ -254,12 +254,15 @@ download, works offline). `merlin setup` prompts for the OpenAI key, or append
 Voice mode turns the window you are on into a hands-free conversation with the
 Claude Code agent running in it, for the car (phone on a mount, screen on) or a
 walk. Tap the **Voice** button in the status bar: a full-screen radio console
-covers the terminal. Talk, pause, and after about a second and a half of silence
-what you said is transcribed and sent to the agent. The agent answers in a style
+covers the terminal. Talk, and when you are done say **"terminé"** (or
+**"over"**), on its own after what you said: only then is your message sent to
+the agent, so you can pause to think as long as you like. The agent answers in a style
 written for the ear, Merlin reads the answer aloud, then listens again. Code and
 long output stay in the terminal: the voice says so instead of reading them.
 
-- **Tap anywhere** while you talk to send now; while the answer plays, to skip
+- If you forget the end word, a soft double tone reminds you after a few
+  seconds. "C'est terminé" inside a sentence does not send.
+- **Tap anywhere** while you talk to send now, without the end word; while the answer plays, to skip
   the rest of it; on an error, to try again.
 - **Stop agent** sends Escape to the agent. **Exit** leaves voice mode, and the
   next prompt you type is back to normal.
@@ -270,9 +273,12 @@ long output stay in the terminal: the voice says so instead of reading them.
   terminal under it keeps everything.
 - **EN / FR** picks the language you speak and the voice that answers. It
   follows the dictation language.
-- The microphone is closed while the agent works and while the answer plays, so
-  the agent never hears itself and the phone does not lower the voice's volume. Keep the screen on: the console holds
-  a wake lock while it is open.
+- The browser asks for the microphone once, when voice mode opens. The
+  console does not listen while the agent works or answers, so the agent never
+  hears itself. On an iPhone the open microphone lowers the volume a little
+  (the phone treats it as a call), and the console plays louder to make up
+  for it; the silent switch does not mute it. Keep the screen on: the console
+  holds a wake lock while it is open.
 - If the phone loses the connection, voice mode keeps going on the server and
   the console catches up when it reconnects. After a reload, tap once to give
   it the audio and the microphone back.

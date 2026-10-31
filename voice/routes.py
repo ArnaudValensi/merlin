@@ -136,6 +136,38 @@ async def api_skip(body: SkipBody):
     return {"ok": True}
 
 
+class SayBody(Target):
+    text: str
+
+
+@api_router.post("/say")
+async def api_say(body: SayBody):
+    """Type the message the user said into the window, then Enter. The page
+    transcribes what is said piece by piece (cut at each pause) and sends the
+    whole message here once it heard the end word. Same keys as dictation's
+    injection: copy-mode cancelled first, the text, then Enter on its own."""
+    running = session.get(body.target)
+    if running is None:
+        return _no_session()
+    text = body.text.strip()
+    if not text:
+        return JSONResponse({"error": "Nothing to send"}, status_code=400)
+    await asyncio.to_thread(sweep.exit_copy_mode, body.target)
+    if not await asyncio.to_thread(sweep.send_literal, body.target, text):
+        return JSONResponse(
+            {"error": "The window did not take the message"}, status_code=502
+        )
+    # Enter apart, after a brief gap: in one send, a TUI reads it as a
+    # newline inside the paste instead of a submit.
+    await asyncio.sleep(0.15)
+    if not await asyncio.to_thread(sweep.send_enter, body.target):
+        return JSONResponse(
+            {"error": "The window did not take the message"}, status_code=502
+        )
+    await running.note_dictation(text, None)
+    return {"ok": True}
+
+
 async def _escape(target: str) -> bool:
     """Escape to the window, and the idle write that the tmux Escape binding
     would have done (``send-keys`` bypasses key bindings)."""

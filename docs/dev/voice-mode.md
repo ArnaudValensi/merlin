@@ -14,8 +14,10 @@ Phone (terminal page, voice console)        Merlin server                     TT
 ────────────────────────────────────        ─────────────                     ──────────
 tap Voice → POST /api/voice/start ──────→  @voice=on on the window
                                             VoiceSession(target) starts
-VAD: speech ... 1.5 s of silence
-POST /api/terminal/transcribe (dictation) → transcribe, send-keys, Enter
+VAD: a piece of speech ... 1.2 s of silence
+POST /api/terminal/transcribe (no target) → the piece's text, back to the page
+  ... pieces held until one ends with the end word ("terminé", "over")
+POST /api/voice/say {target, text} ──────→  send-keys the message, Enter
                                             Claude's UserPromptSubmit hook
                                               → voice instructions in context
                                             tail the window's transcript:
@@ -183,10 +185,11 @@ gives a reconnecting page a snapshot (state, captions, ask, the clips still in
 the store), with a revision so the page folds it in against live frames. A
 window that vanished stops its session. Server shutdown stops every session.
 
-Dictation is unchanged: the console uploads each utterance to
-`/api/terminal/transcribe` with its target and `auto_enter=true`, and the route
-tells a voice window's session about the result (`note_dictation`), so an empty
-transcription or a failure reaches the console as an error frame.
+Dictation is unchanged. The console transcribes each piece of speech through
+the same route without a target (the text comes back in the response), holds
+the pieces, and sends the whole message with `POST /api/voice/say`, which types
+it into the window like dictation's injection (copy-mode cancelled, the text,
+Enter apart) and tells the session (`note_dictation`). See "The end word".
 
 ### Control frames
 
@@ -217,6 +220,7 @@ outbox, so a stalled page never blocks the others); the page filters by
 | `GET /api/voice/session?target=` | The snapshot for a reconnecting page |
 | `POST /api/voice/lang` `{target, lang}` | Switch the voice language |
 | `POST /api/voice/skip` `{target, turn}` | Drop the rest of that answer |
+| `POST /api/voice/say` `{target, text}` | Type the message into the window, then Enter |
 | `POST /api/voice/answer` `{target, yes}` | Yes sends Enter, No sends Escape (and writes `idle`) |
 | `POST /api/voice/interrupt` `{target}` | Stop agent: drop every answer waiting, send Escape |
 | `GET /api/voice/audio/{id}` | A clip's audio |
@@ -228,29 +232,49 @@ with the reason when TTS or transcription is missing or the window cannot start
 (`/api/voice/check`). Tapping it is the user gesture that creates and resumes
 the one `AudioContext` and asks for the mic permission.
 
-The mic is open only while the console listens (`MON`, `TX`). An open mic with
-echo cancellation puts a phone in call mode, which lowers the answer's volume
-(or routes it to the earpiece), so the VAD's `pauseStream` closes the tracks
-and its `resumeStream` reopens them with `getUserMedia`. A granted permission
-is not asked again within the page. A reopen that fails is the `ERR` mode, and
-a tap retries. The e2e round-trip test asserts no live mic track while an
-answer plays.
+One mic stream for the whole session: `getUserMedia` once, when the console
+opens (or after a hold, on the tap), closed on Exit. The VAD's `pauseStream`
+keeps it open and its `resumeStream` reopens it only if it died (a phone call
+took it). Closing it while the agent answered (tried on 2026-10-29) made iOS
+Safari ask the permission at every turn, and a reopen without a tap could be
+refused for the rest of the page, dictation's mic included. The round-trip e2e
+test asserts one `getUserMedia` per session.
 
-Closing the mic has an iOS consequence. Safari plays Web Audio as "ambient",
-which the silent switch mutes; an open mic forces "play-and-record", which
-ignores it, so the answer was audible in silent mode only by accident of the
-open mic. The console sets `navigator.audioSession.type` (Safari 17+) itself:
-`"play-and-record"` just before `getUserMedia`, `"playback"` when the mic
-closes and when the `AudioContext` is created. Browsers without the API keep
-their default (Android does not mute media in silent mode). The round-trip
-test stubs the API and asserts the answer plays under `"playback"`.
+An open mic puts iOS in call mode, which turns the answer down (WebKit bug
+311451, with or without `echoCancellation`). The console compensates: on
+Safari (`navigator.audioSession` present) the output goes through a gain of
+2.5 into a limiter (`DynamicsCompressorNode`, threshold -3 dB, ratio 20).
+
+The silent switch: Safari plays Web Audio as "ambient", which the switch
+mutes. The console sets `navigator.audioSession.type` (Safari 17+) to
+`"play-and-record"` before `getUserMedia`, which ignores the switch, and back
+to `"auto"` on Exit (a page left in `"playback"` gets its next `getUserMedia`
+refused; dictation also resets a `"playback"` session before recording).
+Browsers without the API keep their default (Android does not mute media in
+silent mode). The round-trip test stubs the API and asserts the answer plays
+under `"play-and-record"` and Exit leaves `"auto"`.
 
 The VAD (Silero through `vad-web`, one wasm thread, no cross-origin isolation
 needed) loads lazily the first time the console opens; the vendored files are
 served immutable for a year (`IMMUTABLE_STATIC_PREFIXES` in `main.py`), safe
-because each directory names its version. End of speech after 1.5 s of
-silence. The utterance goes up as a 16 kHz WAV through dictation's own upload
-(`MerlinTerminal.sendVoice`).
+because each directory names its version. A piece of speech ends after 1.2 s
+of silence and goes up as a 16 kHz WAV.
+
+### The end word
+
+A pause does not end a message: people pause to think. Each piece of speech
+(cut at a pause) is transcribed at once, while the user goes on, and the pieces
+are handled in the order said. The message goes when a piece ends with the end
+word, "terminé" or "over" (either one, whatever the language; Whisper's
+variants of "terminé" count), or when the user taps the screen in `TX`. The end
+word counts only as a clause of its own at the end of a piece ("..., terminé",
+"Terminé."), so "c'est terminé" inside a sentence never sends
+(`MerlinVoiceCore.endWord`, unit-tested). It is stripped from the message.
+While pieces are held the mode stays `TX`, the hint names the end word, and
+after 7 s without it a soft double tone reminds the user once. A piece whose
+transcription fails is tried twice more, then shown as an error a tap retries.
+The e2e test `test_a_message_waits_for_its_end_word` holds two pieces, checks
+nothing reached the window, then releases the end word.
 
 Modes (radio names): `SYNC` (starting), `MON` (listening), `TX` (speech
 detected), `PROC` (the agent works, also while resyncing), `RX` (the answer
