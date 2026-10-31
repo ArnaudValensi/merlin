@@ -57,14 +57,14 @@ function initVoiceConsole() {
         : { matches: false };
 
     const MODES = {
-        tune:   { badge: "SYNC", name: "TUNING",     hint: "Opening the channel" },
-        resume: { badge: "HOLD", name: "ON HOLD",    hint: "Tap anywhere to resume" },
-        listen: { badge: "MON",  name: "LISTENING",  hint: "" },
-        tx:     { badge: "TX",   name: "TRANSMIT",   hint: "" },
-        proc:   { badge: "PROC", name: "PROCESSING", hint: "The agent is working" },
-        rx:     { badge: "RX",   name: "RECEIVING",  hint: "Tap anywhere to skip this answer" },
-        ask:    { badge: "ASK",  name: "STANDBY",    hint: "Yes sends Enter, No sends Escape" },
-        error:  { badge: "ERR",  name: "FAULT",      hint: "Tap anywhere to retry" },
+        tune:   { badge: "SYNC", name: "Tuning in",     hint: "Opening the channel" },
+        resume: { badge: "HOLD", name: "On hold",    hint: "Tap anywhere to resume" },
+        listen: { badge: "MON",  name: "Listening",  hint: "" },
+        tx:     { badge: "TX",   name: "Transmitting",   hint: "" },
+        proc:   { badge: "PROC", name: "Processing", hint: "The agent is working" },
+        rx:     { badge: "RX",   name: "Receiving",  hint: "Tap anywhere to skip this answer" },
+        ask:    { badge: "ASK",  name: "Your answer",    hint: "Yes sends Enter, No sends Escape" },
+        error:  { badge: "ERR",  name: "Fault",      hint: "Tap anywhere to retry" },
     };
     // The text area before anything was said.
     const BUTTONS = {
@@ -108,13 +108,13 @@ function initVoiceConsole() {
     root.innerHTML = [
         '<div class="vc-plate">',
         '  <header class="vc-head">',
-        '    <div class="vc-brand"><span class="vc-led"></span>MERLIN<span class="vc-slash">//</span>VOICE</div>',
+        '    <div class="vc-brand"><span class="vc-led"></span>Merlin<span class="vc-slash">/</span>Voice</div>',
         '    <div class="vc-lang" role="group" aria-label="Voice language">',
         '      <button type="button" data-lang="en">EN</button><button type="button" data-lang="fr">FR</button>',
         '    </div>',
         '  </header>',
         '  <div class="vc-id">',
-        '    <span>CALL <b data-el="call"></b></span>',
+        '    <span>Call <b data-el="call"></b></span>',
         '    <span><b data-el="freq"></b> MHz</span>',
         '    <span class="vc-clock" data-el="clock">00:00</span>',
         '  </div>',
@@ -139,11 +139,11 @@ function initVoiceConsole() {
         '  <footer class="vc-foot">',
         '    <div class="vc-hint" data-el="hint"></div>',
         '    <div class="vc-buttons">',
-        '      <button type="button" class="vc-btn vc-yes" data-act="yes">YES</button>',
-        '      <button type="button" class="vc-btn vc-no" data-act="no">NO</button>',
-        '      <button type="button" class="vc-btn vc-stop" data-act="stop">STOP AGENT</button>',
-        '      <button type="button" class="vc-btn vc-skip" data-act="skip">SKIP ANSWER</button>',
-        '      <button type="button" class="vc-btn vc-exit" data-act="exit">EXIT</button>',
+        '      <button type="button" class="vc-btn vc-yes" data-act="yes">Yes</button>',
+        '      <button type="button" class="vc-btn vc-no" data-act="no">No</button>',
+        '      <button type="button" class="vc-btn vc-stop" data-act="stop">Stop agent</button>',
+        '      <button type="button" class="vc-btn vc-skip" data-act="skip">Skip answer</button>',
+        '      <button type="button" class="vc-btn vc-exit" data-act="exit">Exit</button>',
         '    </div>',
         '  </footer>',
         '</div>',
@@ -1015,7 +1015,7 @@ function initVoiceConsole() {
         const spec = MODES[mode];
         root.dataset.mode = mode;
         el.badge.textContent = spec.badge;
-        el.name.textContent = mode === "proc" && m.local === "sending" ? "UPLINK" : spec.name;
+        el.name.textContent = mode === "proc" && m.local === "sending" ? "Uplink" : spec.name;
         const endWord = lang() === "fr" ? "terminé" : "over";
         el.hint.textContent = mode === "listen" ? "Speak, then say \u201c" + endWord + "\u201d"
             : mode === "tx" ? "Say \u201c" + endWord + "\u201d to send, or tap" : spec.hint;
@@ -1088,6 +1088,7 @@ function initVoiceConsole() {
 
     let sigColor = "";
     let sigMode = "";
+    let scopeBg = "";
 
     function drawFrame(still) {
         if (!m) return;
@@ -1095,6 +1096,7 @@ function initVoiceConsole() {
         const dpr = fit();
         const w = canvas.width, h = canvas.height, mid = h / 2;
         if (sigMode !== mode) { sigColor = signal(); sigMode = mode; }
+        if (!scopeBg) scopeBg = getComputedStyle(canvas.parentNode).backgroundColor || "#222633";
 
         const analyser = still ? null
             : (mode === "rx" || mode === "ask") ? audio.outAnalyser
@@ -1117,9 +1119,10 @@ function initVoiceConsole() {
         }
         level = level * 0.7 + Math.min(1, rms * 4) * 0.3;
 
-        // Phosphor persistence: fade the last frame instead of clearing it.
+        // Persistence: fade the last frame instead of clearing it.
         g.globalCompositeOperation = "source-over";
-        g.fillStyle = still ? "rgb(4, 9, 7)" : "rgba(4, 9, 7, 0.32)";
+        g.fillStyle = scopeBg;
+        g.globalAlpha = still ? 1 : 0.32;
         g.fillRect(0, 0, w, h);
 
         g.beginPath();
@@ -1144,8 +1147,8 @@ function initVoiceConsole() {
             if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
         }
         g.strokeStyle = sigColor;
-        g.globalAlpha = 0.22;
-        g.lineWidth = 6 * dpr;
+        g.globalAlpha = 0.16;
+        g.lineWidth = 5 * dpr;
         g.stroke();
         g.globalAlpha = 1;
         g.lineWidth = 1.6 * dpr;

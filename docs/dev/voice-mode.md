@@ -283,9 +283,18 @@ a tap unlocks audio). The VAD runs only in `MON` and `TX` with nothing playing:
 no listening while the agent is busy or the answer plays (no voice barge-in).
 Clips are fetched two ahead of playback, ordered by revision, retried twice;
 a clip that still fails stalls the line with "Part of the answer could not be
-downloaded" (tap retries, SKIP ANSWER drops that answer). Earcons are Nova's,
+downloaded" (tap retries, Skip answer drops that answer). Earcons are Nova's,
 synthesized with WebAudio, plus an alert for `ASK`. Wake lock while open;
 `prefers-reduced-motion` draws a still trace.
+
+**The look is Merlin's.** `voice-console.css` uses the dashboard's variables
+(`dashboard.css`: Geist and Geist Mono, the `#0f1117` palette, bordered cards,
+tinted states) and keeps the radio only in what it shows: the mode code, the
+call sign, the meter and the scope. Each mode's signal colour (`--vc-sig`) is
+the accent the Sessions board gives that agent state: green while it waits on
+the user (`MON`, `TX` filled), yellow while it works (`PROC`), blue on a
+question (`ASK`, filled), purple for the answer (`RX`), red on `ERR`. The scope
+fades each frame into its card's own background, read from the CSS.
 
 **No conversation text on screen.** The console shows no captions (neither what
 the user said nor the answer), no tool label and no pane excerpt on `ASK`, only
