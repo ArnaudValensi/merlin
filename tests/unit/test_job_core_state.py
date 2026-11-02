@@ -185,7 +185,13 @@ class TestHistory:
 
         ts = datetime(2026, 2, 5, 9, 0, 0, tzinfo=timezone.utc)
         append_history(
-            "test-job", exit_code=0, duration=1.5, session_id="abc", timestamp=ts
+            "test-job",
+            exit_code=0,
+            duration=1.5,
+            timestamp=ts,
+            trigger="schedule",
+            agent="claude",
+            run_id="abc",
         )
 
         history = read_history()
@@ -193,7 +199,10 @@ class TestHistory:
         assert len(history["test-job"]) == 1
         assert history["test-job"][0]["exit_code"] == 0
         assert history["test-job"][0]["duration"] == 1.5
-        assert history["test-job"][0]["session_id"] == "abc"
+        assert history["test-job"][0]["agent"] == "claude"
+        assert history["test-job"][0]["run_id"] == "abc"
+        assert "cost_usd" not in history["test-job"][0]
+        assert "session_id" not in history["test-job"][0]
 
     def test_append_history_multiple_entries(self, temp_jobs_dir):
         """append_history accumulates entries."""

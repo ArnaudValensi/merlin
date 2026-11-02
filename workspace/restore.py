@@ -24,6 +24,7 @@ import subprocess
 import time
 
 from terminal.tmux import (
+    JOBS_SESSION_NAME,
     DEFAULT_SESSION_NAME,
     server_spawn_prefix,
     terminal_process_env,
@@ -110,6 +111,8 @@ def missing_sessions(snapshot: dict, live: dict[str, bool] | None) -> list[dict]
     live = live or {}
     out = []
     for s in snapshot["sessions"]:
+        if s["name"] == JOBS_SESSION_NAME:
+            continue  # a job run is not part of the workspace (older snapshots)
         if s["name"] not in live:
             out.append(s)
         elif live[s["name"]] and not _is_bare(s):
@@ -312,7 +315,7 @@ def restore(snapshot: dict) -> dict:
     result: dict = {"restored": [], "skipped": [], "failed": [], "agents": 0}
     for sess in snapshot["sessions"]:
         name = sess["name"]
-        if not sess.get("windows"):
+        if not sess.get("windows") or name == JOBS_SESSION_NAME:
             continue
         try:
             if name not in live:

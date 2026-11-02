@@ -5,7 +5,8 @@ Individual log files per execution: ~/.merlin/job-logs/{job-id}/{timestamp}.json
 Metadata index (.history.json) stays small — no output field there.
 
 Each log file contains: job_id, timestamp, exit_code, duration_seconds,
-cost_usd, session_id, output, output_truncated.
+trigger, agent, run_id, output, output_truncated. Old files carrying
+cost_usd or session_id read fine.
 
 Timestamp format in filenames: ISO-like but filesystem-safe — colons replaced
 with hyphens, e.g. 2026-03-22T02-30-00+00-00.json

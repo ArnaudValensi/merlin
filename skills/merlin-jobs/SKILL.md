@@ -57,16 +57,20 @@ merlin job add \
   --report-mode silent
 ```
 
-**Important:** The prompt should describe the task, not how to deliver results. The engine returns text output and the notification system handles delivery. Never include "send to Discord" or similar in prompts.
+**Important:** The prompt should describe the task, as if typed into the
+agent. Every run opens the agent's real interface in a window of the
+`merlin-jobs` tmux session, with every permission check bypassed (the command
+prints that warning on stderr): tell the user a job only gets work they would
+let run unattended.
 
 **Options:**
 - `--schedule` — Cron expression (optional; omit for a webhook- or manual-only job)
-- `--prompt` — Task for the engine to execute (required)
+- `--prompt` — The prompt the agent runs (required)
+- `--agent` — `claude` (default) or `codex`
 - `--webhook` — Also enable the webhook trigger (generates a secret)
 
-For all other flags (report mode, max turns, description, explicit id,
-channel routing) run `merlin job add --help`; never restate them from
-memory.
+For all other flags (report mode, description, explicit id, channel
+routing) run `merlin job add --help`; never restate them from memory.
 
 ### Enable/Disable Job
 
@@ -95,7 +99,9 @@ Run a job immediately, bypassing the schedule:
 merlin job trigger <job-id>
 ```
 
-This executes the job exactly like the scheduler would — same logging, history tracking, and session handling. Useful for:
+This executes the job exactly like the scheduler would (same window, logging
+and history), waits for the run to finish and prints its exit code, run id
+and window. Useful for:
 - Testing a new job
 - Retrying a failed job
 - Running on demand

@@ -167,8 +167,7 @@ class TestCreateJob:
             json=_sample_job(
                 enabled=False,
                 report_mode="silent",
-                max_turns=5,
-                ephemeral=False,
+                agent="codex",
                 grace_minutes=30,
                 discord_channel="123456",
             ),
@@ -177,8 +176,43 @@ class TestCreateJob:
         data = resp.json()
         assert data["enabled"] is False
         assert data["report_mode"] == "silent"
-        assert data["max_turns"] == 5
+        assert data["agent"] == "codex"
         assert data["discord_channel"] == "123456"
+
+    def test_create_defaults_to_claude(self, client):
+        """A prompt job without an agent runs Claude Code."""
+        resp = client.post("/api/jobs/jobs", json=_sample_job())
+        assert resp.status_code == 201
+        assert resp.json()["agent"] == "claude"
+
+    def test_create_unknown_agent_is_422(self, client):
+        resp = client.post("/api/jobs/jobs", json=_sample_job(agent="hal"))
+        assert resp.status_code == 422
+
+    def test_legacy_fields_drop_at_next_save(self, client, _isolated_job_dirs):
+        """A job file carrying max_turns and ephemeral still loads, and the
+        fields drop at the next save."""
+        import json as json_mod
+
+        path = _isolated_job_dirs / "old-job.json"
+        path.write_text(
+            json_mod.dumps(
+                {
+                    "description": "old",
+                    "schedule": "0 9 * * *",
+                    "prompt": "x",
+                    "max_turns": 5,
+                    "ephemeral": False,
+                    "enabled": True,
+                }
+            )
+        )
+        assert client.get("/api/jobs/jobs/old-job").status_code == 200
+        resp = client.put("/api/jobs/jobs/old-job", json={"description": "new"})
+        assert resp.status_code == 200
+        saved = json_mod.loads(path.read_text())
+        assert "max_turns" not in saved and "ephemeral" not in saved
+        assert saved["description"] == "new"
 
     def test_create_invalid_report_mode(self, client):
         """POST with invalid report_mode returns 422."""

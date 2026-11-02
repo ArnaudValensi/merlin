@@ -14,17 +14,30 @@
 # An interrupt (Esc mid-turn) fires no hook at all in Claude Code, so
 # terminal/tmux.conf binds Esc to write idle on a busy/ask window itself.
 
-# Drain stdin (the hooks pipe JSON we don't need here) so the writer never
-# blocks waiting on a pipe that no one closes.
-cat >/dev/null 2>&1 || true
+# Read the hook JSON (the writer must never block on a pipe nobody drains).
+# Its session id and cwd identify the window when the hook runs outside the
+# pane, in Codex's app-server daemon (see agent-window.sh); the regexes need
+# no jq. A cwd JSON had to escape is skipped rather than half decoded.
+payload=$(cat 2>/dev/null) || payload=""
+conv=""
+re='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9_-]+)"'
+if [[ $payload =~ $re ]]; then
+  conv="${BASH_REMATCH[1]}"
+fi
+cwd=""
+re='"cwd"[[:space:]]*:[[:space:]]*"(/[^"\\]*)"'
+if [[ $payload =~ $re ]]; then
+  cwd="${BASH_REMATCH[1]}"
+fi
 
 state="${1:-idle}"
 command -v tmux >/dev/null 2>&1 || exit 0
 
-# The window of this pane: $TMUX_PANE, or the ancestor walk when a helper
-# process stripped the environment (see agent-window.sh).
+# The window of this agent: $TMUX_PANE when this hook descends from the
+# pane, the ancestor walk when a helper process stripped the environment,
+# the session id and cwd when a daemon runs the hook (see agent-window.sh).
 . "$(dirname "$0")/agent-window.sh"
-win=$(agent_window)
+win=$(agent_window "$conv" "$cwd")
 [ -n "$win" ] || exit 0
 
 tmux set-option -w -t "$win" @agent_state "$state" 2>/dev/null

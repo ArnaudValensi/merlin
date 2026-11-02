@@ -252,16 +252,23 @@ def _tmux_capture(args: list[str]) -> str | None:
     return proc.stdout if proc.returncode == 0 else None
 
 
-def capture_pane(session: str, window_id: str, timeout: float = 3.0) -> str | None:
+def capture_pane(
+    session: str, window_id: str, timeout: float = 3.0, *, history: bool = False
+) -> str | None:
     """The visible text of a window's active pane (``tmux capture-pane -p``),
     or None when tmux is unavailable, the window is gone, or the call fails
     or overruns ``timeout``. Read-only, and the caller runs it off the event
-    loop: this is how the attention watcher reads the agent's last lines."""
+    loop: this is how the attention watcher reads the agent's last lines.
+    ``history`` captures the whole scrollback too (``-S -``): the record of a
+    job run."""
     if not shutil.which("tmux") or not session or not window_id:
         return None
+    args = ["tmux", "capture-pane", "-p", "-t", f"{session}:{window_id}"]
+    if history:
+        args[2:2] = ["-S", "-"]
     try:
         proc = subprocess.run(
-            ["tmux", "capture-pane", "-p", "-t", f"{session}:{window_id}"],
+            args,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -452,6 +459,21 @@ def set_window_option(target: str, name: str, value: str) -> bool:
     return _run_ok(["set-option", "-w", "-t", window, name, value])
 
 
+def set_window_options(target: str, options: dict[str, str]) -> bool:
+    """Set several window options on the window of ``target`` in one tmux
+    call, in the dict's order (so a caller can stamp a sentinel last). Same
+    addressing as ``set_window_option``. Best-effort bool."""
+    window = _window_id(target or "")
+    if not window.startswith("@") or not options:
+        return False
+    args: list[str] = []
+    for name, value in options.items():
+        if args:
+            args.append(";")
+        args += ["set-option", "-w", "-t", window, name, value]
+    return _run_ok(args)
+
+
 def unset_window_option(target: str, name: str) -> bool:
     """Unset a window option on the window of ``target`` (by its bare id, see
     ``set_window_option``). Best-effort bool."""
@@ -631,18 +653,112 @@ def kill_window(session: str, window_id: str) -> bool:
     return _window_cmd("kill-window", session, window_id)
 
 
+def open_window(
+    session: str,
+    name: str,
+    directory: str,
+    command: str,
+    env: dict[str, str] | None = None,
+) -> str | None:
+    """Open a detached window named ``name`` in ``session`` running
+    ``command`` (a shell line) in ``directory``, and return its window id.
+
+    When the session does not exist it is created with this window as its
+    only one, so no stray shell window is left behind, through the
+    ``terminal/tmux.py`` policy (the config flag, and the spawn prefix when
+    this call creates the server). ``env`` is the environment the server is
+    born with when this call creates it (``terminal_process_env``): tmux
+    reads its config and the hook variables only then. ``-n`` turns the
+    window's automatic rename off, so the name stays the caller's. The window
+    is never selected: a client on the session keeps what it was looking at.
+    Returns None when tmux is unavailable or the call fails."""
+    if not shutil.which("tmux") or not session or not name or not command:
+        return None
+    from terminal.tmux import server_spawn_prefix, tmux_conf_args
+
+    existing = {s.name for s in run_session_sweep()}
+    if session in existing:
+        args = ["new-window", "-d", "-P", "-F", "#{window_id}", "-t", f"{session}:"]
+        prefix: list[str] = []
+    else:
+        args = [
+            *tmux_conf_args(),
+            "new-session",
+            "-d",
+            "-P",
+            "-F",
+            "#{window_id}",
+            "-s",
+            session,
+        ]
+        prefix = server_spawn_prefix(bool(existing))
+    out = _run_out(
+        [*args, "-n", name, "-c", directory, command], prefix=prefix, env=env
+    )
+    if not out:
+        return None
+    wid = out.strip().splitlines()[-1].strip()
+    return wid if wid.startswith("@") else None
+
+
+def displayed_windows() -> set[str]:
+    """``session:window_id`` of every window a tmux client is showing right
+    now. Empty when tmux is unavailable, has no server or no client."""
+    out = _tmux_capture(["list-clients", "-F", "#{session_name}:#{window_id}"])
+    if not out:
+        return set()
+    return {line.strip() for line in out.splitlines() if ":@" in line}
+
+
+def list_window_options(session: str, names: tuple[str, ...]) -> list[dict] | None:
+    """One dict per window of ``session``: ``window_id`` plus the values of
+    ``names`` (window options or formats, without ``#{}``, unset ones as
+    empty strings). None when tmux is unavailable, the session does not
+    exist or the call fails, so a caller can tell "no such session" from
+    "no window"."""
+    if not session or not names:
+        return None
+    fields = ("window_id", *names)
+    fmt = "\t".join("#{" + n + "}" for n in fields)
+    out = _tmux_capture(["list-windows", "-t", f"={session}:", "-F", fmt])
+    if out is None:
+        return None
+    rows: list[dict] = []
+    for line in out.splitlines():
+        values = line.split("\t")
+        if len(values) != len(fields) or not values[0].startswith("@"):
+            continue
+        rows.append(dict(zip(fields, values)))
+    return rows
+
+
 def _window_cmd(cmd: str, session: str, window_id: str) -> bool:
     if not shutil.which("tmux") or not session or not window_id:
         return False
     return _run_ok([cmd, "-t", f"{session}:{window_id}"])
 
 
-def _run_ok(args: list[str], prefix: list[str] | None = None) -> bool:
+def _run_ok(
+    args: list[str],
+    prefix: list[str] | None = None,
+    env: dict[str, str] | None = None,
+) -> bool:
     """Run a mutating tmux command, returning True on exit 0. Best-effort: a
     stale target or a dead tmux just yields False rather than raising.
-    ``prefix`` wraps the call (``server_spawn_prefix`` for a server creation)."""
+    ``prefix`` wraps the call (``server_spawn_prefix`` for a server creation),
+    ``env`` is the environment a server created by the call is born with."""
+    return _run_out(args, prefix=prefix, env=env) is not None
+
+
+def _run_out(
+    args: list[str],
+    prefix: list[str] | None = None,
+    env: dict[str, str] | None = None,
+) -> str | None:
+    """Run a mutating tmux command and return its stdout on exit 0, None on
+    any failure (see ``_run_ok``)."""
     if not shutil.which("tmux"):
-        return False
+        return None
     try:
         proc = subprocess.run(
             [*(prefix or []), "tmux", *args],
@@ -650,7 +766,8 @@ def _run_ok(args: list[str], prefix: list[str] | None = None) -> bool:
             text=True,
             timeout=5,
             check=False,
+            env=env,
         )
     except (OSError, subprocess.SubprocessError):
-        return False
-    return proc.returncode == 0
+        return None
+    return proc.stdout if proc.returncode == 0 else None

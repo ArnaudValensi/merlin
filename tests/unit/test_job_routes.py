@@ -24,42 +24,20 @@ def client():
         yield c
 
 
-def test_jobs_page_contains_performance_tab(client):
-    resp = client.get("/jobs")
-    assert resp.status_code == 200
-    assert 'data-tab="performance"' in resp.text
-
-
-def test_jobs_page_contains_perf_canvases(client):
-    resp = client.get("/jobs")
-    html = resp.text
-    for canvas_id in (
-        "job-perf-timeseries",
-        "job-perf-success",
-        "job-perf-by-job-duration",
-        "job-perf-by-job-cost",
-    ):
-        assert f'id="{canvas_id}"' in html
-
-
-def test_jobs_page_loads_shared_chart_module(client):
-    """The Performance tab depends on the shared renderers being included."""
-    resp = client.get("/jobs")
-    assert "/static/perf-charts.js" in resp.text
-
-
-def test_jobs_page_has_perf_empty_state(client):
-    resp = client.get("/jobs")
-    assert "No job runs in this range yet" in resp.text
-
-
-def test_jobs_tab_order_is_jobs_performance_logs(client):
-    """Tabs read Jobs, Performance, Logs (Performance before Logs, matching /bot)."""
+def test_jobs_page_has_no_performance_tab(client):
+    """Cost and performance tracking left with the engine."""
     html = client.get("/jobs").text
-    jobs = html.index('data-tab="jobs"')
-    perf = html.index('data-tab="performance"')
-    logs = html.index('data-tab="logs"')
-    assert jobs < perf < logs
+    assert 'data-tab="performance"' not in html
+    assert "perf-charts.js" not in html
+    assert "cost_usd" not in html
+    assert "/session/" not in html
+
+
+def test_jobs_tab_order_is_jobs_logs(client):
+    html = client.get("/jobs").text
+    jobs_pos = html.index('data-tab="jobs"')
+    logs_pos = html.index('data-tab="logs"')
+    assert jobs_pos < logs_pos
 
 
 def test_job_logs_rows_are_expandable(client):
@@ -120,7 +98,6 @@ def test_toggle_buttons_announce_state(client):
     # 7 chips start unpressed; segmented has one pressed + one not.
     assert html.count('aria-pressed="false"') >= 8
     assert html.count('aria-pressed="true"') >= 1
-    assert 'aria-expanded="false"' in html  # advanced disclosure + action menus
 
 
 def test_labels_are_associated_with_inputs(client):
@@ -134,8 +111,7 @@ def test_labels_are_associated_with_inputs(client):
         "field-command",
         "field-working-dir",
         "field-report-mode",
-        "field-max-turns",
-        "field-ephemeral",
+        "field-agent",
     ):
         assert f'for="{field}"' in html
 
@@ -189,8 +165,15 @@ def test_job_modal_has_action_toggle_and_command_fields(client):
     assert 'data-type="command"' in html
     assert 'id="field-command"' in html
     assert 'id="field-working-dir"' in html
-    # Advanced disclosure groups the agent-only options.
-    assert 'id="advanced-body"' in html
+    # The agent select and its warnings, for agent jobs.
+    assert 'id="field-agent"' in html
+    assert 'id="agent-bypass-warning"' in html
+    assert "--dangerously-skip-permissions" in html
+    assert 'id="agent-problem-claude"' in html
+    assert 'id="agent-problem-codex"' in html
+    # No engine-era options.
+    assert "field-max-turns" not in html
+    assert "field-ephemeral" not in html
     # Save & run now button.
     assert "saveAndRun" in html
 

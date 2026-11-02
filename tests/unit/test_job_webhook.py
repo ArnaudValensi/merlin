@@ -3,7 +3,6 @@
 import asyncio
 import json
 import threading
-import uuid
 from dataclasses import dataclass
 
 import pytest
@@ -85,8 +84,8 @@ class _FakeResult:
     duration: float = 0.1
     result: str = "ok"
     stderr: str = ""
-    cost_usd: float | None = None
-    session_id: str | None = None
+    run_id: str = "run-1"
+    window: str = ""
 
 
 class TestGenerateSecret:
@@ -184,49 +183,37 @@ class TestSingleFlight:
             job_state.release_job_lock(lock)
 
 
-class TestFreshSession:
-    def test_webhook_trigger_forces_fresh_session(self, monkeypatch):
-        """Even a non-ephemeral job gets a fresh UUID4 session per webhook
-        fire — independent incidents must not share context."""
+class TestFreshRun:
+    def test_webhook_prompt_marker(self, _isolated_job_dirs, fake_launch):
+        """A webhook fire tells the agent an external event launched it; a
+        scheduled or manual run carries the plain job marker. Every run
+        starts fresh in its own window: nothing of a previous fire is
+        carried over."""
         from job import runner
 
-        captured = {}
-
-        def fake_invoke(prompt, **kwargs):
-            captured["session_id"] = kwargs.get("session_id")
-            captured["prompt"] = prompt
-            return _FakeResult(session_id=kwargs.get("session_id"))
-
-        monkeypatch.setattr(runner, "invoke", fake_invoke)
-        job = {"type": "prompt", "prompt": "triage", "ephemeral": False}
-
-        runner._run_agent("hook-job", job, "req-1", trigger="webhook")
-
-        deterministic = runner.session_id_for_job("hook-job")
-        assert captured["session_id"] != deterministic
-        uuid.UUID(captured["session_id"])  # valid UUID
-
-    def test_webhook_prompt_marker(self, monkeypatch):
-        from job import runner
-
-        captured = {}
-
-        def fake_invoke(prompt, **kwargs):
-            captured["prompt"] = prompt
-            return _FakeResult()
-
-        monkeypatch.setattr(runner, "invoke", fake_invoke)
         job = {"type": "prompt", "prompt": "triage the outage"}
 
-        runner._run_agent("hook-job", job, "req-1", trigger="webhook")
-        assert captured["prompt"].startswith("[Triggered by webhook: hook-job]")
-
-        runner._run_agent("hook-job", job, "req-2")
-        assert captured["prompt"].startswith("[Job: hook-job]")
+        runner._execute_job(
+            "hook-job", job, emit_result=False, trigger="webhook", request_id="req-1"
+        )
+        runner._execute_job(
+            "hook-job", job, emit_result=False, trigger="manual", request_id="req-2"
+        )
+        first, second = fake_launch.runs
+        assert (
+            (first.dir / "prompt")
+            .read_text()
+            .startswith("[Triggered by webhook: hook-job]")
+        )
+        assert (second.dir / "prompt").read_text().startswith("[Job: hook-job]")
+        assert first.run_id == "req-1" and second.run_id == "req-2"
+        assert first.dir != second.dir
 
 
 class TestTriggerRecorded:
-    def test_history_and_log_carry_trigger(self, _isolated_job_dirs, monkeypatch):
+    def test_history_and_log_carry_trigger(
+        self, _isolated_job_dirs, monkeypatch, fake_launch
+    ):
         """A webhook-triggered execution records trigger=webhook in history
         and the run log, under the run_id it was accepted with."""
         from job import logs as job_logs
@@ -247,7 +234,7 @@ class TestTriggerRecorded:
         entries = job_logs.list_logs("hook-job")
         assert entries[0]["trigger"] == "webhook"
 
-    def test_dispatcher_marks_schedule(self, _isolated_job_dirs, monkeypatch):
+    def test_dispatcher_marks_schedule(self, _isolated_job_dirs, fake_launch):
         from job import runner
 
         job = _write_job(_isolated_job_dirs, command="echo scheduled")

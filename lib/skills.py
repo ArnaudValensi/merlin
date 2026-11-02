@@ -796,6 +796,33 @@ def interactive_hooks_drift() -> bool:
     ) or _hook_file_drift(codex_hooks_path(), _CODEX_HOOK_EVENTS)
 
 
+# The events a job run depends on to be seen finishing: the identity hook at
+# SessionStart, busy on a prompt, done at the end of a turn.
+_JOB_HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "Stop")
+
+
+def state_hooks_present(provider: str) -> bool:
+    """True when Merlin's own state hooks are installed in ``provider``'s user
+    config (``claude`` or ``codex``) for the events a job run needs. A pure
+    read, whatever the consent mode: it never writes the file. Any Merlin
+    version of the hooks counts, since each one writes ``@agent_state``."""
+    if provider == "codex":
+        path = codex_hooks_path()
+    elif provider == "claude":
+        path = claude_settings_path()
+    else:
+        return False
+    settings = _read_hook_file(path)
+    if not settings or not isinstance(settings.get("hooks"), dict):
+        return False
+    hooks = settings["hooks"]
+    for event in _JOB_HOOK_EVENTS:
+        groups = hooks.get(event)
+        if not isinstance(groups, list) or not any(_is_merlin_group(g) for g in groups):
+            return False
+    return True
+
+
 def sync_interactive_hooks() -> str:
     """Reconcile the state hooks per the consent mode. Called at every startup
     and after a consent change. Never raises into the caller's happy path.

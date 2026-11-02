@@ -153,6 +153,13 @@ def job_logs_dir() -> Path:
     return data_dir() / "job-logs"
 
 
+def job_runs_dir() -> Path:
+    """Private run directories, one per job run (``<run_id>/``, mode 0700):
+    the run script, the agent's prompt, the exit code and the output the run
+    leaves behind. Always ``~/.merlin/job-runs/``."""
+    return data_dir() / "job-runs"
+
+
 def logs_dir() -> Path:
     """Base log directory."""
     return data_dir() / "logs"

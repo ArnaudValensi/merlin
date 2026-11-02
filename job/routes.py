@@ -9,11 +9,11 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from job import logs, manage, state, webhook
+from job import agents, logs, manage, runs, state, webhook
 from job.schemas import JobCreate, JobUpdate
-from lib.event_log import JobRunnerCrashEvent, InvocationEvent, read_events
+from lib.event_log import JobRunnerCrashEvent, read_events
 from merlin_ext import make_templates
-from perf.aggregate import PerformanceData, aggregate_invocations
+from notifications.push import deep_link
 
 # URL_SLUG="jobs" resolves the module's historical inconsistency (API was
 # /api/job, page was /jobs): the framework now mounts api_router at /api/jobs
@@ -111,14 +111,13 @@ def create_job(body: JobCreate):
         "description": body.description,
         "timezone": body.timezone,
         "type": body.type,
+        "agent": body.agent,
         "prompt": body.prompt,
         "command": body.command,
         # "" (an emptied field) is stored as absent, not an empty string.
         "working_dir": body.working_dir or None,
         "enabled": body.enabled,
         "report_mode": body.report_mode,
-        "max_turns": body.max_turns,
-        "ephemeral": body.ephemeral,
         "grace_minutes": body.grace_minutes,
         "discord_channel": body.discord_channel,
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
@@ -145,7 +144,7 @@ def get_job(job_id: str):
 
     job["id"] = job_id
     job = _enrich_job(job)
-    job["history"] = state.get_history(job_id, limit=20)
+    job["history"] = _with_windows(state.get_history(job_id, limit=20))
     return job
 
 
@@ -325,7 +324,23 @@ def get_job_logs(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
 
-    return logs.list_logs(job_id)
+    return _with_windows(logs.list_logs(job_id))
+
+
+def _with_windows(entries: list[dict]) -> list[dict]:
+    """Add ``window`` (the tmux target) and ``window_url`` (the terminal deep
+    link, the same one a notification carries) to every run entry whose
+    window still exists. A run is read through its window while it lasts,
+    and always through its run log."""
+    if not entries:
+        return entries
+    windows = runs.job_windows()
+    for entry in entries:
+        target = windows.get(str(entry.get("run_id") or ""))
+        if target:
+            entry["window"] = target
+            entry["window_url"] = deep_link(target)
+    return entries
 
 
 @api_router.get("/jobs/{job_id}/logs/{timestamp:path}")
@@ -375,17 +390,7 @@ def get_all_logs(job_id: str | None = None, limit: int = 100):
         all_entries.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
         all_entries = all_entries[:limit]
 
-    # Resolve session_id → session_file for session viewer links
-    session_dir = paths.logs_dir() / "raw-sessions"
-    if session_dir.exists():
-        for entry in all_entries:
-            sid = entry.get("session_id")
-            if sid:
-                matches = list(session_dir.glob(f"*-{sid}.jsonl"))
-                if matches:
-                    entry["session_file"] = matches[0].name
-
-    return all_entries
+    return _with_windows(all_entries)
 
 
 @api_router.get("/webhook-events")
@@ -477,36 +482,6 @@ def get_crashes():
     return [c.model_dump(exclude_unset=True) for c in _get_recent_crashes()]
 
 
-@api_router.get("/performance")
-def job_performance(since: str | None = None) -> PerformanceData:
-    """Aggregate performance metrics for job callers (caller starts with 'job-').
-
-    The job analogue of the bot performance view: read invocation events from
-    engine-log.jsonl, keep only job callers, and aggregate server-side. A
-    missing/empty log yields a zeroed PerformanceData (HTTP 200, not 404).
-    """
-    now = datetime.now(tz=timezone.utc)
-    if since:
-        try:
-            since_dt = datetime.fromisoformat(since)
-        except ValueError:
-            raise HTTPException(
-                status_code=400, detail="Invalid 'since' timestamp"
-            ) from None
-        if since_dt.tzinfo is None:
-            since_dt = since_dt.replace(tzinfo=timezone.utc)
-    else:
-        since_dt = now - timedelta(days=7)
-
-    raw = read_events(event_type="invocation", since=since_dt)
-    job_events = [
-        e
-        for e in raw
-        if isinstance(e, InvocationEvent) and (e.caller or "").startswith("job-")
-    ]
-    return aggregate_invocations(job_events, now)
-
-
 # ---------------------------------------------------------------------------
 # Dashboard page route
 # ---------------------------------------------------------------------------
@@ -522,15 +497,15 @@ def jobs_page(request: Request):
 
         # Last run status from history
         job_id = job.get("id", "")
-        history = state.get_history(job_id, limit=1)
+        history = _with_windows(state.get_history(job_id, limit=1))
         if history:
             job["last_status"] = history[0].get("exit_code", -1)
-            job["last_cost"] = history[0].get("cost_usd")
             job["last_duration"] = history[0].get("duration")
+            job["last_window_url"] = history[0].get("window_url")
         else:
             job["last_status"] = None
-            job["last_cost"] = None
             job["last_duration"] = None
+            job["last_window_url"] = None
 
         # Human-readable schedule
         job["schedule_human"] = manage.cron_to_human(job.get("schedule", ""))
@@ -565,5 +540,11 @@ def jobs_page(request: Request):
             "any_webhook": any_webhook,
             "crashes": crashes,
             "default_working_dir": default_working_dir,
+            "agents": [(a.id, a.label) for a in agents.AGENTS.values()],
+            "default_agent": agents.DEFAULT_AGENT,
+            # Agent id -> why a run of it cannot start right now (binary
+            # missing, state hooks not installed): shown in the form up front.
+            "agent_problems": agents.problems(),
+            "bypass_warning": agents.BYPASS_WARNING,
         },
     )

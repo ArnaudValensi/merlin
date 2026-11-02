@@ -35,13 +35,19 @@ re='"transcript_path"[[:space:]]*:[[:space:]]*"(/[^"\\]*)"'
 if [[ $payload =~ $re ]]; then
   transcript="${BASH_REMATCH[1]}"
 fi
+cwd=""
+re='"cwd"[[:space:]]*:[[:space:]]*"(/[^"\\]*)"'
+if [[ $payload =~ $re ]]; then
+  cwd="${BASH_REMATCH[1]}"
+fi
 
 command -v tmux >/dev/null 2>&1 || exit 0
 
-# The window of this pane: $TMUX_PANE, or the ancestor walk when a helper
-# process stripped the environment (see agent-window.sh).
+# The window of this agent: $TMUX_PANE when this hook descends from the
+# pane, the ancestor walk when a helper process stripped the environment,
+# the session id and cwd when a daemon runs the hook (see agent-window.sh).
 . "$(dirname "$0")/agent-window.sh"
-win=$(agent_window)
+win=$(agent_window "$conv" "$cwd")
 [ -n "$win" ] || exit 0
 
 # Mint a stable id once. Resume in the same window keeps the existing id.

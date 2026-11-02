@@ -257,13 +257,23 @@ options or the state pill; when identity is not ready, it uses a private actor
 key without claiming liveness. It no-ops outside tmux. Historical capture is
 therefore independent of both the PTY bridge and `AgentEngine`.
 
-The state hooks find their window through `$TMUX_PANE`, with a fallback in
-`terminal/hooks/agent-window.sh`: Claude Code 2.1.273 runs hooks through a
-helper daemon whose children get a trimmed environment, without `TMUX_PANE` or
-`TMUX`, and the hooks stamped nothing until the fallback walked up the
-process ancestors to the pane's shell, which the daemon still descends from.
-The fallback runs only when `MERLIN_TERMINAL_HOOKS` is set, so a hook outside a
-Merlin terminal stays a no-op.
+The state hooks find their window through `terminal/hooks/agent-window.sh`,
+in this order: `$TMUX_PANE` when the hook descends from that pane's process
+(in-process hooks); the process ancestors up to a pane's shell when a helper
+stripped the environment (Claude Code 2.1.273 runs hooks through a helper
+daemon whose children get neither `TMUX_PANE` nor `TMUX`, and the helper still
+descends from the pane; this walk runs only when `MERLIN_TERMINAL_HOOKS` is
+set, so a hook outside a Merlin terminal stays a no-op); then the hook
+payload's session id and cwd, for Codex 0.165, which runs hooks in its
+app-server daemon, a process shared by every Codex session of the user and
+born with the environment of whichever pane started it: its `TMUX_PANE` is
+that pane, dead or alive, and no ancestor is a pane. The window already
+stamped with the payload's session id (`@agent_conv`, by the session init
+hook) wins, else the pane in the payload's cwd whose newest process is a
+Codex TUI (SessionStart fires right after it started). A `$TMUX` whose
+socket is gone is dropped first, so tmux reaches the default server. Codex
+runs its hooks only in a directory it trusts; elsewhere no hook fires and
+the pills stay blank. Pinned by `tests/unit/test_agent_state_hooks.py`.
 
 The same `@agent_state` feeds the notifications feature: a server-side watcher
 sweeps it every two seconds and turns transitions into browser notifications

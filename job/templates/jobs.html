@@ -276,12 +276,19 @@
     min-width: 60px;
 }
 
-.job-logs .log-cost {
-    font-family: 'Geist Mono', monospace;
+.job-logs .log-window {
     font-size: 11px;
-    color: var(--text-secondary);
     min-width: 60px;
 }
+.job-logs .log-window a,
+.log-table .window-link,
+.job-meta-item .window-link {
+    color: var(--accent-blue);
+    text-decoration: none;
+}
+.job-logs .log-window a:hover,
+.log-table .window-link:hover,
+.job-meta-item .window-link:hover { text-decoration: underline; }
 
 .job-logs .log-status {
     font-size: 12px;
@@ -612,33 +619,27 @@
     color: white;
 }
 
-/* ── Advanced disclosure ── */
-.job-modal .advanced-toggle {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    min-height: 44px;
-    background: none;
-    border: none;
-    text-align: left;
-    color: var(--text-secondary);
+/* ── Agent warnings ── */
+.job-modal .form-warning {
+    margin-top: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--accent-amber, #f9e2af);
+    border-radius: 6px;
     font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    padding: 4px 0;
-    font-family: inherit;
+    line-height: 1.45;
+    color: var(--text-primary);
+    background: var(--bg-primary);
 }
-.job-modal .advanced-toggle:hover { color: var(--text-primary); }
+.job-modal .form-warning.problem {
+    border-color: var(--accent-red);
+}
 
 /* Desktop: pointer-precise, compact variants */
 @media (min-width: 769px) {
     .job-modal .weekday-chip { width: 36px; height: 36px; }
     .job-modal .weekday-quick button { min-height: 0; padding: 4px 10px; font-size: 11px; }
     .job-modal .segmented button { min-height: 36px; }
-    .job-modal .advanced-toggle { min-height: 0; }
 }
-.job-modal .advanced-body { display: none; margin-top: 8px; }
-.job-modal .advanced-body.open { display: block; }
 
 .job-modal .webhook-enable {
     display: flex;
@@ -833,7 +834,6 @@
 
     <div class="tabs" id="job-tabs">
         <div class="tab active" data-tab="jobs">Jobs</div>
-        <div class="tab" data-tab="performance">Performance</div>
         <div class="tab" data-tab="logs">Logs</div>
         {% if any_webhook %}
         <div class="tab" data-tab="webhooks">Webhooks</div>
@@ -912,16 +912,16 @@
                             <span class="meta-value job-last-run" data-iso="{{ job.last_run }}" title="{{ job.last_run }}"></span>
                         </div>
                         {% endif %}
-                        {% if job.last_cost is not none %}
-                        <div class="job-meta-item">
-                            <span class="meta-label">Cost</span>
-                            <span class="meta-value">${{ "%.4f"|format(job.last_cost) }}</span>
-                        </div>
-                        {% endif %}
                         {% if job.last_duration is not none %}
                         <div class="job-meta-item">
                             <span class="meta-label">Duration</span>
                             <span class="meta-value">{{ "%.1f"|format(job.last_duration) }}s</span>
+                        </div>
+                        {% endif %}
+                        {% if job.last_window_url %}
+                        <div class="job-meta-item">
+                            <span class="meta-label">Window</span>
+                            <span class="meta-value"><a class="window-link" href="{{ job.last_window_url }}" title="Open the last run's tmux window">open</a></span>
                         </div>
                         {% endif %}
                     </div>
@@ -1004,36 +1004,6 @@
     </div><!-- /job-tab-webhooks -->
     {% endif %}
 
-    <!-- ── Performance tab ── -->
-    <div class="job-tab-content" id="job-tab-performance" style="display:none">
-        <div class="time-range" id="job-perf-range">
-            <button data-range="1">24h</button>
-            <button data-range="7" class="active">7d</button>
-            <button data-range="30">30d</button>
-        </div>
-        <div class="empty-state" id="job-perf-empty" style="display:none">No job runs in this range yet. Run a job and refresh.</div>
-        <div id="job-perf-charts">
-            <div class="stat-row">
-                <div class="chart-container" style="flex: 2;">
-                    <div class="chart-title">Execution Time Over Time</div>
-                    <canvas id="job-perf-timeseries" class="chart-canvas"></canvas>
-                </div>
-                <div class="stat-box">
-                    <div class="chart-title">Success Rate</div>
-                    <canvas id="job-perf-success" style="max-height: 200px;"></canvas>
-                    <div id="job-perf-success-text" style="text-align: center; margin-top: 12px; font-size: 14px; color: var(--text-secondary);"></div>
-                </div>
-            </div>
-            <div class="chart-container">
-                <div class="chart-title">Execution Time by Job</div>
-                <canvas id="job-perf-by-job-duration" class="chart-canvas"></canvas>
-            </div>
-            <div class="chart-container">
-                <div class="chart-title">Cost by Job</div>
-                <canvas id="job-perf-by-job-cost" class="chart-canvas"></canvas>
-            </div>
-        </div>
-    </div><!-- /job-tab-performance -->
 
 </div>
 
@@ -1165,12 +1135,25 @@
             </div>
             <div class="form-group" id="prompt-group">
                 <label class="form-label" for="field-prompt">Prompt</label>
-                <textarea class="form-input" id="field-prompt" placeholder="The prompt to send to Claude..."></textarea>
+                <textarea class="form-input" id="field-prompt" placeholder="The prompt the agent runs..."></textarea>
+            </div>
+            <div class="form-group" id="agent-group">
+                <label class="form-label" for="field-agent">Agent</label>
+                <select class="form-input" id="field-agent" onchange="Jobs.onAgentChange()">
+                    {% for agent_id, label in agents %}
+                    <option value="{{ agent_id }}"{% if agent_id == default_agent %} selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+                <div class="form-help">Each run opens the agent's real interface in a window of the <code>merlin-jobs</code> tmux session: watch it, step in, or answer it from the Terminal.</div>
+                <div class="form-warning" id="agent-bypass-warning">{{ bypass_warning }}</div>
+                {% for agent_id, label in agents %}
+                <div class="form-warning problem" id="agent-problem-{{ agent_id }}" data-agent="{{ agent_id }}" style="display:none">{{ agent_problems.get(agent_id, '') }}</div>
+                {% endfor %}
             </div>
             <div class="form-group" id="command-group" style="display:none">
                 <label class="form-label" for="field-command">Command</label>
                 <textarea class="form-input" id="field-command" placeholder="echo hello&#10;# runs via bash -lc, stdout+stderr captured"></textarea>
-                <div class="form-help">Runs in your Merlin environment via <code>bash -lc</code>. No agent, no token cost.</div>
+                <div class="form-help">Runs in your Merlin environment via <code>bash -lc</code>, in a window of the <code>merlin-jobs</code> tmux session. No agent.</div>
             </div>
             <div class="form-group">
                 <label class="form-label" for="field-working-dir">Working directory</label>
@@ -1184,7 +1167,7 @@
                     <option value="silent">Errors only</option>
                     <option value="off">Never</option>
                 </select>
-                <div class="form-help">Discord notification after each run</div>
+                <div class="form-help">A notification after each run</div>
             </div>
             {% if bot_loaded %}
             <div class="form-group" id="discord-channel-group">
@@ -1193,26 +1176,6 @@
                 <div class="form-help">Leave empty to use the bot's default channel.</div>
             </div>
             {% endif %}
-            <div class="form-group" id="advanced-group">
-                <button type="button" class="advanced-toggle" id="advanced-toggle" aria-expanded="false" aria-controls="advanced-body" onclick="Jobs.toggleAdvanced()">&#9656; Advanced (agent options)</button>
-                <div class="advanced-body" id="advanced-body">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label" for="field-max-turns">Max Turns</label>
-                            <input class="form-input" id="field-max-turns" type="number" min="0" value="0" style="font-family: 'Geist Mono', monospace;">
-                            <div class="form-help">0 = unlimited</div>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" for="field-ephemeral">Session Mode</label>
-                            <select class="form-input" id="field-ephemeral">
-                                <option value="true">Fresh session each run</option>
-                                <option value="false">Persistent session (keeps context)</option>
-                            </select>
-                            <div class="form-help">Fresh: each run starts clean (recommended). Persistent: Claude remembers previous runs, but costs grow over time.</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div><!-- /.job-modal-body -->
             <div class="modal-actions">
                 <button type="button" class="modal-cancel-btn" onclick="Jobs.closeModal()">Cancel</button>
@@ -1229,7 +1192,6 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/perf-charts.js"></script>
 <script>
 // Escape text for safe innerHTML interpolation.
 function escapeHtml(s) {
@@ -1245,7 +1207,6 @@ function switchJobsTab(tab) {
     document.querySelectorAll('.job-tab-content').forEach(c => c.style.display = 'none');
     document.getElementById('job-tab-' + tab).style.display = '';
     if (tab === 'logs') Jobs.loadAllLogs();
-    if (tab === 'performance') Jobs.loadPerformance();
     if (tab === 'webhooks') Jobs.loadWebhookActivity();
 }
 
@@ -1253,24 +1214,12 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('#job-tabs .tab').forEach(t => {
         t.addEventListener('click', () => switchJobsTab(t.dataset.tab));
     });
-
-    // Performance time-range buttons (re-fetch + re-render on change)
-    document.querySelectorAll('#job-perf-range button').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('#job-perf-range button').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            Jobs.setPerfRange(parseInt(btn.dataset.range));
-        });
-    });
 });
 
 const Jobs = {
     _editingJobId: null,
     _validateTimer: null,
     _returnFocus: null,
-    _perfRange: 7,          // selected time range in days (default 7)
-    _perfLoadedRange: null, // range currently rendered (null = not loaded yet)
-    _perfReqSeq: 0,         // monotonic request id; guards out-of-order responses
 
     // ── Logs tab ──
     async loadAllLogs(filterJobId) {
@@ -1285,31 +1234,39 @@ const Jobs = {
             return;
         }
 
-        let html = '<table class="log-table"><thead><tr><th>Time</th><th>Job</th><th>Status</th><th>Trigger</th><th>Duration</th><th>Cost</th><th></th></tr></thead><tbody>';
+        let html = '<table class="log-table"><thead><tr><th>Time</th><th>Job</th><th>Status</th><th>Trigger</th><th>Duration</th><th>Agent</th><th></th></tr></thead><tbody>';
         entries.forEach((e, i) => {
             const isError = e.exit_code != null && e.exit_code !== 0;
             const ts = e.timestamp || '';
             const time = ts ? formatDateTime(ts) : '—';
             const duration = e.duration_seconds != null ? formatDuration(e.duration_seconds) : '—';
-            const cost = e.cost_usd != null ? '$' + e.cost_usd.toFixed(4) : '—';
+            const agent = e.agent ? escapeHtml(e.agent) : '—';
             const trigger = e.trigger ? escapeHtml(e.trigger) : '—';
             const status = isError
                 ? '<span class="feed-badge badge-error">Error</span>'
                 : '<span class="feed-badge badge-success">OK</span>';
-            const sessionLink = e.session_file
-                ? `<a class="session-link" href="/session/${encodeURIComponent(e.session_file)}?back=jobs" onclick="event.stopPropagation()">View session</a>`
-                : '';
+            // The run's window, while it exists: the same deep link a
+            // notification carries. The run log is always one click away.
+            const windowLink = Jobs.windowLink(e);
             html += `<tr class="clickable ${isError ? 'error' : ''}" onclick="Jobs.toggleLogRow(${i}, '${e.job_id || ''}', '${ts}')" title="${utcString(ts)}">
                 <td>${time}</td>
                 <td class="duration">${(e.job_id || '—')}</td>
                 <td>${status}</td>
                 <td class="duration">${trigger}</td>
                 <td class="duration">${duration}</td>
-                <td class="duration">${cost}</td>
-                <td>${sessionLink}</td>
+                <td class="duration">${agent}</td>
+                <td>${windowLink}</td>
             </tr><tr class="row-detail" id="job-logdetail-${i}"><td colspan="7"><pre></pre></td></tr>`;
         });
         container.innerHTML = html + '</tbody></table>';
+    },
+
+    // A link to a run's tmux window while it exists (the entry carries
+    // window_url then), or nothing.
+    windowLink(entry) {
+        if (!entry || !entry.window_url) return '';
+        const url = String(entry.window_url).replace(/"/g, '&quot;');
+        return `<a class="window-link" href="${url}" onclick="event.stopPropagation()" title="Open the run's window in the Terminal">Open window</a>`;
     },
 
     // ── Webhooks tab ──
@@ -1373,65 +1330,6 @@ const Jobs = {
         switchJobsTab('logs');
     },
 
-    // ── Performance tab ──
-    _perfSince(days) {
-        const d = new Date();
-        d.setDate(d.getDate() - days);
-        return d.toISOString();
-    },
-
-    async loadPerformance(force) {
-        // Lazy load: one fetch per activation. Skip if the current range is
-        // already rendered (unless forced by a range change).
-        if (!force && this._perfLoadedRange === this._perfRange) return;
-        configureChartDefaults();
-
-        // Guard against out-of-order responses: if the range changes again
-        // before this fetch resolves, only the latest request renders.
-        const seq = ++this._perfReqSeq;
-        const range = this._perfRange;
-        const since = this._perfSince(range);
-        const data = await API.get('/api/jobs/performance?since=' + encodeURIComponent(since));
-        if (seq !== this._perfReqSeq || !data) return;
-
-        this._perfLoadedRange = range;
-        this._renderPerformance(data);
-    },
-
-    setPerfRange(days) {
-        this._perfRange = days;
-        this.loadPerformance(true); // re-fetch + re-render for the new range
-    },
-
-    _renderPerformance(data) {
-        const total = (data.success_rate && data.success_rate.total) || 0;
-        const emptyEl = document.getElementById('job-perf-empty');
-        const chartsEl = document.getElementById('job-perf-charts');
-
-        if (total === 0) {
-            if (chartsEl) chartsEl.style.display = 'none';
-            if (emptyEl) emptyEl.style.display = '';
-            return;
-        }
-        if (emptyEl) emptyEl.style.display = 'none';
-        if (chartsEl) chartsEl.style.display = '';
-
-        // Pre-aggregated server-side; renderers just draw. renderOrUpdate
-        // destroys any previous chart on each canvas, so range switches don't
-        // leak Chart.js instances.
-        PerfCharts.renderExecutionTimeOverTime('job-perf-timeseries', data.timeseries);
-        PerfCharts.renderSuccessRate('job-perf-success', data.success_rate);
-        PerfCharts.renderExecutionTimeByJob('job-perf-by-job-duration', data.by_job_duration);
-        PerfCharts.renderCostByJob('job-perf-by-job-cost', data.by_job_cost);
-
-        const txt = document.getElementById('job-perf-success-text');
-        if (txt) {
-            const sr = data.success_rate;
-            const pct = sr.total > 0 ? Math.round((sr.success / sr.total) * 100) : 0;
-            txt.textContent = `${pct}% success (${sr.total} total)`;
-        }
-    },
-
     // ── Modal ──
     openCreateModal() {
         this._editingJobId = null;
@@ -1450,9 +1348,8 @@ const Jobs = {
         document.getElementById('field-daily-time').value = '09:00';
         this.cronToBuilder('0 9 * * *');
         document.getElementById('field-report-mode').value = 'always';
-        document.getElementById('field-max-turns').value = '0';
-        document.getElementById('field-ephemeral').value = 'true';
-        this._resetAdvanced();
+        document.getElementById('field-agent').value = {{ default_agent|tojson }};
+        this.onAgentChange();
         const preview = document.getElementById('schedule-preview');
         if (preview) preview.style.display = 'none';
         const errorId = document.getElementById('error-id');
@@ -1490,14 +1387,15 @@ const Jobs = {
         document.getElementById('field-command').value = job.command || '';
         document.getElementById('field-working-dir').value = job.working_dir || '';
         this.setJobType(job.type === 'command' ? 'command' : 'prompt');
-        this._resetAdvanced();
+        const agentSel = document.getElementById('field-agent');
+        agentSel.value = job.agent || {{ default_agent|tojson }};
+        if (!agentSel.value) agentSel.value = {{ default_agent|tojson }};
+        this.onAgentChange();
         // Stored timezone if present, else the browser's zone.
         this.setTimezone(job.timezone || null);
         // Round-trip the stored cron into the builder (falls back to Custom).
         this.cronToBuilder(job.schedule || '');
         document.getElementById('field-report-mode').value = job.report_mode || 'always';
-        document.getElementById('field-max-turns').value = String(job.max_turns || 0);
-        document.getElementById('field-ephemeral').value = job.ephemeral === false ? 'false' : 'true';
         const preview = document.getElementById('schedule-preview');
         if (preview) preview.style.display = 'none';
         const errorId = document.getElementById('error-id');
@@ -1539,7 +1437,7 @@ const Jobs = {
         this._returnFocus = null;
     },
 
-    // ── Action type toggle + advanced disclosure ──
+    // ── Action type toggle ──
     setJobType(type) {
         document.querySelectorAll('#field-type button').forEach(b => {
             const on = b.dataset.type === type;
@@ -1549,28 +1447,24 @@ const Jobs = {
         const isCommand = type === 'command';
         document.getElementById('prompt-group').style.display = isCommand ? 'none' : 'block';
         document.getElementById('command-group').style.display = isCommand ? 'block' : 'none';
-        // Agent-only advanced options are irrelevant for commands.
-        document.getElementById('advanced-group').style.display = isCommand ? 'none' : 'block';
+        // The agent and its warnings only matter to an agent job.
+        document.getElementById('agent-group').style.display = isCommand ? 'none' : 'block';
+    },
+
+    // Show the launch problem of the selected agent (binary missing, state
+    // hooks not installed), if it has one, so a job that cannot start is
+    // warned about up front.
+    onAgentChange() {
+        const selected = document.getElementById('field-agent').value;
+        document.querySelectorAll('#agent-group .form-warning.problem').forEach(el => {
+            const applies = el.dataset.agent === selected && el.textContent.trim() !== '';
+            el.style.display = applies ? 'block' : 'none';
+        });
     },
 
     _jobType() {
         const active = document.querySelector('#field-type button.active');
         return active ? active.dataset.type : 'prompt';
-    },
-
-    toggleAdvanced() {
-        const body = document.getElementById('advanced-body');
-        const btn = document.getElementById('advanced-toggle');
-        const open = body.classList.toggle('open');
-        btn.innerHTML = (open ? '&#9662;' : '&#9656;') + ' Advanced (agent options)';
-        btn.setAttribute('aria-expanded', String(open));
-    },
-
-    _resetAdvanced() {
-        document.getElementById('advanced-body').classList.remove('open');
-        const btn = document.getElementById('advanced-toggle');
-        btn.innerHTML = '&#9656; Advanced (agent options)';
-        btn.setAttribute('aria-expanded', 'false');
     },
 
     // Disable the footer while a save is in flight (prevents double-submit)
@@ -1620,8 +1514,7 @@ const Jobs = {
             body.command = command;
         } else {
             body.prompt = prompt;
-            body.max_turns = parseInt(document.getElementById('field-max-turns').value) || 0;
-            body.ephemeral = document.getElementById('field-ephemeral').value === 'true';
+            body.agent = document.getElementById('field-agent').value;
         }
 
         // Notifications: report_mode says when ("off" = never, enforced by
@@ -1903,13 +1796,12 @@ const Jobs = {
             const isError = entry.exit_code !== 0;
             const ts = entry.timestamp ? formatDateTime(entry.timestamp) : '—';
             const dur = entry.duration_seconds != null ? formatDuration(entry.duration_seconds) : '—';
-            const cost = entry.cost_usd != null ? formatCost(entry.cost_usd) : '—';
             const icon = isError ? '<span style="color:var(--accent-red)">&#10007;</span>' : '<span style="color:var(--accent-green)">&#10003;</span>';
 
             return `<div class="log-entry" onclick="Jobs.loadLogDetail('${jobId}', '${entry.timestamp || ''}')">
                 <span class="log-time">${ts}</span>
                 <span class="log-duration">${dur}</span>
-                <span class="log-cost">${cost}</span>
+                <span class="log-window">${Jobs.windowLink(entry)}</span>
                 <span class="log-status">${icon}</span>
             </div>`;
         }).join('');

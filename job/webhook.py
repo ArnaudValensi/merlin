@@ -13,9 +13,8 @@ module owns everything job-specific:
 Runs launch in-process (``asyncio.to_thread`` around the runner) instead of
 the scheduler's subprocess path so the single-flight answer is authoritative:
 the in-flight map tracks webhook runs in this process, and the per-job flock
-covers overlap with scheduled/manual runs. Each launched run gets a fresh
-session (independent incidents must not bleed together) — enforced in
-``runner._run_agent`` for ``trigger="webhook"``.
+covers overlap with scheduled/manual runs. Every run starts fresh in its own
+window (independent incidents never bleed together).
 """
 
 from __future__ import annotations
@@ -99,10 +98,10 @@ async def _run(job_id: str, job: dict, run_id: str, lock) -> None:
     """Execute the run in a worker thread, then notify.
 
     Both the run and the notification are offloaded with ``asyncio.to_thread``
-    so nothing blocks the event loop (the run invokes the agent; notification
-    does synchronous Discord I/O). The flock is released as soon as the run
-    finishes — before notifying — so single-flight covers only the run itself,
-    not the delivery that follows it.
+    so nothing blocks the event loop (the run's supervisor polls the window
+    for as long as the run takes; notification does synchronous Discord I/O).
+    The flock is released as soon as the run finishes, before notifying, so
+    single-flight covers only the run itself, not the delivery that follows it.
     """
     from job import runner
 
@@ -144,8 +143,6 @@ def _notify(job_id: str, job: dict, result) -> None:
             result={
                 "exit_code": result.exit_code,
                 "duration_seconds": round(result.duration, 2),
-                "cost_usd": result.cost_usd,
-                "session_id": result.session_id,
                 "output": result.result or "",
             },
             extension_registry=extension_registry,

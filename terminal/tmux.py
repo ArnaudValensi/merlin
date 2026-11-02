@@ -26,6 +26,9 @@ TMUX_CONF = TERMINAL_DIR / "tmux.conf"
 HOOKS_DIR = TERMINAL_DIR / "hooks"
 
 DEFAULT_SESSION_NAME = "merlin-dev"
+# The session every job run opens its window in (see job/runs.py). Not part
+# of the workspace: never snapshotted, never restored.
+JOBS_SESSION_NAME = "merlin-jobs"
 _SESSION_ID = re.compile(r"^\$\d+$")
 
 

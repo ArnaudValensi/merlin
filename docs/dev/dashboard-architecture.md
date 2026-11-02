@@ -510,7 +510,7 @@ terminal/
 job/
 ├── routes.py             # /jobs page + REST API
 ├── tz.py                 # job_timezone_default() — shared UTC-fallback tz resolver
-└── templates/jobs.html   # Jobs/Performance/Logs tabs + create/edit modal
+└── templates/jobs.html   # Jobs/Logs tabs + create/edit modal
 ```
 
 **Pages:** `/jobs` (see [`job-system.md`](job-system.md) for the backend).

@@ -4,7 +4,7 @@ import json
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -50,7 +50,6 @@ def create_job_file(directory: Path, job_id: str, **overrides) -> Path:
         "channel": "123456789",
         "enabled": True,
         "report_mode": "always",
-        "max_turns": 20,
         "created_at": "2026-02-05T00:00:00Z",
     }
     job.update(overrides)
@@ -58,22 +57,6 @@ def create_job_file(directory: Path, job_id: str, **overrides) -> Path:
     path = directory / f"{job_id}.json"
     path.write_text(json.dumps(job))
     return path
-
-
-def make_mock_result(**kwargs):
-    """Create a mock invoke result."""
-    defaults = {
-        "exit_code": 0,
-        "duration": 1.0,
-        "session_id": "test-session",
-        "stderr": "",
-        "cost_usd": 0.05,
-    }
-    defaults.update(kwargs)
-    result = MagicMock()
-    for k, v in defaults.items():
-        setattr(result, k, v)
-    return result
 
 
 class TestLoadJob:
@@ -301,137 +284,130 @@ class TestIsJobDue:
 
 
 class TestBuildPrompt:
-    """Tests for build_prompt function."""
+    """The prompt a run hands its agent: the marker, a blank line, the job's
+    prompt, nothing about delivery."""
 
-    def test_build_prompt_returns_job_prompt(self):
-        """build_prompt returns the job's prompt without any delivery instructions."""
-        from job.runner import build_prompt
+    def test_job_marker(self):
+        from job.runs import build_prompt
 
-        job = {"prompt": "Search for X", "report_mode": "silent"}
-        prompt = build_prompt(job)
-        assert prompt == "Search for X"
+        text = build_prompt("daily", {"prompt": "Check the releases"}, "schedule")
+        assert text == "[Job: daily]\n\nCheck the releases"
 
-    def test_build_prompt_no_discord_mention(self):
-        """build_prompt never mentions Discord."""
-        from job.runner import build_prompt
+    def test_webhook_marker(self):
+        from job.runs import build_prompt
 
-        job = {"prompt": "Do something", "report_mode": "always"}
-        prompt = build_prompt(job)
-        assert "discord" not in prompt.lower()
-        assert "Discord" not in prompt
+        text = build_prompt("daily", {"prompt": "Triage"}, "webhook")
+        assert text.startswith("[Triggered by webhook: daily]\n\n")
 
+    def test_no_delivery_instructions(self):
+        from job.runs import build_prompt
 
-class TestSessionId:
-    """Tests for session_id_for_job function."""
-
-    def test_session_id_deterministic(self):
-        """session_id_for_job returns same ID for same job."""
-        from job.runner import session_id_for_job
-
-        s1 = session_id_for_job("test-job")
-        s2 = session_id_for_job("test-job")
-        assert s1 == s2
-
-    def test_session_id_different_jobs(self):
-        """session_id_for_job returns different IDs for different jobs."""
-        from job.runner import session_id_for_job
-
-        s1 = session_id_for_job("job1")
-        s2 = session_id_for_job("job2")
-        assert s1 != s2
-
-    def test_session_id_is_valid_uuid(self):
-        """session_id_for_job returns a valid UUID string."""
-        import uuid
-
-        from job.runner import session_id_for_job
-
-        s = session_id_for_job("test-job")
-        # Should not raise
-        uuid.UUID(s)
+        text = build_prompt("daily", {"prompt": "Do the thing"}, "manual")
+        assert "discord" not in text.lower()
+        assert "send" not in text.lower()
 
 
 class TestRunJob:
-    """Tests for run_job function."""
+    """run_job: the lock, the launch, the record."""
 
-    def test_run_job_calls_invoke(self, temp_jobs_dir):
-        """run_job calls invoke with correct arguments."""
-        from job.runner import run_job
-
+    def _job(self, **over):
         job = {
             "description": "Test job",
             "schedule": "0 9 * * *",
             "prompt": "Do something",
-            "channel": "123456789",
             "enabled": True,
             "report_mode": "always",
-            "max_turns": 10,
         }
+        job.update(over)
+        return job
 
-        with patch("job.runner.invoke", return_value=make_mock_result()) as mock_invoke:
-            run_job("test-job", job)
-
-            mock_invoke.assert_called_once()
-            call_args = mock_invoke.call_args
-            assert "Do something" in call_args[0][0]  # prompt
-            assert call_args[1]["caller"] == "job-test-job"
-            assert call_args[1]["max_turns"] == 10
-
-    def test_agent_job_selects_headless_worker_recipe(self, temp_jobs_dir):
-        """Agent jobs inject the headless-worker composition (brain + user)."""
+    def test_run_job_opens_a_window_for_the_job(self, temp_jobs_dir, fake_launch):
         from job.runner import run_job
 
-        job = {
-            "description": "Test job",
-            "schedule": "0 9 * * *",
-            "prompt": "Do something",
-            "channel": "123456789",
-            "enabled": True,
-            "report_mode": "always",
-        }
+        result = run_job("test-job", self._job())
+        assert result is not None and result.exit_code == 0
+        assert len(fake_launch.runs) == 1
+        run = fake_launch.runs[0]
+        assert run.job_id == "test-job"
+        assert run.is_agent and run.agent == "claude"
+        assert run.deadline == 21600
+        assert (run.dir / "prompt").read_text() == "[Job: test-job]\n\nDo something"
+        assert result.run_id == run.run_id
+        assert result.window == run.target
 
-        with (
-            patch("job.runner.invoke", return_value=make_mock_result()) as mock_invoke,
-            patch(
-                "job.runner.agent_context.compose", return_value="COMPOSED"
-            ) as mock_compose,
-        ):
-            run_job("test-job", job)
+    def test_run_job_uses_the_jobs_agent(self, temp_jobs_dir, fake_launch):
+        from job.runner import run_job
 
-        mock_compose.assert_called_once_with("headless-worker")
-        assert mock_invoke.call_args[1]["append_system_prompt"] == "COMPOSED"
+        run_job("codex-job", self._job(agent="codex"))
+        assert fake_launch.runs[0].agent == "codex"
+        assert (
+            "codex --dangerously-bypass-approvals-and-sandbox"
+            in (fake_launch.runs[0].dir / "run.sh").read_text()
+        )
 
-    def test_run_job_updates_state_and_history(self, temp_jobs_dir):
+    def test_command_job_has_the_command_deadline(self, temp_jobs_dir, fake_launch):
+        from job.runner import run_job
+
+        run_job("cmd", self._job(type="command", command="echo hi"))
+        run = fake_launch.runs[0]
+        assert not run.is_agent and run.agent is None
+        assert run.deadline == 3600
+        assert not (run.dir / "prompt").exists()
+
+    def test_run_job_updates_state_and_history(self, temp_jobs_dir, fake_launch):
         """A scheduled run advances the schedule cursor and records history."""
         from job.runner import run_job
         from job.state import get_history, get_last_run
 
-        job = {
-            "description": "Test job",
-            "schedule": "0 9 * * *",
-            "prompt": "Do something",
-            "channel": "123456789",
-            "enabled": True,
-            "report_mode": "always",
-        }
-
-        with patch(
-            "job.runner.invoke",
-            return_value=make_mock_result(duration=2.5, cost_usd=0.10),
-        ):
-            run_job("test-job", job, trigger="schedule")
+        fake_launch.output = "the output"
+        run_job("test-job", self._job(), trigger="schedule")
 
         # A scheduled run advances the cursor
         assert get_last_run("test-job") is not None
 
-        # History should have entry
         history = get_history("test-job")
         assert len(history) == 1
         assert history[0]["exit_code"] == 0
-        assert history[0]["duration"] == 2.5
-        assert history[0]["cost_usd"] == 0.10
+        assert history[0]["agent"] == "claude"
+        assert history[0]["run_id"] == fake_launch.runs[0].run_id
+        assert history[0]["trigger"] == "schedule"
+        assert "cost_usd" not in history[0]
+        # The run directory is marked recorded exactly once.
+        assert (fake_launch.runs[0].dir / "result.json").exists()
 
-    def test_non_scheduled_run_does_not_advance_cursor(self, temp_jobs_dir):
+    def test_run_log_carries_agent_and_run_id(
+        self, temp_jobs_dir, fake_launch, monkeypatch
+    ):
+        from job import logs as job_logs
+        from job.runner import run_job
+
+        monkeypatch.setattr(job_logs, "_logs_base_dir", lambda: temp_jobs_dir / "rl")
+        fake_launch.output = "pane text"
+        run_job("test-job", self._job())
+        entries = job_logs.list_logs("test-job")
+        assert entries[0]["agent"] == "claude"
+        assert entries[0]["run_id"] == fake_launch.runs[0].run_id
+        assert "session_id" not in entries[0]
+        full = job_logs.read_log("test-job", entries[0]["timestamp"])
+        assert full["output"] == "pane text"
+
+    def test_record_run_records_once(self, temp_jobs_dir, fake_launch):
+        """A second record of the same run (the orphan path racing a
+        supervisor) writes nothing."""
+        from job import supervisor
+        from job.runner import record_run, run_job
+        from job.state import get_history
+
+        run_job("test-job", self._job())
+        run = fake_launch.runs[0]
+        record_run(
+            run, supervisor.Outcome(exit_code=0, finished=run.started, output="")
+        )
+        assert len(get_history("test-job")) == 1
+
+    def test_non_scheduled_run_does_not_advance_cursor(
+        self, temp_jobs_dir, fake_launch
+    ):
         """A webhook or manual run records history but leaves the schedule
         cursor untouched, so it can't consume an upcoming scheduled slot (#7)."""
         from job.runner import run_job
@@ -440,14 +416,15 @@ class TestRunJob:
         job = {"schedule": "0 9 * * *", "prompt": "x", "enabled": True}
 
         for trig in ("webhook", "manual"):
-            with patch("job.runner.invoke", return_value=make_mock_result()):
-                run_job(f"j-{trig}", job, trigger=trig)
+            run_job(f"j-{trig}", job, trigger=trig)
             # No cursor written...
             assert get_last_run(f"j-{trig}") is None
             # ...but the run is still recorded in history (drives the display).
             assert len(get_history(f"j-{trig}")) == 1
 
-    def test_webhook_run_does_not_swallow_scheduled_slot(self, temp_jobs_dir):
+    def test_webhook_run_does_not_swallow_scheduled_slot(
+        self, temp_jobs_dir, fake_launch
+    ):
         """The concrete #7 scenario: the schedule cursor sits at the last
         scheduled fire; a webhook run in between must leave it there so the
         next scheduled slot still comes due (grace fires it)."""
@@ -465,69 +442,76 @@ class TestRunJob:
         set_last_run("daily", yesterday_9)
 
         # A webhook fires and runs.
-        with patch("job.runner.invoke", return_value=make_mock_result()):
-            run_job("daily", job, trigger="webhook")
+        run_job("daily", job, trigger="webhook")
 
-        # Cursor unchanged — still yesterday's fire, not the webhook time.
+        # Cursor unchanged: still yesterday's fire, not the webhook time.
         assert get_last_run("daily") == yesterday_9
 
         # A few minutes after today's 09:00 slot, the job is still due
-        # (within grace) — the slot was not swallowed.
+        # (within grace): the slot was not swallowed.
         just_after_9 = datetime.now(tz=timezone.utc).replace(
             hour=9, minute=5, second=0, microsecond=0
         )
         assert is_job_due("daily", "0 9 * * *", just_after_9, tz=timezone.utc)
 
-    def test_run_job_non_ephemeral_uses_deterministic_session(self, temp_jobs_dir):
-        """Non-ephemeral job uses deterministic session ID (no resume logic)."""
-        from job.runner import run_job, session_id_for_job
-
-        job = {
-            "description": "Test job",
-            "schedule": "0 9 * * *",
-            "prompt": "Do something",
-            "channel": "123456789",
-            "enabled": True,
-            "report_mode": "always",
-            "ephemeral": False,
-        }
-
-        with patch("job.runner.invoke", return_value=make_mock_result()) as mock:
-            run_job("test-job", job)
-
-            assert mock.call_count == 1
-            call_kwargs = mock.call_args[1]
-            assert call_kwargs["session_id"] == session_id_for_job("test-job")
-
-    def test_run_job_skips_if_locked(self, temp_jobs_dir):
+    def test_run_job_skips_if_locked(self, temp_jobs_dir, fake_launch):
         """run_job skips execution if job is already locked."""
         from job.runner import run_job
         from job.state import acquire_job_lock, release_job_lock
 
-        job = {
-            "description": "Test job",
-            "schedule": "0 9 * * *",
-            "prompt": "Do something",
-            "channel": "123456789",
-            "enabled": True,
-            "report_mode": "always",
-        }
-
-        # Hold the lock
         lock = acquire_job_lock("test-job")
         assert lock is not None
-
-        with patch("job.runner.invoke") as mock:
-            run_job("test-job", job)
-            mock.assert_not_called()  # Should be skipped
-
+        assert run_job("test-job", self._job()) is None
+        assert fake_launch.runs == []
         release_job_lock(lock)
+
+    def test_launch_that_cannot_happen_is_a_failed_run(
+        self, temp_jobs_dir, fake_launch, monkeypatch
+    ):
+        """No window, a clear message in history and the run log, the agent's
+        exit code (127 for a missing binary, 1 for missing hooks)."""
+        from job import agents, logs as job_logs
+        from job.runner import run_job
+        from job.state import get_history
+
+        monkeypatch.setattr(job_logs, "_logs_base_dir", lambda: temp_jobs_dir / "rl")
+        monkeypatch.setattr(
+            agents, "launch_problem", lambda agent: (127, "claude is not installed")
+        )
+        result = run_job("test-job", self._job())
+        assert result is not None
+        assert result.exit_code == 127
+        assert result.window == ""
+        assert fake_launch.runs == []
+        assert get_history("test-job")[0]["exit_code"] == 127
+        entry = job_logs.list_logs("test-job")[0]
+        full = job_logs.read_log("test-job", entry["timestamp"])
+        assert "claude is not installed" in full["output"]
+        # No run directory is left behind.
+        from job import runs
+
+        assert runs.run_dirs() == []
+
+    def test_window_that_cannot_open_is_a_failed_run(
+        self, temp_jobs_dir, fake_launch, monkeypatch
+    ):
+        from job import runner, runs
+        from job.runner import run_job
+
+        def refuse(run):
+            raise runs.LaunchError(1, "could not open a tmux window for the run.")
+
+        monkeypatch.setattr(runner.runs, "launch", refuse)
+        result = run_job("test-job", self._job())
+        assert result is not None and result.exit_code == 1
+        assert "tmux window" in result.result
+        assert runs.run_dirs() == []
 
 
 class TestRunDispatcher:
     """Tests for run_dispatcher function."""
 
-    def test_dispatcher_runs_due_jobs(self, temp_jobs_dir):
+    def test_dispatcher_runs_due_jobs(self, temp_jobs_dir, fake_launch):
         """Dispatcher runs jobs that are due."""
         from job.runner import run_dispatcher
         from job.state import set_last_run
@@ -539,23 +523,21 @@ class TestRunDispatcher:
             "every-minute", datetime.now(tz=timezone.utc) - timedelta(minutes=2)
         )
 
-        with patch("job.runner.invoke", return_value=make_mock_result()) as mock:
-            run_dispatcher()
-            assert mock.call_count == 1
+        run_dispatcher()
+        assert [r.job_id for r in fake_launch.runs] == ["every-minute"]
+        assert fake_launch.runs[0].trigger == "schedule"
 
-    def test_dispatcher_skips_disabled_jobs(self, temp_jobs_dir):
+    def test_dispatcher_skips_disabled_jobs(self, temp_jobs_dir, fake_launch):
         """Dispatcher skips disabled jobs."""
         from job.runner import run_dispatcher
 
         create_job_file(
             temp_jobs_dir, "disabled-job", schedule="* * * * *", enabled=False
         )
+        run_dispatcher()
+        assert fake_launch.runs == []
 
-        with patch("job.runner.invoke") as mock:
-            run_dispatcher()
-            mock.assert_not_called()
-
-    def test_dispatcher_skips_not_due_jobs(self, temp_jobs_dir):
+    def test_dispatcher_skips_not_due_jobs(self, temp_jobs_dir, fake_launch):
         """Dispatcher skips jobs that aren't due yet."""
         from job.runner import run_dispatcher
         from job.state import set_last_run
@@ -566,11 +548,10 @@ class TestRunDispatcher:
         # Set last run to just now
         set_last_run("daily-job", datetime.now(tz=timezone.utc))
 
-        with patch("job.runner.invoke") as mock:
-            run_dispatcher()
-            mock.assert_not_called()
+        run_dispatcher()
+        assert fake_launch.runs == []
 
-    def test_dispatcher_continues_after_job_error(self, temp_jobs_dir):
+    def test_dispatcher_continues_after_job_error(self, temp_jobs_dir, fake_launch):
         """Dispatcher continues running other jobs if one fails."""
         from job.runner import run_dispatcher
         from job.state import set_last_run
@@ -582,22 +563,13 @@ class TestRunDispatcher:
         set_last_run("job1", two_min_ago)
         set_last_run("job2", two_min_ago)
 
-        call_count = 0
-
-        def mock_invoke(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("Simulated error")
-            return make_mock_result()
-
-        with patch("job.runner.invoke", side_effect=mock_invoke):
-            run_dispatcher()  # Should not raise
+        fake_launch.fail = RuntimeError("Simulated error")
+        run_dispatcher()  # Should not raise
 
         # Both jobs should have been attempted
-        assert call_count == 2
+        assert sorted(r.job_id for r in fake_launch.runs) == ["job1", "job2"]
 
-    def test_dispatcher_runs_jobs_in_parallel(self, temp_jobs_dir):
+    def test_dispatcher_runs_jobs_in_parallel(self, temp_jobs_dir, fake_launch):
         """Dispatcher runs multiple due jobs concurrently."""
         from job.runner import run_dispatcher
         from job.state import set_last_run
@@ -609,28 +581,19 @@ class TestRunDispatcher:
                 f"job{i}", datetime.now(tz=timezone.utc) - timedelta(minutes=2)
             )
 
-        execution_times = {}
-
-        def slow_invoke(*args, **kwargs):
-            job_caller = kwargs.get("caller", "")
-            execution_times[job_caller] = {"start": time.time()}
-            time.sleep(0.3)  # Simulate work
-            execution_times[job_caller]["end"] = time.time()
-            return make_mock_result()
-
-        with patch("job.runner.invoke", side_effect=slow_invoke):
-            start = time.time()
-            run_dispatcher()
-            wall_time = time.time() - start
+        fake_launch.delay = 0.3
+        start = time.time()
+        run_dispatcher()
+        wall_time = time.time() - start
 
         # All 3 should have run
-        assert len(execution_times) == 3
+        assert len(fake_launch.runs) == 3
 
         # Wall time should be ~0.3s (parallel), not ~0.9s (sequential)
         # Use generous margin for CI environments
         assert wall_time < 0.8, f"Expected parallel execution but took {wall_time:.2f}s"
 
-    def test_dispatcher_skips_stale_jobs_on_restart(self, temp_jobs_dir):
+    def test_dispatcher_skips_stale_jobs_on_restart(self, temp_jobs_dir, fake_launch):
         """After a restart, jobs >15 min past schedule are skipped."""
         from job.runner import run_dispatcher
         from job.state import set_last_run
@@ -645,24 +608,37 @@ class TestRunDispatcher:
             "job.runner._now",
             return_value=datetime(2026, 2, 5, 4, 0, 0, tzinfo=timezone.utc),
         ):
-            with patch("job.runner.invoke") as mock:
-                run_dispatcher()
-                mock.assert_not_called()  # Both jobs are stale
+            run_dispatcher()
+        assert fake_launch.runs == []  # Both jobs are stale
 
-    def test_dispatcher_never_seen_jobs_not_run(self, temp_jobs_dir):
+    def test_dispatcher_never_seen_jobs_not_run(self, temp_jobs_dir, fake_launch):
         """Brand new jobs (no state) are registered but not executed."""
         from job.runner import run_dispatcher
         from job.state import get_last_run
 
         create_job_file(temp_jobs_dir, "brand-new", schedule="0 9 * * *")
-        # No set_last_run — this is a never-seen job
+        # No set_last_run: this is a never-seen job
 
-        with patch("job.runner.invoke") as mock:
-            run_dispatcher()
-            mock.assert_not_called()
+        run_dispatcher()
+        assert fake_launch.runs == []
 
         # But state should be initialized
         assert get_last_run("brand-new") is not None
+
+    def test_dispatcher_runs_retention_tick(
+        self, temp_jobs_dir, fake_launch, monkeypatch
+    ):
+        """Every tick finalizes orphans and closes windows past retention."""
+        from job import runner
+
+        calls = []
+        monkeypatch.setattr(
+            runner.retention,
+            "tick",
+            lambda **kw: calls.append(1) or {"finalized": 0, "closed": 0, "removed": 0},
+        )
+        runner.run_dispatcher()
+        assert calls == [1]
 
 
 # ---------------------------------------------------------------------------
@@ -699,56 +675,33 @@ class TestResolveWorkingDir:
 
 
 class TestAgentJobCwd:
-    def _capture_invoke(self, monkeypatch):
-        import job.runner as runner
+    def test_agent_job_passes_explicit_working_dir(
+        self, temp_jobs_dir, fake_launch, tmp_path
+    ):
+        from job.runner import run_job
 
-        calls = {}
+        run_job("my-job", {"prompt": "do it", "working_dir": str(tmp_path)})
+        assert fake_launch.runs[0].cwd == str(tmp_path)
 
-        def fake_invoke(prompt, **kwargs):
-            calls.update(kwargs, prompt=prompt)
+    def test_agent_job_defaults_to_launch_cwd(
+        self, temp_jobs_dir, fake_launch, monkeypatch, tmp_path
+    ):
+        from job.runner import run_job
 
-            class R:
-                exit_code = 0
-                duration = 0.1
-                result = "ok"
-                stderr = ""
-                cost_usd = None
-                session_id = "s"
-
-            return R()
-
-        monkeypatch.setattr(runner, "invoke", fake_invoke)
-        return calls
-
-    def test_agent_job_passes_explicit_working_dir(self, monkeypatch, tmp_path):
-        from pathlib import Path
-
-        import job.runner as runner
-
-        calls = self._capture_invoke(monkeypatch)
-        job = {"prompt": "do it", "working_dir": str(tmp_path)}
-        runner._run_agent("my-job", job, "req-1")
-        assert calls["cwd"] == Path(str(tmp_path))
-
-    def test_agent_job_defaults_to_launch_cwd(self, monkeypatch, tmp_path):
-        from pathlib import Path
-
-        import job.runner as runner
-
-        calls = self._capture_invoke(monkeypatch)
         monkeypatch.setenv("MERLIN_LAUNCH_CWD", str(tmp_path))
-        runner._run_agent("my-job", {"prompt": "do it"}, "req-1")
-        assert calls["cwd"] == Path(str(tmp_path))
+        run_job("my-job", {"prompt": "do it"})
+        assert fake_launch.runs[0].cwd == str(tmp_path)
 
-    def test_agent_job_defaults_to_home_without_env(self, monkeypatch):
+    def test_agent_job_defaults_to_home_without_env(
+        self, temp_jobs_dir, fake_launch, monkeypatch
+    ):
         from pathlib import Path
 
-        import job.runner as runner
+        from job.runner import run_job
 
-        calls = self._capture_invoke(monkeypatch)
         monkeypatch.delenv("MERLIN_LAUNCH_CWD", raising=False)
-        runner._run_agent("my-job", {"prompt": "do it"}, "req-1")
-        assert calls["cwd"] == Path.home()
+        run_job("my-job", {"prompt": "do it"})
+        assert fake_launch.runs[0].cwd == str(Path.home())
 
 
 class TestEmitResult:
@@ -757,15 +710,18 @@ class TestEmitResult:
     def _job(self):
         return {"type": "command", "command": "echo hi", "schedule": "* * * * *"}
 
-    def test_default_emits_job_complete(self, capsys):
+    def test_default_emits_job_complete(self, capsys, temp_jobs_dir, fake_launch):
         from job.runner import run_job
 
         result = run_job("emit-test", self._job())
         assert result is not None and result.exit_code == 0
         out = capsys.readouterr().out
         assert '"type": "job_complete"' in out
+        assert "cost_usd" not in out and "session_id" not in out
 
-    def test_emit_result_false_keeps_stdout_clean(self, capsys):
+    def test_emit_result_false_keeps_stdout_clean(
+        self, capsys, temp_jobs_dir, fake_launch
+    ):
         from job.runner import run_job
 
         result = run_job("quiet-test", self._job(), emit_result=False)

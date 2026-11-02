@@ -426,7 +426,7 @@ class TestTrigger:
         assert "not found" in result["error"].lower()
 
     @staticmethod
-    def _fake_result(exit_code=0, duration=1.234, session_id="sess-1"):
+    def _fake_result(exit_code=0, duration=1.234, run_id="run-1"):
         from types import SimpleNamespace
 
         return SimpleNamespace(
@@ -434,8 +434,8 @@ class TestTrigger:
             duration=duration,
             result="output",
             stderr="",
-            cost_usd=None,
-            session_id=session_id,
+            run_id=run_id,
+            window="merlin-jobs:@7",
         )
 
     def test_trigger_runs_job(self, temp_jobs_dir, monkeypatch):
@@ -459,7 +459,8 @@ class TestTrigger:
         assert result["ok"] is True
         assert result["exit_code"] == 0
         assert result["duration_seconds"] == 1.23
-        assert result["session_id"] == "sess-1"
+        assert result["run_id"] == "run-1"
+        assert result["window"] == "merlin-jobs:@7"
         # In-process trigger must suppress the runner's stdout job_complete line
         assert ran == [("my-job", False)]
 

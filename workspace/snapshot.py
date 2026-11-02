@@ -30,6 +30,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from terminal.tmux import JOBS_SESSION_NAME
+
 SNAPSHOT_VERSION = 1
 
 UUID_RE = re.compile(
@@ -447,6 +449,8 @@ def build_snapshot(
     out_sessions = []
     for s in sessions:
         name = s["session_name"]
+        if name == JOBS_SESSION_NAME:
+            continue  # job runs are not part of the workspace (job/runs.py)
         out_windows = []
         active_window = None
         for w in sorted(

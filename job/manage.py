@@ -23,6 +23,7 @@ from croniter import croniter
 
 import paths
 from argparse_help import HelpfulParser
+from job.agents import BYPASS_WARNING, DEFAULT_AGENT, agent_ids
 from job.state import get_all_history, get_history
 
 JOBS_DIR = paths.jobs_dir()
@@ -91,8 +92,16 @@ def load_job(job_id: str) -> dict | None:
         return None
 
 
+# Fields of earlier versions. A job file carrying them still loads; they
+# drop at the next save.
+LEGACY_FIELDS = ("max_turns", "ephemeral")
+
+
 def save_job(job_id: str, job: dict) -> Path:
-    """Save a job to disk. Returns the path."""
+    """Save a job to disk, dropping the fields of earlier versions. Returns
+    the path."""
+    for key in LEGACY_FIELDS:
+        job.pop(key, None)
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
     path = JOBS_DIR / f"{job_id}.json"
     path.write_text(json.dumps(job, indent=2))
@@ -175,7 +184,7 @@ def format_job_discord(job: dict, job_id: str) -> str:
     schedule = job.get("schedule", "")
     schedule_human = cron_to_human(schedule)
     report_mode = job.get("report_mode", "always")
-    max_turns = job.get("max_turns", 0)
+    agent = job.get("agent", DEFAULT_AGENT)
     description = job.get("description", "No description")
     prompt = job.get("prompt", "")
     channel = job.get("discord_channel", "")
@@ -188,7 +197,7 @@ def format_job_discord(job: dict, job_id: str) -> str:
         f"**Status**: {status}",
         f"**Schedule**: {schedule_human} (`{schedule}`)",
         f"**Report mode**: {report_mode}",
-        f"**Max turns**: {'unlimited' if max_turns == 0 else max_turns}",
+        f"**Agent**: {agent}",
         f"**Channel**: {channel}",
         f"**Description**: {description}",
         f"**Prompt**: {prompt_display}",
@@ -266,11 +275,11 @@ def cmd_add(args) -> dict:
     # Build job
     job: dict = {
         "description": args.description or job_id,
+        "agent": getattr(args, "agent", DEFAULT_AGENT),
         "prompt": args.prompt,
         "discord_channel": args.discord_channel,
         "enabled": True,
         "report_mode": args.report_mode,
-        "max_turns": args.max_turns,
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
     }
     if args.schedule:
@@ -291,6 +300,8 @@ def cmd_add(args) -> dict:
 
     # Save job
     path = save_job(job_id, job)
+    # The warning goes to stderr so stdout stays one JSON document.
+    print(f"Warning: {BYPASS_WARNING}", file=sys.stderr)
 
     result = {
         "ok": True,
@@ -382,8 +393,8 @@ def cmd_trigger(args) -> dict:
 
     Runs in-process with emit_result=False so stdout stays a single JSON
     document (the job_complete line is a subprocess contract for the
-    scheduler/REST paths, not for this CLI), and reports the job's real
-    exit code instead of a blanket success.
+    scheduler/REST paths, not for this CLI), blocks until the run finishes,
+    and reports the job's real exit code instead of a blanket success.
     """
     from job import runner
 
@@ -408,8 +419,10 @@ def cmd_trigger(args) -> dict:
         "exit_code": result.exit_code,
         "duration_seconds": round(result.duration, 2),
     }
-    if result.session_id:
-        response["session_id"] = result.session_id
+    if result.run_id:
+        response["run_id"] = result.run_id
+    if result.window:
+        response["window"] = result.window
     response["message"] = (
         f"Job '{args.job_id}' completed"
         if ok
@@ -603,7 +616,7 @@ def cmd_history(args) -> dict | str:
 def main(argv: list[str] | None = None, prog: str | None = None):
     parser = HelpfulParser(
         prog=prog,
-        description="Manage Merlin jobs — add, list, enable/disable, remove, and view history.",
+        description="Manage Merlin jobs: add, list, enable/disable, remove, and view history.",
         epilog="""
 Examples:
   # Add a new job (with dry-run preview)
@@ -648,9 +661,13 @@ Cron expression cheat sheet:
   0 */2 * * *   Every 2 hours
 
 Report modes:
-  always  - Always send results to Discord (default)
+  always  - Always notify when a run finishes (default)
   silent  - Only report on errors (non-zero exit)
   off     - Never send notifications
+
+Every run opens a window in the merlin-jobs tmux session, where you can
+watch it or step in. Agent jobs run with every permission check bypassed:
+give a job only work you would let run unattended.
 
 Output:
   Without --discord: JSON (for programmatic use)
@@ -669,7 +686,13 @@ Output:
         "--schedule",
         help="Cron expression (e.g., '0 9 * * *'). Omit for a webhook- or manual-only job",
     )
-    p_add.add_argument("--prompt", required=True, help="The prompt to send to Claude")
+    p_add.add_argument("--prompt", required=True, help="The prompt the agent runs")
+    p_add.add_argument(
+        "--agent",
+        choices=agent_ids(),
+        default=DEFAULT_AGENT,
+        help=f"The agent that runs the prompt (default: {DEFAULT_AGENT})",
+    )
     p_add.add_argument(
         "--discord-channel",
         default=None,
@@ -681,12 +704,6 @@ Output:
         choices=["always", "silent", "off"],
         default="always",
         help="Report mode: always, silent (errors only), or off (default: always)",
-    )
-    p_add.add_argument(
-        "--max-turns",
-        type=int,
-        default=0,
-        help="Max agentic turns (0 = unlimited, default: 0)",
     )
     p_add.add_argument(
         "--webhook",

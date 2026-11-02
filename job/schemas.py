@@ -7,11 +7,21 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
+from job.agents import DEFAULT_AGENT, agent_ids
+
 # Job ID pattern: lowercase + alphanumeric + single hyphens, no --, max 30 chars, starts with letter.
 # Used with fullmatch so a trailing newline can't slip through the ``$`` anchor.
 _ID_RE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
 
 VALID_REPORT_MODES = ("always", "silent", "off")
+
+
+def _validate_agent(v: str | None) -> str | None:
+    if v is None:
+        return v
+    if v not in agent_ids():
+        raise ValueError(f"agent must be one of {tuple(agent_ids())}")
+    return v
 
 
 class WebhookConfig(BaseModel):
@@ -47,16 +57,20 @@ class JobCreate(BaseModel):
     schedule: str | None = None
     timezone: str | None = None
     type: Literal["prompt", "command"] = "prompt"
+    agent: str = DEFAULT_AGENT
     prompt: str = ""
     command: str = ""
     working_dir: str | None = None
     enabled: bool = True
     report_mode: str = "always"
-    max_turns: int = 0
-    ephemeral: bool = True
     grace_minutes: int = 15
     discord_channel: str | None = None
     webhook: WebhookConfig | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def validate_agent(cls, v: str) -> str:
+        return _validate_agent(v) or DEFAULT_AGENT
 
     @field_validator("id")
     @classmethod
@@ -111,15 +125,19 @@ class JobUpdate(BaseModel):
     schedule: str | None = None
     timezone: str | None = None
     type: Literal["prompt", "command"] | None = None
+    agent: str | None = None
     prompt: str | None = None
     command: str | None = None
     working_dir: str | None = None
     enabled: bool | None = None
     report_mode: str | None = None
-    max_turns: int | None = None
-    ephemeral: bool | None = None
     grace_minutes: int | None = None
     discord_channel: str | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def validate_agent(cls, v: str | None) -> str | None:
+        return _validate_agent(v)
 
     @field_validator("schedule")
     @classmethod

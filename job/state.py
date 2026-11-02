@@ -115,14 +115,16 @@ def append_history(
     job_id: str,
     exit_code: int,
     duration: float,
-    session_id: str | None = None,
     timestamp: datetime | None = None,
-    cost_usd: float | None = None,
     trigger: str | None = None,
+    agent: str | None = None,
+    run_id: str | None = None,
 ) -> None:
     """Append a run entry to the history for a job. Enforces rolling limit.
 
-    Thread-safe and process-safe via flock on _history.lock.
+    Thread-safe and process-safe via flock on _history.lock. Old entries
+    carrying ``cost_usd`` or ``session_id`` read fine: readers only look at
+    the keys they know.
     """
     if timestamp is None:
         timestamp = datetime.now(tz=timezone.utc)
@@ -131,9 +133,9 @@ def append_history(
         "timestamp": timestamp.isoformat(),
         "exit_code": exit_code,
         "duration": round(duration, 2),
-        "session_id": session_id,
-        "cost_usd": round(cost_usd, 6) if cost_usd is not None else None,
         "trigger": trigger,
+        "agent": agent,
+        "run_id": run_id,
     }
 
     lock_file = _acquire_history_lock()
