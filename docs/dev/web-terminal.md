@@ -269,25 +269,24 @@ app-server daemon, a process shared by every Codex session of the user and
 born with the environment of whichever pane started it: its `TMUX_PANE` is
 that pane, dead or alive, and no ancestor is a pane. Nothing in the hook's
 reach names the session's process (the daemon holds the per-thread locks
-itself, the session metadata records no pid), so the hook binds on the
-conversation's own evidence: the window already stamped with the payload's
-session id (`@agent_conv`, by the session init hook) wins; at SessionStart
-of a new session (`source` startup), the one pane in the payload's cwd whose
-Codex TUI started within the 30 seconds before the session's creation time
-(the rollout timestamp in `transcript_path`); at a job run's first prompt
-(the `[Job: id]` or `[Triggered by webhook: id]` line Merlin wrote), the one
-window carrying that `@job_id` in that cwd with no conversation yet, which
-then takes the conversation. Two candidates, a resumed session, a new
-conversation in a TUI that started long before, or a later event whose
-conversation no window carries resolve to nothing: a hook that cannot prove
-its window stamps none, and an inherited `TMUX_PANE` is never reinstated
-once its ancestry check failed (it is the last resort for a hook with no
-payload at all). The residual: a Codex session started outside tmux within
-those 30 seconds of a pane's TUI in the same directory would be taken for
-it. A `$TMUX` whose socket is gone is dropped first, so tmux reaches the
-default server. Codex runs its hooks only in a directory it trusts;
-elsewhere no hook fires and the pills stay blank. Pinned by
-`tests/unit/test_agent_state_hooks.py`.
+itself, the session metadata records no pid, nothing in the daemon's
+environment names the session), so the hook binds only on what is tied to
+the conversation: the window already stamped with the payload's session id
+(`@agent_conv`) wins; at a job run's first prompt (the `[Job: id]` or
+`[Triggered by webhook: id]` line Merlin wrote), the one window carrying
+that `@job_id` in that cwd with no conversation yet is bound and takes the
+conversation. A `SessionStart` the daemon runs for a session no window
+carries binds nothing: a pane's directory and start time are not proof that
+it emitted the event, and losing a binding is better than overwriting
+another conversation's identity. A hook that cannot prove its window stamps
+none, and an inherited `TMUX_PANE` is never reinstated once its ancestry
+check failed (it is the last resort for a hook with no payload at all). The
+consequence: a Codex session a person opens in a tmux window under the
+daemon gets no pills until Codex names its process to its hooks; a job's
+Codex run does, through its prompt. A `$TMUX` whose socket is gone is
+dropped first, so tmux reaches the default server. Codex runs its hooks
+only in a directory it trusts; elsewhere no hook fires and the pills stay
+blank. Pinned by `tests/unit/test_agent_state_hooks.py`.
 
 The same `@agent_state` feeds the notifications feature: a server-side watcher
 sweeps it every two seconds and turns transitions into browser notifications

@@ -34,16 +34,6 @@ re='"hook_event_name"[[:space:]]*:[[:space:]]*"([A-Za-z]+)"'
 if [[ $payload =~ $re ]]; then
   event="${BASH_REMATCH[1]}"
 fi
-transcript=""
-re='"transcript_path"[[:space:]]*:[[:space:]]*"(/[^"\\]*)"'
-if [[ $payload =~ $re ]]; then
-  transcript="${BASH_REMATCH[1]}"
-fi
-source_kind=""
-re='"source"[[:space:]]*:[[:space:]]*"([a-z]+)"'
-if [[ $payload =~ $re ]]; then
-  source_kind="${BASH_REMATCH[1]}"
-fi
 # A job run's first prompt names its job: "[Job: id]" or
 # "[Triggered by webhook: id]" (the prompt Merlin wrote, see job/runs.py).
 job=""
@@ -60,11 +50,7 @@ command -v tmux >/dev/null 2>&1 || exit 0
 # the conversation's own evidence when a daemon runs the hook (see
 # agent-window.sh).
 . "$(dirname "$0")/agent-window.sh"
-created=""
-if [ "$event" = "SessionStart" ] && [ "$source_kind" = "startup" ]; then
-  created=$(agent_session_created "$transcript")
-fi
-win=$(agent_window "$conv" "$cwd" "$event" "$created" "$job")
+win=$(agent_window "$conv" "$cwd" "$event" "$job")
 [ -n "$win" ] || exit 0
 
 # A window bound here for the first time (a job's first prompt, resolved by
