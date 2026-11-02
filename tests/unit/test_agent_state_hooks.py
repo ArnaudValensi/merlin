@@ -648,6 +648,36 @@ class TestDaemonRunHooks:
             self._conv(s, "agent2") == "conv-2" and self._state(s, "agent2") == "busy"
         )
 
+    def test_a_retained_failed_window_never_takes_a_retrys_binding(
+        self, server, tmp_path
+    ):
+        """A run of the job failed before its first prompt (Codex exited at
+        startup): its window stays, unbound, with @job_exit and @job_finished
+        stamped. The retry's prompt binds only the retry's window, its Stop
+        finishes only the retry, and the failed window keeps its state."""
+        s, work = server
+        failed = "agent"
+        s.tmux("set-option", "-w", "-t", f"t:{failed}", "@job_id", "digest")
+        s.tmux("set-option", "-w", "-t", f"t:{failed}", "@agent_cwd", str(work))
+        s.tmux("set-option", "-w", "-t", f"t:{failed}", "@job_run", "run-failed")
+        s.tmux("set-option", "-w", "-t", f"t:{failed}", "@job_exit", "1")
+        s.tmux("set-option", "-w", "-t", f"t:{failed}", "@job_finished", "1700000000")
+        s.tmux("set-option", "-w", "-t", f"t:{failed}", "@agent_state", "done")
+        fake = tmp_path / "bin" / "codex"
+        s.tmux("new-window", "-d", "-t", "t", "-n", "retry", "-c", str(work), str(fake))
+        s.tmux("set-option", "-w", "-t", "t:retry", "@job_id", "digest")
+        s.tmux("set-option", "-w", "-t", "t:retry", "@agent_cwd", str(work))
+        s.tmux("set-option", "-w", "-t", "t:retry", "@job_run", "run-retry")
+        self._hook(s, STATE_SH, ["busy"], "%999", self._job_prompt("conv-retry", work))
+        assert (
+            self._conv(s, "retry") == "conv-retry" and self._state(s, "retry") == "busy"
+        )
+        stop = f'{{"session_id":"conv-retry","cwd":"{work}","hook_event_name":"Stop"}}'
+        self._hook(s, STATE_SH, ["done"], "%999", stop)
+        assert self._state(s, "retry") == "done"
+        assert self._conv(s, failed) == "" and self._state(s, failed) == "done"
+        assert self._opt(s, failed, "@job_exit") == "1"
+
     def test_a_live_but_foreign_tmux_pane_is_not_trusted(self, server):
         """The daemon's TMUX_PANE may still exist (the pane that started it):
         a hook that does not descend from it must not stamp it."""

@@ -27,8 +27,11 @@
 #        (@agent_conv, by the session init hook or by 2);
 #     2. at the first prompt of a job run (the prompt Merlin itself wrote,
 #        "[Job: id]" or "[Triggered by webhook: id]"), the one window that
-#        carries that @job_id in that cwd and no conversation yet, which then
-#        takes the conversation.
+#        carries that @job_id in that cwd, is still running (no @job_exit,
+#        no @job_finished: a retained window of an earlier run that failed
+#        before its first prompt never qualifies) and has no conversation
+#        yet, which then takes the conversation. One job has one run in
+#        flight (its flock), so that window is the run's.
 #   A SessionStart the daemon runs for a session no window carries binds
 #   nothing: the pane's directory and the time it started are not proof that
 #   it emitted the event, and losing a binding is better than overwriting
@@ -91,11 +94,14 @@ _agent_descends_from() {
   return 1
 }
 
-# The one window carrying @job_id $1 in directory $2 (its @agent_cwd) with
-# no conversation yet: a job run whose agent sent its first prompt.
+# The one window carrying @job_id $1 in directory $2 (its @agent_cwd), still
+# running (no @job_exit, no @job_finished) and with no conversation yet: the
+# job's run in flight, whose agent sent its first prompt. A finished window
+# the retention keeps never takes a binding.
 _agent_window_by_job() {
   local job="$1" cwd="$2"
-  tmux list-windows -a -F '#{window_id}	#{@job_id}	#{@agent_conv}	#{@agent_cwd}' 2>/dev/null \
-    | awk -F'\t' -v j="$job" -v c="$cwd" '$2 == j && $3 == "" && $4 == c { n++; w = $1 } END { if (n == 1) print w }'
+  tmux list-windows -a -F '#{window_id}	#{@job_id}	#{@agent_conv}	#{@agent_cwd}	#{@job_exit}	#{@job_finished}' 2>/dev/null \
+    | awk -F'\t' -v j="$job" -v c="$cwd" \
+      '$2 == j && $3 == "" && $4 == c && $5 == "" && $6 == "" { n++; w = $1 } END { if (n == 1) print w }'
   return 0
 }

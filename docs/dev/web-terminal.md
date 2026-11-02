@@ -274,8 +274,11 @@ environment names the session), so the hook binds only on what is tied to
 the conversation: the window already stamped with the payload's session id
 (`@agent_conv`) wins; at a job run's first prompt (the `[Job: id]` or
 `[Triggered by webhook: id]` line Merlin wrote), the one window carrying
-that `@job_id` in that cwd with no conversation yet is bound and takes the
-conversation. A `SessionStart` the daemon runs for a session no window
+that `@job_id` in that cwd, still running (no `@job_exit`, no
+`@job_finished`: a retained window of a run that failed before its first
+prompt never qualifies) and with no conversation yet is bound and takes
+the conversation; one job has one run in flight, so that window is the
+run's. A `SessionStart` the daemon runs for a session no window
 carries binds nothing: a pane's directory and start time are not proof that
 it emitted the event, and losing a binding is better than overwriting
 another conversation's identity. A hook that cannot prove its window stamps
