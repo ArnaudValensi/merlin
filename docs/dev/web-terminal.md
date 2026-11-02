@@ -267,17 +267,26 @@ set, so a hook outside a Merlin terminal stays a no-op); then the hook
 payload's session id and cwd, for Codex 0.165, which runs hooks in its
 app-server daemon, a process shared by every Codex session of the user and
 born with the environment of whichever pane started it: its `TMUX_PANE` is
-that pane, dead or alive, and no ancestor is a pane. The window already
-stamped with the payload's session id (`@agent_conv`, by the session init
-hook) wins; at SessionStart only, when no window carries it yet, the one
-pane in the payload's cwd that runs a Codex TUI and has no conversation yet
-is bound. Two such panes, or a later event whose conversation no window
-carries, resolve to nothing: a hook that cannot prove its window stamps
-none, and an inherited `TMUX_PANE` is never reinstated once its ancestry
-check failed (it is the last resort for a hook with no payload at all). A
-`$TMUX` whose socket is gone is dropped first, so tmux reaches the default
-server. Codex runs its hooks only in a directory it trusts; elsewhere no
-hook fires and the pills stay blank. Pinned by
+that pane, dead or alive, and no ancestor is a pane. Nothing in the hook's
+reach names the session's process (the daemon holds the per-thread locks
+itself, the session metadata records no pid), so the hook binds on the
+conversation's own evidence: the window already stamped with the payload's
+session id (`@agent_conv`, by the session init hook) wins; at SessionStart
+of a new session (`source` startup), the one pane in the payload's cwd whose
+Codex TUI started within the 30 seconds before the session's creation time
+(the rollout timestamp in `transcript_path`); at a job run's first prompt
+(the `[Job: id]` or `[Triggered by webhook: id]` line Merlin wrote), the one
+window carrying that `@job_id` in that cwd with no conversation yet, which
+then takes the conversation. Two candidates, a resumed session, a new
+conversation in a TUI that started long before, or a later event whose
+conversation no window carries resolve to nothing: a hook that cannot prove
+its window stamps none, and an inherited `TMUX_PANE` is never reinstated
+once its ancestry check failed (it is the last resort for a hook with no
+payload at all). The residual: a Codex session started outside tmux within
+those 30 seconds of a pane's TUI in the same directory would be taken for
+it. A `$TMUX` whose socket is gone is dropped first, so tmux reaches the
+default server. Codex runs its hooks only in a directory it trusts;
+elsewhere no hook fires and the pills stay blank. Pinned by
 `tests/unit/test_agent_state_hooks.py`.
 
 The same `@agent_state` feeds the notifications feature: a server-side watcher

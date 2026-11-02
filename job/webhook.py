@@ -67,48 +67,66 @@ def resolve(job_id: str) -> WebhookTarget | None:
     )
 
 
-def _fire(job_id: str, job: dict) -> FireResult:
+def _fire(job_id: str, job: dict):
     """Launch the job unless a run is already in flight (single-flight).
 
-    Called by the front desk after the secret check, inside the event loop.
-    Coalescing: a second fire while a run is active returns 200/"coalesced"
-    and starts nothing — BetterStack firing five times during one incident
-    spawns exactly one run.
+    Called by the front desk after the secret check, inside the event loop,
+    which awaits the coroutine this returns. Coalescing: a second fire while
+    a run is active returns 200/"coalesced" and starts nothing (BetterStack
+    firing five times during one incident spawns exactly one run). The
+    unfinished-run lookup reads the run directories off the loop; a per-job
+    asyncio lock serializes concurrent fires of one job across that await,
+    so the second fire always sees the authoritative run id.
     """
-    existing = _in_flight.get(job_id)
-    if existing is not None:
-        logger.info("Webhook fire for %s coalesced (run %s active)", job_id, existing)
-        return FireResult(status="coalesced", run_id=existing)
+    return _fire_async(job_id, job)
 
-    # A scheduled or manual run holds the per-job flock; coalesce into it.
-    lock = state.acquire_job_lock(job_id)
-    if lock is None:
-        logger.info("Webhook fire for %s coalesced (job locked)", job_id)
-        return FireResult(status="coalesced", run_id=None)
 
-    # A run still going on without a supervisor (a restart killed it):
-    # coalesce into it and adopt it, rather than open a second window.
-    from job import runs
+_job_locks: dict[str, asyncio.Lock] = {}
 
-    pending = runs.unfinished_run(job_id)
-    if pending is not None:
-        logger.info(
-            "Webhook fire for %s coalesced into unfinished run %s",
-            job_id,
-            pending.run_id,
-        )
-        _in_flight[job_id] = pending.run_id
-        task = asyncio.create_task(_adopt(job_id, pending, lock))
+
+async def _fire_async(job_id: str, job: dict) -> FireResult:
+    lock = _job_locks.setdefault(job_id, asyncio.Lock())
+    async with lock:
+        existing = _in_flight.get(job_id)
+        if existing is not None:
+            logger.info(
+                "Webhook fire for %s coalesced (run %s active)", job_id, existing
+            )
+            return FireResult(status="coalesced", run_id=existing)
+
+        # A scheduled or manual run holds the per-job flock; coalesce into it.
+        flock = state.acquire_job_lock(job_id)
+        if flock is None:
+            logger.info("Webhook fire for %s coalesced (job locked)", job_id)
+            return FireResult(status="coalesced", run_id=None)
+
+        # A run still going on without a supervisor (a restart killed it):
+        # coalesce into it and adopt it, rather than open a second window.
+        from job import runs
+
+        try:
+            pending = await asyncio.to_thread(runs.unfinished_run, job_id)
+        except Exception:
+            state.release_job_lock(flock)
+            raise
+        if pending is not None:
+            logger.info(
+                "Webhook fire for %s coalesced into unfinished run %s",
+                job_id,
+                pending.run_id,
+            )
+            _in_flight[job_id] = pending.run_id
+            task = asyncio.create_task(_adopt(job_id, pending, flock))
+            _tasks.add(task)
+            task.add_done_callback(_tasks.discard)
+            return FireResult(status="coalesced", run_id=pending.run_id)
+
+        run_id = str(uuid.uuid4())
+        _in_flight[job_id] = run_id
+        task = asyncio.create_task(_run(job_id, job, run_id, flock))
         _tasks.add(task)
         task.add_done_callback(_tasks.discard)
-        return FireResult(status="coalesced", run_id=pending.run_id)
-
-    run_id = str(uuid.uuid4())
-    _in_flight[job_id] = run_id
-    task = asyncio.create_task(_run(job_id, job, run_id, lock))
-    _tasks.add(task)
-    task.add_done_callback(_tasks.discard)
-    return FireResult(status="launched", run_id=run_id)
+        return FireResult(status="launched", run_id=run_id)
 
 
 async def _adopt(job_id: str, pending, lock) -> None:

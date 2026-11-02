@@ -39,7 +39,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Callable
+from typing import Awaitable, Callable
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -79,7 +79,7 @@ class WebhookTarget:
     """
 
     secret: str
-    fire: Callable[[], FireResult]
+    fire: Callable[[], "FireResult | Awaitable[FireResult]"]
     enabled: bool = True
 
 
@@ -181,7 +181,14 @@ async def receive_webhook(
         _log("disabled")
         raise HTTPException(status_code=403, detail="Webhook target is disabled")
 
-    result = target.fire()
+    fired = target.fire()
+    # A module whose launch needs the filesystem does that work off the
+    # loop and hands the desk a coroutine: awaited here, so the answer is
+    # still the authoritative one.
+    if isinstance(fired, FireResult):
+        result = fired
+    else:
+        result = await fired
     _log(result.status, run_id=result.run_id)
     logger.info(
         "Webhook %s: %s/%s (ip=%s, run_id=%s)",

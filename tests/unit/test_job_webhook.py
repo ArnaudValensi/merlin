@@ -140,13 +140,13 @@ class TestSingleFlight:
         job = _write_job(_isolated_job_dirs)
 
         async def _test():
-            r1 = webhook._fire("hook-job", job)
+            r1 = await webhook._fire("hook-job", job)
             assert r1.status == "launched"
             assert r1.run_id is not None
 
             await asyncio.to_thread(started.wait, 5)
 
-            r2 = webhook._fire("hook-job", job)
+            r2 = await webhook._fire("hook-job", job)
             assert r2.status == "coalesced"
             assert r2.run_id == r1.run_id
 
@@ -156,7 +156,7 @@ class TestSingleFlight:
                     break
                 await asyncio.sleep(0.02)
 
-            r3 = webhook._fire("hook-job", job)
+            r3 = await webhook._fire("hook-job", job)
             assert r3.status == "launched"
             assert r3.run_id != r1.run_id
             while "hook-job" in webhook._in_flight:
@@ -174,7 +174,7 @@ class TestSingleFlight:
         try:
 
             async def _test():
-                return webhook._fire("hook-job", job)
+                return await webhook._fire("hook-job", job)
 
             result = asyncio.run(_test())
             assert result.status == "coalesced"

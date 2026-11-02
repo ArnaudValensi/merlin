@@ -34,17 +34,44 @@ re='"hook_event_name"[[:space:]]*:[[:space:]]*"([A-Za-z]+)"'
 if [[ $payload =~ $re ]]; then
   event="${BASH_REMATCH[1]}"
 fi
+transcript=""
+re='"transcript_path"[[:space:]]*:[[:space:]]*"(/[^"\\]*)"'
+if [[ $payload =~ $re ]]; then
+  transcript="${BASH_REMATCH[1]}"
+fi
+source_kind=""
+re='"source"[[:space:]]*:[[:space:]]*"([a-z]+)"'
+if [[ $payload =~ $re ]]; then
+  source_kind="${BASH_REMATCH[1]}"
+fi
+# A job run's first prompt names its job: "[Job: id]" or
+# "[Triggered by webhook: id]" (the prompt Merlin wrote, see job/runs.py).
+job=""
+re='"prompt"[[:space:]]*:[[:space:]]*"\[(Job|Triggered by webhook): ([a-z0-9-]+)\]'
+if [[ $payload =~ $re ]]; then
+  job="${BASH_REMATCH[2]}"
+fi
 
 state="${1:-idle}"
 command -v tmux >/dev/null 2>&1 || exit 0
 
 # The window of this agent: $TMUX_PANE when this hook descends from the
 # pane, the ancestor walk when a helper process stripped the environment,
-# the session id and cwd when a daemon runs the hook (see agent-window.sh).
+# the conversation's own evidence when a daemon runs the hook (see
+# agent-window.sh).
 . "$(dirname "$0")/agent-window.sh"
-win=$(agent_window "$conv" "$cwd" "$event")
+created=""
+if [ "$event" = "SessionStart" ] && [ "$source_kind" = "startup" ]; then
+  created=$(agent_session_created "$transcript")
+fi
+win=$(agent_window "$conv" "$cwd" "$event" "$created" "$job")
 [ -n "$win" ] || exit 0
 
+# A window bound here for the first time (a job's first prompt, resolved by
+# its job id) takes the conversation, so every later event finds it.
+if [ -n "$conv" ] && [ -z "$(tmux show-option -wqv -t "$win" @agent_conv 2>/dev/null)" ]; then
+  tmux set-option -w -t "$win" @agent_conv "$conv" 2>/dev/null
+fi
 tmux set-option -w -t "$win" @agent_state "$state" 2>/dev/null
 tmux refresh-client -S 2>/dev/null
 exit 0

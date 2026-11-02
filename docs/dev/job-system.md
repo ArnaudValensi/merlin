@@ -185,7 +185,11 @@ that both saw no session both try to create it; the loser opens its window
 in the session the winner made. No stray shell window. The window is named after the job id (`-n`, which turns automatic
 rename off), opens in the job's working directory (`resolve_working_dir`:
 `working_dir` then `MERLIN_LAUNCH_CWD` then `$HOME`) and runs `bash
-<run.sh>`. Right after, one chained tmux call stamps its options:
+<run.sh>`. Right after, the run's identity (`@job_id`, `@job_run`) is stamped, the
+target saved in `meta.json`, then one chained tmux call stamps the rest, the
+gate last (a crash anywhere in between leaves a window the recovery
+attributes by `@job_run`, or a directory it ages out as an interrupted
+preparation after `PREPARATION_TTL`, recorded as a failed launch):
 
 - `@job_id`, `@job_run`, `@job_report` (the job's `report_mode`),
   `@job_started` (epoch, stamped last);
@@ -195,8 +199,9 @@ rename off), opens in the job's working directory (`resolve_working_dir`:
 - `@agent_state` = `busy` for a command, `idle` for an agent until its hooks
   take over.
 
-`run.sh` gates on `@job_started` before anything else (30 s, then it gives
-up with exit 1), so the job's first hook always finds the sid set: no race
+`run.sh` gates on `@job_started` before anything else (30 s, then it
+publishes exit 1 and leaves, so no unattributable window lingers), so the
+job's first hook always finds the sid set: no race
 between the stamp and the agent's SessionStart. Then it unsets `CLAUDECODE`,
 exports `MERLIN_JOB_ID`, `MERLIN_JOB_RUN_ID`, `MERLIN_JOB_TRIGGER`,
 `MERLIN_HOME` and the forwarded `MERLIN_*` variables (`runs.FORWARDED_ENV`,
@@ -287,8 +292,11 @@ reboot kills everything. Every scheduler tick runs `retention.tick()` first:
 
 **Orphans.** A run directory without its marker whose job flock is free is
 looked at under that flock: an outcome already published is materialized
-again (the record was interrupted); an `exit` file is a finished run,
-recorded from it; a window tmux confirmed gone, or whose id now carries
+again (the record was interrupted); a directory without a target gets the
+window carrying its `@job_run`, or is recorded as an interrupted launch once
+old enough; an `exit` file is a finished run, recorded from it, after a
+termination a dead supervisor meant (the `terminate` marker) is finished on
+the verified process group; a window tmux confirmed gone, or whose id now carries
 another run's `@job_run`, is exit 130; anything else is a run still going
 on, which the tick hands back to the dispatcher. The dispatcher **adopts**
 it (`runner.adopt_run`, in the same pool as the due jobs): it supervises the
@@ -316,7 +324,12 @@ removes their run directories (`should_close` is the pure rule):
   after the last activity;
 - closing never touches a window without `@job_run`, nor any other
   session, and the window is read again right before the kill: it must still
-  carry the same `@job_run` and still be shown by nobody.
+  carry the same `@job_run`, its retention fields read now must still say
+  close (someone may have stepped in since the sweep), and nobody may be
+  showing it;
+- the directory goes with the window only once the record is complete: an
+  outcome not yet materialized (a write that keeps failing) is kept for the
+  recovery to retry.
 
 A recorded run whose window tmux confirmed gone loses its directory at once.
 A tick with no `merlin-jobs` session and no run directory does no work.
@@ -539,7 +552,10 @@ scheduled/manual runs. Launched runs execute in a worker thread
 (`asyncio.to_thread` around `runner._execute_job`, so the event loop is
 never blocked by the supervisor's polling); the flock is released as soon as
 the run finishes, before the (also off-loop) notification, so single-flight
-covers the run, not the delivery. The accepted `run_id` doubles as the run's
+covers the run, not the delivery. The front desk awaits `fire`: the
+unfinished-run lookup reads the run directories off the loop, under a
+per-job asyncio lock so concurrent fires of one job see the authoritative
+run id. The accepted `run_id` doubles as the run's
 id and `request_id`, so `webhook_request` and `job_dispatch` events
 correlate and the run directory is `job-runs/<run_id>/`.
 

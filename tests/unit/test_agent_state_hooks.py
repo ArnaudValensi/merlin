@@ -444,10 +444,12 @@ class TestWindowFallback:
 class TestDaemonRunHooks:
     """agent-window.sh: Codex 0.165 runs hooks in its app-server daemon, with
     the daemon's environment: TMUX_PANE names whichever pane started the
-    daemon (dead here), and no ancestor is a pane. The payload's session id
-    and cwd identify the window instead: the pane in that directory whose
-    newest process is a Codex TUI at SessionStart, then the window stamped
-    with that conversation for every later event."""
+    daemon (dead here), and no ancestor is a pane. The hook binds on the
+    conversation's own evidence: the window stamped with its session id; at
+    SessionStart, the one pane in its cwd whose Codex TUI started just before
+    the session was created (the rollout timestamp in transcript_path); at a
+    job's first prompt, the one window carrying that job id and no
+    conversation. Anything else stamps nothing."""
 
     INIT_SH = HOOKS / "agent-session-init.sh"
 
@@ -486,6 +488,20 @@ class TestDaemonRunHooks:
         yield s, work
         s.kill()
 
+    @staticmethod
+    def _transcript(created: float) -> str:
+        stamp = time.strftime("%Y-%m-%dT%H-%M-%S", time.localtime(created))
+        return f"/home/u/.codex/sessions/rollout-{stamp}-abc.jsonl"
+
+    def _start(
+        self, conv: str, work, created: float | None = None, source="startup"
+    ) -> str:
+        created = time.time() if created is None else created
+        return (
+            f'{{"session_id":"{conv}","cwd":"{work}","hook_event_name":"SessionStart",'
+            f'"transcript_path":"{self._transcript(created)}","source":"{source}"}}'
+        )
+
     def _hook(self, s, script, args, pane, payload):
         env = s.hook_env(pane)
         return subprocess.run(
@@ -498,77 +514,78 @@ class TestDaemonRunHooks:
             check=False,
         )
 
-    def test_session_start_finds_the_codex_pane_by_cwd(self, server):
+    def _conv(self, s, window):
+        return s.tmux("show-option", "-wv", "-t", f"t:{window}", "@agent_conv")
+
+    def _state(self, s, window):
+        return s.tmux("show-option", "-wv", "-t", f"t:{window}", "@agent_state")
+
+    def test_session_start_binds_the_pane_whose_tui_just_started(self, server):
         s, work = server
-        payload = (
-            f'{{"session_id":"conv-9","cwd":"{work}","hook_event_name":"SessionStart"}}'
-        )
+        payload = self._start("conv-9", work)
         self._hook(s, self.INIT_SH, ["codex"], "%999", payload)
         self._hook(s, STATE_SH, ["idle"], "%999", payload)
-        assert s.tmux("show-option", "-wv", "-t", "t:agent", "@agent_conv") == "conv-9"
-        assert s.tmux("show-option", "-wv", "-t", "t:agent", "@agent_state") == "idle"
-        assert s.tmux("show-option", "-wv", "-t", "t:shell", "@agent_state") == ""
-        assert s.tmux("show-option", "-wv", "-t", "t:far", "@agent_state") == ""
+        assert self._conv(s, "agent") == "conv-9"
+        assert self._state(s, "agent") == "idle"
+        assert self._state(s, "shell") == "" and self._state(s, "far") == ""
 
     def test_later_events_follow_the_conversation(self, server):
         s, work = server
-        start = (
-            f'{{"session_id":"conv-9","cwd":"{work}","hook_event_name":"SessionStart"}}'
-        )
-        self._hook(s, self.INIT_SH, ["codex"], "%999", start)
-        # The turn's hooks carry the same session id; a cwd alone would now
-        # be ambiguous if another Codex opened there, the conversation is not.
+        self._hook(s, self.INIT_SH, ["codex"], "%999", self._start("conv-9", work))
         turn = f'{{"session_id":"conv-9","cwd":"{work}","hook_event_name":"Stop"}}'
         self._hook(s, STATE_SH, ["done"], "%999", turn)
-        assert s.tmux("show-option", "-wv", "-t", "t:agent", "@agent_state") == "done"
-        assert s.tmux("show-option", "-wv", "-t", "t:far", "@agent_state") == ""
+        assert self._state(s, "agent") == "done"
+        assert self._state(s, "far") == ""
 
-    def test_a_live_but_foreign_tmux_pane_is_not_trusted(self, server):
-        """The daemon's TMUX_PANE may still exist (the pane that started it):
-        a hook that does not descend from it must not stamp it."""
+    def test_a_session_created_long_after_the_tui_started_binds_nothing(self, server):
+        """A new conversation in a running TUI (/new, or a resumed one): its
+        creation time matches no TUI start, so nothing is bound (and a
+        resumed session carries its original creation time anyway)."""
         s, work = server
-        foreign = s.tmux("display-message", "-p", "-t", "t:far", "#{pane_id}")
-        start = (
-            f'{{"session_id":"conv-9","cwd":"{work}","hook_event_name":"SessionStart"}}'
+        self._hook(
+            s,
+            self.INIT_SH,
+            ["codex"],
+            "%999",
+            self._start("conv-old", work, time.time() - 600),
         )
-        self._hook(s, self.INIT_SH, ["codex"], foreign, start)
-        payload = f'{{"session_id":"conv-9","cwd":"{work}","hook_event_name":"UserPromptSubmit"}}'
-        self._hook(s, STATE_SH, ["busy"], foreign, payload)
-        assert s.tmux("show-option", "-wv", "-t", "t:agent", "@agent_conv") == "conv-9"
-        assert s.tmux("show-option", "-wv", "-t", "t:agent", "@agent_state") == "busy"
-        assert s.tmux("show-option", "-wv", "-t", "t:far", "@agent_state") == ""
-        assert s.tmux("show-option", "-wv", "-t", "t:far", "@agent_conv") == ""
-
-    def test_an_unmatched_payload_stamps_nothing(self, server):
-        """F1: no window carries the conversation, the cwd matches no Codex
-        pane, and the inherited TMUX_PANE (the daemon's) is live but foreign:
-        the hook resolves to nothing rather than that pane."""
-        s, work = server
-        foreign = s.tmux("display-message", "-p", "-t", "t:far", "#{pane_id}")
-        payload = '{"session_id":"conv-x","cwd":"/nowhere","hook_event_name":"Stop"}'
-        self._hook(s, STATE_SH, ["done"], foreign, payload)
-        for window in ("agent", "shell", "far"):
-            assert (
-                s.tmux("show-option", "-wv", "-t", f"t:{window}", "@agent_state") == ""
-            )
-
-    def test_a_later_event_never_binds_by_cwd(self, server):
-        """F2: only SessionStart may bind a conversation to a pane by cwd; a
-        Stop whose conversation no window carries stamps nothing, even with
-        a lone Codex pane in that directory."""
-        s, work = server
-        payload = (
-            f'{{"session_id":"conv-late","cwd":"{work}","hook_event_name":"Stop"}}'
+        assert self._conv(s, "agent") == ""
+        self._hook(
+            s,
+            self.INIT_SH,
+            ["codex"],
+            "%999",
+            self._start("conv-r", work, source="resume"),
         )
-        self._hook(s, STATE_SH, ["done"], "%999", payload)
-        assert s.tmux("show-option", "-wv", "-t", "t:agent", "@agent_state") == ""
-        assert s.tmux("show-option", "-wv", "-t", "t:agent", "@agent_conv") == ""
+        assert self._conv(s, "agent") == ""
 
-    def test_two_unbound_codex_panes_in_one_directory_bind_neither(
+    def test_a_bound_and_an_unbound_pane_in_one_directory_bind_neither(
         self, server, tmp_path
     ):
-        """F2: two agents starting in the same directory cannot be told
-        apart: no guess, no stamp."""
+        """R1: A carries an older conversation, B is unbound, both TUIs started
+        recently; A's new conversation must not land on B: two candidates
+        bind neither."""
+        s, work = server
+        self._hook(s, self.INIT_SH, ["codex"], "%999", self._start("conv-a", work))
+        assert self._conv(s, "agent") == "conv-a"
+        fake = tmp_path / "bin" / "codex"
+        s.tmux(
+            "new-window", "-d", "-t", "t", "-n", "agent2", "-c", str(work), str(fake)
+        )
+        for _ in range(50):
+            if (
+                s.tmux(
+                    "display-message", "-p", "-t", "t:agent2", "#{pane_current_command}"
+                )
+                == "codex"
+            ):
+                break
+            time.sleep(0.1)
+        self._hook(s, self.INIT_SH, ["codex"], "%999", self._start("conv-new", work))
+        assert self._conv(s, "agent") == "conv-a"
+        assert self._conv(s, "agent2") == ""
+
+    def test_two_unbound_tuis_in_one_directory_bind_neither(self, server, tmp_path):
         s, work = server
         fake = tmp_path / "bin" / "codex"
         s.tmux(
@@ -583,29 +600,83 @@ class TestDaemonRunHooks:
             ):
                 break
             time.sleep(0.1)
-        payload = (
-            f'{{"session_id":"conv-9","cwd":"{work}","hook_event_name":"SessionStart"}}'
-        )
-        self._hook(s, self.INIT_SH, ["codex"], "%999", payload)
-        for window in ("agent", "agent2"):
-            assert (
-                s.tmux("show-option", "-wv", "-t", f"t:{window}", "@agent_conv") == ""
-            )
+        self._hook(s, self.INIT_SH, ["codex"], "%999", self._start("conv-9", work))
+        assert self._conv(s, "agent") == "" and self._conv(s, "agent2") == ""
 
-    def test_a_bound_pane_is_not_rebound(self, server):
-        """F2: a pane that carries a conversation is never chosen for another
-        one by cwd; the empty @agent_conv field is parsed as empty."""
+    def test_a_session_outside_tmux_claims_no_window(self, server):
+        """An outside-tmux Codex session in the same directory: its creation
+        time matches no pane's TUI start (the pane's TUI is older), so no
+        window is claimed; a later event of it binds nothing either."""
         s, work = server
-        first = (
-            f'{{"session_id":"conv-1","cwd":"{work}","hook_event_name":"SessionStart"}}'
+        self._hook(
+            s,
+            self.INIT_SH,
+            ["codex"],
+            "%999",
+            self._start("conv-out", work, time.time() + 120),
         )
-        self._hook(s, self.INIT_SH, ["codex"], "%999", first)
-        assert s.tmux("show-option", "-wv", "-t", "t:agent", "@agent_conv") == "conv-1"
-        second = (
-            f'{{"session_id":"conv-2","cwd":"{work}","hook_event_name":"SessionStart"}}'
+        assert self._conv(s, "agent") == ""
+        turn = f'{{"session_id":"conv-out","cwd":"{work}","hook_event_name":"UserPromptSubmit","prompt":"hi"}}'
+        self._hook(s, STATE_SH, ["busy"], "%999", turn)
+        assert self._state(s, "agent") == ""
+
+    def test_an_unmatched_payload_stamps_nothing(self, server):
+        """F1: no window carries the conversation, the cwd matches no Codex
+        pane, and the inherited TMUX_PANE (the daemon's) is live but foreign:
+        the hook resolves to nothing rather than that pane."""
+        s, work = server
+        foreign = s.tmux("display-message", "-p", "-t", "t:far", "#{pane_id}")
+        payload = '{"session_id":"conv-x","cwd":"/nowhere","hook_event_name":"Stop"}'
+        self._hook(s, STATE_SH, ["done"], foreign, payload)
+        for window in ("agent", "shell", "far"):
+            assert self._state(s, window) == ""
+
+    def test_a_later_event_never_binds_by_cwd(self, server):
+        """F2: only SessionStart may bind by the session's creation; a Stop
+        whose conversation no window carries stamps nothing, even with a
+        lone Codex pane in that directory."""
+        s, work = server
+        payload = (
+            f'{{"session_id":"conv-late","cwd":"{work}","hook_event_name":"Stop"}}'
         )
-        self._hook(s, self.INIT_SH, ["codex"], "%999", second)
-        assert s.tmux("show-option", "-wv", "-t", "t:agent", "@agent_conv") == "conv-1"
+        self._hook(s, STATE_SH, ["done"], "%999", payload)
+        assert self._state(s, "agent") == "" and self._conv(s, "agent") == ""
+
+    def test_a_jobs_first_prompt_binds_its_window(self, server):
+        """A job window (its @job_id and @agent_cwd stamped by Merlin) whose
+        agent sends the prompt Merlin wrote: bound by the job id, then the
+        conversation follows."""
+        s, work = server
+        s.tmux("set-option", "-w", "-t", "t:agent", "@job_id", "digest")
+        s.tmux("set-option", "-w", "-t", "t:agent", "@agent_cwd", str(work))
+        prompt = (
+            f'{{"session_id":"conv-j","cwd":"{work}","hook_event_name":"UserPromptSubmit",'
+            f'"prompt":"[Job: digest]\\n\\nDo the thing"}}'
+        )
+        self._hook(s, STATE_SH, ["busy"], "%999", prompt)
+        assert self._state(s, "agent") == "busy"
+        assert self._conv(s, "agent") == "conv-j"
+        stop = f'{{"session_id":"conv-j","cwd":"{work}","hook_event_name":"Stop"}}'
+        self._hook(s, STATE_SH, ["done"], "%999", stop)
+        assert self._state(s, "agent") == "done"
+        # Another job's prompt, or the same job's window already bound: nothing.
+        other = (
+            f'{{"session_id":"conv-k","cwd":"{work}","hook_event_name":"UserPromptSubmit",'
+            f'"prompt":"[Triggered by webhook: digest]\\n\\nAgain"}}'
+        )
+        self._hook(s, STATE_SH, ["busy"], "%999", other)
+        assert self._state(s, "agent") == "done" and self._conv(s, "agent") == "conv-j"
+
+    def test_a_live_but_foreign_tmux_pane_is_not_trusted(self, server):
+        """The daemon's TMUX_PANE may still exist (the pane that started it):
+        a hook that does not descend from it must not stamp it."""
+        s, work = server
+        foreign = s.tmux("display-message", "-p", "-t", "t:far", "#{pane_id}")
+        self._hook(s, self.INIT_SH, ["codex"], foreign, self._start("conv-9", work))
+        payload = f'{{"session_id":"conv-9","cwd":"{work}","hook_event_name":"UserPromptSubmit"}}'
+        self._hook(s, STATE_SH, ["busy"], foreign, payload)
+        assert self._conv(s, "agent") == "conv-9" and self._state(s, "agent") == "busy"
+        assert self._state(s, "far") == "" and self._conv(s, "far") == ""
 
     def test_a_stale_tmux_socket_is_dropped(self, server, tmp_path):
         """$TMUX from a daemon born under a server that is gone must not
@@ -616,28 +687,25 @@ class TestDaemonRunHooks:
         env["TMUX_TMPDIR"] = str(tmp_path / "tt")
         (tmp_path / "tt" / f"tmux-{os.getuid()}").mkdir(parents=True, mode=0o700)
         os.symlink(s.socket, tmp_path / "tt" / f"tmux-{os.getuid()}" / "default")
-        payload = (
-            f'{{"session_id":"conv-9","cwd":"{work}","hook_event_name":"SessionStart"}}'
+
+        def run(script, args, payload):
+            subprocess.run(
+                ["bash", str(script), *args],
+                input=payload,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=15,
+                check=False,
+            )
+
+        run(self.INIT_SH, ["codex"], self._start("conv-9", work))
+        run(
+            STATE_SH,
+            ["busy"],
+            f'{{"session_id":"conv-9","cwd":"{work}","hook_event_name":"UserPromptSubmit"}}',
         )
-        subprocess.run(
-            ["bash", str(STATE_SH), "idle"],
-            input=payload,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=15,
-            check=False,
-        )
-        subprocess.run(
-            ["bash", str(STATE_SH), "busy"],
-            input=payload,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=15,
-            check=False,
-        )
-        assert s.tmux("show-option", "-wv", "-t", "t:agent", "@agent_state") == "busy"
+        assert self._state(s, "agent") == "busy"
 
 
 # ---------------------------------------------------------------------------

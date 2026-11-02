@@ -514,7 +514,7 @@ def test_a_trigger_adopts_the_unfinished_run_instead_of_a_second_window(
     manage.save_job("busy-orphan", job)
 
     async def fire():
-        first = webhook._fire("busy-orphan", job)
+        first = await webhook._fire("busy-orphan", job)
         assert first.status == "coalesced"
         assert first.run_id == pending.run_id
         await asyncio.gather(*list(webhook._tasks))
@@ -695,9 +695,9 @@ def test_coalesced_webhook_fire_joins_the_running_window(iso):
     manage.save_job("hook", job)
 
     async def scenario():
-        first = webhook._fire("hook", job)
+        first = await webhook._fire("hook", job)
         await asyncio.sleep(0.3)
-        second = webhook._fire("hook", job)
+        second = await webhook._fire("hook", job)
         assert first.status == "launched"
         assert second.status == "coalesced"
         assert second.run_id == first.run_id
@@ -954,3 +954,249 @@ def test_job_meta_round_trip(iso):
     assert back.report_mode == "silent" and back.trigger == "webhook"
     assert oct(run.dir.stat().st_mode & 0o777) == "0o700"
     assert json.loads((run.dir / "meta.json").read_text())["run_id"] == "r-meta"
+
+
+# ---------------------------------------------------------------------------
+# Review round two
+# ---------------------------------------------------------------------------
+
+
+def test_the_server_exiting_under_a_read_is_absence(monkeypatch):
+    """tmux says "server exited unexpectedly" when the server it reached was
+    closing (its last window killed): nothing on it exists any more."""
+    import subprocess as sp
+
+    def fake_run(cmd, **kw):
+        return sp.CompletedProcess(
+            cmd, 1, stdout="", stderr="server exited unexpectedly\n"
+        )
+
+    monkeypatch.setattr(sweep.subprocess, "run", fake_run)
+    assert sweep._tmux_observe(["list-windows"]) == ("gone", "")
+
+    def refused(cmd, **kw):
+        return sp.CompletedProcess(
+            cmd, 1, stdout="", stderr="error connecting to x (Connection refused)\n"
+        )
+
+    monkeypatch.setattr(sweep.subprocess, "run", refused)
+    assert sweep._tmux_observe(["list-windows"]) == ("unavailable", "")
+
+
+def test_a_launch_interrupted_after_the_window_is_recovered_by_its_run_id(iso):
+    """R2: the launch crashed after stamping the window's identity but before
+    the metadata got its target: the recovery attributes the window by
+    @job_run and the run goes on (here to its exit)."""
+    run = runs.new_run(
+        "cut",
+        {"type": "command", "command": "exit 0"},
+        trigger="manual",
+        run_id="run-cut",
+        cwd=str(Path.home()),
+        deadline=60,
+    )
+    wid = sweep.open_window(JOBS, "cut", run.cwd, f"bash {run.dir / 'run.sh'}")
+    assert wid
+    assert sweep.set_window_options(
+        f"{JOBS}:{wid}", {"@job_id": "cut", "@job_run": "run-cut"}
+    )
+    assert runs.read_meta(run.dir).target == ""  # the crash point
+    assert runs.unfinished_run("cut") is not None  # a trigger would adopt it
+    assert runs.read_meta(run.dir).target == f"{JOBS}:{wid}"
+    # The gate was never stamped: run.sh gives up, publishes exit 1, leaves.
+    run.target = ""
+    runs.write_meta(run)
+    counts, adoptable = retention.tick()
+    assert counts["finalized"] == 0 and [r.run_id for r in adoptable] == ["run-cut"]
+    assert runs.read_meta(run.dir).target == f"{JOBS}:{wid}"
+
+
+def test_a_launch_interrupted_before_the_window_is_a_failed_run(iso):
+    """R2: no window carries the run id and the preparation is old: recorded
+    as a failed launch, never adopted, never a second window's excuse."""
+    run = runs.new_run(
+        "never",
+        {"type": "command", "command": "exit 0"},
+        trigger="manual",
+        run_id="run-never",
+        cwd=str(Path.home()),
+        deadline=60,
+    )
+    assert runs.unfinished_run("never") is None
+    counts, adoptable = retention.tick()
+    assert counts["finalized"] == 0 and adoptable == []  # too young to judge
+    old = runs.read_meta(run.dir)
+    old.started -= runs.PREPARATION_TTL + 1
+    runs.write_meta(old)
+    counts, adoptable = retention.tick()
+    assert counts["finalized"] == 1 and adoptable == []
+    assert state.get_history("never")[0]["exit_code"] == 1
+    assert counts["removed"] == 1 and not run.dir.exists()  # recorded, no window
+    assert runs.unfinished_run("never") is None
+
+
+def test_gate_timeout_publishes_exit_one_and_closes_the_window(iso, monkeypatch):
+    """R2: a window whose options Merlin never stamped does not linger."""
+    monkeypatch.setattr(runs, "STAMP_WAIT_SECONDS", 1)
+    run = runs.new_run(
+        "gate",
+        {"type": "command", "command": "exit 0"},
+        trigger="manual",
+        run_id="run-gate",
+        cwd=str(Path.home()),
+        deadline=60,
+    )
+    wid = sweep.open_window(JOBS, "gate", run.cwd, f"bash {run.dir / 'run.sh'}")
+    assert wid
+    assert wait_until(lambda: runs.read_exit(run.dir) == 1, timeout=10)
+    assert wait_until(lambda: not windows(), timeout=10)
+
+
+def test_an_unrecorded_outcome_survives_the_windows_retention(iso, monkeypatch):
+    """R3: the run log keeps failing to write; the window closes at its TTL
+    but the directory with the canonical outcome stays, and once writes work
+    the record is materialized exactly once."""
+    from job import logs as job_logs
+
+    real_write_log = job_logs.write_log
+    broken = {"on": True}
+
+    def flaky(job_id, entry):
+        if broken["on"]:
+            raise OSError("disk full")
+        return real_write_log(job_id, entry)
+
+    monkeypatch.setattr(job_logs, "write_log", flaky)
+    run = _launch_unsupervised("keep", {"type": "command", "command": "exit 0"})
+    assert (
+        wait_until(lambda: runs.read_exit(run.dir) is not None, timeout=10) is not None
+    )
+    assert retention.tick()[0]["finalized"] == 1
+    assert runs.read_outcome(run.dir) is not None and not runs.is_recorded(run.dir)
+    counts, _ = retention.tick(now=time.time() + 3601)
+    assert counts["closed"] == 1 and counts["removed"] == 0
+    assert run.dir.exists() and windows() == []
+    broken["on"] = False
+    counts, _ = retention.tick()
+    assert counts["finalized"] == 1
+    assert counts["removed"] == 1 and not run.dir.exists()  # recorded, no window
+    assert len(state.get_history("keep")) == 1
+    assert len(job_logs.list_logs("keep")) == 1
+
+
+def test_an_interrupted_deadline_is_finished_by_the_recovery(iso):
+    """R4: the supervisor published 124 and died before its signals; the job
+    ignores SIGTERM. The recovery ends the verified group (SIGKILL after the
+    grace) before it records the run, so nothing outlives the record."""
+    run = _launch_unsupervised(
+        "stubborn", {"type": "command", "command": "trap '' TERM; sleep 100"}
+    )
+    pgid = wait_until(lambda: runs.read_pgid(run.dir), timeout=10)
+    assert pgid
+    time.sleep(0.5)
+    runs.mark_terminating(run.dir)  # the dead supervisor's intent
+    assert runs.write_exit_once(run.dir, 124)
+    supervisor.TERM_GRACE = 0.5
+    try:
+        counts, adoptable = retention.tick()
+    finally:
+        supervisor.TERM_GRACE = 5.0
+    assert counts["finalized"] == 1 and adoptable == []
+    assert not supervisor._group_alive(pgid)
+    assert state.get_history("stubborn")[0]["exit_code"] == 124
+
+
+def test_end_run_retried_after_publication_still_ends_the_group(iso):
+    """R4: end_run called again when its exit already stands (a supervisor's
+    retry) signals the group instead of assuming run.sh ended it."""
+    run = _launch_unsupervised(
+        "again", {"type": "command", "command": "trap '' TERM; sleep 100"}
+    )
+    pgid = wait_until(lambda: runs.read_pgid(run.dir), timeout=10)
+    assert pgid
+    time.sleep(0.5)
+    runs.mark_terminating(run.dir)
+    assert runs.write_exit_once(run.dir, 124)
+    assert supervisor.end_run(run, 124, term_grace=0.5) == 124
+    assert not supervisor._group_alive(pgid)
+
+
+def test_a_webhook_fire_keeps_the_loop_free_and_single_flight(iso, monkeypatch):
+    """R5: the unfinished-run lookup runs off the loop; a stalled lookup
+    stalls nothing else, and two fires during it get one run."""
+    import asyncio
+
+    from job import manage, webhook
+
+    manage.JOBS_DIR = job_runner.JOBS_DIR
+    job = {"type": "command", "command": "sleep 2", "webhook": {"secret": "whk_s"}}
+    manage.save_job("free", job)
+    real = runs.unfinished_run
+
+    def slow(job_id):
+        time.sleep(0.6)
+        return real(job_id)
+
+    monkeypatch.setattr(runs, "unfinished_run", slow)
+
+    async def scenario():
+        beats = {"n": 0}
+
+        async def heartbeat():
+            while True:
+                beats["n"] += 1
+                await asyncio.sleep(0.05)
+
+        hb = asyncio.create_task(heartbeat())
+        first, second = await asyncio.gather(
+            webhook._fire("free", job), webhook._fire("free", job)
+        )
+        hb.cancel()
+        assert beats["n"] >= 5, beats  # the loop kept turning during the lookup
+        assert {first.status, second.status} == {"launched", "coalesced"}
+        assert first.run_id == second.run_id
+        await asyncio.gather(*list(webhook._tasks))
+        return first.run_id
+
+    run_id = asyncio.run(scenario())
+    assert len(windows()) == 1
+    assert [e["run_id"] for e in state.get_history("free")] == [run_id]
+
+
+def test_activity_after_the_sweep_keeps_the_window(iso):
+    """R6: someone steps into a success window between the sweep and the
+    kill: the final read sees the new activity and keeps it."""
+    run = _launch_unsupervised("late", {"type": "command", "command": "exit 0"})
+    assert (
+        wait_until(lambda: runs.read_exit(run.dir) is not None, timeout=10) is not None
+    )
+    assert retention.tick()[0]["finalized"] == 1
+    # The finish is a while behind us: anything typed now is a step-in.
+    assert sweep.set_window_option(
+        run.target, "@job_finished", str(int(time.time()) - 60)
+    )
+    later = time.time() + 3601
+    real = sweep.displayed_windows_checked
+    calls = {"n": 0}
+
+    def step_in_then_answer():
+        calls["n"] += 1
+        if calls["n"] == 1:
+
+            def activity():
+                rows = sweep.list_window_options(JOBS, ("window_activity",)) or []
+                return rows[0]["window_activity"] if rows else ""
+
+            before = activity()
+            # Typed into the window after the sweep: a human stepping in.
+            sweep.send_literal(run.target, "echo stepped in")
+            sweep.send_enter(run.target)
+            wait_until(lambda: activity() != before, timeout=10)
+        return real()
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(sweep, "displayed_windows_checked", step_in_then_answer)
+        counts, _ = retention.tick(now=later)
+    assert counts["closed"] == 0
+    assert len(windows()) == 1
+    assert retention.tick(now=time.time() + 86401 + 10)[0]["closed"] == 1

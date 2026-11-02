@@ -4,7 +4,10 @@ The thread holding the job's flock (the runner's worker, or the webhook
 path's thread) polls the run every ``POLL_INTERVAL`` seconds. A run is
 finished when any of these holds, first match wins:
 
-1. The ``exit`` file exists: the exit code is read from it.
+1. The ``exit`` file exists: the exit code is read from it (and when a
+   supervisor meant to end the job, the ``terminate`` marker, that
+   termination is finished first, so a timed-out job never outlives its
+   record).
 2. Agent only: ``@agent_state`` is ``done``, or it is ``idle`` after the
    window was seen ``busy``: exit 0. The agent keeps running: finishing a
    run does not end the conversation, and a human may step in.
@@ -117,6 +120,7 @@ def supervise(
     while True:
         code = runs.read_exit(run.dir)
         if code is not None:
+            ensure_ended(run, term_grace=term_grace)
             break
         status, opts = observe(run)
         if status == "ok" and opts is not None and run.is_agent:
@@ -165,24 +169,42 @@ def end_run(run: Run, code: int, *, term_grace: float | None = None) -> int:
     the window, and end the job's process group, SIGTERM then SIGKILL, after
     checking the group is still the job's. Returns the run's exit code."""
     term_grace = TERM_GRACE if term_grace is None else term_grace
+    # The intent first: a supervisor that dies between the publication and
+    # the signals leaves a marker, and the recovery finishes the job.
+    runs.mark_terminating(run.dir)
     if not runs.write_exit_once(run.dir, code):
         published = runs.read_exit(run.dir)
         if published is not None:
-            return published
+            code = published
     _stamp_exit_if_unset(run, code)
+    ensure_ended(run, term_grace=term_grace)
+    return code
+
+
+def ensure_ended(run: Run, *, term_grace: float | None = None) -> bool:
+    """End the job's process group if a supervisor meant to (the terminate
+    marker) and it is still the job's and alive: SIGTERM, then SIGKILL after
+    ``term_grace``. Idempotent, so a recovery can finish what a dead
+    supervisor started. True when the group is gone at the end."""
+    term_grace = TERM_GRACE if term_grace is None else term_grace
+    if not runs.is_terminating(run.dir):
+        return True
     process = runs.read_process(run.dir)
     if process is None:
-        return code
+        return True
     pgid, ticks = process
     if not runs.process_matches(pgid, ticks):
-        return code
+        return True
     if _signal_group(pgid, signal.SIGTERM):
         deadline = time.monotonic() + term_grace
         while time.monotonic() < deadline and runs.process_matches(pgid, ticks):
             time.sleep(0.1)
         if runs.process_matches(pgid, ticks):
             _signal_group(pgid, signal.SIGKILL)
-    return code
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline and runs.process_matches(pgid, ticks):
+                time.sleep(0.05)
+    return not runs.process_matches(pgid, ticks)
 
 
 def _signal_group(pgid: int, sig: signal.Signals) -> bool:

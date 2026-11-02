@@ -250,6 +250,9 @@ _GONE_MARKERS = (
     "no such file or directory",
     "no current client",
     "no clients",
+    # The server closed the connection because it was exiting (its last
+    # window was just killed): nothing on it exists any more.
+    "server exited unexpectedly",
 )
 
 

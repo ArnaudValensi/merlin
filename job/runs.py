@@ -297,15 +297,33 @@ def read_outcome(directory: Path) -> dict | None:
 
 def unfinished_run(job_id: str) -> Run | None:
     """The launched run of ``job_id`` that has no outcome yet (its window
-    may still be going on without a supervisor), or None. A launch that
-    never reached its window (no target) is not a run to adopt."""
+    may still be going on without a supervisor), or None. A directory
+    without a window target is an interrupted preparation: its window, if
+    it got one, is attributed by ``recover_target`` first."""
     for directory in run_dirs():
         run = read_meta(directory)
-        if run is None or run.job_id != job_id or not run.target:
+        if run is None or run.job_id != job_id:
             continue
         if is_recorded(directory) or read_outcome(directory) is not None:
             continue
+        if not run.target:
+            run = recover_target(run)
+            if run is None:
+                continue
         return run
+    return None
+
+
+def recover_target(run: Run) -> Run | None:
+    """Attribute a window to a run whose metadata has no target (the launch
+    crashed between the window and the metadata): the window carrying this
+    run's ``@job_run``. The target is then saved. None when no window
+    carries it."""
+    for run_id, target in job_windows().items():
+        if run_id == run.run_id:
+            run.target = target
+            write_meta(run)
+            return run
     return None
 
 
@@ -461,8 +479,13 @@ i=0
 until [ -n "$(tmux show-option -wqv -t "$win" @job_started 2>/dev/null)" ]; do
   i=$((i + 1))
   if [ "$i" -ge {STAMP_WAIT_SECONDS * 10} ]; then
+    # Merlin died mid-launch: publish the failure for its recovery to
+    # record, and leave, so no window lingers that nothing can attribute.
     echo "merlin: the job window was never stamped, not starting the job" >&2
-    finish 1
+    printf '1\\n' > "$RUN_DIR/.exit.$$"
+    ln "$RUN_DIR/.exit.$$" "$RUN_DIR/exit" 2>/dev/null
+    rm -f "$RUN_DIR/.exit.$$"
+    exit 1
   fi
   sleep 0.1
 done
@@ -509,11 +532,21 @@ def launch(run: Run) -> str:
     if not wid:
         raise LaunchError(1, "could not open a tmux window for the run.")
     target = f"{JOBS_SESSION}:{wid}"
+    # The run's identity first, then the target in the durable metadata,
+    # then the rest with the gate last: a crash anywhere in between leaves
+    # a window the recovery can attribute (by @job_run) or a directory it
+    # can age out, never a running job nothing knows of.
+    owned = sweep.set_window_options(
+        target, {"@job_id": run.job_id, "@job_run": run.run_id}
+    )
+    if not owned:
+        sweep.kill_window(JOBS_SESSION, wid)
+        raise LaunchError(1, "could not stamp the run's tmux window.")
+    run.target = target
+    write_meta(run)
     stamped = sweep.set_window_options(
         target,
         {
-            "@job_id": run.job_id,
-            "@job_run": run.run_id,
             "@job_report": run.report_mode,
             "@agent_sid": run.sid,
             "@agent_cwd": run.cwd,
@@ -523,10 +556,27 @@ def launch(run: Run) -> str:
     )
     if not stamped:
         sweep.kill_window(JOBS_SESSION, wid)
+        run.target = ""
+        write_meta(run)
         raise LaunchError(1, "could not stamp the run's tmux window.")
-    run.target = target
-    write_meta(run)
     return target
+
+
+# How long a run directory may stay without a window target before it is
+# an interrupted preparation: the launch's own gate (run.sh gives up after
+# STAMP_WAIT_SECONDS) plus a margin.
+PREPARATION_TTL = STAMP_WAIT_SECONDS + 90
+
+
+def mark_terminating(directory: Path) -> None:
+    """Record that a supervisor meant to end the job's process group (a
+    deadline), before it publishes the exit: a recovery that finds the
+    marker finishes that termination before it records the run."""
+    _write_atomic(directory / "terminate", "1\n")
+
+
+def is_terminating(directory: Path) -> bool:
+    return (directory / "terminate").exists()
 
 
 def job_windows() -> dict[str, str]:

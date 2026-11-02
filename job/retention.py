@@ -148,13 +148,40 @@ def finalize_orphans(
                 count += 1
                 continue
             if not run.target:
-                continue  # never reached a window: a stray, aged out above
+                # The launch crashed before the metadata got its target: the
+                # window carrying this run's @job_run, if the launch got that
+                # far, is the run's; else an old enough preparation is a
+                # failed launch, recorded and removed.
+                target = owned.get(run.run_id)
+                if target and status == "ok":
+                    run.target = f"{runs.JOBS_SESSION}:{target}"
+                    runs.write_meta(run)
+                elif (
+                    status != "unavailable" and now - run.started > runs.PREPARATION_TTL
+                ):
+                    outcome = supervisor.Outcome(
+                        exit_code=1,
+                        finished=now,
+                        output="[merlin: the launch was interrupted before the window opened]",
+                        note="launch interrupted",
+                    )
+                    from job.runner import record_run
+
+                    record_run(run, outcome)
+                    count += 1
+                    continue
+                else:
+                    continue
             present = owned.get(run.run_id) == run.window_id
             code = orphan_exit(run, status, present)
             if code is None:
                 if status == "ok" and present:
                     adoptable.append(run)
                 continue
+            if runs.read_exit(directory) is not None and not supervisor.ensure_ended(
+                run
+            ):
+                continue  # the timed-out job is still alive: next tick
             note = "finalized after its supervisor died"
             if code == 130:
                 note = f"window closed before the run ended, {note}"
@@ -248,12 +275,15 @@ def close_windows(
                 row, now=now, displayed=displayed, newer_run_started=newer_started
             ):
                 continue
-            if not _still_closable(row):
+            if not _still_closable(row, now=now, newer_run_started=newer_started):
                 continue
             if sweep.kill_window(runs.JOBS_SESSION, row["window_id"]):
                 closed += 1
                 run = metas.pop(run_id, None)
-                if run is not None:
+                # The directory goes with the window only once its record is
+                # complete: an outcome not yet materialized (a write that
+                # keeps failing) is kept for the recovery to retry.
+                if run is not None and runs.is_recorded(run.dir):
                     runs.remove(run.dir)
                     removed += 1
     for run_id, run in metas.items():
@@ -263,13 +293,21 @@ def close_windows(
     return closed, removed
 
 
-def _still_closable(row: dict[str, str]) -> bool:
-    """Read the window again right before the kill: it must still carry
-    the same run and still be shown by nobody. A read that fails closes
-    nothing."""
+def _still_closable(
+    row: dict[str, str], *, now: float, newer_run_started: float | None
+) -> bool:
+    """Read the window again right before the kill and decide on what it
+    says now: it must still carry the same run, its retention fields
+    (someone may have stepped in since the sweep) must still say close, and
+    nobody may be showing it. A read that fails closes nothing."""
     target = f"{runs.JOBS_SESSION}:{row['window_id']}"
-    status, opts = sweep.window_options_checked(target, ("@job_run",))
+    status, opts = sweep.window_options_checked(target, _WINDOW_FIELDS)
     if status != "ok" or opts is None or opts.get("@job_run") != row["@job_run"]:
         return False
     client_status, displayed = sweep.displayed_windows_checked()
-    return client_status == "ok" and target not in displayed
+    if client_status != "ok":
+        return False
+    fresh = {"window_id": row["window_id"], **opts}
+    return should_close(
+        fresh, now=now, displayed=displayed, newer_run_started=newer_run_started
+    )
