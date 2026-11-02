@@ -361,8 +361,11 @@ class Watcher:
             if replay and (w.job_exit or w.job_finished) and w.state != "done":
                 # The watcher's first sweep (Merlin restarted): a window
                 # finished long ago, idle or busy, was decided by the
-                # previous process. Nothing to notify now.
+                # previous process. Nothing to notify now, and the busy it
+                # may show is not a human turn: the run's trailing done
+                # stays silent until a turn starts from a state seen here.
                 t.handled = True
+                return []
         state = w.state
         out: list[Transition] = []
         if not t.handled:

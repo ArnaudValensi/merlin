@@ -403,11 +403,26 @@ class TestANewRunSeenAlreadyFinished:
         )
         assert ev.job_id == "" and ev.body.startswith("Finished after 10 s")
 
-    def test_only_the_first_sweep_is_a_replay(self):
-        """The same windows at the watcher's first sweep: left alone."""
+    @pytest.mark.parametrize("first", ["idle", "busy"])
+    @pytest.mark.parametrize(("report", "exit_code", "notified"), CELLS)
+    def test_only_the_first_sweep_is_a_replay(self, first, report, exit_code, notified):
+        """The same windows at the watcher's first sweep: left alone, the
+        trailing done silent whatever the mode (a replayed busy is not a
+        human turn). A turn the human starts afterwards is told normally."""
         w = watcher()
-        assert w.observe([win(state="idle", exit_code="3", finished="1")]) == []
-        assert w.observe([win(state="done", exit_code="3", finished="1")]) == []
+        got: list = []
+        w.add_listener(got.append)
+        fields = dict(report=report, exit_code=exit_code, finished="1")
+        assert w.observe([win(state=first, **fields)]) == []
+        assert w.observe([win(state=first, **fields)]) == []
+        assert w.observe([win(state="done", **fields)]) == []
+        assert w.observe([win(state="done", **fields)]) == []
+        assert got == [] and w.events_since(f"{w.epoch}:0")[0] == []
+        assert w.observe([win(state="busy", **fields)]) == []
+        (ev,) = w.observe([win(state="done", **fields)])
+        assert ev.job_id == "" and ev.exit_code is None
+        assert ev.body.startswith("Finished after 10 s")
+        assert len(got) == 1 and len(w.events_since(f"{w.epoch}:0")[0]) == 1
 
 
 class TestAHumanTurnDuringTheWait:

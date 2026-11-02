@@ -61,7 +61,9 @@ even while the run's own finish still waits for its code: a `busy` starts their 
 `job_id`; the run's own trailing `done` (stamped after the supervisor's finish) notifies
 nothing. The watcher's first sweep is a replay (Merlin restarted): a window in `done` with the
 finish stamped is the run's own finish, under its mode; one seen `idle` or `busy` with the
-finish stamped is left alone (the previous process decided it). At any later sweep a window
+finish stamped is left alone (the previous process decided it), and the `busy` it may show is
+not a human turn: its trailing `done` stays silent, and a turn the human starts afterwards is
+told normally. At any later sweep a window
 first seen with its finish stamped, in any state, is a run that began and ended between two
 sweeps, decided by the mode, and a `busy` seen only together with the finish is the run's
 own, not a human turn.
