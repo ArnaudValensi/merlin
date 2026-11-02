@@ -489,9 +489,10 @@ cd {shlex.quote(run.cwd)} || {{ echo "merlin: cannot enter {shlex.quote(run.cwd)
 # process group, so a deadline can end the job and leave this script to
 # record the end, and the terminal in its hands from its first instruction.
 # The subshell writes its group and its leader's start ticks (procfs) first,
-# so a pid reused later is never signalled as this job.
+# so a pid reused later is never signalled as this job; its pid is taken
+# once, since $BASHPID inside a command substitution is that substitution's.
 set -m
-( printf '%s %s\\n' "$BASHPID" "$(cut -d' ' -f22 "/proc/$BASHPID/stat" 2>/dev/null)" > "$RUN_DIR/pid"; {job_line} )
+( job=$BASHPID; printf '%s %s\\n' "$job" "$(cut -d' ' -f22 "/proc/$job/stat" 2>/dev/null)" > "$RUN_DIR/pid"; {job_line} )
 finish "$?"
 """
 

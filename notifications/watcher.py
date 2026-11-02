@@ -42,16 +42,24 @@ past an event that is not in the ring yet.
 
 A job run's window (``job/runs.py``) carries ``@job_report``, the job's
 report mode, ``@job_exit`` once the run's exit code is known and
-``@job_finished`` once the supervisor closed the run. The watcher applies
-the report mode to the run's own finish: ``always`` notifies every finish,
-``silent`` only a failure (and every ``ask``), ``off`` nothing. An agent's
-``done`` reaches the window before the supervisor stamps the exit, so a job
-window's ``done`` without ``@job_exit`` is held back and decided at a later
-sweep, once the code is there (or after ``DEFER_SWEEPS`` sweeps without it):
-a run's own finish can never slip through ``silent`` as a plain ``done``.
-Once ``@job_finished`` stands, the window is the human's: a later turn
-notifies like any other window, whatever the report mode. A silenced
-finish produces no event on any channel.
+``@job_finished`` once the supervisor closed the run. The watcher keeps one
+track per run (the sid is the run's) and decides the run's own finish
+exactly once, by the report mode: ``always`` notifies every finish,
+``silent`` only a failure (and every ``ask``), ``off`` nothing. The finish
+is recognized from whichever comes first: a ``done`` with the exit code
+known, or the run fields confirming completion whatever the state (a
+busy-then-idle finish, a ``done`` the sweep missed, an exit stamped before
+``done``). A ``done`` seen before its exit code is held back and decided
+once the code is there, as a ``done`` with the busy span of the sweep that
+saw it (or, under ``always``, as a finish of unknown result after
+``DEFER_SWEEPS`` sweeps, corrected by one failure event if a non-zero code
+arrives later; under ``silent`` and ``off`` the decision simply waits for
+the code). A silenced finish produces no event on any channel. Once the
+finish is decided, the window is the human's: a ``busy`` starts their turn,
+and the ``done`` that ends it, or any ``ask``, notifies like any other
+window, whatever the mode; a trailing ``done`` of the run itself (stamped
+after the supervisor's finish) notifies nothing. A finished window first
+seen idle or busy (Merlin restarted long after the run) is left alone.
 
 Only windows carrying a stable ``@agent_sid`` are tracked. The identity hook
 mints the sid at SessionStart, in the same hook group as the state hook, so a
@@ -76,7 +84,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -90,7 +98,8 @@ logger = logging.getLogger("merlin.notifications")
 ATTENTION_STATES = frozenset({"done", "ask"})
 SWEEP_INTERVAL = 2.0
 # How many sweeps a job window's done may wait for its exit code before it
-# is decided without one (the supervisor stamps it within one poll).
+# is decided without one under ``always`` (the supervisor stamps it within
+# one poll; a dead one is adopted at the next scheduler tick).
 DEFER_SWEEPS = 10
 RING_SIZE = 200
 # How long a stopping watcher waits for the captures in flight (each is
@@ -164,13 +173,15 @@ class Transition:
 
 
 @dataclass
-class _Deferred:
-    """A job window's ``done`` seen before its exit code: decided at a later
-    sweep, with the busy span of the sweep that saw it."""
+class _JobTrack:
+    """What the watcher knows of one job run's window (one per sid)."""
 
-    window: Window
-    busy_seconds: int | None
-    sweeps: int = 0
+    handled: bool = False  # the run's own finish was decided (either way)
+    unknown: bool = False  # decided under always without an exit code
+    human_turn: bool = False  # a busy seen after the finish: the human's turn
+    deferred: Window | None = None  # the done seen before its exit code
+    deferred_busy: int | None = None
+    deferred_sweeps: int = 0
 
 
 def _capture_window(w: Window) -> str | None:
@@ -223,11 +234,8 @@ class Watcher:
         self._last: dict[str, str] = {}
         # sid -> clock time of the sweep that last saw the window enter busy.
         self._busy_since: dict[str, float] = {}
-        # sid -> whether the window carried @job_finished at the last sweep:
-        # a transition after that is a human's turn, not the run's finish.
-        self._finished: dict[str, bool] = {}
-        # sid -> a job window's done waiting for its exit code.
-        self._deferred: dict[str, _Deferred] = {}
+        # sid -> the track of a job run's window.
+        self._jobs: dict[str, _JobTrack] = {}
         # Transitions in order, each waiting for its capture (the task path).
         self._reserved: deque[_Reserved] = deque()
         self._captures: set[asyncio.Task] = set()
@@ -309,53 +317,131 @@ class Watcher:
 
         now = self._clock()
         pending: list[Transition] = []
-        # Finishes held back at earlier sweeps, decided now if their exit
-        # code arrived (or they waited long enough).
-        for key, held in list(self._deferred.items()):
-            w = seen.get(key)
-            if w is None:
-                del self._deferred[key]
-                continue
-            held.sweeps += 1
-            if w.job_exit or held.sweeps >= DEFER_SWEEPS:
-                del self._deferred[key]
-                decided = self._job_finish(w, held.busy_seconds)
-                if decided is not None:
-                    pending.append(decided)
         for key, state in current.items():
             prev = self._last.get(key)
+            w = seen[key]
             if state == "busy":
                 # Entering busy from a state this watcher saw. A window first
                 # seen busy went busy before Merlin looked: unknown start.
                 if prev is not None and prev != "busy":
                     self._busy_since[key] = now
+            if w.is_job:
+                pending.extend(self._job_window(key, w, prev, now))
                 continue
-            if state not in ATTENTION_STATES or prev == state:
+            if state == "busy" or state not in ATTENTION_STATES or prev == state:
                 continue
-            since = self._busy_since.pop(key, None)
-            busy = int(round(max(0.0, now - since))) if since is not None else None
-            w = seen[key]
-            if not w.is_job or self._finished.get(key, False):
-                # Not a job window, or the run is over and the window is the
-                # human's now: an ordinary transition.
-                pending.append(Transition(w, busy))
-                continue
-            if state == "ask":
-                if w.job_report != "off":
-                    pending.append(Transition(w, busy, job_id=w.job_id))
-                continue
-            if not w.job_exit:
-                # The agent's done reached the window before the supervisor's
-                # exit: decide at a later sweep, never as a plain done.
-                self._deferred[key] = _Deferred(w, busy)
-                continue
-            decided = self._job_finish(w, busy)
-            if decided is not None:
-                pending.append(decided)
+            pending.append(Transition(w, self._busy_span(key, now)))
         self._busy_since = {k: v for k, v in self._busy_since.items() if k in current}
-        self._finished = {k: bool(w.job_finished) for k, w in seen.items()}
+        self._jobs = {k: v for k, v in self._jobs.items() if k in current}
         self._last = current
         return pending
+
+    def _busy_span(self, key: str, now: float) -> int | None:
+        since = self._busy_since.pop(key, None)
+        return int(round(max(0.0, now - since))) if since is not None else None
+
+    def _job_window(
+        self, key: str, w: Window, prev: str | None, now: float
+    ) -> list[Transition]:
+        """One sweep of a job run's window: the run's own finish, decided
+        once from the state or the run fields, then the human's turns."""
+        t = self._jobs.get(key)
+        if t is None:
+            t = self._jobs[key] = _JobTrack()
+            if (w.job_exit or w.job_finished) and w.state != "done":
+                # Finished long ago, seen idle or busy on a restart: the
+                # previous process decided it. Nothing to notify now.
+                t.handled = True
+        state = w.state
+        out: list[Transition] = []
+        if not t.handled:
+            after_done = t.deferred is not None
+            out.extend(self._run_finish(key, t, w, prev, now))
+            if not t.handled:
+                # Still the run's: its own question is told by the mode.
+                if state == "ask" and prev != "ask" and w.job_report != "off":
+                    out.append(
+                        Transition(w, self._busy_span(key, now), job_id=w.job_id)
+                    )
+                return out
+            if state == "done" or (state == "busy" and not after_done):
+                # The done is the finish just decided, or its trailing one;
+                # a busy the finish was stamped over is the run's own.
+                return out
+            # Decided at this sweep, the state having moved on since the
+            # done: that move is the human's, below.
+        elif t.unknown and w.job_exit.lstrip("-").isdigit() and int(w.job_exit) != 0:
+            # The late result of a finish told without one: one failure event.
+            t.unknown = False
+            done = replace(w, state="done")
+            out.append(
+                Transition(done, None, job_id=w.job_id, exit_code=int(w.job_exit))
+            )
+        # The run's own finish is decided: the window is the human's now.
+        if state == "busy" and prev != "busy":
+            t.human_turn = True
+        elif state == "done" and prev != "done":
+            if t.human_turn:
+                t.human_turn = False
+                out.append(Transition(w, self._busy_span(key, now)))
+            # Else the run's own trailing done (run.sh stamps it after the
+            # supervisor's finish): already decided, nothing.
+        elif state == "ask" and prev != "ask":
+            out.append(Transition(w, self._busy_span(key, now)))
+        return out
+
+    def _run_finish(
+        self, key: str, t: _JobTrack, w: Window, prev: str | None, now: float
+    ) -> list[Transition]:
+        """The run's own finish, if this sweep shows it: a done with the
+        exit known, the run fields confirming completion whatever the
+        state, or the exit a held-back done was waiting for."""
+        state = w.state
+        if t.deferred is not None:
+            t.deferred_sweeps += 1
+            if w.job_exit or w.job_finished:
+                decided = self._decide(t, t.deferred, t.deferred_busy, w)
+                return [decided] if decided is not None else []
+            if t.deferred_sweeps >= DEFER_SWEEPS and w.job_report == "always":
+                # Nothing came: tell of the finish without its result, and
+                # keep the door open for one failure event.
+                t.handled = t.unknown = True
+                told, t.deferred = t.deferred, None
+                return [Transition(told, t.deferred_busy, job_id=w.job_id)]
+            return []
+        if (w.job_exit or w.job_finished) and (state != "done" or prev == "done"):
+            # The run fields confirm the finish, whatever the state: a
+            # busy-then-idle finish, a done the sweep missed, an exit
+            # stamped before done.
+            done = replace(w, state="done")
+            decided = self._decide(t, done, self._busy_span(key, now), w)
+            return [decided] if decided is not None else []
+        if state == "done" and prev != "done":
+            busy = self._busy_span(key, now)
+            if w.job_exit:
+                decided = self._decide(t, w, busy, w)
+                return [decided] if decided is not None else []
+            # The agent's done reached the window before the supervisor's
+            # exit: decided at a later sweep, as this done, never as a
+            # plain one.
+            t.deferred, t.deferred_busy, t.deferred_sweeps = w, busy, 0
+        return []
+
+    def _decide(
+        self, t: _JobTrack, done: Window, busy: int | None, fields: Window
+    ) -> Transition | None:
+        """The run's own finish, once: ``done`` is the window as the finish
+        is told (state done), ``fields`` the window read now, whose exit
+        code and report mode decide. None is silence."""
+        t.handled = True
+        t.deferred = None
+        exit_code = fields.job_exit
+        if not exit_code:
+            # Confirmed finished without a code (the finish stamp came
+            # first): told as a finish of unknown result, corrected by one
+            # failure event if a non-zero code arrives.
+            t.unknown = True
+        return self._job_finish(replace(done, job_exit=exit_code), busy)
 
     @staticmethod
     def _job_finish(w: Window, busy: int | None) -> Transition | None:

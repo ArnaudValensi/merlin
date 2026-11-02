@@ -94,15 +94,23 @@ def test_scheduler_fires_runner():
         async def mock_run_job_runner():
             pass
 
+        created: list = []
+
+        def mock_create_task(coro):
+            # The scheduler hands the runner coroutine to the loop: close
+            # it here, so the fake creates no task and awaits nothing.
+            created.append(coro.__name__)
+            coro.close()
+
         with patch("job._run_job_runner", mock_run_job_runner):
             with patch("job.asyncio.sleep", mock_sleep):
-                with patch("job.asyncio.create_task") as mock_create_task:
+                with patch("job.asyncio.create_task", mock_create_task):
                     try:
                         await job._job_scheduler()
                     except asyncio.CancelledError:
                         pass
 
         # Should have created a task for _run_job_runner
-        assert mock_create_task.call_count >= 1
+        assert created == ["mock_run_job_runner"]
 
     asyncio.run(_test())

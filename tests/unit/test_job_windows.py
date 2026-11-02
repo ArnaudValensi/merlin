@@ -243,6 +243,22 @@ def test_stuck_start_is_marked_asking_then_bounded_by_the_deadline(iso, monkeypa
     assert runs.read_exit(runs.run_dirs()[0]) == 124
 
 
+def test_the_pid_file_names_the_job_leader_and_its_own_start_ticks(iso):
+    """R1: the ticks saved beside the pid are the leader's own (a command
+    substitution has its own pid), so the identity check matches the job."""
+    run = _launch_unsupervised("ticks", {"type": "command", "command": "sleep 30"})
+    process = wait_until(lambda: runs.read_process(run.dir), timeout=10)
+    assert process
+    pgid, ticks = process
+    assert ticks and ticks == runs.process_start_ticks(pgid)
+    assert runs.process_matches(pgid, ticks)
+    # The leader is the pane's foreground job, in its own group.
+    stat = subprocess.run(
+        ["ps", "-o", "pgid=,tpgid=", "-p", str(pgid)], capture_output=True, text=True
+    ).stdout.split()
+    assert stat == [str(pgid), str(pgid)]
+
+
 def test_deadline_ends_the_process_group_and_keeps_the_window(iso, monkeypatch):
     monkeypatch.setattr(job_runner, "AGENT_TIMEOUT_SECONDS", 2.0)
     result = job_runner.run_job("hang", agent_job("hang"))

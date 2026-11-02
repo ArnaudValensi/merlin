@@ -361,11 +361,14 @@ page, Web Push), the failure wording `Failed (exit N) after <duration>:
 | `silent` | quiet | notify | notify |
 | `off` | quiet | quiet | quiet |
 
-An agent's `done` reaches the window before the supervisor stamps the exit,
-so a job window's `done` without `@job_exit` is held back by the watcher and
-decided once the code is there: a run's own finish never slips through
-`silent` as a plain `done`. Once `@job_finished` stands, a turn a human
-starts in the window notifies like any other window, whatever the mode. The
+The watcher decides each run's finish exactly once, from a `done` with the
+exit known or from the run fields confirming completion whatever the state
+(the exit can be stamped while the window still reads `busy` or `idle`). An
+agent's `done` seen before `@job_exit` is held back and decided once the
+code is there: a run's own finish never slips through `silent` as a plain
+`done`, and a late failure is never lost. Once the finish is decided, a turn
+a human starts in the window notifies like any other window, whatever the
+mode. The
 dashboard modal exposes the mode as one **Notify** select (Always /
 Failures and questions only / Never). Full reference:
 [`notifications.md`](notifications.md).
