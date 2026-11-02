@@ -134,3 +134,17 @@ sandbox misbehaving; both are self-inflicted.
   agent session in it. Skipping the kill is not the fix either, since
   `rm -rf` of the tmpdir strands the server with no socket, reachable
   only by PID.
+
+  **Unsetting `TMUX` does not make it safe.** When `TMUX_TMPDIR` names a
+  directory that no longer exists, tmux silently ignores it and falls back
+  to `/tmp/tmux-<uid>/default`: the real server again. This is how a test
+  run once killed a working server of 24 windows: an e2e run and a unit
+  run overlapped, the unit run's startup cleanup deleted the e2e run's
+  socket directory, and the e2e teardown's `env TMUX_TMPDIR=... tmux
+  kill-server` landed on the real server. The tests now kill only by
+  socket (`tests/tmux_isolation.py`, `kill_server`), never delete a
+  directory another run may still use, and run every `tmux` through a
+  guarding shim first on `PATH` that refuses a call whose `TMUX_TMPDIR` is
+  unset or gone (`tests/unit/test_tmux_isolation.py` pins all three). Do
+  the same by hand: `tmux -S "$TT/tmux-$(id -u)/default" kill-server`, and
+  check the socket exists before you type it.

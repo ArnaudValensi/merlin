@@ -21,12 +21,16 @@ import os
 import signal
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import tmux_isolation  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -125,7 +129,9 @@ def stop_merlin(server: Merlin) -> None:
         server.proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         server.proc.kill()
-    subprocess.run(["tmux", "kill-server"], env=server.env, capture_output=True)
+    # By its socket: a bare kill-server would fall back to the real server
+    # once the private directory is gone (tests/tmux_isolation.py).
+    tmux_isolation.kill_server(server.env["TMUX_TMPDIR"])
 
 
 @pytest.fixture(scope="module")

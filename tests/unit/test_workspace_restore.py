@@ -294,7 +294,11 @@ class TestRestore:
         )
         before = sorted(tmux("list-panes", "-t", "=lay:", "-F", fmt).splitlines())
         captured = snap.take_snapshot()
-        tmux("kill-server")
+        tmux(
+            "-S",
+            os.environ["TMUX_TMPDIR"] + f"/tmux-{os.getuid()}/default",
+            "kill-server",
+        )
         time.sleep(0.2)
         result = rs.restore(captured)
         assert result["failed"] == []
