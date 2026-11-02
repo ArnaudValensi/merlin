@@ -11,32 +11,6 @@ const API = {
     }
 };
 
-// Smart auto-refresh: poll /api/bot/last-modified, only refresh when data changes
-const Refresh = {
-    _lastMtime: null,
-    _interval: null,
-    _callbacks: [],
-
-    register(callback) {
-        this._callbacks.push(callback);
-    },
-
-    start(intervalMs = 5000) {
-        this._interval = setInterval(() => this._check(), intervalMs);
-    },
-
-    async _check() {
-        const data = await API.get('/api/bot/last-modified');
-        if (!data) return;
-        if (this._lastMtime !== null && data.mtime !== this._lastMtime) {
-            for (const cb of this._callbacks) {
-                try { await cb(); } catch (e) { console.error('Refresh callback error:', e); }
-            }
-        }
-        this._lastMtime = data.mtime;
-    }
-};
-
 // Time formatting
 function formatTime(isoString) {
     const d = new Date(isoString);
@@ -74,51 +48,6 @@ function formatDuration(seconds) {
     const m = Math.floor(seconds / 60);
     const s = Math.round(seconds % 60);
     return m + 'm ' + s + 's';
-}
-
-function formatCost(usd) {
-    if (usd == null) return '—';
-    if (usd < 0.01) return '<$0.01';
-    return '$' + usd.toFixed(2);
-}
-
-// Badge HTML
-function typeBadge(type) {
-    const labels = {
-        invocation: 'Invocation',
-        bot_event: 'Bot',
-        job_dispatch: 'Job',
-        job_runner_crash: 'Crash'
-    };
-    return `<span class="feed-badge badge-${type}">${labels[type] || type}</span>`;
-}
-
-function statusBadge(event) {
-    const isError = event.exit_code != null && event.exit_code !== 0 || event.event === 'error';
-    if (isError) return `<span class="feed-badge badge-error">Error</span>`;
-    return `<span class="feed-badge badge-success">OK</span>`;
-}
-
-// Summary line for feed
-function eventSummary(event) {
-    switch (event.type) {
-        case 'invocation': {
-            const parts = [`${event.caller || 'unknown'} — ${formatDuration(event.duration || 0)}`];
-            if (event.cost_usd != null) parts.push(formatCost(event.cost_usd));
-            parts.push(`exit ${event.exit_code ?? '?'}`);
-            return parts.join(' — ');
-        }
-        case 'bot_event':
-            if (event.event === 'transcription') {
-                const text = (event.content || '').substring(0, 80);
-                return `🎤 ${text}${event.content && event.content.length > 80 ? '...' : ''} (${formatDuration(event.duration || 0)})`;
-            }
-            return event.details || event.event || '';
-        case 'job_dispatch':
-            return `${event.job_id || '?'} — ${event.event || ''} ${event.duration ? '— ' + formatDuration(event.duration) : ''}`;
-        default:
-            return JSON.stringify(event).slice(0, 80);
-    }
 }
 
 // Sidebar active state

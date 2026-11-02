@@ -46,7 +46,7 @@ def run_js_tests() -> int:
 
 def cmd_test(args):
     """Run unit and integration tests (~4s)."""
-    py = run(["uv", "run", "pytest", "tests/unit/", "merlin-bot/tests/", "-v"])
+    py = run(["uv", "run", "pytest", "tests/unit/", "-v"])
     sys.exit(max(py.returncode, run_js_tests()))
 
 
@@ -130,7 +130,7 @@ def cmd_validate(args):
         ["uvx", RUFF, "check", "."],
         ["uvx", RUFF, "format", "--check", "."],
         ["uvx", TY, "check"],
-        ["uv", "run", "pytest", "tests/unit/", "merlin-bot/tests/", "-v"],
+        ["uv", "run", "pytest", "tests/unit/", "-v"],
     ]:
         result = run(cmd)
         if result.returncode != 0:

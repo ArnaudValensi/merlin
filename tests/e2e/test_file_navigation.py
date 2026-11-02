@@ -49,8 +49,6 @@ def server(navigation_files, tmp_path_factory):
     env = os.environ.copy()
     env["DASHBOARD_PASS"] = ""
     env["MERLIN_SAAS_TOKEN"] = ""
-    env["DISCORD_BOT_TOKEN"] = ""
-    env["DISCORD_CHANNEL_IDS"] = ""
     env["MERLIN_HOME"] = str(merlin_home)
     env["MERLIN_DEV"] = "1"
 

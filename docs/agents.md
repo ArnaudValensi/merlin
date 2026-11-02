@@ -6,9 +6,9 @@ default, OpenCode and Codex too) and Merlin gives it a body: open the
 and it already knows Merlin. Its skills are in place, the `merlin` CLI is
 its toolbox, and the [notes system](notes.md) is its memory. One agent,
 every channel: what you teach your agent in the
-terminal lands in the shared notes and knowledge base, and the
-[Discord bot](bot.md) and [jobs](jobs.md) run the same agent with the
-same brain doc, so every channel gets sharper together.
+terminal lands in the shared notes and knowledge base, and
+[jobs](jobs.md) run the same agent with the same brain doc, so every
+channel gets sharper together.
 
 Open `/timeline` when you need history across several interactive agent windows.
 The [Agent Activity Timeline](dev/agent-activity-timeline.md) records only

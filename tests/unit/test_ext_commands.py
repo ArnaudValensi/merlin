@@ -163,7 +163,6 @@ class TestReservedNames:
     def test_builtin_ids_reserved(self):
         for name in (
             "notes",
-            "merlin-bot",
             "timeline",
             "job",
             "files",
@@ -189,7 +188,6 @@ class TestDiscovery:
     def test_builtin_dirs_point_into_app_dir(self):
         dirs = ext_commands.builtin_extension_dirs()
         assert dirs["notes"] == paths.app_dir() / "notes"
-        assert dirs["merlin-bot"] == paths.app_dir() / "merlin-bot"
         assert dirs["timeline"] == paths.app_dir() / "timeline"
 
 
@@ -405,15 +403,15 @@ class TestServerLoadRejection:
         import main
 
         make_command(paths.extensions_dir() / "job", "evil")
-        make_command(paths.extensions_dir() / "merlin-bot", "evil")
+        make_command(paths.extensions_dir() / "timeline", "evil")
 
         saved_registry = dict(main.extension_registry)
         try:
             main.extension_registry.pop("job", None)
-            main.extension_registry.pop("merlin-bot", None)
+            main.extension_registry.pop("timeline", None)
             main._load_installed_extensions()
 
-            for name in ("job", "merlin-bot"):
+            for name in ("job", "timeline"):
                 info = main.extension_registry[name]
                 assert info.tier == "installed"
                 assert info.loaded is False
@@ -568,17 +566,25 @@ class TestEnabledExtensionSourceDirs:
         path.write_text(json.dumps(state))
 
     def test_builtin_defaults_applied(self, tmp_path):
-        # No state file: notes and timeline enabled, merlin-bot disabled.
+        # No state file: notes and timeline enabled.
         sources = ext_commands.enabled_extension_source_dirs()
         assert "notes" in sources
         assert "timeline" in sources
-        assert "merlin-bot" not in sources
 
     def test_explicit_state_wins(self, tmp_path):
-        self._write_state({"merlin-bot": True, "notes": False})
+        self._write_state({"timeline": False, "notes": False})
         sources = ext_commands.enabled_extension_source_dirs()
-        assert "merlin-bot" in sources
+        assert "timeline" not in sources
         assert "notes" not in sources
+
+    def test_a_stale_state_entry_is_ignored(self, tmp_path):
+        """An extensions.json from a release that shipped the Discord bot
+        still names it: the entry is ignored, nothing else changes."""
+        self._write_state({"merlin-bot": True, "notes": False})
+        states = ext_commands.all_extension_states()
+        assert "merlin-bot" not in states
+        assert states["notes"][1] is False
+        assert "merlin-bot" not in ext_commands.enabled_extension_source_dirs()
 
     def test_installed_default_enabled_and_state_disable(self, tmp_path):
         make_command(paths.extensions_dir() / "tasks", "add")
@@ -593,11 +599,11 @@ class TestEnabledExtensionSourceDirs:
         # all_extension_states lists every extension with its enabled flag,
         # including disabled ones (which enabled_extension_source_dirs drops).
         make_command(paths.extensions_dir() / "tasks", "add")
-        self._write_state({"merlin-bot": True, "tasks": False})
+        self._write_state({"timeline": False, "tasks": False})
 
         states = ext_commands.all_extension_states()
         assert states["notes"][1] is True  # built-in default
-        assert states["merlin-bot"][1] is True  # explicitly enabled
+        assert states["timeline"][1] is False  # explicitly disabled
         assert states["tasks"][1] is False  # explicitly disabled, still listed
 
         # The enabled subset matches enabled_extension_source_dirs exactly.
@@ -618,7 +624,7 @@ class TestEnabledExtensionSourceDirs:
 
         assert main.BUILT_IN_DEFAULTS is ext_commands.BUILTIN_DEFAULT_ENABLED
 
-    def test_setup_respects_disabled_bot(self, tmp_path, monkeypatch, capsys):
+    def test_setup_respects_a_disabled_extension(self, tmp_path, monkeypatch, capsys):
         """merlin setup must not re-expose a disabled extension's skills."""
         from tests.unit.test_cli import _real_refresh_skills
 
@@ -626,14 +632,21 @@ class TestEnabledExtensionSourceDirs:
         home.mkdir()
         monkeypatch.setenv("HOME", str(home))
 
-        # merlin-bot disabled by default -> its skills must not aggregate
+        skill_dir = paths.extensions_dir() / "tasks" / "skills" / "tasks"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: tasks\ndescription: Tasks skill.\n---\n"
+        )
+
+        # Disabled in extensions.json -> its skill must not aggregate
+        self._write_state({"tasks": False})
         _real_refresh_skills()
         from lib import skills
 
-        assert not (skills.canonical_dir() / "discord").exists()
-        assert not (home / ".claude" / "skills" / "discord").exists()
+        assert not (skills.canonical_dir() / "tasks").exists()
+        assert not (home / ".claude" / "skills" / "tasks").exists()
 
-        # Enable it -> skills appear on the next refresh
-        self._write_state({"merlin-bot": True})
+        # Enable it -> the skill appears on the next refresh
+        self._write_state({"tasks": True})
         _real_refresh_skills()
-        assert (skills.canonical_dir() / "discord").is_symlink()
+        assert (skills.canonical_dir() / "tasks").is_symlink()

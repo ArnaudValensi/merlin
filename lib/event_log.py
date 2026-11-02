@@ -12,9 +12,7 @@ Design:
     a single ``WARNING`` summary is emitted at the end of a read.
 
 Consumers:
-  - ``merlin-bot/merlin_app.py`` (bot dashboard: health, invocations, logs)
-  - ``job/routes.py`` (job crash banner + ``/api/job/performance``)
-  - ``perf/aggregate.py`` operates on the ``InvocationEvent`` models below.
+  - ``job/routes.py`` (the job crash banner, the webhook request list)
 """
 
 from __future__ import annotations
@@ -50,27 +48,6 @@ class BaseEvent(BaseModel):
     timestamp: str
 
 
-class InvocationEvent(BaseEvent):
-    """An engine call (the actual AI invocation). Fields per docs/dev/logging-system.md.
-
-    ``num_turns``, ``prompt`` and any other writer fields are preserved via
-    ``extra="allow"`` even though they are not declared here.
-    """
-
-    caller: str | None = None
-    duration: float = 0.0
-    exit_code: int = 0
-    tokens_in: int = 0
-    tokens_out: int = 0
-    cost_usd: float | None = None
-    model: str | None = None
-    session_id: str | None = None
-    session_file: str | None = None
-    engine: str | None = None
-    stderr: str = ""
-    request_id: str | None = None
-
-
 class JobDispatchEvent(BaseEvent):
     """A job execution lifecycle event (started / completed / failed)."""
 
@@ -103,19 +80,6 @@ class WebhookRequestEvent(BaseEvent):
     request_id: str | None = None
 
 
-class BotEvent(BaseEvent):
-    """A Discord bot lifecycle event.
-
-    The writer's discriminator field is ``event`` (ready / error /
-    transcription / message_received), not ``subtype``; declaring it here keeps
-    the real schema in code. Free-form payloads (``content``, ``author``,
-    ``channel`` ...) flow through via ``extra="allow"``.
-    """
-
-    event: str | None = None
-    details: str | None = None
-
-
 class AppLifecycleEvent(BaseEvent):
     """Server start / stop. ``app_stopped`` carries no payload beyond the base."""
 
@@ -129,11 +93,9 @@ class AppLifecycleEvent(BaseEvent):
 # still returned (parity with the previous dict-based reader) rather than
 # treated as malformed.
 _MODEL_FOR_TYPE: dict[str, type[BaseEvent]] = {
-    "invocation": InvocationEvent,
     "job_dispatch": JobDispatchEvent,
     "job_runner_crash": JobRunnerCrashEvent,
     "webhook_request": WebhookRequestEvent,
-    "bot_event": BotEvent,
     "app_started": AppLifecycleEvent,
     "app_stopped": AppLifecycleEvent,
 }

@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 import paths
 from dotenv import load_dotenv
 
-load_dotenv(paths.bot_config_path())
+load_dotenv(paths.config_path())
 
 
 def job_timezone_default() -> ZoneInfo:

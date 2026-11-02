@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from lib import event_log as el
-from lib.event_log import BotEvent, InvocationEvent
+from lib.event_log import BaseEvent, WebhookRequestEvent
 
 
 @pytest.fixture(autouse=True)
@@ -24,11 +24,12 @@ def _write(log_path, *lines: str) -> None:
 
 
 def _invocation(**overrides) -> str:
-    """Build one invocation JSONL line."""
+    """Build one JSONL line of a type the reader has no model for (such
+    lines come back as BaseEvent with every field kept)."""
     event = {
         "type": "invocation",
         "timestamp": "2026-05-01T12:00:00+00:00",
-        "caller": "discord",
+        "caller": "job-weather",
         "duration": 4.2,
         "exit_code": 0,
         "tokens_in": 100,
@@ -60,30 +61,44 @@ def test_read_events_missing_file_returns_empty_list(_isolated_log):
 # ---------------------------------------------------------------------------
 
 
-def test_read_events_parses_valid_invocation(_isolated_log):
+def test_read_events_parses_a_typed_event(_isolated_log):
     _write(
         _isolated_log,
-        _invocation(
-            caller="job-weather",
-            duration=12.5,
-            exit_code=0,
-            cost_usd=0.05,
-            session_file="2026-05-01_12-00-00-job-weather-abc.jsonl",
+        json.dumps(
+            {
+                "type": "webhook_request",
+                "timestamp": "2026-05-01T12:00:00+00:00",
+                "job_id": "weather",
+                "outcome": "fired",
+                "ip": "10.0.0.1",
+                "run_id": "abc",
+            }
         ),
     )
 
     events = el.read_events()
     assert len(events) == 1
-    inv = events[0]
-    assert isinstance(inv, InvocationEvent)
-    assert inv.type == "invocation"
-    assert inv.caller == "job-weather"
-    assert inv.duration == 12.5
-    assert inv.exit_code == 0
-    assert inv.tokens_in == 100
-    assert inv.tokens_out == 50
-    assert inv.cost_usd == 0.05
-    assert inv.session_file == "2026-05-01_12-00-00-job-weather-abc.jsonl"
+    ev = events[0]
+    assert isinstance(ev, WebhookRequestEvent)
+    assert ev.type == "webhook_request"
+    assert ev.job_id == "weather"
+    assert ev.outcome == "fired"
+    assert ev.ip == "10.0.0.1"
+    assert ev.run_id == "abc"
+
+
+def test_read_events_keeps_an_unknown_type_as_a_base_event(_isolated_log):
+    """A line of a type without a model (one an older release wrote) comes
+    back as BaseEvent, its fields reachable through the extras."""
+    _write(_isolated_log, _invocation(caller="job-weather", duration=12.5))
+
+    events = el.read_events()
+    assert len(events) == 1
+    ev = events[0]
+    assert type(ev) is BaseEvent
+    assert ev.type == "invocation"
+    assert ev.caller == "job-weather"
+    assert ev.duration == 12.5
 
 
 def test_read_events_skips_malformed_json(_isolated_log):
@@ -99,19 +114,32 @@ def test_read_events_skips_malformed_json(_isolated_log):
     assert [e.caller for e in events] == ["job-a", "job-b"]
 
 
+def _started(**overrides) -> str:
+    """Build one app_started JSONL line (a typed event: its port is an int)."""
+    event = {
+        "type": "app_started",
+        "timestamp": "2026-05-01T12:00:00+00:00",
+        "host": "0.0.0.0",
+        "port": 3123,
+    }
+    event.update(overrides)
+    return json.dumps(event)
+
+
 def test_read_events_skips_validation_failures(_isolated_log, caplog):
-    """A line whose duration is non-numeric fails validation and is skipped."""
+    """A typed line whose port is not a number fails validation and is
+    skipped."""
     _write(
         _isolated_log,
-        _invocation(caller="job-good"),
-        _invocation(caller="job-bad", duration="not a number"),
+        _started(host="good"),
+        _started(host="bad", port="not a number"),
     )
 
     with caplog.at_level(logging.WARNING, logger="merlin.event_log"):
         events = el.read_events()
 
     assert len(events) == 1
-    assert events[0].caller == "job-good"
+    assert events[0].host == "good"
     assert "skipped 1 malformed lines" in caplog.text
 
 
@@ -129,9 +157,9 @@ def test_read_events_filters_by_event_type(_isolated_log):
         ),
         json.dumps(
             {
-                "type": "bot_event",
+                "type": "app_started",
                 "timestamp": "2026-05-01T12:00:00+00:00",
-                "event": "ready",
+                "port": 3123,
             }
         ),
     )
@@ -140,10 +168,9 @@ def test_read_events_filters_by_event_type(_isolated_log):
     assert len(invocations) == 1
     assert all(e.type == "invocation" for e in invocations)
 
-    bot_events = el.read_events(event_type="bot_event")
-    assert len(bot_events) == 1
-    assert isinstance(bot_events[0], BotEvent)
-    assert bot_events[0].event == "ready"
+    started = el.read_events(event_type="app_started")
+    assert len(started) == 1
+    assert started[0].port == 3123
 
 
 def test_read_events_filters_by_since(_isolated_log):
@@ -203,7 +230,7 @@ def test_read_events_logs_malformed_summary(_isolated_log, caplog):
         _invocation(caller="job-a"),
         "garbage line one",
         "garbage line two",
-        _invocation(caller="job-b", duration="nope"),  # validation failure
+        _started(port="nope"),  # validation failure
         _invocation(caller="job-c"),
     )
 

@@ -38,8 +38,6 @@ _FALLBACK_PATTERNS = (
     "uv run cli.py",
     "uv run main.py",
     "python main.py",
-    "uv run merlin_bot.py",
-    "python merlin_bot.py",
 )
 
 

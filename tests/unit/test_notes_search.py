@@ -157,7 +157,7 @@ class TestKbSearch:
         from notes.commands.search import cmd_kb
         import argparse
 
-        args = argparse.Namespace(keyword=None, tag=None, type=None, discord=False)
+        args = argparse.Namespace(keyword=None, tag=None, type=None)
         cmd_kb(args)
         output = capsys.readouterr().out
         assert "2 entries" in output
@@ -170,9 +170,7 @@ class TestKbSearch:
         from notes.commands.search import cmd_kb
         import argparse
 
-        args = argparse.Namespace(
-            keyword=None, tag=None, type="technique", discord=False
-        )
+        args = argparse.Namespace(keyword=None, tag=None, type="technique")
         cmd_kb(args)
         output = capsys.readouterr().out
         assert "Docker Setup" in output
@@ -182,7 +180,7 @@ class TestKbSearch:
         from notes.commands.search import cmd_kb
         import argparse
 
-        args = argparse.Namespace(keyword=None, tag=None, type=None, discord=False)
+        args = argparse.Namespace(keyword=None, tag=None, type=None)
         cmd_kb(args)
         assert "[technique]" in capsys.readouterr().out
 
@@ -190,7 +188,7 @@ class TestKbSearch:
         from notes.commands.search import cmd_kb
         import argparse
 
-        args = argparse.Namespace(keyword=None, tag="tech", type=None, discord=False)
+        args = argparse.Namespace(keyword=None, tag="tech", type=None)
         cmd_kb(args)
         output = capsys.readouterr().out
         assert "Tech Gear" in output
@@ -200,9 +198,7 @@ class TestKbSearch:
         from notes.commands.search import cmd_kb
         import argparse
 
-        args = argparse.Namespace(
-            keyword=None, tag="nonexistent", type=None, discord=False
-        )
+        args = argparse.Namespace(keyword=None, tag="nonexistent", type=None)
         cmd_kb(args)
         output = capsys.readouterr().out
         assert "no KB entries" in output
@@ -211,9 +207,7 @@ class TestKbSearch:
         from notes.commands.search import cmd_kb
         import argparse
 
-        args = argparse.Namespace(
-            keyword="keyboard", tag=None, type=None, discord=False
-        )
+        args = argparse.Namespace(keyword="keyboard", tag=None, type=None)
         cmd_kb(args)
         output = capsys.readouterr().out
         assert "Tech Gear" in output
@@ -223,9 +217,7 @@ class TestKbSearch:
         from notes.commands.search import cmd_kb
         import argparse
 
-        args = argparse.Namespace(
-            keyword="nonexistent_xyz", tag=None, type=None, discord=False
-        )
+        args = argparse.Namespace(keyword="nonexistent_xyz", tag=None, type=None)
         cmd_kb(args)
         output = capsys.readouterr().out
         assert "no KB matches" in output
@@ -234,7 +226,7 @@ class TestKbSearch:
         from notes.commands.search import cmd_kb
         import argparse
 
-        args = argparse.Namespace(keyword=None, tag=None, type=None, discord=False)
+        args = argparse.Namespace(keyword=None, tag=None, type=None)
         cmd_kb(args)
         output = capsys.readouterr().out
         assert "no KB entries" in output
@@ -247,9 +239,7 @@ class TestLogSearch:
         from notes.commands.search import cmd_log
         import argparse
 
-        args = argparse.Namespace(
-            keyword=None, date_from=None, date_to=None, last=None, discord=False
-        )
+        args = argparse.Namespace(keyword=None, date_from=None, date_to=None, last=None)
         cmd_log(args)
         output = capsys.readouterr().out
         assert "3 files" in output
@@ -265,7 +255,6 @@ class TestLogSearch:
             date_from="2026-02-01",
             date_to="2026-02-28",
             last=None,
-            discord=False,
         )
         cmd_log(args)
         output = capsys.readouterr().out
@@ -278,7 +267,7 @@ class TestLogSearch:
         import argparse
 
         args = argparse.Namespace(
-            keyword="cron", date_from=None, date_to=None, last=None, discord=False
+            keyword="cron", date_from=None, date_to=None, last=None
         )
         cmd_log(args)
         output = capsys.readouterr().out
@@ -294,7 +283,6 @@ class TestLogSearch:
             date_from=None,
             date_to=None,
             last=None,
-            discord=False,
         )
         cmd_log(args)
         output = capsys.readouterr().out
@@ -313,9 +301,7 @@ class TestLogSearch:
         from notes.commands.search import cmd_log
         import argparse
 
-        args = argparse.Namespace(
-            keyword=None, date_from=None, date_to=None, last=None, discord=False
-        )
+        args = argparse.Namespace(keyword=None, date_from=None, date_to=None, last=None)
         cmd_log(args)
         output = capsys.readouterr().out
         assert "no log files" in output

@@ -6,7 +6,7 @@ links into ``~/.claude/skills``, ``~/.agents/skills`` and ``$CODEX_HOME/skills``
 on start; with the real ``HOME`` a throwaway server would leave links into its
 temp dir there), its own tmux server (a private ``TMUX_TMPDIR``, ``$TMUX``
 unset so the spawned ``tmux new-session`` never refuses to nest), a random
-port, auth off unless a password is given, and no SaaS or Discord token unless
+port, auth off unless a password is given, and no SaaS token unless
 given. Nothing a test does can reach ``~/.merlin`` (config, jobs, logs, the
 live server's state file), the user's agent configs, or the real tmux server.
 
@@ -91,8 +91,6 @@ def start_merlin(
         {
             "DASHBOARD_PASS": password,
             "MERLIN_SAAS_TOKEN": saas_token,
-            "DISCORD_BOT_TOKEN": "",
-            "DISCORD_CHANNEL_IDS": "",
             "MERLIN_HOME": str(home),
             "MERLIN_DEV": "1",
             # Streams in tests never touch the machine's real router or the

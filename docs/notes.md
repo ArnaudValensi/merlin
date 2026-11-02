@@ -6,7 +6,7 @@ directory (`~/.merlin/notes` by default, `~/shared/notes` on
 always prints the resolved path). This is the third pillar, the living knowledge base:
 everything here is plain markdown that your agent reads and writes from
 every channel. A fact you save on this page shapes your agent's next
-[job run](jobs.md) or [chat reply](bot.md), and what your agent learns
+[job run](jobs.md), and what your agent learns
 anywhere shows up here.
 
 ![Notes app showing a knowledge base entry](notes/phone-notes.jpg)

@@ -111,7 +111,6 @@ class TestExtensionLifecycle:
         assert state == {}
         # Built-in defaults apply
         assert _resolve_enabled("notes", "built-in", state) is True
-        assert _resolve_enabled("merlin-bot", "built-in", state) is False
         # Installed defaults to True
         assert _resolve_enabled("video-scenes", "installed", state) is True
 

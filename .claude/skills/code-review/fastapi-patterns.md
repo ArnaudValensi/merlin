@@ -226,7 +226,7 @@ app.add_middleware(
 )
 ```
 
-For Merlin: CORS may not be needed since the dashboard is served by the same FastAPI app. Only needed if external services (portal, Discord) call the API.
+For Merlin: CORS may not be needed since the dashboard is served by the same FastAPI app. Only needed if external services (the portal) call the API.
 
 ## WebSocket Patterns
 

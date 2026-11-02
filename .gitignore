@@ -7,8 +7,6 @@ test-results/
 NEXT_SESSION.md
 screenshots/
 nohup.out
-merlin-bot/logs/
-merlin-bot/notes/
 jobs/.history.json
 jobs/.locks/
 jobs/.state/

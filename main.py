@@ -6,7 +6,7 @@ Served locally; remote access comes from Merlin Cloud (SaaS mode) or a
 tunnel/reverse proxy you bring yourself.
 
 Core modules: File browser, Terminal, Commit browser, Notes editor.
-Apps: Optional plugins (e.g., merlin-bot) that add pages to the sidebar.
+Extensions (built-in or installed) add pages to the sidebar.
 
 Usage:
     uv run main.py                    # Start on port 3123, CWD = current dir
@@ -52,7 +52,6 @@ import paths
 PROJECT_ROOT = paths.app_dir()
 STATIC_DIR = PROJECT_ROOT / "static"
 TEMPLATES_DIR = PROJECT_ROOT / "templates"
-MERLIN_BOT_DIR = PROJECT_ROOT / "merlin-bot"
 
 # Add project root and lib/ to sys.path for module imports
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -66,7 +65,6 @@ from merlin_ext import make_templates, register_template_globals
 # ---------------------------------------------------------------------------
 
 load_dotenv(paths.config_path())
-load_dotenv(paths.bot_config_path())  # Bot-specific vars (Discord token, etc.)
 
 DASHBOARD_USER = os.getenv("DASHBOARD_USER", "admin")
 DASHBOARD_PASS = os.getenv("DASHBOARD_PASS", "")
@@ -161,7 +159,6 @@ EXTENSIONS_NAV_ITEM = {
 
 # Will be extended by extensions
 nav_items: list[dict] = list(CORE_NAV_ITEMS)
-show_bot_status: bool = False
 
 # Optional dependency availability (set by _check_optional_deps)
 TMUX_AVAILABLE: bool = True
@@ -786,16 +783,6 @@ def api_get_settings(_auth=Depends(require_auth)):
     """Current settings state — booleans + masked values, never raw secrets."""
     cfg = _read_config_env()
 
-    # Engine info
-    from lib.engine import _registry, get_engine
-
-    engine_name = cfg.get("AGENT_ENGINE", "claude-code")
-    try:
-        engine = get_engine(engine_name)
-        engine_valid = engine.validate() is None
-    except ValueError:
-        engine_valid = False
-
     public_base, public_source = job_webhook.resolve_public_base()
 
     from lib import skills
@@ -803,9 +790,6 @@ def api_get_settings(_auth=Depends(require_auth)):
     return {
         "password_set": bool(cfg.get("DASHBOARD_PASS")),
         "openai_key_set": bool(cfg.get("OPENAI_API_KEY")),
-        "agent_engine": engine_name,
-        "agent_engine_valid": engine_valid,
-        "available_engines": sorted(_registry.keys()),
         "saas_mode": bool(MERLIN_SAAS_TOKEN),
         "public_url": cfg.get("MERLIN_DASHBOARD_URL", ""),
         "effective_public_url": public_base,
@@ -868,7 +852,6 @@ def api_save_settings(body: dict = Body(...), _auth=Depends(require_auth)):
         if key not in (
             "DASHBOARD_PASS",
             "OPENAI_API_KEY",
-            "AGENT_ENGINE",
             "MERLIN_DASHBOARD_URL",
             env_color.KEY,
         ):
@@ -881,8 +864,7 @@ def api_save_settings(body: dict = Body(...), _auth=Depends(require_auth)):
             if key == "DASHBOARD_PASS" and cfg.get(key) != value:
                 password_changed = True
             cfg[key] = value
-        elif key != "AGENT_ENGINE":
-            # Don't delete AGENT_ENGINE when empty — it has a default
+        else:
             cfg.pop(key, None)
 
     # Agent-state pill hooks consent (auto|ask|off). Validated against the
@@ -1185,13 +1167,6 @@ import job.routes as job_routes
 
 mount_module(job_routes, "job")
 
-# Session viewer — core module. Transcripts under logs/raw-sessions/ are
-# written by lib/ for every caller (jobs, bot, terminal), so viewing one is
-# shared infra, not bot-specific. URL_SLUG="session" → /session + /api/session.
-import sessions
-
-mount_module(sessions, "sessions")
-
 # Sessions board — core module. A 2D overview of parallel agent sessions built
 # on the @agent_state tmux pills. URL_SLUG="board" → /board + /api/board.
 import board
@@ -1271,7 +1246,7 @@ def _load_extension(
     ext_id: str, tier: str, module_loader, static_name: str | None = None
 ) -> None:
     """Load a single extension into the registry and wire it up if enabled."""
-    global _extensions_with_errors, show_bot_status
+    global _extensions_with_errors
 
     enabled = _resolve_enabled(ext_id, tier, _ext_state)
 
@@ -1324,10 +1299,6 @@ def _load_extension(
     if ext_hooks:
         for hook_source, hook_resolver in ext_hooks.items():
             webhooks.register(hook_source, hook_resolver)
-
-    # Track bot status
-    if ext_id == "merlin-bot":
-        show_bot_status = True
 
     # Build metadata
     meta = getattr(mod, "EXTENSION_META", {})
@@ -1387,18 +1358,6 @@ def _load_flagged_builtins() -> None:
 
 
 _load_flagged_builtins()
-
-# --- Built-in: Merlin Bot ---
-sys.path.insert(0, str(MERLIN_BOT_DIR))
-
-
-def _load_bot():
-    import merlin_bot as _bot
-
-    return _bot
-
-
-_load_extension("merlin-bot", "built-in", _load_bot, static_name="merlin-app")
 
 # --- Installed extensions (~/.merlin/extensions/) ---
 
@@ -1581,26 +1540,6 @@ def _check_optional_deps() -> None:
                 item["tooltip"] = f"tmux required — install: {cmd}"
 
 
-def _disable_bot_extension() -> None:
-    """Disable the bot extension at runtime (e.g. missing Discord config)."""
-    global show_bot_status
-    show_bot_status = False
-    bot_info = extension_registry.get("merlin-bot")
-    if bot_info and bot_info.module:
-        # Collect bot nav URLs before clearing
-        bot_nav_urls = {
-            item.get("url") for item in getattr(bot_info.module, "NAV_ITEMS", [])
-        }
-        nav_items[:] = [i for i in nav_items if i.get("url") not in bot_nav_urls]
-        bot_info.enabled = False
-        bot_info.loaded = False
-        bot_info.module = None
-        bot_info.start = None
-        bot_info.disable = None
-        bot_info.validate = None
-        bot_info.notify = None
-
-
 def _validate_config() -> None:
     """Validate required configuration. Fails fast with a helpful message."""
     env_path = paths.config_path()
@@ -1631,17 +1570,6 @@ def _validate_config() -> None:
 
     # Check optional deps (warns, doesn't fail)
     _check_optional_deps()
-
-    # Validate bot config if extension is loaded — degrade gracefully if missing
-    bot_info = extension_registry.get("merlin-bot")
-    if bot_info and bot_info.validate is not None:
-        try:
-            bot_info.validate()
-        except SystemExit:
-            _disable_bot_extension()
-            logger.warning(
-                "Bot disabled — Discord not configured. Run 'merlin setup' to configure."
-            )
 
 
 def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
@@ -1681,9 +1609,6 @@ def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
 
     print(f"Merlin starting on http://{host}:{port}")
     print(f"CWD: {CWD}")
-    bot_info = extension_registry.get("merlin-bot")
-    if bot_info and bot_info.loaded:
-        print("Merlin Bot extension: loaded")
 
     async def _run():
         config = uvicorn.Config(app, host=host, port=port, log_level="info")

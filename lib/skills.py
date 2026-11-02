@@ -7,7 +7,7 @@ system-prompt fallback). Sources, in precedence order:
 
 1. The core repo ``skills/`` directory (shipped operational skills, always
    active regardless of the bot)
-2. Built-in extensions' ``skills/`` directories (e.g. ``merlin-bot/skills/``),
+2. Built-in extensions' ``skills/`` directories (e.g. ``app/skills/``),
    gated by the extension's enabled state
 3. Installed extensions' ``~/.merlin/extensions/<ext>/skills/``
 4. The user-skill home ``<merlin-home>/skills-user/`` (personal skills,

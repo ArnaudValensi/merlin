@@ -112,14 +112,12 @@ class TestFullFlow:
         capsys.readouterr()  # clear
 
         # Search should find it by keyword
-        cmd_kb(argparse.Namespace(keyword="bridge", tag=None, type=None, discord=False))
+        cmd_kb(argparse.Namespace(keyword="bridge", tag=None, type=None))
         output = capsys.readouterr().out
         assert "Docker Networking" in output
 
         # Search should find it by tag
-        cmd_kb(
-            argparse.Namespace(keyword=None, tag="networking", type=None, discord=False)
-        )
+        cmd_kb(argparse.Namespace(keyword=None, tag="networking", type=None))
         output = capsys.readouterr().out
         assert "Docker Networking" in output
 
@@ -196,7 +194,6 @@ class TestFullFlow:
                 date_from=None,
                 date_to=None,
                 last=None,
-                discord=False,
             )
         )
         output = capsys.readouterr().out

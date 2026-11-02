@@ -115,14 +115,14 @@ response.set_cookie("session", token)  # JS-readable, sent over HTTP, no CSRF pr
 
 ```python
 # BAD — hardcoded secrets
-DISCORD_TOKEN = "MTQ2ODY2..."
+API_TOKEN = "MTQ2ODY2..."
 API_KEY = "sk-abc123..."
 
 # BAD — secrets in code comments
 # Old token: MTQ2ODY2NTUxNTk3NDIwMTQxMA.GA3tsL...
 
 # GOOD — from environment / config file
-DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+API_TOKEN = os.getenv("API_TOKEN")
 ```
 
 **Review pattern:** Search for patterns that look like tokens/keys: strings starting with `sk-`, `MTQ`, long base64 strings, anything that looks like a credential.

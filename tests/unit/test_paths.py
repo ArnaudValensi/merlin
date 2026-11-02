@@ -103,9 +103,6 @@ class TestDevModePaths:
     def test_config_path(self):
         assert paths.config_path() == paths.merlin_home() / "config.env"
 
-    def test_bot_config_path(self):
-        assert paths.bot_config_path() == paths.merlin_home() / "config.env"
-
     def test_notes_dir(self):
         assert paths.notes_dir() == paths.merlin_home() / "notes"
 
@@ -139,10 +136,6 @@ class TestInstalledModePaths:
 
     def test_config_path(self):
         assert paths.config_path() == self.fake_home / "config.env"
-
-    def test_bot_config_path_is_same_as_config(self):
-        """In installed mode, there's a single config file."""
-        assert paths.bot_config_path() == self.fake_home / "config.env"
 
     def test_notes_dir(self):
         assert paths.notes_dir() == self.fake_home / "notes"
@@ -299,27 +292,12 @@ class TestModuleIntegration:
 
     _default_home = str((Path.home() / ".merlin").resolve())
 
-    def test_claude_wrapper_uses_paths(self):
-        import lib.claude as cw
-
-        assert not str(cw.LOG_DIR).startswith(self._default_home)
-        assert cw.LOG_DIR.name == "claude"
-        assert cw.LOG_DIR.parent.name == "logs"
-        assert cw.RAW_SESSION_DIR.name == "raw-sessions"
-        assert cw.RAW_SESSION_DIR.parent == cw.LOG_DIR.parent
-
     def test_structured_log_uses_paths(self):
         import structured_log as sl
 
         assert not str(sl.ENGINE_LOG_PATH).startswith(self._default_home)
         assert sl.ENGINE_LOG_PATH.name == "engine-log.jsonl"
         assert sl.ENGINE_LOG_PATH.parent.name == "logs"
-
-    def test_session_registry_uses_paths(self):
-        import session_registry as sr
-
-        assert not str(sr.DATA_DIR).startswith(self._default_home)
-        assert sr.DATA_DIR.name == "data"
 
     def test_job_state_uses_paths(self):
         from job.state import JOBS_DIR, STATE_DIR, LOCKS_DIR, HISTORY_FILE
@@ -343,7 +321,6 @@ class TestModuleIntegration:
             paths.app_dir,
             paths.data_dir,
             paths.config_path,
-            paths.bot_config_path,
             paths.notes_dir,
             paths.jobs_dir,
             paths.logs_dir,

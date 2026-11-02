@@ -33,16 +33,6 @@ uv run cli.py restart            # restart the running server (stop + fresh star
 
 The dashboard listens on http://localhost:3123.
 
-## Discord bot from a checkout
-
-Bot creation (token, channel ID) is covered in [the bot doc](../bot.md);
-for a checkout the token lives in a local env file:
-
-```bash
-cp merlin-bot/.env.example merlin-bot/.env
-# edit .env with your bot token and channel ID
-```
-
 ## Validate
 
 ```bash

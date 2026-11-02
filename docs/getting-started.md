@@ -25,7 +25,6 @@ merlin setup
 It asks, in order:
 
 - **Dashboard password**: empty means no auth, fine for local-only use.
-- **Discord bot token**: Enter to skip; you can add it later (see [bot.md](bot.md)).
 - **OpenAI API key for voice transcription**: Enter to skip. Without it, transcription falls back to a local model (~1.5GB download, works offline); with it, the Whisper API costs about $0.006/min.
 
 Answers land in `~/.merlin/config.env` (mode 0600, the only config file). Re-running setup shows your current values as defaults and asks before overwriting. The wizard also aggregates your agent skills so they are ready before the first run.
@@ -164,5 +163,4 @@ Inside `~/.merlin`:
 ## Where to next
 
 - [terminal.md](terminal.md): the web terminal, the front door for working from your phone.
-- [bot.md](bot.md): put the same agent in your Discord chat.
 - [agents.md](agents.md): how your agent operates Merlin and what it remembers.

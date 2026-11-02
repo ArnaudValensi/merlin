@@ -5,8 +5,10 @@ dataclass, registry population, error handling, and folder naming.
 """
 
 import sys
+from unittest import mock
 
 
+import main
 import paths
 from main import (
     ExtensionInfo,
@@ -90,8 +92,9 @@ class TestResolveEnabled:
         assert _resolve_enabled("notes", "built-in", {}) is True
 
     def test_resolve_enabled_builtin_default_off(self):
-        """Bot not in state → uses built-in default False."""
-        assert _resolve_enabled("merlin-bot", "built-in", {}) is False
+        """A built-in whose default is off (none ships today) resolves off."""
+        with mock.patch.dict(main.BUILT_IN_DEFAULTS, {"demo": False}):
+            assert _resolve_enabled("demo", "built-in", {}) is False
 
     def test_resolve_enabled_installed_default(self):
         """Unknown installed extension not in state → True."""
@@ -157,14 +160,7 @@ class TestRegistry:
 
     def test_registry_disabled_extension_not_imported(self, tmp_path):
         """Disabled extension has loaded=False, module=None."""
-        # merlin-bot is disabled by default (BUILT_IN_DEFAULTS)
-        # If it's in the registry as disabled, verify it
-        bot = extension_registry.get("merlin-bot")
-        if bot and not bot.enabled:
-            assert bot.loaded is False
-            assert bot.module is None
-        else:
-            # Bot might have been enabled by state or loaded successfully
+        if True:
             # Test the principle: create a synthetic disabled entry
             info = ExtensionInfo(
                 id="disabled-test",

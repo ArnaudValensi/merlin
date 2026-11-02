@@ -8,7 +8,6 @@ dependencies = [
     "asyncssh",
     "cron-descriptor>=2.1.0",
     "croniter",
-    "discord.py",
     "fastapi",
     "faster-whisper; sys_platform != 'darwin' or platform_machine == 'arm64'",
     "httpx",
@@ -43,7 +42,6 @@ ignore = [
 [tool.ty.src]
 exclude = [
     "tests",
-    "merlin-bot/tests",
     # Runs under the system Python (PyGObject + python-xlib), which the
     # project environment does not have: see app/deps.py.
     "app/streamer.py",
@@ -53,6 +51,6 @@ exclude = [
 ]
 
 [tool.ty.environment]
-# Mirrors sys.path.insert calls in main.py (lines 49, 851) so ty can resolve
-# imports like `from structured_log import ...` and `import merlin_bot`.
-extra-paths = ["lib", "merlin-bot"]
+# Mirrors the sys.path.insert in main.py so ty can resolve imports like
+# `from structured_log import ...`.
+extra-paths = ["lib"]

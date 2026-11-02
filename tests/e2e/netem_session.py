@@ -53,7 +53,6 @@ def main() -> int:
         MERLIN_DEV="1",
         MERLIN_FEATURES="app",
         DASHBOARD_PASS="",
-        DISCORD_BOT_TOKEN="",
         TMUX_TMPDIR=tempfile.mkdtemp(prefix="nt-"),
         UV_OFFLINE="1",  # no network in here: uv must not look for one
         MERLIN_APP_STUN="",  # nor a STUN server: the LAN is all there is

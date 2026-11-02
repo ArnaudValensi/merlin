@@ -31,8 +31,6 @@ def timeline_server(tmp_path_factory):
     env.update(
         {
             "DASHBOARD_PASS": "",
-            "DISCORD_BOT_TOKEN": "",
-            "DISCORD_CHANNEL_IDS": "",
             "MERLIN_SAAS_TOKEN": "",
             "MERLIN_TIMELINE_FIXTURES": "1",
             "MERLIN_ACTIVITY_HOOKS": "ask",
@@ -76,8 +74,6 @@ def real_timeline_server(tmp_path_factory):
     env.update(
         {
             "DASHBOARD_PASS": "",
-            "DISCORD_BOT_TOKEN": "",
-            "DISCORD_CHANNEL_IDS": "",
             "MERLIN_SAAS_TOKEN": "",
             "MERLIN_ACTIVITY_HOOKS": "off",
             "MERLIN_HOME": str(merlin_home),

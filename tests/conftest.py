@@ -11,11 +11,8 @@ _project_root = str(Path(__file__).parent.parent)
 # Add project root to sys.path so tests can import core modules
 sys.path.insert(0, _project_root)
 
-# Add lib/ so `from lib.claude import ...` works
+# Add lib/ so `from lib.skills import ...` works
 sys.path.insert(0, str(Path(_project_root) / "lib"))
-
-# Also add merlin-bot/ for tests that reference bot modules (transcribe, etc.)
-sys.path.insert(0, str(Path(_project_root) / "merlin-bot"))
 
 # ---------------------------------------------------------------------------
 # Test isolation: redirect MERLIN_HOME BEFORE any test modules are imported.
@@ -23,8 +20,7 @@ sys.path.insert(0, str(Path(_project_root) / "merlin-bot"))
 # Many modules cache paths at import time (e.g. structured_log.ENGINE_LOG_PATH).
 # Setting the env var here — at conftest load time — ensures those module-level
 # constants resolve to a temp dir instead of ~/.merlin/. Without this, tests
-# write fake crash events to the production engine-log.jsonl and the live
-# Merlin process sends spurious Discord notifications.
+# write fake crash events to the production engine-log.jsonl.
 # ---------------------------------------------------------------------------
 _session_merlin_home = tempfile.mkdtemp(prefix="merlin-test-")
 os.environ["MERLIN_HOME"] = _session_merlin_home

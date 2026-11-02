@@ -34,8 +34,8 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.resolve()))
-# lib/ holds shared modules (structured_log, engine) imported by the job module and
-# other delegated core commands.
+# lib/ holds shared modules (structured_log, skills) imported by the job module
+# and other delegated core commands.
 sys.path.insert(1, str(Path(__file__).parent.resolve() / "lib"))
 
 import ext_commands
@@ -345,8 +345,8 @@ def _refresh_skills() -> None:
 def run_setup(config_path: Path | None = None) -> None:
     """Interactive first-run setup wizard.
 
-    Prompts for dashboard password and Discord bot token.
-    Writes results to config.env.
+    Prompts for the dashboard password and the optional OpenAI key for
+    voice transcription. Writes results to config.env.
     """
     target = config_path or paths.config_path()
 
@@ -375,21 +375,6 @@ def run_setup(config_path: Path | None = None) -> None:
     password = input(prompt).strip()
     if not password and current_pass:
         password = current_pass
-
-    # Discord bot token
-    current_token = existing.get("DISCORD_BOT_TOKEN", "")
-    if current_token:
-        masked = (
-            current_token[:8] + "..." + current_token[-4:]
-            if len(current_token) > 12
-            else "***"
-        )
-        prompt = f"Discord bot token [{masked}] (Enter to keep): "
-    else:
-        prompt = "Discord bot token (Enter to skip): "
-    token = input(prompt).strip()
-    if not token and current_token:
-        token = current_token
 
     # OpenAI API key (voice transcription)
     print("\n─── Voice Transcription ───\n")
@@ -425,20 +410,21 @@ def run_setup(config_path: Path | None = None) -> None:
         "# Merlin configuration",
         f"DASHBOARD_PASS={password}",
     ]
-    if token:
-        lines.append(f"DISCORD_BOT_TOKEN={token}")
     if openai_key:
         lines.append(f"OPENAI_API_KEY={openai_key}")
 
-    # Preserve any extra keys from existing config. TUNNEL_* are legacy
-    # keys from the removed cloudflared tunnel: listing them here means a
-    # rewrite drops them instead of carrying them forward.
+    # Preserve any extra keys from existing config. TUNNEL_* (the removed
+    # cloudflared tunnel), DISCORD_* (the removed Discord bot) and
+    # AGENT_ENGINE (the removed agent engine) are legacy keys: listing them
+    # here means a rewrite drops them instead of carrying them forward.
     known_keys = {
         "DASHBOARD_PASS",
         "TUNNEL_ENABLED",
         "TUNNEL_TOKEN",
         "TUNNEL_HOSTNAME",
         "DISCORD_BOT_TOKEN",
+        "DISCORD_CHANNEL_IDS",
+        "AGENT_ENGINE",
         "OPENAI_API_KEY",
     }
     for key, val in existing.items():
@@ -466,12 +452,6 @@ def _delegate_job(argv: list[str]) -> None:
     job_main(argv, prog="merlin job")
 
 
-def _delegate_chat(argv: list[str]) -> None:
-    from lib.chat import main as chat_main
-
-    chat_main(argv)
-
-
 def _delegate_review(argv: list[str]) -> None:
     from commits.review_cli import main as review_main
 
@@ -487,10 +467,6 @@ DELEGATED_COMMANDS: dict[str, tuple] = {
     "job": (
         _delegate_job,
         "Manage jobs (list/get/add/enable/disable/remove/trigger/history)",
-    ),
-    "chat": (
-        _delegate_chat,
-        "Send messages, replies, and reactions to the chat channel",
     ),
     "review": (
         _delegate_review,
@@ -556,25 +532,14 @@ def build_parser(include_extension_help: bool = True) -> argparse.ArgumentParser
     )
 
     # agent
-    agent_parser = subparsers.add_parser(
+    subparsers.add_parser(
         "agent",
         help="Print the agent-facing brain doc",
         description=(
             "Print the Merlin brain doc: what Merlin is and how to operate "
             "it. Intended for AI agents; pipe it into a prompt or read it "
-            "on demand. The optional layers are the same texts Merlin "
-            "injects into its own managed channels."
+            "on demand."
         ),
-    )
-    agent_parser.add_argument(
-        "--personality",
-        action="store_true",
-        help="Append the personality layer (~/.merlin/personality.md)",
-    )
-    agent_parser.add_argument(
-        "--user",
-        action="store_true",
-        help="Append the user memory layer (user.md)",
     )
 
     # Delegated commands — routed before argparse in cli_main so all args
@@ -625,7 +590,6 @@ Read-only keys (resolved paths / info):
   data-dir        User data directory
   config-path     Config file path
   logs-dir        Logs directory
-  sessions-dir    Session transcripts directory
   jobs-dir        Job definitions directory
   extensions-dir  User extensions directory
   version         Current version
@@ -687,7 +651,6 @@ def _get_config_values() -> dict[str, str]:
         "data-dir": str(paths.data_dir()),
         "config-path": str(paths.config_path()),
         "logs-dir": str(paths.logs_dir()),
-        "sessions-dir": str(paths.sessions_dir()),
         "jobs-dir": str(paths.jobs_dir()),
         "extensions-dir": str(paths.extensions_dir()),
         "agent-state-hooks": skills.agent_state_hooks_mode(),
@@ -701,32 +664,20 @@ def _get_config_values() -> dict[str, str]:
 _SETTABLE_CONFIG_KEYS = ("agent-state-hooks", "tts-url")
 
 
-def run_agent(personality: bool = False, user: bool = False) -> None:
-    """Print the agent-facing brain doc, optionally with personal layers.
+def run_agent() -> None:
+    """Print the agent-facing brain doc (agent/MERLIN.md).
 
-    All layers come from lib/agent_context.py, the same module the managed
-    channels inject from, so this output cannot diverge from what the bot
-    or jobs receive. The brain is read from the app dir, so 'merlin
-    update' refreshes it via the 'current' symlink.
+    The brain is read from the app dir, so 'merlin update' refreshes it via
+    the 'current' symlink. Nothing is injected around it: an agent gets the
+    same text whether it reads this or finds Merlin through the skills.
     """
-    from lib import agent_context
-
-    brain = agent_context.brain()
-    if brain is None:
-        brain_path = paths.app_dir() / "agent" / "MERLIN.md"
+    brain_path = paths.app_dir() / "agent" / "MERLIN.md"
+    try:
+        brain = brain_path.read_text(encoding="utf-8")
+    except OSError:
         print(f"Brain doc not found at {brain_path}", file=sys.stderr)
         sys.exit(1)
-
-    parts = [brain]
-    if personality:
-        text = agent_context.personality()
-        if text:
-            parts.append(text)
-    if user:
-        text = agent_context.user_memory()
-        if text:
-            parts.append(text)
-    print("\n\n".join(parts).rstrip())
+    print(brain.rstrip())
 
 
 def run_dashboard_url() -> None:
@@ -1012,10 +963,7 @@ def cli_main(argv: list[str] | None = None) -> None:
         print(get_version())
 
     elif command == "agent":
-        run_agent(
-            personality=getattr(args, "personality", False),
-            user=getattr(args, "user", False),
-        )
+        run_agent()
 
     elif command == "dashboard-url":
         run_dashboard_url()

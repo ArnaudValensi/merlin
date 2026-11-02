@@ -167,9 +167,6 @@ class TestRunSkills:
         assert "skills-user" in out
         # The user 'merlin-jobs' is shown blocked (core takes precedence).
         assert "blocked" in out.lower()
-        # merlin-bot is disabled by default: shown disabled, discord inactive.
-        assert "discord" in out
-        assert "disabled" in out.lower()
 
     def test_routing_via_cli_main(self, capsys):
         cli_main(["skills"])
@@ -305,7 +302,7 @@ class TestGetVersion:
 class TestRunSetup:
     def test_creates_config_file(self, tmp_path):
         config = tmp_path / "config.env"
-        with mock.patch("builtins.input", side_effect=["mypass", "", ""]):
+        with mock.patch("builtins.input", side_effect=["mypass", ""]):
             run_setup(config_path=config)
 
         assert config.exists()
@@ -322,7 +319,7 @@ class TestRunSetup:
             "TUNNEL_HOSTNAME=merlin.example.com\n"
         )
 
-        with mock.patch("builtins.input", side_effect=["y", "newpass", "", ""]):
+        with mock.patch("builtins.input", side_effect=["y", "newpass", ""]):
             run_setup(config_path=config)
 
         content = config.read_text()
@@ -330,17 +327,42 @@ class TestRunSetup:
         assert "TUNNEL_TOKEN" not in content
         assert "TUNNEL_HOSTNAME" not in content
 
-    def test_discord_token_saved(self, tmp_path):
+    def test_scrubs_legacy_bot_and_engine_keys(self, tmp_path):
+        """Rewriting config drops the keys of the removed Discord bot and
+        agent engine; setup asks nothing about them."""
         config = tmp_path / "config.env"
-        with mock.patch("builtins.input", side_effect=["pass", "my-bot-token-123", ""]):
+        config.write_text(
+            "DASHBOARD_PASS=old\n"
+            "DISCORD_BOT_TOKEN=MTQ2\n"
+            "DISCORD_CHANNEL_IDS=1,2\n"
+            "AGENT_ENGINE=opencode\n"
+            "OPENAI_API_KEY=sk-keep\n"
+        )
+        with mock.patch("builtins.input", side_effect=["y", "newpass", ""]):
             run_setup(config_path=config)
 
         content = config.read_text()
-        assert "DISCORD_BOT_TOKEN=my-bot-token-123" in content
+        assert "DISCORD" not in content
+        assert "AGENT_ENGINE" not in content
+        assert "OPENAI_API_KEY=sk-keep" in content
+
+    def test_asks_only_password_and_openai_key(self, tmp_path):
+        config = tmp_path / "config.env"
+        prompts: list[str] = []
+
+        def fake_input(prompt):
+            prompts.append(prompt)
+            return ""
+
+        with mock.patch("builtins.input", fake_input):
+            run_setup(config_path=config)
+        assert len(prompts) == 2
+        assert "password" in prompts[0].lower()
+        assert "openai" in prompts[1].lower()
 
     def test_empty_password_allowed(self, tmp_path):
         config = tmp_path / "config.env"
-        with mock.patch("builtins.input", side_effect=["", "", ""]):
+        with mock.patch("builtins.input", side_effect=["", ""]):
             run_setup(config_path=config)
 
         content = config.read_text()
@@ -361,7 +383,7 @@ class TestRunSetup:
         config = tmp_path / "config.env"
         config.write_text("DASHBOARD_PASS=old\n")
 
-        with mock.patch("builtins.input", side_effect=["y", "newpass", "", ""]):
+        with mock.patch("builtins.input", side_effect=["y", "newpass", ""]):
             run_setup(config_path=config)
 
         content = config.read_text()
@@ -371,7 +393,7 @@ class TestRunSetup:
         config = tmp_path / "config.env"
         config.write_text("DASHBOARD_PASS=old\nCUSTOM_KEY=custom_value\n")
 
-        with mock.patch("builtins.input", side_effect=["y", "newpass", "", ""]):
+        with mock.patch("builtins.input", side_effect=["y", "newpass", ""]):
             run_setup(config_path=config)
 
         content = config.read_text()
@@ -380,7 +402,7 @@ class TestRunSetup:
 
     def test_creates_parent_dirs(self, tmp_path):
         config = tmp_path / "deep" / "nested" / "config.env"
-        with mock.patch("builtins.input", side_effect=["pass", "", ""]):
+        with mock.patch("builtins.input", side_effect=["pass", ""]):
             run_setup(config_path=config)
 
         assert config.exists()
@@ -388,7 +410,7 @@ class TestRunSetup:
     def test_config_file_permissions(self, tmp_path):
         """Config file should be created with 0o600 (owner-only) permissions."""
         config = tmp_path / "config.env"
-        with mock.patch("builtins.input", side_effect=["secret", "token123", ""]):
+        with mock.patch("builtins.input", side_effect=["secret", "sk-token123"]):
             run_setup(config_path=config)
 
         mode = config.stat().st_mode
@@ -483,70 +505,25 @@ class TestAgentCommand:
         assert exc_info.value.code == 1
         assert "Brain doc not found" in capsys.readouterr().err
 
-    def test_default_is_brain_only(self, tmp_path, monkeypatch, capsys):
-        """Personal layers are opt-in; no flags means brain only."""
+    def test_prints_the_brain_doc_alone(self, tmp_path, monkeypatch, capsys):
+        """No layer is injected around the brain: a personality.md or a
+        user.md in the home changes nothing."""
         paths.set_dev_mode(True)
         monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
         (tmp_path / "personality.md").write_text("PERSONALITY-TEXT")
         (tmp_path / "user.md").write_text("USER-FACTS")
         cli_main(["agent"])
         out = capsys.readouterr().out
+        brain = (paths.app_dir() / "agent" / "MERLIN.md").read_text()
+        assert out.rstrip() == brain.rstrip()
         assert "PERSONALITY-TEXT" not in out
         assert "USER-FACTS" not in out
 
-    def test_personality_flag_appends_layer(self, tmp_path, monkeypatch, capsys):
-        paths.set_dev_mode(True)
-        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
-        (tmp_path / "personality.md").write_text("PERSONALITY-TEXT")
-        cli_main(["agent", "--personality"])
-        out = capsys.readouterr().out
-        assert "PERSONALITY-TEXT" in out
-        assert out.index("# Merlin") < out.index("PERSONALITY-TEXT")
-
-    def test_user_flag_appends_layer(self, tmp_path, monkeypatch, capsys):
-        paths.set_dev_mode(True)
-        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
-        (tmp_path / "user.md").write_text("USER-FACTS")
-        cli_main(["agent", "--user"])
-        out = capsys.readouterr().out
-        assert "# User Memory" in out
-        assert "USER-FACTS" in out
-
-    def test_missing_layer_files_degrade_to_brain(self, tmp_path, monkeypatch, capsys):
-        paths.set_dev_mode(True)
-        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
-        cli_main(["agent", "--personality", "--user"])
-        out = capsys.readouterr().out
-        assert "# Merlin" in out
-
-    def test_flags_emit_same_layers_as_managed_recipe(
-        self, tmp_path, monkeypatch, capsys
-    ):
-        """Single-source check: the personality/user text from
-        'merlin agent --personality --user' is byte-for-byte what the
-        managed-assistant recipe injects (which appends the Discord
-        overlay after the same three layers)."""
-        from lib import agent_context
-
-        paths.set_dev_mode(True)
-        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
-        (tmp_path / "personality.md").write_text("PERSONALITY-TEXT")
-        (tmp_path / "user.md").write_text("USER-FACTS")
-
-        cli_main(["agent", "--personality", "--user"])
-        out = capsys.readouterr().out.rstrip()
-
-        expected = "\n\n".join(
-            [
-                agent_context.brain(),
-                agent_context.personality(),
-                agent_context.user_memory(),
-            ]
-        ).rstrip()
-        assert out == expected
-
-        composed = agent_context.compose("managed-assistant")
-        assert composed.startswith(expected)
+    def test_layer_flags_are_gone(self):
+        for flag in ("--personality", "--user"):
+            with pytest.raises(SystemExit) as exc_info:
+                cli_main(["agent", flag])
+            assert exc_info.value.code == 2
 
 
 # ---------------------------------------------------------------------------
@@ -701,12 +678,14 @@ class TestSetupSkillRefresh:
         monkeypatch.setenv("HOME", str(home))
         monkeypatch.setenv("MERLIN_HOME", str(tmp_path / "merlin-home"))
 
-        # merlin-bot is disabled by default; enable it so its bot-gated
-        # skill (discord) participates in the refresh. (Core skills like jobs
-        # aggregate regardless of the bot, so they cannot prove bot refresh.)
-        state_path = paths.extensions_state_path()
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(json.dumps({"merlin-bot": True}))
+        # An installed extension with a skill proves the refresh reaches
+        # the extension sources (core skills aggregate in any case).
+        skill_dir = paths.extensions_dir() / "tasks" / "skills" / "tasks"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: tasks\ndescription: Tasks skill.\n---\n"
+        )
+        del json
 
         # The autouse fixture stubs cli._refresh_skills; call the original
         # function object captured at import time.
@@ -716,10 +695,12 @@ class TestSetupSkillRefresh:
 
         from lib import skills
 
-        # Bot-gated skill exposed through both shim scopes
-        assert (home / ".claude" / "skills" / "discord").is_symlink()
-        assert (home / ".agents" / "skills" / "discord").is_symlink()
-        assert (skills.canonical_dir() / "discord").is_symlink()
+        # The extension skill is exposed through both shim scopes
+        assert (home / ".claude" / "skills" / "tasks").is_symlink()
+        assert (home / ".agents" / "skills" / "tasks").is_symlink()
+        assert (skills.canonical_dir() / "tasks").is_symlink()
+        # And so is a core one
+        assert (home / ".claude" / "skills" / "merlin-jobs").is_symlink()
 
 
 class TestLazyExtensionHelp:

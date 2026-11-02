@@ -3,7 +3,7 @@
 `HelpfulParser` overrides `ArgumentParser.error` to print the parser's full
 help (then the error) instead of just a one-line usage. Subparsers created by
 a `HelpfulParser` inherit the class automatically, so a leaf command invoked
-with missing required arguments (e.g. `merlin chat reply`) prints its own help
+with missing required arguments (e.g. `merlin job add`) prints its own help
 rather than a bare "the following arguments are required" line.
 """
 

@@ -22,11 +22,10 @@ a machine, a scheduler, and a memory.
   filesystem, and the git history, all in the browser, built for the way
   you work now: the agent types, you direct, review, and decide from
   whatever screen is in your hand. Talk instead of typing: voice input
-  with built-in transcription works in the terminal and the chat. The
-  **Discord bot** puts the same agent in your pocket.
+  with built-in transcription works in the terminal.
 - **Agent orchestration**: jobs that run without you, fired by a
-  schedule or a webhook. A job is a script or an agent, and reports land
-  back in your chat.
+  schedule or a webhook. A job is a script or an agent, each run in its
+  own tmux window, and Merlin notifies you when one finishes or asks.
 - **A living knowledge base**: markdown notes you and your agents both
   read, write, and curate. Every channel feeds the same memory, so the
   longer Merlin runs, the more your agents know.
@@ -38,7 +37,7 @@ three.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ArnaudValensi/merlin/master/install.sh | bash
-merlin setup    # password, optional Discord bot and voice transcription
+merlin setup    # password and optional voice transcription
 merlin          # start the dashboard
 ```
 
@@ -59,7 +58,6 @@ Start here, then one doc per piece of Merlin:
 - [Commits](docs/commits.md): git history and diffs, review your agent's work from your phone
 - [Notes](docs/notes.md): the notes editor and your agent's memory (user facts, daily logs, knowledge base)
 - [Jobs](docs/jobs.md): agent or command runs on a schedule, a webhook, or on demand, each in its own tmux window; notifications and history
-- [Discord bot](docs/bot.md): the same agent in your chat, threads, voice messages
 - [Extensions](docs/extensions.md): enable, configure, and audit what your agent can do
 - [Creating extensions](docs/creating-extensions.md): add your own dashboard pages, `merlin` commands, and agent skills
 - [The merlin CLI](docs/cli.md): drive everything from the shell; the command map, with syntax in `merlin --help`

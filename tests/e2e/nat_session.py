@@ -425,7 +425,6 @@ def main(phone_nat: str, query: str, relay: bool = True) -> int:
             MERLIN_DEV="1",
             MERLIN_FEATURES="app",
             DASHBOARD_PASS="",
-            DISCORD_BOT_TOKEN="",
             UV_OFFLINE="1",
             TMUX_TMPDIR=tempfile.mkdtemp(prefix="nt-"),
             # Merlin Cloud, as far as this Merlin can tell: the fake portal.

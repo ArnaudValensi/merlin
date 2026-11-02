@@ -47,7 +47,7 @@ from structured_log import log_event
 
 _SCRIPT_DIR = Path(__file__).parent.resolve()
 
-load_dotenv(paths.bot_config_path())
+load_dotenv(paths.config_path())
 
 # Timezone for interpreting job schedules. Loaded lazily in _validate_config().
 JOB_TZ: ZoneInfo | None = None
@@ -711,7 +711,7 @@ def run_dispatcher() -> None:
 def _validate_config() -> None:
     """Validate required configuration at startup. Fails fast with helpful messages."""
     global JOB_TZ
-    env_path = paths.bot_config_path()
+    env_path = paths.config_path()
     errors: list[str] = []
 
     if not env_path.exists():
@@ -781,7 +781,6 @@ Job file format (jobs/<job-id>.json):
     "prompt": "Task for the agent",  # Prompt jobs: what to ask the agent
     "command": "echo hi",          # Command jobs: shell command run via bash -lc
     "working_dir": null,           # Both job types: cwd; default MERLIN_LAUNCH_CWD then $HOME
-    "discord_channel": "default",  # Discord destination ("default" or a channel ID)
     "enabled": true,               # Toggle on/off
     "report_mode": "silent",       # "always", "silent" (errors only), or "off"
     "grace_minutes": 15            # Optional: staleness window override

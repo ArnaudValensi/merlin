@@ -47,7 +47,6 @@ CORE_COMMANDS: tuple[str, ...] = (
     "skills",
     "agent",
     "job",
-    "chat",
     "review",
     "dashboard-url",
 )
@@ -56,7 +55,6 @@ CORE_COMMANDS: tuple[str, ...] = (
 # installed extension.
 BUILTIN_IDS: tuple[str, ...] = (
     "notes",
-    "merlin-bot",
     "timeline",
     "files",
     "terminal",
@@ -84,7 +82,6 @@ TOP_LEVEL_ALIASES: dict[str, tuple[str, str]] = {
 # entry. Shared with main.py so the CLI and the server agree.
 BUILTIN_DEFAULT_ENABLED: dict[str, bool] = {
     "notes": True,
-    "merlin-bot": False,
     "timeline": True,
     "app": True,
 }
@@ -167,7 +164,6 @@ def builtin_extension_dirs() -> dict[str, Path]:
     app = paths.app_dir()
     dirs = {
         "notes": app / "notes",
-        "merlin-bot": app / "merlin-bot",
         "timeline": app / "timeline",
         "app": app / "app",
     }

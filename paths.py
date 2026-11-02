@@ -79,11 +79,6 @@ def config_path() -> Path:
     return merlin_home() / "config.env"
 
 
-def bot_config_path() -> Path:
-    """Bot-specific config (Discord token, etc.). Same as config_path()."""
-    return merlin_home() / "config.env"
-
-
 def load_config_env() -> None:
     """Load config.env into os.environ (existing env vars win).
 
@@ -163,11 +158,6 @@ def job_runs_dir() -> Path:
 def logs_dir() -> Path:
     """Base log directory."""
     return data_dir() / "logs"
-
-
-def sessions_dir() -> Path:
-    """Session transcript directory. Always ~/.merlin/sessions/."""
-    return data_dir() / "sessions"
 
 
 def reviews_dir() -> Path:

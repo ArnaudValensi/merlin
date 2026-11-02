@@ -117,17 +117,17 @@ def cmd_kb(args: argparse.Namespace) -> None:
         return
 
     if args.tag:
-        _kb_search_tag(kb_files, args.tag, discord=args.discord)
+        _kb_search_tag(kb_files, args.tag)
     elif args.type:
-        _kb_search_type(kb_files, args.type, discord=args.discord)
+        _kb_search_type(kb_files, args.type)
     elif args.keyword:
-        _kb_search_keyword(args.keyword, discord=args.discord)
+        _kb_search_keyword(args.keyword)
     else:
         # List all entries
-        _kb_list(kb_files, discord=args.discord)
+        _kb_list(kb_files)
 
 
-def _kb_list(files: list[Path], *, discord: bool = False) -> None:
+def _kb_list(files: list[Path]) -> None:
     """List all KB entries with descriptions."""
     results = [_format_kb_result(f) for f in files]
 
@@ -140,7 +140,7 @@ def _kb_list(files: list[Path], *, discord: bool = False) -> None:
     print(output)
 
 
-def _kb_search_tag(files: list[Path], tag: str, *, discord: bool = False) -> None:
+def _kb_search_tag(files: list[Path], tag: str) -> None:
     """Filter KB entries by tag."""
     tag_lower = tag.lower()
     results = []
@@ -158,9 +158,7 @@ def _kb_search_tag(files: list[Path], tag: str, *, discord: bool = False) -> Non
     print(output)
 
 
-def _kb_search_type(
-    files: list[Path], note_type: str, *, discord: bool = False
-) -> None:
+def _kb_search_type(files: list[Path], note_type: str) -> None:
     """Filter KB entries by type."""
     type_lower = note_type.lower()
     results = []
@@ -178,7 +176,7 @@ def _kb_search_type(
     print(output)
 
 
-def _kb_search_keyword(keyword: str, *, discord: bool = False) -> None:
+def _kb_search_keyword(keyword: str) -> None:
     """Search KB content by keyword using ripgrep."""
     raw = _rg(keyword, KB_DIR, context=2)
     if not raw.strip():
@@ -233,9 +231,9 @@ def cmd_log(args: argparse.Namespace) -> None:
     date_from, date_to = _resolve_date_range(args)
 
     if args.keyword:
-        _log_search_keyword(args.keyword, date_from, date_to, discord=args.discord)
+        _log_search_keyword(args.keyword, date_from, date_to)
     else:
-        _log_list(date_from, date_to, discord=args.discord)
+        _log_list(date_from, date_to)
 
 
 def _resolve_date_range(args: argparse.Namespace) -> tuple[str | None, str | None]:
@@ -267,9 +265,7 @@ def _get_log_files(date_from: str | None, date_to: str | None) -> list[Path]:
     return filtered
 
 
-def _log_list(
-    date_from: str | None, date_to: str | None, *, discord: bool = False
-) -> None:
+def _log_list(date_from: str | None, date_to: str | None) -> None:
     """List available log files in date range."""
     files = _get_log_files(date_from, date_to)
     if not files:
@@ -296,7 +292,7 @@ def _log_list(
 
 
 def _log_search_keyword(
-    keyword: str, date_from: str | None, date_to: str | None, *, discord: bool = False
+    keyword: str, date_from: str | None, date_to: str | None
 ) -> None:
     """Search log content by keyword."""
     files = _get_log_files(date_from, date_to)
@@ -408,12 +404,8 @@ Examples:
   # List all tags used in the KB
   merlin notes search tags
 
-  # With Discord formatting
-  merlin notes search kb --keyword "music" --discord
-
 Output:
   Results are printed to stdout as formatted text (markdown-ish).
-  Use --discord for Discord-friendly formatting.
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -429,9 +421,6 @@ Output:
     kb_parser.add_argument("--tag", "-t", help="Filter by tag")
     kb_parser.add_argument(
         "--type", help="Filter by note type (e.g. company, technique, transcript)"
-    )
-    kb_parser.add_argument(
-        "--discord", action="store_true", help="Format output for Discord"
     )
     kb_parser.set_defaults(func=cmd_kb)
 
@@ -449,9 +438,6 @@ Output:
         "--to", dest="date_to", metavar="YYYY-MM-DD", help="End date (inclusive)"
     )
     log_parser.add_argument("--last", type=int, metavar="N", help="Search last N days")
-    log_parser.add_argument(
-        "--discord", action="store_true", help="Format output for Discord"
-    )
     log_parser.set_defaults(func=cmd_log)
 
     # --- tags subcommand ---

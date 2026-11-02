@@ -14,7 +14,7 @@ default; the group appears once something is installed).
 
 This page is the trust-and-growth gate. Extensions are how
 your agent gains new capabilities: commands callable from every surface
-([terminal](terminal.md), [Discord bot](bot.md), [jobs](jobs.md)) and
+([terminal](terminal.md), [jobs](jobs.md)) and
 skills that teach it when to use them. The audit view is where you check
 what code your agent is about to gain before you flip the switch.
 

@@ -22,8 +22,6 @@ there, not here: this page is the map.
   runs fired by a schedule, a webhook, or by hand.
 - `merlin notes` / `merlin kb` / `merlin remember`: search and feed the
   [knowledge base](notes.md).
-- `merlin chat`: send, reply, and react on the chat channel the
-  [Discord bot](bot.md) serves.
 - `merlin skills`: list every agent skill and where it comes from (core,
   an extension, or your personal skills), in precedence order; see
   [Extensions](extensions.md).

@@ -1,20 +1,19 @@
 """
-Engine event logger — writes JSONL events to logs/engine-log.jsonl.
+Event logger — writes JSONL events to logs/engine-log.jsonl.
 
-Single source of truth for the monitoring dashboard. Each line is a JSON
-object with a "type" field and an ISO 8601 UTC timestamp.
+Each line is a JSON object with a "type" field and an ISO 8601 UTC
+timestamp. The typed reader is lib/event_log.py.
 
 Event types:
-  - invocation:    Claude Code call (from lib/claude.py)
-  - bot_event:     Discord bot lifecycle (from merlin_bot.py)
-  - job_dispatch: Job execution (from job/runner.py)
+  - app_started / app_stopped: server lifecycle (main.py)
+  - job_runner_crash: the job runner exited non-zero (job/__init__.py)
+  - webhook_request: a webhook hit the front desk (webhooks/)
+  - attention_routed: a notification routed to the push sender
 
 Usage:
     from structured_log import log_event
 
-    log_event("invocation", caller="discord", duration=12.5, exit_code=0)
-    log_event("bot_event", event="ready", details="Bot started")
-    log_event("job_dispatch", job_id="weather", event="completed", duration=30.1)
+    log_event("job_runner_crash", exit_code=1, stderr="...")
 """
 
 import json
@@ -25,21 +24,19 @@ from datetime import datetime, timezone
 import paths
 
 ENGINE_LOG_PATH = paths.logs_dir() / "engine-log.jsonl"
-RAW_SESSION_DIR = paths.logs_dir() / "raw-sessions"
 
 _write_lock = threading.Lock()
 _logger = logging.getLogger("merlin.structured_log")
 
 # Retention settings
 ENGINE_LOG_RETENTION_DAYS = 180
-RAW_SESSION_RETENTION_DAYS = 90
 
 
 def log_event(event_type: str, **fields) -> None:
     """Append a structured JSON event to the log file.
 
     Args:
-        event_type: Event type (invocation, bot_event, job_dispatch).
+        event_type: Event type (see the module docstring).
         **fields: Type-specific fields to include in the event.
     """
     event = {
@@ -57,35 +54,12 @@ def log_event(event_type: str, **fields) -> None:
 
 
 def cleanup_old_logs() -> None:
-    """Remove old engine log entries and raw session files.
+    """Remove engine log entries older than ENGINE_LOG_RETENTION_DAYS.
 
-    Called at startup to keep disk usage bounded.
-    - engine-log.jsonl: remove entries older than ENGINE_LOG_RETENTION_DAYS
-    - raw-sessions/: remove files older than RAW_SESSION_RETENTION_DAYS
+    Called at startup to keep disk usage bounded. Nothing else under
+    logs/ is touched: a ``raw-sessions/`` directory left by an older
+    release (the removed agent engine wrote it) is the user's to keep.
     """
-    import time
-
-    now = time.time()
-
-    # Clean raw session files by mtime
-    if RAW_SESSION_DIR.is_dir():
-        cutoff = now - RAW_SESSION_RETENTION_DAYS * 86400
-        removed = 0
-        for f in RAW_SESSION_DIR.iterdir():
-            try:
-                if f.stat().st_mtime < cutoff:
-                    f.unlink()
-                    removed += 1
-            except OSError:
-                pass
-        if removed:
-            _logger.info(
-                "Cleaned up %d raw session files older than %d days",
-                removed,
-                RAW_SESSION_RETENTION_DAYS,
-            )
-
-    # Clean engine log by filtering out old entries
     if ENGINE_LOG_PATH.exists():
         from datetime import timedelta
 

@@ -73,7 +73,7 @@ class TestParseFrontmatter:
 
 class TestBuildRegistry:
     def test_builds_from_extension_and_user_sources(self, tmp_path):
-        bot_dir = tmp_path / "merlin-bot"
+        bot_dir = tmp_path / "alpha-ext"
         make_skill(bot_dir, "alpha", description="Alpha skill.")
         make_skill(bot_dir, "beta", description="Beta skill.")
 
@@ -82,10 +82,10 @@ class TestBuildRegistry:
 
         make_skill_in(skills.user_skills_dir(), "teacher", description="Teacher skill.")
 
-        registry = skills.build_registry({"merlin-bot": bot_dir, "tasks": ext_dir})
+        registry = skills.build_registry({"alpha-ext": bot_dir, "tasks": ext_dir})
 
-        assert registry["alpha"].source == "merlin-bot"
-        assert registry["beta"].source == "merlin-bot"
+        assert registry["alpha"].source == "alpha-ext"
+        assert registry["beta"].source == "alpha-ext"
         assert registry["tasks"].source == "tasks"
         assert registry["teacher"].source == "user"
         assert registry["teacher"].description == "Teacher skill."
@@ -235,10 +235,10 @@ class TestAuditSources:
 
 class TestRebuild:
     def test_creates_symlinks(self, tmp_path):
-        bot_dir = tmp_path / "merlin-bot"
+        bot_dir = tmp_path / "alpha-ext"
         demo_skill = make_skill(bot_dir, "demo")
 
-        registry = skills.rebuild({"merlin-bot": bot_dir})
+        registry = skills.rebuild({"alpha-ext": bot_dir})
 
         link = skills.canonical_dir() / "demo"
         assert link.is_symlink()
@@ -247,9 +247,9 @@ class TestRebuild:
         assert skills.get_registry() == registry
 
     def test_stale_symlinks_removed(self, tmp_path):
-        bot_dir = tmp_path / "merlin-bot"
+        bot_dir = tmp_path / "alpha-ext"
         make_skill(bot_dir, "demo")
-        skills.rebuild({"merlin-bot": bot_dir})
+        skills.rebuild({"alpha-ext": bot_dir})
         assert (skills.canonical_dir() / "demo").is_symlink()
 
         # Extension disabled: its skills disappear on rebuild (core ones stay)
@@ -269,9 +269,9 @@ class TestRebuild:
         canonical = skills.canonical_dir()
         (canonical / "demo").mkdir(parents=True)
 
-        bot_dir = tmp_path / "merlin-bot"
+        bot_dir = tmp_path / "alpha-ext"
         make_skill(bot_dir, "demo")
-        skills.rebuild({"merlin-bot": bot_dir})
+        skills.rebuild({"alpha-ext": bot_dir})
 
         assert not (canonical / "demo").is_symlink()  # Unmanaged dir kept
         assert "unmanaged" in caplog.text.lower() or "name taken" in caplog.text.lower()
@@ -290,8 +290,7 @@ class TestRebuild:
 
 
 # ---------------------------------------------------------------------------
-# Real repo sources: core skills/ ships operational skills; discord stays
-# bot-gated under merlin-bot/skills/.
+# Real repo sources: core skills/ ships the operational skills.
 # ---------------------------------------------------------------------------
 
 
@@ -313,27 +312,10 @@ class TestRealRepoSkills:
         ):
             assert name in specs, f"missing {name}"
             assert specs[name].description
-        # discord is bot-gated, not a core skill.
-        assert "discord" not in specs
-
-    def test_bot_ships_only_discord(self, repo_root):
-        names = {
-            s.name
-            for s in skills.list_source_skills(
-                "merlin-bot", repo_root / "merlin-bot" / "skills"
-            )
-        }
-        assert names == {"discord"}
 
     def test_teacher_not_in_repo(self, repo_root):
         core = {s.name for s in skills.list_source_skills("core", repo_root / "skills")}
-        bot = {
-            s.name
-            for s in skills.list_source_skills(
-                "merlin-bot", repo_root / "merlin-bot" / "skills"
-            )
-        }
-        assert "teacher" not in core | bot
+        assert "teacher" not in core
 
     def test_core_skills_aggregate_in_installed_mode(self, repo_root):
         # The bug's home turf: in installed (production) mode app_dir() is
@@ -374,8 +356,8 @@ class TestMainSources:
             main.extension_registry["files"] = main.ExtensionInfo(
                 id="files", tier="core", enabled=True, loaded=True, error=None
             )
-            main.extension_registry["merlin-bot"] = main.ExtensionInfo(
-                id="merlin-bot", tier="built-in", enabled=True, loaded=True, error=None
+            main.extension_registry["timeline"] = main.ExtensionInfo(
+                id="timeline", tier="built-in", enabled=True, loaded=True, error=None
             )
             main.extension_registry["tasks"] = main.ExtensionInfo(
                 id="tasks", tier="installed", enabled=True, loaded=True, error=None
@@ -386,7 +368,7 @@ class TestMainSources:
 
             sources = main._skill_source_dirs()
             assert sources == {
-                "merlin-bot": paths.app_dir() / "merlin-bot",
+                "timeline": paths.app_dir() / "timeline",
                 "tasks": paths.extensions_dir() / "tasks",
             }
         finally:
@@ -408,9 +390,9 @@ class TestShimLinks:
         self.home = home
 
     def _canonical_with_skill(self, tmp_path, name="demo"):
-        bot_dir = tmp_path / "merlin-bot"
+        bot_dir = tmp_path / "alpha-ext"
         make_skill(bot_dir, name)
-        skills.rebuild({"merlin-bot": bot_dir})
+        skills.rebuild({"alpha-ext": bot_dir})
 
     def test_creates_per_skill_links(self, tmp_path):
         self._canonical_with_skill(tmp_path, "demo")
@@ -482,9 +464,9 @@ class TestShimLinks:
 
 class TestListCanonical:
     def test_lists_after_rebuild(self, tmp_path):
-        bot_dir = tmp_path / "merlin-bot"
+        bot_dir = tmp_path / "alpha-ext"
         make_skill(bot_dir, "demo", description="Demo skill.")
-        skills.rebuild({"merlin-bot": bot_dir})
+        skills.rebuild({"alpha-ext": bot_dir})
 
         specs = {s.name: s for s in skills.list_canonical_skills()}
         assert "demo" in specs

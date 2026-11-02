@@ -212,7 +212,7 @@ class TestCmdList:
         from job.manage import cmd_list
         from types import SimpleNamespace
 
-        args = SimpleNamespace(discord=False)
+        args = SimpleNamespace()
         result = cmd_list(args)
         assert result["ok"] is True
         assert result["count"] == 0
@@ -240,7 +240,7 @@ class TestCmdList:
             },
         )
 
-        args = SimpleNamespace(discord=False)
+        args = SimpleNamespace()
         result = cmd_list(args)
         assert result["ok"] is True
         assert result["count"] == 2
@@ -321,7 +321,7 @@ class TestCmdHistory:
         from job.manage import cmd_history
         from types import SimpleNamespace
 
-        args = SimpleNamespace(job_id="test-job", limit=None, discord=False)
+        args = SimpleNamespace(job_id="test-job", limit=None)
         result = cmd_history(args)
         assert result["ok"] is True
         assert result["runs"] == []
@@ -334,7 +334,7 @@ class TestCmdHistory:
         append_history("test-job", exit_code=0, duration=1.5)
         append_history("test-job", exit_code=1, duration=2.0)
 
-        args = SimpleNamespace(job_id="test-job", limit=None, discord=False)
+        args = SimpleNamespace(job_id="test-job", limit=None)
         result = cmd_history(args)
         assert result["ok"] is True
         assert len(result["runs"]) == 2
