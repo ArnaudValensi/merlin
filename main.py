@@ -1389,7 +1389,6 @@ def _load_flagged_builtins() -> None:
 _load_flagged_builtins()
 
 # --- Built-in: Merlin Bot ---
-# merlin-bot/ must be on sys.path regardless of enabled state (transcribe.py lives there)
 sys.path.insert(0, str(MERLIN_BOT_DIR))
 
 

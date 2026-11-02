@@ -322,7 +322,7 @@ class TestTranscribeEndpoint:
     def test_transcribe_returns_text(self):
         """Successful transcription returns JSON with text (fallback path)."""
         with (
-            mock.patch("transcribe.transcribe", return_value="hello world"),
+            mock.patch("terminal.transcribe.transcribe", return_value="hello world"),
             mock.patch("os.unlink"),
         ):
             result = asyncio.run(
@@ -341,7 +341,7 @@ class TestTranscribeEndpoint:
     def test_transcribe_cleans_up_temp_file(self):
         """Temp file is deleted after transcription (fallback path)."""
         with (
-            mock.patch("transcribe.transcribe", return_value="text"),
+            mock.patch("terminal.transcribe.transcribe", return_value="text"),
             mock.patch("os.unlink") as mock_unlink,
         ):
             asyncio.run(
@@ -359,7 +359,8 @@ class TestTranscribeEndpoint:
         """Transcription failure returns 500 with error message."""
         with (
             mock.patch(
-                "transcribe.transcribe", side_effect=RuntimeError("model failed")
+                "terminal.transcribe.transcribe",
+                side_effect=RuntimeError("model failed"),
             ),
             mock.patch("os.unlink"),
         ):
@@ -379,10 +380,12 @@ class TestTranscribeEndpoint:
     def test_subscription_required_returns_402(self):
         """A lapsed Merlin Cloud account is a final refusal, not a 500 the
         page would retry: 402 with the reason for the page to show."""
-        from transcribe import SubscriptionRequired
+        from terminal.transcribe import SubscriptionRequired
 
         with (
-            mock.patch("transcribe.transcribe", side_effect=SubscriptionRequired()),
+            mock.patch(
+                "terminal.transcribe.transcribe", side_effect=SubscriptionRequired()
+            ),
             mock.patch("os.unlink"),
         ):
             result = asyncio.run(
@@ -399,10 +402,10 @@ class TestTranscribeEndpoint:
 
     def test_unreadable_audio_returns_422(self):
         """Unreadable audio is final too: relayed as 422, not a retried 500."""
-        from transcribe import AudioUnreadable
+        from terminal.transcribe import AudioUnreadable
 
         with (
-            mock.patch("transcribe.transcribe", side_effect=AudioUnreadable()),
+            mock.patch("terminal.transcribe.transcribe", side_effect=AudioUnreadable()),
             mock.patch("os.unlink"),
         ):
             result = asyncio.run(
@@ -421,7 +424,7 @@ class TestTranscribeEndpoint:
         """Language parameter is forwarded to transcribe()."""
         with (
             mock.patch(
-                "transcribe.transcribe", return_value="bonjour"
+                "terminal.transcribe.transcribe", return_value="bonjour"
             ) as mock_transcribe,
             mock.patch("os.unlink"),
         ):
@@ -440,7 +443,7 @@ class TestTranscribeEndpoint:
         """Default language is English when explicitly passed."""
         with (
             mock.patch(
-                "transcribe.transcribe", return_value="hello"
+                "terminal.transcribe.transcribe", return_value="hello"
             ) as mock_transcribe,
             mock.patch("os.unlink"),
         ):
@@ -459,7 +462,7 @@ class TestTranscribeEndpoint:
         """Invalid language falls back to English."""
         with (
             mock.patch(
-                "transcribe.transcribe", return_value="hello"
+                "terminal.transcribe.transcribe", return_value="hello"
             ) as mock_transcribe,
             mock.patch("os.unlink"),
         ):
@@ -500,7 +503,7 @@ class TestTranscribeSizeLimit:
 
     def test_rejects_empty_audio_as_final(self):
         """Empty audio returns 422 (dropped by the page), never a retried 500."""
-        with mock.patch("transcribe.transcribe") as mock_transcribe:
+        with mock.patch("terminal.transcribe.transcribe") as mock_transcribe:
             result = asyncio.run(
                 tr.transcribe_audio(
                     file=self._make_file(data=b""),
@@ -517,7 +520,7 @@ class TestTranscribeSizeLimit:
         """Audio exactly 25 MB is accepted."""
         data = b"x" * (25 * 1024 * 1024)
         with (
-            mock.patch("transcribe.transcribe", return_value="ok"),
+            mock.patch("terminal.transcribe.transcribe", return_value="ok"),
             mock.patch("os.unlink"),
         ):
             result = asyncio.run(
@@ -595,7 +598,7 @@ class TestTranscribeServerSideInjection:
         """No target, or one that is not exactly session:@id, takes the 200 path
         and schedules no injection."""
         with (
-            mock.patch("transcribe.transcribe", return_value="hello"),
+            mock.patch("terminal.transcribe.transcribe", return_value="hello"),
             mock.patch("os.unlink"),
             mock.patch("terminal.routes._transcribe_and_inject") as inject,
         ):
@@ -657,10 +660,12 @@ class TestTranscribeAndInject:
     ):
         if transcribe_exc is not None:
             cm_transcribe = mock.patch(
-                "transcribe.transcribe", side_effect=transcribe_exc
+                "terminal.transcribe.transcribe", side_effect=transcribe_exc
             )
         else:
-            cm_transcribe = mock.patch("transcribe.transcribe", return_value=text)
+            cm_transcribe = mock.patch(
+                "terminal.transcribe.transcribe", return_value=text
+            )
         # One parent records the order of the tmux steps across all three helpers.
         parent = mock.Mock()
         parent.exit_cm.return_value = None
@@ -747,7 +752,7 @@ class TestTranscribeAndInject:
         r["broadcast"].assert_awaited_once()
 
     def test_subscription_refusal_is_broadcast_with_its_reason(self):
-        from transcribe import SubscriptionRequired
+        from terminal.transcribe import SubscriptionRequired
 
         r = self._run(transcribe_exc=SubscriptionRequired())
         r["send_lit"].assert_not_called()

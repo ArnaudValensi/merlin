@@ -470,7 +470,7 @@ async def _transcribe_and_inject(
     they left. A window that no longer exists is a logged loss, not a redirect
     to somewhere else. Runs off the event loop: every call shells out to tmux.
     """
-    from transcribe import TranscriptionRefused, transcribe
+    from terminal.transcribe import TranscriptionRefused, transcribe
 
     loop = asyncio.get_event_loop()
     try:
@@ -566,7 +566,7 @@ async def transcribe_audio(
         return JSONResponse({"status": "accepted"}, status_code=202)
 
     # Fallback: synchronous transcription (page writes into its own socket)
-    from transcribe import TranscriptionRefused, transcribe
+    from terminal.transcribe import TranscriptionRefused, transcribe
 
     try:
         text = await asyncio.get_event_loop().run_in_executor(

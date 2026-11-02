@@ -302,7 +302,7 @@ reconnect rule after a phone suspension are documented in
 
 `POST /api/terminal/transcribe`:
 - Accepts multipart form: `file` (audio), `language`, `auto_enter` (`true`/`false`), `target` (`session:window_id`)
-- Transcribes via `transcribe.py` (SaaS proxy → OpenAI Whisper → local faster-whisper)
+- Transcribes via `terminal/transcribe.py` (SaaS proxy → OpenAI Whisper → local faster-whisper)
 - **`target` is captured at stop time.** The page reads the current tmux window the instant the recording stops (`currentSession:currentWindowId`, e.g. `merlin:@12`) and sends it with the audio. It is the window the text belongs in, whatever window or device is current when the upload finally lands. The pending IndexedDB record keeps the target so a retry uses the same one, never the window current at retry time.
 - **With a valid `target`** (matching `^[^:\s]+:@\d+$`): returns `202 Accepted`, transcribes in the background, and injects the text straight into that tmux window with `board.sweep.send_literal(target, text)` (`tmux send-keys -t <session:window_id> -l -- <text>`), then, when `auto_enter`, `board.sweep.send_enter(target)` after a 150 ms gap. This addresses the window's active pane through tmux only: it moves no client and selects no window, so a user who switched away sees nothing move and the text waits in the window they left. It needs no open WebSocket. `_transcribe_and_inject()` runs every tmux call off the event loop.
 - **Without a target, or a malformed one**: returns `200` with `{"text": "..."}` and the page writes the text into its own WebSocket (`sendToTerminal`). That socket already reaches the right device, so only the "lock the phone while it transcribes" convenience is lost. This is the right path for the first second after connect (before the first session frame) and for a pending record saved before this feature existed. The server never rewrites a missing target to some other window.
@@ -323,6 +323,6 @@ Terminal access requires the same cookie auth as the rest of the dashboard. WebS
 | `terminal/routes.py` | WebSocket endpoint, transcription API (target-window injection) |
 | `terminal/pty_bridge.py` | Non-blocking PTY I/O, tmux client termination |
 | `templates/terminal.html` | xterm.js frontend, toolbar, clipboard, voice input |
-| `transcribe.py` | Audio transcription (faster-whisper) |
+| `terminal/transcribe.py` | Audio transcription (faster-whisper) |
 | `auth.py` | `verify_ws_cookie()` for WebSocket auth |
 | `main.py` | Mounts terminal router |

@@ -1,4 +1,4 @@
-"""Tests for transcribe.py — audio transcription backends."""
+"""Tests for terminal/transcribe.py, the audio transcription backends."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch, mock_open
 
 import pytest
 
-import transcribe
+from terminal import transcribe
 
 
 class TestConstants:
@@ -17,7 +17,7 @@ class TestConstants:
 
 
 class TestLocalBackend:
-    @patch("transcribe._get_model")
+    @patch("terminal.transcribe._get_model")
     def test_returns_joined_segments(self, mock_get_model):
         seg1 = MagicMock()
         seg1.text = " hello "
@@ -30,7 +30,7 @@ class TestLocalBackend:
         result = transcribe._transcribe_local("/tmp/test.ogg", "fr")
         assert result == "hello world"
 
-    @patch("transcribe._get_model")
+    @patch("terminal.transcribe._get_model")
     def test_calls_model_with_language(self, mock_get_model):
         mock_model = MagicMock()
         mock_model.transcribe.return_value = ([], MagicMock())
@@ -39,7 +39,7 @@ class TestLocalBackend:
         transcribe._transcribe_local("/tmp/test.ogg", "en")
         mock_model.transcribe.assert_called_once_with("/tmp/test.ogg", language="en")
 
-    @patch("transcribe._get_model")
+    @patch("terminal.transcribe._get_model")
     def test_empty_segments_returns_empty_string(self, mock_get_model):
         mock_model = MagicMock()
         mock_model.transcribe.return_value = ([], MagicMock())
@@ -130,7 +130,7 @@ class TestBackendSelection:
         # Reset the backend logged flag between tests
         transcribe._backend_logged = False
 
-    @patch("transcribe._transcribe_local", return_value="local result")
+    @patch("terminal.transcribe._transcribe_local", return_value="local result")
     @patch.dict("os.environ", {}, clear=True)
     def test_no_env_uses_local(self, mock_local):
         # Ensure neither key is set
@@ -142,14 +142,14 @@ class TestBackendSelection:
         assert result == "local result"
         mock_local.assert_called_once_with("/tmp/test.ogg", "fr")
 
-    @patch("transcribe._transcribe_openai", return_value="openai result")
+    @patch("terminal.transcribe._transcribe_openai", return_value="openai result")
     @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=True)
     def test_openai_key_uses_openai(self, mock_openai):
         result = transcribe.transcribe("/tmp/test.ogg")
         assert result == "openai result"
         mock_openai.assert_called_once_with("/tmp/test.ogg", "fr", "sk-test")
 
-    @patch("transcribe._transcribe_saas", return_value="saas result")
+    @patch("terminal.transcribe._transcribe_saas", return_value="saas result")
     @patch.dict(
         "os.environ",
         {"MERLIN_SAAS_TOKEN": "test-token", "OPENAI_API_KEY": "sk-test"},
@@ -160,7 +160,7 @@ class TestBackendSelection:
         assert result == "saas result"
         mock_saas.assert_called_once_with("/tmp/test.ogg", "fr", "test-token")
 
-    @patch("transcribe._transcribe_local", return_value="text")
+    @patch("terminal.transcribe._transcribe_local", return_value="text")
     @patch.dict("os.environ", {}, clear=True)
     def test_custom_language_passed_through(self, mock_local):
         import os
