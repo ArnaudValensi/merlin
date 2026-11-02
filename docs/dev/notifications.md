@@ -50,17 +50,21 @@ whatever the state, since the supervisor can stamp them while the window still r
 (`run.sh` publishes the exit before it stamps `done`) or `idle` (a busy-then-idle finish, a
 `done` the sweep missed). A `done` seen before its exit code is held back (`_JobTrack.deferred`)
 and decided once the code is there, told as that `done` with the busy span of the sweep that
-saw it, whatever the state has become since; a transition the state made meanwhile (`busy`,
-`ask`) is the human's, told separately and once. Under `always`, a held-back `done` still
-without a code after `DEFER_SWEEPS` sweeps is told as a finish of unknown result, and a
-non-zero code arriving later (a supervisor adopted at the next scheduler tick) is told as one
-failure event; under `silent` and `off` the decision simply waits for the code, so a late
-failure is never lost. Once the finish is decided, the window is the human's: a `busy` starts
-their turn, and the `done` that ends it, or any `ask`, notifies like any other window,
-whatever the mode, without `job_id`; the run's own trailing `done` (stamped after the
-supervisor's finish) notifies nothing. The first sight of a finished window in `done` (Merlin
-restarted right after the run) is the run's own finish, under its mode; first seen `idle` or
-`busy` with the finish stamped, the window is left alone (the previous process decided it).
+saw it, whatever the state has become since. Under `always`, a held-back `done` still without
+a code after `DEFER_SWEEPS` sweeps, or a `done` carrying `@job_finished` but no code, is told
+as a finish of unknown result, and a non-zero code arriving later (a supervisor adopted at the
+next scheduler tick) is told as one failure event, through the same mode rule; under `silent`
+and `off` the decision simply waits for the code, so a late failure is never lost and nothing
+is ever told without one. Once the run's `done` or finish was seen, the window is the human's,
+even while the run's own finish still waits for its code: a `busy` starts their turn, and the
+`done` that ends it, or any `ask`, notifies like any other window, whatever the mode, without
+`job_id`; the run's own trailing `done` (stamped after the supervisor's finish) notifies
+nothing. The watcher's first sweep is a replay (Merlin restarted): a window in `done` with the
+finish stamped is the run's own finish, under its mode; one seen `idle` or `busy` with the
+finish stamped is left alone (the previous process decided it). At any later sweep a window
+first seen with its finish stamped, in any state, is a run that began and ended between two
+sweeps, decided by the mode, and a `busy` seen only together with the finish is the run's
+own, not a human turn.
 The failed finish reads `Failed (exit N) after <duration>: <snippet>` (`content.compose_body`
 with `exit_code`). Pinned by `tests/unit/test_notifications_jobs.py`, every cell of the
 table, the race and the later turn.

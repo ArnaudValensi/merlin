@@ -306,13 +306,27 @@ class TestAStateChangeDuringTheWait:
         assert ev.body.startswith("Finished after 20 s")
 
     def test_a_question_while_waiting_is_told_once(self):
-        """done (no exit) then ask: the question is told under the mode; the
-        exit then decides the finish, and the ask is not told again."""
+        """done (no exit) then ask: the question comes after the run's done,
+        so it is the human's, told whatever the mode; the exit then decides
+        the finish, and the ask is not told again."""
+        w = seen_idle(watcher(), report="off")
+        w.observe([win(state="busy", report="off")])
+        assert w.observe([win(state="done", report="off")]) == []
+        (ask,) = w.observe([win(state="ask", report="off")])
+        assert ask.state == "ask" and ask.job_id == ""
+        assert (
+            w.observe([win(state="ask", report="off", exit_code="124", finished="1")])
+            == []
+        )
+        assert (
+            w.observe([win(state="ask", report="off", exit_code="124", finished="1")])
+            == []
+        )
         w = seen_idle(watcher(), report="silent")
         w.observe([win(state="busy", report="silent")])
         assert w.observe([win(state="done", report="silent")]) == []
         (ask,) = w.observe([win(state="ask", report="silent")])
-        assert ask.state == "ask" and ask.job_id == "digest"
+        assert ask.state == "ask" and ask.job_id == ""
         (finish,) = w.observe(
             [win(state="ask", report="silent", exit_code="124", finished="1")]
         )
@@ -323,6 +337,185 @@ class TestAStateChangeDuringTheWait:
             )
             == []
         )
+
+
+class TestANewRunSeenAlreadyFinished:
+    """A run that began and ended between two sweeps of a running watcher:
+    its first sight carries the finish fields, idle (busy then idle) or
+    busy (the exit stamped before the done). Not a restart replay: the
+    finish is decided by the mode, and the trailing done is nothing."""
+
+    CELLS = [
+        ("always", "0", True),
+        ("always", "3", True),
+        ("silent", "0", False),
+        ("silent", "3", True),
+        ("off", "0", False),
+        ("off", "3", False),
+    ]
+
+    @pytest.mark.parametrize("first", ["idle", "busy"])
+    @pytest.mark.parametrize(("report", "exit_code", "notified"), CELLS)
+    def test_decided_by_the_mode_at_first_sight(
+        self, first, report, exit_code, notified
+    ):
+        w = watcher()
+        assert w.observe([]) == []
+        got: list = []
+        w.add_listener(got.append)
+        events = w.observe(
+            [win(state=first, report=report, exit_code=exit_code, finished="1")]
+        )
+        assert bool(events) is notified
+        if notified:
+            (ev,) = events
+            assert ev.state == "done" and ev.job_id == "digest"
+            assert ev.exit_code == int(exit_code)
+            assert ev.body.startswith(
+                "Finished" if exit_code == "0" else "Failed (exit 3)"
+            )
+        assert (
+            w.observe(
+                [win(state="done", report=report, exit_code=exit_code, finished="1")]
+            )
+            == []
+        )
+        assert len(got) == (1 if notified else 0)
+        assert len(w.events_since(f"{w.epoch}:0")[0]) == len(got)
+
+    def test_a_human_turn_after_that_notifies_normally(self):
+        w = watcher()
+        w.observe([])
+        assert (
+            w.observe([win(state="busy", report="off", exit_code="0", finished="1")])
+            == []
+        )
+        assert (
+            w.observe([win(state="done", report="off", exit_code="0", finished="1")])
+            == []
+        )
+        assert (
+            w.observe([win(state="busy", report="off", exit_code="0", finished="1")])
+            == []
+        )
+        (ev,) = w.observe(
+            [win(state="done", report="off", exit_code="0", finished="1")]
+        )
+        assert ev.job_id == "" and ev.body.startswith("Finished after 10 s")
+
+    def test_only_the_first_sweep_is_a_replay(self):
+        """The same windows at the watcher's first sweep: left alone."""
+        w = watcher()
+        assert w.observe([win(state="idle", exit_code="3", finished="1")]) == []
+        assert w.observe([win(state="done", exit_code="3", finished="1")]) == []
+
+
+class TestAHumanTurnDuringTheWait:
+    """The human steps into the window while the run's done waits for its
+    exit: their turn is tracked and told normally, and the run's own finish
+    is still decided by the mode once the code arrives."""
+
+    @pytest.mark.parametrize("report", ["always", "silent", "off"])
+    def test_a_turn_begun_before_the_exit_arrives_is_told(self, report):
+        w = seen_idle(watcher(), report=report)
+        got: list = []
+        w.add_listener(got.append)
+        w.observe([win(state="busy", report=report)])
+        assert w.observe([win(state="done", report=report)]) == []
+        assert w.observe([win(state="busy", report=report)]) == []
+        # The exit arrives while the human's turn runs: the run's finish
+        # (exit 0) is told by the mode, the turn goes on.
+        events = w.observe(
+            [win(state="busy", report=report, exit_code="0", finished="1")]
+        )
+        assert [e.job_id for e in events] == (["digest"] if report == "always" else [])
+        (ev,) = w.observe(
+            [win(state="done", report=report, exit_code="0", finished="1")]
+        )
+        assert ev.job_id == "" and ev.exit_code is None
+        assert ev.body.startswith("Finished after")
+        assert len(got) == (2 if report == "always" else 1)
+
+    def test_a_turn_completed_during_the_wait_then_the_runs_failure(self):
+        w = seen_idle(watcher(), report="silent")
+        got: list = []
+        w.add_listener(got.append)
+        w.observe([win(state="busy", report="silent")])
+        assert w.observe([win(state="done", report="silent")]) == []
+        assert w.observe([win(state="busy", report="silent")]) == []
+        (turn,) = w.observe([win(state="done", report="silent")])
+        assert turn.job_id == "" and turn.body.startswith("Finished after 10 s")
+        (finish,) = w.observe(
+            [win(state="done", report="silent", exit_code="3", finished="1")]
+        )
+        assert finish.job_id == "digest" and finish.exit_code == 3
+        assert finish.body.startswith("Failed (exit 3) after 10 s")
+        assert (
+            w.observe([win(state="done", report="silent", exit_code="3", finished="1")])
+            == []
+        )
+        assert len(got) == 2
+
+    def test_a_question_during_the_turn_is_told_once(self):
+        w = seen_idle(watcher(), report="off")
+        w.observe([win(state="busy", report="off")])
+        assert w.observe([win(state="done", report="off")]) == []
+        assert w.observe([win(state="busy", report="off")]) == []
+        (ask,) = w.observe([win(state="ask", report="off")])
+        assert ask.job_id == "" and ask.body.startswith("Needs an answer")
+        assert (
+            w.observe([win(state="ask", report="off", exit_code="0", finished="1")])
+            == []
+        )
+
+
+class TestAFinishStampWithoutAnExit:
+    """The supervisor's finish stamp is seen before the exit code: always
+    tells a finish of unknown result and corrects it with one failure
+    event; silent and off wait for the code and decide then."""
+
+    @pytest.mark.parametrize(
+        ("report", "late", "told"),
+        [
+            ("always", "0", [None]),
+            ("always", "3", [None, 3]),
+            ("silent", "0", []),
+            ("silent", "3", [3]),
+            ("off", "0", []),
+            ("off", "3", []),
+        ],
+    )
+    def test_the_mode_on_every_late_result(self, report, late, told):
+        w = seen_idle(watcher(), report=report)
+        got: list = []
+        w.add_listener(got.append)
+        w.observe([win(state="busy", report=report)])
+        first = w.observe([win(state="done", report=report, finished="1")])
+        again = w.observe([win(state="done", report=report, finished="1")])
+        assert again == []
+        last = w.observe(
+            [win(state="done", report=report, exit_code=late, finished="1")]
+        )
+        assert [e.exit_code for e in first + last] == told
+        assert all(e.job_id == "digest" for e in first + last)
+        assert (
+            w.observe([win(state="done", report=report, exit_code=late, finished="1")])
+            == []
+        )
+        assert len(got) == len(told)
+        assert len(w.events_since(f"{w.epoch}:0")[0]) == len(told)
+
+    def test_a_stamp_seen_idle_waits_too(self):
+        """Busy then idle with the finish stamp but no code under silent:
+        held until the code, then decided."""
+        w = seen_idle(watcher(), report="silent")
+        w.observe([win(state="busy", report="silent")])
+        assert w.observe([win(state="idle", report="silent", finished="1")]) == []
+        (ev,) = w.observe(
+            [win(state="idle", report="silent", exit_code="2", finished="1")]
+        )
+        assert ev.state == "done" and ev.exit_code == 2
+        assert ev.body.startswith("Failed (exit 2) after 10 s")
 
 
 class TestALateExit:
