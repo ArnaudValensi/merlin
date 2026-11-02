@@ -259,8 +259,7 @@ def resolve_working_dir(job: dict) -> str:
 
 @dataclass
 class RunResult:
-    """What a run ended with, for the caller (``merlin job trigger``, the
-    scheduler's stdout line)."""
+    """What a run ended with, for the caller (``merlin job trigger``)."""
 
     exit_code: int
     duration: float
@@ -279,9 +278,7 @@ def deadline_for(job: dict) -> float:
     )
 
 
-def run_job(
-    job_id: str, job: dict, *, emit_result: bool = True, trigger: str = "manual"
-):
+def run_job(job_id: str, job: dict, *, trigger: str = "manual"):
     """Execute a single job. Acquires per-job lock to prevent double dispatch.
 
     Returns the ``RunResult``, or None when the job is already running
@@ -294,7 +291,7 @@ def run_job(
         return None
 
     try:
-        return _execute_job(job_id, job, emit_result=emit_result, trigger=trigger)
+        return _execute_job(job_id, job, trigger=trigger)
     finally:
         release_job_lock(lock)
 
@@ -303,7 +300,6 @@ def _execute_job(
     job_id: str,
     job: dict,
     *,
-    emit_result: bool = True,
     trigger: str = "manual",
     request_id: str | None = None,
 ) -> RunResult:
@@ -314,10 +310,9 @@ def _execute_job(
     that cannot happen (no tmux, the agent binary missing, its hooks not
     installed) is recorded at once as a failed run with no window.
 
-    ``emit_result`` controls the structured job_complete line on stdout. It
-    exists for the subprocess contract (the scheduler and the REST trigger
-    parse it); in-process callers like 'merlin job trigger' pass False so
-    their own stdout stays a single JSON document.
+    The run's notification is not written here: the attention watcher sees
+    the run's window finish (``notifications/watcher.py``) and applies the
+    job's report mode from the window's options.
 
     ``trigger`` records what launched the run (schedule / webhook / manual)
     in events, history, and the run log. Webhook fires pass their
@@ -367,7 +362,6 @@ def _execute_job(
         result = _adopt_locked(pending)
         if is_scheduled:
             set_last_run(job_id, _now())
-        _emit(job_id, job, result, emit_result)
         return result
 
     run: Run | None = None
@@ -399,33 +393,7 @@ def _execute_job(
     if is_scheduled:
         set_last_run(job_id, _now())
 
-    _emit(job_id, job, result, emit_result)
     return result
-
-
-def _emit(job_id: str, job: dict, result: RunResult, emit_result: bool) -> None:
-    """The structured job_complete line on stdout, the subprocess contract
-    the scheduler and the REST trigger parse."""
-    if not emit_result:
-        return
-    try:
-        print(
-            json.dumps(
-                {
-                    "type": "job_complete",
-                    "job_id": job_id,
-                    "job": job,
-                    "result": {
-                        "exit_code": result.exit_code,
-                        "duration_seconds": round(result.duration, 2),
-                        "output": result.result or "",
-                    },
-                }
-            ),
-            flush=True,
-        )
-    except Exception:
-        pass  # Never fail the job for a notification issue
 
 
 def adopt_run(run: Run) -> RunResult | None:
@@ -633,7 +601,7 @@ def _write_record(
         )
 
 
-def run_single_job(job_id: str, *, emit_result: bool = True):
+def run_single_job(job_id: str):
     """Run a specific job immediately (manual execution).
 
     Returns the job result, or None when the job is locked (already
@@ -657,7 +625,7 @@ def run_single_job(job_id: str, *, emit_result: bool = True):
         )
 
     try:
-        result = run_job(job_id, job, emit_result=emit_result)
+        result = run_job(job_id, job)
     except Exception:
         logger.exception("Unexpected error running job %s", job_id)
         raise SystemExit(1)

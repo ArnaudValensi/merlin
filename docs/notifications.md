@@ -30,6 +30,17 @@ The signal is the same one the Sessions panel and the status-bar pills show: the
 `@agent_state` stamped by the agent hooks (see [Agent-state pills](terminal.md#agent-state-pills)).
 Merlin sweeps it every two seconds, so a notification arrives within a couple of seconds.
 
+## Job runs
+
+A [job](jobs.md) run lives in a window of the `merlin-jobs` session, so it
+notifies like any other window, under the job's **Notify** setting: Always
+(every finish, failure or question), Failures and questions only, or Never.
+A failed run reads `Failed (exit N) after 12 min: <its last lines>`; a
+finished one `Finished after 12 min: ...`; a run waiting on something
+`Needs an answer: ...`. Tap it to land in the run's window. Once a run is
+over, the window is yours: a turn you start there notifies as usual,
+whatever the job's setting.
+
 ## Turn it on
 
 Open the terminal page and tap the **bell** in the bottom bar, left of the Sessions button.

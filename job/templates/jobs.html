@@ -150,18 +150,6 @@
 .status-dot.error { background: var(--accent-red); }
 .status-dot.pending { background: var(--text-muted); }
 
-/* Discord badge */
-.discord-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding: 1px 6px;
-    border-radius: 4px;
-    font-size: 10px;
-    font-weight: 600;
-    background: rgba(74, 158, 255, 0.12);
-    color: var(--accent-blue);
-}
 
 /* Toggle switch — uses shared .toggle-switch from dashboard.css */
 
@@ -877,11 +865,6 @@
                         {% if not job.get('enabled', true) %}
                         <span class="paused-tag">paused</span>
                         {% endif %}
-                        {% if bot_loaded and job.get('discord_channel') %}
-                        <span class="discord-badge" title="Discord notifications enabled">
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-                        </span>
-                        {% endif %}
                     </div>
                     {% if job.get('description') %}
                     <div class="job-desc">{{ job.description }}</div>
@@ -1162,20 +1145,13 @@
             </div>
             <div class="form-group">
                 <label class="form-label" for="field-report-mode">Notify</label>
-                <select class="form-input" id="field-report-mode" onchange="Jobs.onNotifyChange()">
+                <select class="form-input" id="field-report-mode">
                     <option value="always">Always</option>
-                    <option value="silent">Errors only</option>
+                    <option value="silent">Failures and questions only</option>
                     <option value="off">Never</option>
                 </select>
-                <div class="form-help">A notification after each run</div>
+                <div class="form-help">A Merlin notification from the run's window: when it finishes, fails or needs an answer. Once a run is over, a turn you start in that window notifies as usual.</div>
             </div>
-            {% if bot_loaded %}
-            <div class="form-group" id="discord-channel-group">
-                <label class="form-label" for="field-discord-channel">Discord channel override</label>
-                <input class="form-input" id="field-discord-channel" placeholder="Default channel">
-                <div class="form-help">Leave empty to use the bot's default channel.</div>
-            </div>
-            {% endif %}
         </div><!-- /.job-modal-body -->
             <div class="modal-actions">
                 <button type="button" class="modal-cancel-btn" onclick="Jobs.closeModal()">Cancel</button>
@@ -1354,21 +1330,10 @@ const Jobs = {
         if (preview) preview.style.display = 'none';
         const errorId = document.getElementById('error-id');
         if (errorId) errorId.textContent = '';
-        const channelOverride = document.getElementById('field-discord-channel');
-        if (channelOverride) channelOverride.value = '';
-        this.onNotifyChange();
         this._setWebhookState(null);
         document.getElementById('field-webhook-enabled').checked = false;
         this.onWebhookToggle();
         this._openOverlay('field-id');
-    },
-
-    // Show the Discord channel override only when notifications can fire.
-    onNotifyChange() {
-        const group = document.getElementById('discord-channel-group');
-        if (!group) return;
-        const mode = document.getElementById('field-report-mode').value;
-        group.style.display = mode === 'off' ? 'none' : 'block';
     },
 
     async openEditModal(jobId) {
@@ -1400,13 +1365,6 @@ const Jobs = {
         if (preview) preview.style.display = 'none';
         const errorId = document.getElementById('error-id');
         if (errorId) errorId.textContent = '';
-        const channelOverride = document.getElementById('field-discord-channel');
-        if (channelOverride) {
-            // "default" means no specific override.
-            const specific = job.discord_channel;
-            channelOverride.value = specific && specific !== 'default' ? specific : '';
-        }
-        this.onNotifyChange();
         this._setWebhookState(
             job.webhook
                 ? { secret: job.webhook.secret, url: job.webhook_url || '', source: job.webhook_url_source }
@@ -1515,15 +1473,6 @@ const Jobs = {
         } else {
             body.prompt = prompt;
             body.agent = document.getElementById('field-agent').value;
-        }
-
-        // Notifications: report_mode says when ("off" = never, enforced by
-        // notify.py); discord_channel is only the destination. When off, the
-        // destination is left untouched so re-enabling keeps the channel.
-        const channelOverride = document.getElementById('field-discord-channel');
-        if (channelOverride && body.report_mode !== 'off') {
-            const ch = channelOverride.value.trim();
-            body.discord_channel = ch || 'default';
         }
 
         if (!this._editingJobId && !id) {

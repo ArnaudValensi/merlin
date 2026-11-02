@@ -94,7 +94,7 @@ def load_job(job_id: str) -> dict | None:
 
 # Fields of earlier versions. A job file carrying them still loads; they
 # drop at the next save.
-LEGACY_FIELDS = ("max_turns", "ephemeral")
+LEGACY_FIELDS = ("max_turns", "ephemeral", "discord_channel")
 
 
 def save_job(job_id: str, job: dict) -> Path:
@@ -134,104 +134,6 @@ def delete_job(job_id: str) -> bool:
         path.unlink()
         return True
     return False
-
-
-# ---------------------------------------------------------------------------
-# Discord formatting
-# ---------------------------------------------------------------------------
-
-
-def format_jobs_discord(jobs: list[dict]) -> str:
-    """Format job list for Discord."""
-    if not jobs:
-        return "**No jobs configured.**"
-
-    active = sum(1 for j in jobs if j.get("enabled", True))
-    disabled = len(jobs) - active
-
-    lines = []
-    if disabled > 0:
-        lines.append(f"**Jobs ({active} active, {disabled} disabled)**")
-    else:
-        lines.append(f"**Jobs ({active} active)**")
-
-    for i, job in enumerate(jobs, 1):
-        enabled = job.get("enabled", True)
-        icon = "\u2705" if enabled else "\u23f8\ufe0f"
-        schedule_human = cron_to_human(job.get("schedule", ""))
-        report_mode = job.get("report_mode", "always")
-        job_id = job.get("id", "unknown")
-
-        suffix = ""
-        if not enabled:
-            suffix = " (disabled)"
-        elif report_mode == "silent":
-            suffix = " — silent"
-        elif report_mode == "off":
-            suffix = " — notifications off"
-        elif report_mode == "always":
-            suffix = " — always"
-
-        lines.append(f"{i}. {icon} **{job_id}** — {schedule_human}{suffix}")
-
-    return "\n".join(lines)
-
-
-def format_job_discord(job: dict, job_id: str) -> str:
-    """Format a single job for Discord."""
-    enabled = job.get("enabled", True)
-    status = "enabled" if enabled else "disabled"
-    schedule = job.get("schedule", "")
-    schedule_human = cron_to_human(schedule)
-    report_mode = job.get("report_mode", "always")
-    agent = job.get("agent", DEFAULT_AGENT)
-    description = job.get("description", "No description")
-    prompt = job.get("prompt", "")
-    channel = job.get("discord_channel", "")
-
-    # Truncate prompt if too long
-    prompt_display = prompt[:200] + "..." if len(prompt) > 200 else prompt
-
-    lines = [
-        f"**Job: {job_id}**",
-        f"**Status**: {status}",
-        f"**Schedule**: {schedule_human} (`{schedule}`)",
-        f"**Report mode**: {report_mode}",
-        f"**Agent**: {agent}",
-        f"**Channel**: {channel}",
-        f"**Description**: {description}",
-        f"**Prompt**: {prompt_display}",
-    ]
-
-    return "\n".join(lines)
-
-
-def format_history_discord(job_id: str, runs: list[dict]) -> str:
-    """Format run history for Discord."""
-    if not runs:
-        return f"**No run history for {job_id}**"
-
-    lines = [f"**Recent runs: {job_id}**"]
-
-    for run in runs[:10]:  # Limit to 10 most recent
-        ts = run.get("timestamp", "")
-        if ts:
-            try:
-                dt = datetime.fromisoformat(ts)
-                ts_display = dt.strftime("%Y-%m-%d %H:%M")
-            except ValueError:
-                ts_display = ts[:16]
-        else:
-            ts_display = "unknown"
-
-        exit_code = run.get("exit_code", -1)
-        duration = run.get("duration", 0)
-        icon = "\u2705" if exit_code == 0 else "\u274c"
-        status = "success" if exit_code == 0 else f"failed (exit {exit_code})"
-
-        lines.append(f"\u2022 {ts_display} \u2014 {icon} {status} ({duration:.1f}s)")
-
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +179,6 @@ def cmd_add(args) -> dict:
         "description": args.description or job_id,
         "agent": getattr(args, "agent", DEFAULT_AGENT),
         "prompt": args.prompt,
-        "discord_channel": args.discord_channel,
         "enabled": True,
         "report_mode": args.report_mode,
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
@@ -322,27 +223,18 @@ def cmd_add(args) -> dict:
     return result
 
 
-def cmd_list(args) -> dict | str:
+def cmd_list(args) -> dict:
     """List all jobs."""
     jobs = list_jobs()
-
-    if args.discord:
-        return format_jobs_discord(jobs)
-
     return {"ok": True, "jobs": jobs, "count": len(jobs)}
 
 
-def cmd_get(args) -> dict | str:
+def cmd_get(args) -> dict:
     """Get a single job's details."""
     job = load_job(args.job_id)
 
     if job is None:
-        if args.discord:
-            return f"**Job not found: {args.job_id}**"
         return {"ok": False, "error": f"Job not found: {args.job_id}"}
-
-    if args.discord:
-        return format_job_discord(job, args.job_id)
 
     job["id"] = args.job_id
     return {"ok": True, "job": job}
@@ -391,10 +283,9 @@ def cmd_remove(args) -> dict:
 def cmd_trigger(args) -> dict:
     """Run a job immediately, bypassing the schedule check.
 
-    Runs in-process with emit_result=False so stdout stays a single JSON
-    document (the job_complete line is a subprocess contract for the
-    scheduler/REST paths, not for this CLI), blocks until the run finishes,
-    and reports the job's real exit code instead of a blanket success.
+    Runs in-process, blocks until the run finishes, and reports the job's
+    real exit code instead of a blanket success. Stdout stays one JSON
+    document; the bypass warning, like every warning, goes to stderr.
     """
     from job import runner
 
@@ -402,7 +293,7 @@ def cmd_trigger(args) -> dict:
         return {"ok": False, "error": f"Job not found: {args.job_id}"}
 
     try:
-        result = runner.run_single_job(args.job_id, emit_result=False)
+        result = runner.run_single_job(args.job_id)
     except SystemExit:
         return {"ok": False, "error": f"Job '{args.job_id}' failed to run"}
 
@@ -592,25 +483,15 @@ def cmd_test(args) -> dict:
     }
 
 
-def cmd_history(args) -> dict | str:
+def cmd_history(args) -> dict:
     """Show run history for a job."""
     limit = args.limit or 10
 
     if args.job_id:
         runs = get_history(args.job_id, limit=limit)
-        if args.discord:
-            return format_history_discord(args.job_id, runs)
         return {"ok": True, "job_id": args.job_id, "runs": runs}
-    else:
-        all_history = get_all_history(limit_per_job=limit)
-        if args.discord:
-            if not all_history:
-                return "**No run history.**"
-            lines = []
-            for job_id, runs in all_history.items():
-                lines.append(format_history_discord(job_id, runs))
-            return "\n\n".join(lines)
-        return {"ok": True, "history": all_history}
+    all_history = get_all_history(limit_per_job=limit)
+    return {"ok": True, "history": all_history}
 
 
 def main(argv: list[str] | None = None, prog: str | None = None):
@@ -627,11 +508,11 @@ Examples:
     --report-mode silent \\
     --dry-run
 
-  # List all jobs (Discord-formatted)
-  merlin job list --discord
+  # List all jobs
+  merlin job list
 
   # Get job details
-  merlin job get daily-python-check --discord
+  merlin job get daily-python-check
 
   # Enable/disable a job
   merlin job disable daily-python-check
@@ -650,7 +531,7 @@ Examples:
   merlin job webhook daily-python-check --rotate
 
   # View run history
-  merlin job history daily-python-check --discord
+  merlin job history daily-python-check
 
 Cron expression cheat sheet:
   * * * * *     Every minute
@@ -660,18 +541,17 @@ Cron expression cheat sheet:
   0 8 * * 1-5   Weekdays at 8:00
   0 */2 * * *   Every 2 hours
 
-Report modes:
-  always  - Always notify when a run finishes (default)
-  silent  - Only report on errors (non-zero exit)
-  off     - Never send notifications
+Report modes (Merlin notifications, from the run's window):
+  always  - Notify when a run finishes, fails or needs an answer (default)
+  silent  - Notify only when a run fails or needs an answer
+  off     - Never notify for the run
 
 Every run opens a window in the merlin-jobs tmux session, where you can
 watch it or step in. Agent jobs run with every permission check bypassed:
 give a job only work you would let run unattended.
 
 Output:
-  Without --discord: JSON (for programmatic use)
-  With --discord:    Pre-formatted text ready to send to Discord
+  JSON, one document, for programmatic use. Warnings go to stderr.
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -693,17 +573,12 @@ Output:
         default=DEFAULT_AGENT,
         help=f"The agent that runs the prompt (default: {DEFAULT_AGENT})",
     )
-    p_add.add_argument(
-        "--discord-channel",
-        default=None,
-        help="Discord channel ID for notifications (default: bot's default channel)",
-    )
     p_add.add_argument("--description", help="Human-readable description")
     p_add.add_argument(
         "--report-mode",
         choices=["always", "silent", "off"],
         default="always",
-        help="Report mode: always, silent (errors only), or off (default: always)",
+        help="Notify: always, silent (failures and questions only), or off (default: always)",
     )
     p_add.add_argument(
         "--webhook",
@@ -719,17 +594,11 @@ Output:
 
     # list
     p_list = subparsers.add_parser("list", help="List all jobs")
-    p_list.add_argument(
-        "--discord", action="store_true", help="Output formatted for Discord"
-    )
     p_list.set_defaults(func=cmd_list)
 
     # get
     p_get = subparsers.add_parser("get", help="Get a job's details")
     p_get.add_argument("job_id", help="Job ID")
-    p_get.add_argument(
-        "--discord", action="store_true", help="Output formatted for Discord"
-    )
     p_get.set_defaults(func=cmd_get)
 
     # enable
@@ -801,9 +670,6 @@ Output:
         "job_id", nargs="?", help="Job ID (optional, shows all if omitted)"
     )
     p_history.add_argument("--limit", type=int, help="Max runs to show (default: 10)")
-    p_history.add_argument(
-        "--discord", action="store_true", help="Output formatted for Discord"
-    )
     p_history.set_defaults(func=cmd_history)
 
     args = parser.parse_args(argv)

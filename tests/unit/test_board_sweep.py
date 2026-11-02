@@ -18,6 +18,10 @@ def line(**over):
         "window_active": "0",
         "window_activity": "1700",
         "window_name": "claude",
+        "@job_id": "",
+        "@job_report": "",
+        "@job_exit": "",
+        "@job_finished": "",
     }
     fields.update(over)
     return "\t".join(str(fields[f]) for f in sweep._FIELDS)

@@ -56,6 +56,9 @@ POLL_INTERVAL = 2.0
 START_WATCHDOG = 120.0
 # How long SIGTERM gets before SIGKILL on a deadline (seconds).
 TERM_GRACE = 5.0
+# How long a termination waits for the job's pid file when the deadline
+# fired before the job's subshell wrote it (seconds).
+PID_WAIT = 5.0
 
 WINDOW_FIELDS = ("@agent_state", "@job_exit", "@job_run", "@job_busy_seen")
 
@@ -189,7 +192,14 @@ def ensure_ended(run: Run, *, term_grace: float | None = None) -> bool:
     term_grace = TERM_GRACE if term_grace is None else term_grace
     if not runs.is_terminating(run.dir):
         return True
+    # The job's subshell writes the pid file first thing; a deadline that
+    # fires right as the job starts gives it a moment to appear rather than
+    # leave the job unsignalled.
     process = runs.read_process(run.dir)
+    waited = time.monotonic() + PID_WAIT
+    while process is None and time.monotonic() < waited:
+        time.sleep(0.1)
+        process = runs.read_process(run.dir)
     if process is None:
         return True
     pgid, ticks = process

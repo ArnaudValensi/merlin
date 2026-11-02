@@ -9,18 +9,19 @@ sits in a private directory, ``~/.merlin/job-runs/<run_id>/`` (mode 0700):
   target once opened). The orphan finalizer reads it when the supervisor died
   with its run.
 - ``run.sh``: what the window runs. It waits for the window options, exports
-  the ``MERLIN_JOB_*`` variables and the Merlin home, runs the job in its own
-  process group (``set -m``, so a deadline can kill the job and leave the
-  script to stamp the end), writes the exit code atomically to ``exit`` and
-  the ``@job_exit`` window option, stamps ``@agent_state done`` if the state
-  is not already ``done``, and execs an interactive login shell so the window
-  stays readable.
+  the ``MERLIN_JOB_*`` variables and the Merlin home, runs the job as a
+  foreground subshell under job control (``set -m``: its own process group,
+  the terminal in its hands, so a deadline can kill the job and leave the
+  script to stamp the end), publishes the exit code no-clobber to ``exit``
+  and the ``@job_exit`` window option, stamps ``@agent_state done`` if the
+  state is not already ``done``, and execs an interactive login shell so the
+  window stays readable.
 - ``prompt``: the agent's prompt, read by ``run.sh``. It is never put on a
   tmux command line: the window command is only ``bash <run.sh>``.
-- ``pid``: the process group of the job and its start ticks, ``status``:
-  the job's own exit code, ``output.log``: a command's output (``tee``),
-  ``exit``: the run's exit code, published no-clobber (a hard link of a
-  private temporary file: the first publisher wins, the other reads the
+- ``pid``: the process group of the job and its start ticks (written by the
+  job's own subshell, first thing), ``output.log``: a command's output
+  (``tee``), ``exit``: the run's exit code, published no-clobber (a hard link
+  of a private temporary file: the first publisher wins, the other reads the
   winner), ``outcome.json``: the canonical record of the finished run,
   written first, ``result.json``: written once history and the run log are
   materialized from it (the exactly-once marker; a crash in between is
@@ -421,34 +422,25 @@ def _exports(run: Run) -> list[str]:
 
 
 def _job_line(run: Run) -> str:
-    """The shell line that runs the job inside the process group: the job,
-    then its exit code into ``status`` (that redirection is on the printf
-    alone: the job itself keeps the window's terminal)."""
+    """The shell line that runs the job inside its foreground subshell: an
+    agent execs its launch line (the subshell's exit is the agent's), a
+    command runs under ``bash -lc`` with its output teed, and exits with the
+    command's code (``PIPESTATUS``), not the pipe's."""
     if run.is_agent:
-        return '( launch ); printf \'%s\\n\' "$?" > "$RUN_DIR/status"'
+        agent = agents.AGENTS[run.agent or agents.DEFAULT_AGENT]
+        argv = " ".join(shlex.quote(a) for a in agents.launch_argv(agent))
+        return f'exec {argv} "$(cat "$RUN_DIR/prompt")"'
     command = shlex.quote(run.job.get("command", ""))
     return (
         f'bash -lc {command} </dev/null 2>&1 | tee "$RUN_DIR/output.log"; '
-        'printf \'%s\\n\' "${PIPESTATUS[0]}" > "$RUN_DIR/status"'
+        'exit "${PIPESTATUS[0]}"'
     )
-
-
-def _launch_function(run: Run) -> str:
-    """The ``launch`` function of an agent run: the launch line with the
-    prompt read from the run's file. The job-control message fg prints in
-    the window then names the function, not the prompt."""
-    if not run.is_agent:
-        return ""
-    agent = agents.AGENTS[run.agent or agents.DEFAULT_AGENT]
-    argv = " ".join(shlex.quote(a) for a in agents.launch_argv(agent))
-    return f'launch() {{ exec {argv} "$(cat "$RUN_DIR/prompt")"; }}\n'
 
 
 def run_script(run: Run) -> str:
     """The text of ``run.sh`` for a run."""
     exports = "\n".join(_exports(run))
     job_line = _job_line(run)
-    launch_fn = _launch_function(run)
     return f"""#!/bin/bash
 # Merlin job run {run.run_id} of job {run.job_id}. Written by Merlin for this run.
 RUN_DIR={shlex.quote(str(run.dir))}
@@ -493,22 +485,14 @@ done
 {exports}
 cd {shlex.quote(run.cwd)} || {{ echo "merlin: cannot enter {shlex.quote(run.cwd)}" >&2; finish 1; }}
 
-# The job runs in its own process group (job control), so a deadline can
-# end the job and leave this script to record the end. fg hands it the
-# terminal, and fg must not be redirected: the job would lose the terminal
-# (SIGTTOU) before it starts.
+# The job runs as a foreground subshell under job control (set -m): its own
+# process group, so a deadline can end the job and leave this script to
+# record the end, and the terminal in its hands from its first instruction.
+# The subshell writes its group and its leader's start ticks (procfs) first,
+# so a pid reused later is never signalled as this job.
 set -m
-{launch_fn}{{ {job_line}; }} &
-pid=$!
-# The group and its leader's start ticks (procfs), so a pid reused later
-# is never signalled as this job.
-ticks=$(cut -d' ' -f22 "/proc/$pid/stat" 2>/dev/null)
-printf '%s %s\\n' "$pid" "$ticks" > "$RUN_DIR/pid"
-fg %+
-wait "$pid" 2>/dev/null
-code=$(cat "$RUN_DIR/status" 2>/dev/null)
-case "$code" in ''|*[!0-9]*) code=143 ;; esac
-finish "$code"
+( printf '%s %s\\n' "$BASHPID" "$(cut -d' ' -f22 "/proc/$BASHPID/stat" 2>/dev/null)" > "$RUN_DIR/pid"; {job_line} )
+finish "$?"
 """
 
 

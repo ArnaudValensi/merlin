@@ -136,7 +136,6 @@ class TestSingleFlight:
             return _FakeResult()
 
         monkeypatch.setattr(runner, "_execute_job", fake_execute)
-        monkeypatch.setattr(webhook, "_notify", lambda *a, **k: None)
         job = _write_job(_isolated_job_dirs)
 
         async def _test():
@@ -193,12 +192,8 @@ class TestFreshRun:
 
         job = {"type": "prompt", "prompt": "triage the outage"}
 
-        runner._execute_job(
-            "hook-job", job, emit_result=False, trigger="webhook", request_id="req-1"
-        )
-        runner._execute_job(
-            "hook-job", job, emit_result=False, trigger="manual", request_id="req-2"
-        )
+        runner._execute_job("hook-job", job, trigger="webhook", request_id="req-1")
+        runner._execute_job("hook-job", job, trigger="manual", request_id="req-2")
         first, second = fake_launch.runs
         assert (
             (first.dir / "prompt")
@@ -224,7 +219,7 @@ class TestTriggerRecorded:
 
         job = _write_job(_isolated_job_dirs, command="echo webhook-run")
         result = runner._execute_job(
-            "hook-job", job, emit_result=False, trigger="webhook", request_id="run-42"
+            "hook-job", job, trigger="webhook", request_id="run-42"
         )
         assert result.exit_code == 0
 
@@ -238,7 +233,7 @@ class TestTriggerRecorded:
         from job import runner
 
         job = _write_job(_isolated_job_dirs, command="echo scheduled")
-        runner.run_job("hook-job", job, emit_result=False, trigger="schedule")
+        runner.run_job("hook-job", job, trigger="schedule")
         history = job_state.get_history("hook-job")
         assert history[0]["trigger"] == "schedule"
 
@@ -541,7 +536,6 @@ class TestEndToEndDesk:
             return _FakeResult()
 
         monkeypatch.setattr(runner, "_execute_job", fake_execute)
-        monkeypatch.setattr(webhook, "_notify", lambda *a, **k: None)
         _write_job(_isolated_job_dirs)
 
         resp = client.post(

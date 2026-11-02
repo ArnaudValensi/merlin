@@ -72,7 +72,6 @@ def _create_job(jobs_dir: Path, job_id: str = "test-job", **overrides) -> None:
         "max_turns": 0,
         "ephemeral": True,
         "grace_minutes": 15,
-        "discord_channel": None,
         "created_at": "2026-03-22T00:00:00+00:00",
         **overrides,
     }

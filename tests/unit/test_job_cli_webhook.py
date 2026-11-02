@@ -204,7 +204,6 @@ class TestCmdAddWebhook:
             "description": "",
             "schedule": None,
             "prompt": "do it",
-            "discord_channel": None,
             "report_mode": "always",
             "max_turns": 0,
             "webhook": False,

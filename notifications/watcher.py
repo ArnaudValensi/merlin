@@ -40,6 +40,19 @@ Publication and reads share one lock: the poll handler runs in a worker thread
 while the watcher publishes on the event loop, and a cursor must never move
 past an event that is not in the ring yet.
 
+A job run's window (``job/runs.py``) carries ``@job_report``, the job's
+report mode, ``@job_exit`` once the run's exit code is known and
+``@job_finished`` once the supervisor closed the run. The watcher applies
+the report mode to the run's own finish: ``always`` notifies every finish,
+``silent`` only a failure (and every ``ask``), ``off`` nothing. An agent's
+``done`` reaches the window before the supervisor stamps the exit, so a job
+window's ``done`` without ``@job_exit`` is held back and decided at a later
+sweep, once the code is there (or after ``DEFER_SWEEPS`` sweeps without it):
+a run's own finish can never slip through ``silent`` as a plain ``done``.
+Once ``@job_finished`` stands, the window is the human's: a later turn
+notifies like any other window, whatever the report mode. A silenced
+finish produces no event on any channel.
+
 Only windows carrying a stable ``@agent_sid`` are tracked. The identity hook
 mints the sid at SessionStart, in the same hook group as the state hook, so a
 state without a sid is a transient race between the two (SessionStart sets
@@ -76,6 +89,9 @@ logger = logging.getLogger("merlin.notifications")
 
 ATTENTION_STATES = frozenset({"done", "ask"})
 SWEEP_INTERVAL = 2.0
+# How many sweeps a job window's done may wait for its exit code before it
+# is decided without one (the supervisor stamps it within one poll).
+DEFER_SWEEPS = 10
 RING_SIZE = 200
 # How long a stopping watcher waits for the captures in flight (each is
 # bounded by the capture's own timeout) before cancelling them.
@@ -103,6 +119,10 @@ class Event:
     # it) when the event was produced: no channel shows it. Decided here,
     # once, so the push sender and every page obey the same answer.
     quiet: bool = False
+    # A job run's own finish: the job and the run's exit code. Empty and
+    # None on every other event, a human's later turn in the window included.
+    job_id: str = ""
+    exit_code: int | None = None
 
     @property
     def target(self) -> str:
@@ -128,6 +148,29 @@ class _Reserved:
     busy_seconds: int | None
     ts: str
     snippet: str | None = None
+    job_id: str = ""
+    exit_code: int | None = None
+
+
+@dataclass
+class Transition:
+    """One attention transition a sweep produced, with what the job rule
+    decided: ``job_id`` and ``exit_code`` set for a run's own finish."""
+
+    window: Window
+    busy_seconds: int | None
+    job_id: str = ""
+    exit_code: int | None = None
+
+
+@dataclass
+class _Deferred:
+    """A job window's ``done`` seen before its exit code: decided at a later
+    sweep, with the busy span of the sweep that saw it."""
+
+    window: Window
+    busy_seconds: int | None
+    sweeps: int = 0
 
 
 def _capture_window(w: Window) -> str | None:
@@ -180,6 +223,11 @@ class Watcher:
         self._last: dict[str, str] = {}
         # sid -> clock time of the sweep that last saw the window enter busy.
         self._busy_since: dict[str, float] = {}
+        # sid -> whether the window carried @job_finished at the last sweep:
+        # a transition after that is a human's turn, not the run's finish.
+        self._finished: dict[str, bool] = {}
+        # sid -> a job window's done waiting for its exit code.
+        self._deferred: dict[str, _Deferred] = {}
         # Transitions in order, each waiting for its capture (the task path).
         self._reserved: deque[_Reserved] = deque()
         self._captures: set[asyncio.Task] = set()
@@ -224,19 +272,26 @@ class Watcher:
         """
         pending = self._transitions(windows)
         return [
-            self._emit(w, busy, self._snippet_of(w), self._stamp())
-            for w, busy in pending
+            self._emit(
+                t.window,
+                t.busy_seconds,
+                self._snippet_of(t.window),
+                self._stamp(),
+                job_id=t.job_id,
+                exit_code=t.exit_code,
+            )
+            for t in pending
         ]
 
     def _stamp(self) -> str:
         return datetime.fromtimestamp(self._clock(), tz=timezone.utc).isoformat()
 
-    def _transitions(
-        self, windows: list[Window] | None
-    ) -> list[tuple[Window, int | None]]:
+    def _transitions(self, windows: list[Window] | None) -> list[Transition]:
         """Diff one sweep against the last: the windows that transitioned
         into ``done`` or ``ask``, each with how long it was busy before, or
-        None when the watcher never saw it enter ``busy``. Updates the state,
+        None when the watcher never saw it enter ``busy``, after the job rule
+        (a job run's own finish is decided by its report mode and exit code,
+        and held back while the code is not there yet). Updates the state,
         emits nothing."""
         self.swept_once = True
         if windows is None:
@@ -253,7 +308,20 @@ class Watcher:
             seen[w.sid] = w
 
         now = self._clock()
-        pending: list[tuple[Window, int | None]] = []
+        pending: list[Transition] = []
+        # Finishes held back at earlier sweeps, decided now if their exit
+        # code arrived (or they waited long enough).
+        for key, held in list(self._deferred.items()):
+            w = seen.get(key)
+            if w is None:
+                del self._deferred[key]
+                continue
+            held.sweeps += 1
+            if w.job_exit or held.sweeps >= DEFER_SWEEPS:
+                del self._deferred[key]
+                decided = self._job_finish(w, held.busy_seconds)
+                if decided is not None:
+                    pending.append(decided)
         for key, state in current.items():
             prev = self._last.get(key)
             if state == "busy":
@@ -266,10 +334,40 @@ class Watcher:
                 continue
             since = self._busy_since.pop(key, None)
             busy = int(round(max(0.0, now - since))) if since is not None else None
-            pending.append((seen[key], busy))
+            w = seen[key]
+            if not w.is_job or self._finished.get(key, False):
+                # Not a job window, or the run is over and the window is the
+                # human's now: an ordinary transition.
+                pending.append(Transition(w, busy))
+                continue
+            if state == "ask":
+                if w.job_report != "off":
+                    pending.append(Transition(w, busy, job_id=w.job_id))
+                continue
+            if not w.job_exit:
+                # The agent's done reached the window before the supervisor's
+                # exit: decide at a later sweep, never as a plain done.
+                self._deferred[key] = _Deferred(w, busy)
+                continue
+            decided = self._job_finish(w, busy)
+            if decided is not None:
+                pending.append(decided)
         self._busy_since = {k: v for k, v in self._busy_since.items() if k in current}
+        self._finished = {k: bool(w.job_finished) for k, w in seen.items()}
         self._last = current
         return pending
+
+    @staticmethod
+    def _job_finish(w: Window, busy: int | None) -> Transition | None:
+        """The report mode applied to a run's own finish: ``always`` notifies
+        it, ``silent`` only when it failed, ``off`` never. None is silence."""
+        code = int(w.job_exit) if w.job_exit.lstrip("-").isdigit() else None
+        failed = code is not None and code != 0
+        if w.job_report == "off":
+            return None
+        if w.job_report == "silent" and not failed:
+            return None
+        return Transition(w, busy, job_id=w.job_id, exit_code=code)
 
     def _snippet_of(self, w: Window) -> str:
         """The cleaned snippet of a window's pane. Never raises: a capture
@@ -281,7 +379,14 @@ class Watcher:
             return ""
 
     def _emit(
-        self, w: Window, busy_seconds: int | None, snippet: str, ts: str
+        self,
+        w: Window,
+        busy_seconds: int | None,
+        snippet: str,
+        ts: str,
+        *,
+        job_id: str = "",
+        exit_code: int | None = None,
     ) -> Event:
         machine = self.machine
         title, body = compose(
@@ -291,6 +396,7 @@ class Watcher:
             machine=machine,
             busy_seconds=busy_seconds,
             snippet=snippet,
+            exit_code=exit_code,
         )
         try:
             quiet = bool(self.looking_at(f"{w.session}:{w.window_id}"))
@@ -316,6 +422,8 @@ class Watcher:
                 title=title,
                 body=body,
                 quiet=quiet,
+                job_id=job_id,
+                exit_code=exit_code,
             )
             self._ring.append(ev)
         for fn in list(self._listeners):
@@ -366,8 +474,14 @@ class Watcher:
         except Exception:
             logger.exception("Attention diff failed")
             return 0
-        for w, busy in pending:
-            item = _Reserved(w, busy, self._stamp())
+        for t in pending:
+            item = _Reserved(
+                t.window,
+                t.busy_seconds,
+                self._stamp(),
+                job_id=t.job_id,
+                exit_code=t.exit_code,
+            )
             self._reserved.append(item)
             task = asyncio.create_task(self._enrich(item), name="notifications-capture")
             self._captures.add(task)
@@ -402,7 +516,14 @@ class Watcher:
             if snippet is None:
                 break
             item = self._reserved.popleft()
-            self._emit(item.window, item.busy_seconds, snippet, item.ts)
+            self._emit(
+                item.window,
+                item.busy_seconds,
+                snippet,
+                item.ts,
+                job_id=item.job_id,
+                exit_code=item.exit_code,
+            )
 
     async def settle(self, timeout: float | None = None) -> None:
         """Wait for the captures in flight, up to ``timeout``, so that their

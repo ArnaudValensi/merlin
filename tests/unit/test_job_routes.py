@@ -139,15 +139,15 @@ def test_no_off_palette_green(client):
     assert "rgba(74, 222, 128" not in html
 
 
-def test_notify_select_replaces_discord_checkbox(client):
-    """One Notify select (always/silent/off); the old checkbox is gone."""
+def test_notify_select_is_merlins_own(client):
+    """The Notify select carries the three report modes and no Discord
+    channel override: a job notifies through Merlin's own notifications."""
     html = client.get("/jobs").text
-    assert 'value="off"' in html
-    assert 'value="silent"' in html
-    assert "onNotifyChange" in html
-    # The misleading enable/disable checkbox is removed.
-    assert "field-discord-enabled" not in html
-    assert "discord-default-hint" not in html
+    assert 'id="field-report-mode"' in html
+    for value in ("always", "silent", "off"):
+        assert f'value="{value}"' in html
+    assert "Failures and questions only" in html
+    assert "discord" not in html.lower()
 
 
 def test_job_modal_repeat_options(client):

@@ -34,8 +34,26 @@ and the app lifespan's shutdown stops it (`watcher.stop()`).
 **Event shape** (`Event.to_dict()`): `seq`, `sid`, `session`, `window_id`, `window_name`,
 `state`, `project` (basename of `@agent_cwd`), `ts` (UTC ISO), `target` (`session:window_id`),
 plus the fields added for the content: `machine` (the environment name), `busy_seconds`
-(an integer, or `null` when unknown), `snippet`, `title` and `body`. Fields are only ever
-added, never renamed or removed: the hub forwards these events.
+(an integer, or `null` when unknown), `snippet`, `title` and `body`, `quiet`, and for a job
+run's own finish `job_id` and `exit_code` (empty and `null` on every other event). Fields are
+only ever added, never renamed or removed: the hub forwards these events.
+
+**Job runs.** A job run's window (`job/runs.py`) carries `@job_id`, `@job_report` (the job's
+`report_mode`), `@job_exit` once the run's exit code is known and `@job_finished` once the
+supervisor closed the run; the sweep reads them (`Window.job_*`). The watcher applies the mode
+to the run's own finish: `always` notifies every finish, `silent` only a failure (and every
+`ask`), `off` nothing; a silenced finish produces no event on any channel (no ring entry, no
+listener call). An agent's `done` reaches the window before the supervisor stamps the exit, so
+a job window's `done` without `@job_exit` is held back (`_deferred`) and decided at a later
+sweep once the code is there, with the busy span of the sweep that saw the `done`, or after
+`DEFER_SWEEPS` sweeps without it: a run's own finish can never slip through `silent` as a
+plain `done`. A command's `run.sh` stamps the exit before `done`, so no wait. Once
+`@job_finished` stood at the previous sweep, the window is the human's: a later transition
+notifies like any other window, whatever the mode, without `job_id`. The first sight of a
+finished window (Merlin restarted after the run) is the run's own finish, under its mode.
+The failed finish reads `Failed (exit N) after <duration>: <snippet>` (`content.compose_body`
+with `exit_code`). Pinned by `tests/unit/test_notifications_jobs.py`, every cell of the
+table, the race and the later turn.
 
 **Busy tracking.** `_busy_since` maps a sid to the clock time of the sweep that last saw
 the window enter `busy` from a state the watcher had seen. A transition into `done` or `ask`

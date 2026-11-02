@@ -119,7 +119,6 @@ def create_job(body: JobCreate):
         "enabled": body.enabled,
         "report_mode": body.report_mode,
         "grace_minutes": body.grace_minutes,
-        "discord_channel": body.discord_channel,
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
     }
 
@@ -157,10 +156,10 @@ def update_job(job_id: str, body: JobUpdate):
 
     # Merge only non-None fields from the update body. For the optional
     # fields below, an empty string means "clear this back to the default"
-    # (working_dir/timezone/discord_channel) or "remove the trigger"
-    # (schedule); None still means "unchanged" and is dropped by exclude_none.
-    # Without this, a cleared field would silently keep its old value.
-    clearable = {"schedule", "working_dir", "timezone", "discord_channel"}
+    # (working_dir/timezone) or "remove the trigger" (schedule); None still
+    # means "unchanged" and is dropped by exclude_none. Without this, a
+    # cleared field would silently keep its old value.
+    clearable = {"schedule", "working_dir", "timezone"}
     update_data = body.model_dump(exclude_none=True)
     for key, value in update_data.items():
         if key in clearable and value == "":
@@ -279,14 +278,15 @@ async def run_job(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
 
-    # Run in background — capture stdout for notification processing
-    asyncio.create_task(_run_job_with_notify(job_id))
+    # Run in the background; the window and the watcher take it from here.
+    asyncio.create_task(_run_job_subprocess(job_id))
 
     return {"ok": True, "message": f"Job '{job_id}' triggered"}
 
 
-async def _run_job_with_notify(job_id: str) -> None:
-    """Run a job subprocess and process notifications from its output."""
+async def _run_job_subprocess(job_id: str) -> None:
+    """Run a job in a runner subprocess (it survives a Merlin restart). The
+    run's notification is the attention watcher's, from its window."""
     proc = await asyncio.create_subprocess_exec(
         "uv",
         "run",
@@ -294,27 +294,10 @@ async def _run_job_with_notify(job_id: str) -> None:
         "--job",
         job_id,
         cwd=str(_JOB_DIR),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
     )
-
-    stdout, _stderr = await proc.communicate()
-
-    # Process job_complete events for Discord notifications. Offloaded because
-    # notification does synchronous Discord I/O that must not block the loop.
-    if stdout:
-        try:
-            from job import _process_runner_output
-
-            await asyncio.to_thread(_process_runner_output, stdout)
-        except Exception:
-            import logging
-
-            logging.getLogger("merlin.job").warning(
-                "Failed to process notifications for manual job %s",
-                job_id,
-                exc_info=True,
-            )
+    await proc.wait()
 
 
 @api_router.get("/jobs/{job_id}/logs")
@@ -510,15 +493,6 @@ def jobs_page(request: Request):
         # Human-readable schedule
         job["schedule_human"] = manage.cron_to_human(job.get("schedule", ""))
 
-    # Check if merlin-bot is loaded (for Discord notification UI)
-    try:
-        from main import extension_registry
-
-        bot_info = extension_registry.get("merlin-bot")
-        bot_loaded = bool(bot_info and bot_info.loaded)
-    except (ImportError, AttributeError):
-        bot_loaded = False
-
     # Check for recent scheduler crashes
     crashes = _get_recent_crashes()
 
@@ -536,7 +510,6 @@ def jobs_page(request: Request):
         "jobs.html",
         {
             "jobs": jobs,
-            "bot_loaded": bot_loaded,
             "any_webhook": any_webhook,
             "crashes": crashes,
             "default_working_dir": default_working_dir,

@@ -144,23 +144,19 @@ async def _adopt(job_id: str, pending, lock) -> None:
 
 
 async def _run(job_id: str, job: dict, run_id: str, lock) -> None:
-    """Execute the run in a worker thread, then notify.
+    """Execute the run in a worker thread.
 
-    Both the run and the notification are offloaded with ``asyncio.to_thread``
-    so nothing blocks the event loop (the run's supervisor polls the window
-    for as long as the run takes; notification does synchronous Discord I/O).
-    The flock is released as soon as the run finishes, before notifying, so
-    single-flight covers only the run itself, not the delivery that follows it.
-    """
+    The run is offloaded with ``asyncio.to_thread`` so nothing blocks the
+    event loop (the run's supervisor polls the window for as long as the run
+    takes). The flock is released as soon as the run finishes. The
+    notification is the attention watcher's, from the window."""
     from job import runner
 
-    result = None
     try:
-        result = await asyncio.to_thread(
+        await asyncio.to_thread(
             runner._execute_job,
             job_id,
             job,
-            emit_result=False,
             trigger="webhook",
             request_id=run_id,
         )
@@ -169,35 +165,6 @@ async def _run(job_id: str, job: dict, run_id: str, lock) -> None:
     finally:
         state.release_job_lock(lock)
         _in_flight.pop(job_id, None)
-
-    if result is not None:
-        try:
-            await asyncio.to_thread(_notify, job_id, job, result)
-        except Exception:
-            logger.warning(
-                "Failed to notify for webhook run of %s", job_id, exc_info=True
-            )
-
-
-def _notify(job_id: str, job: dict, result) -> None:
-    """Deliver the run result through the shared notification path."""
-    try:
-        from main import extension_registry
-
-        from job.notify import notify_job_result
-
-        notify_job_result(
-            job_id=job_id,
-            job=job,
-            result={
-                "exit_code": result.exit_code,
-                "duration_seconds": round(result.duration, 2),
-                "output": result.result or "",
-            },
-            extension_registry=extension_registry,
-        )
-    except Exception:
-        logger.warning("Failed to notify for webhook run of %s", job_id, exc_info=True)
 
 
 # ---------------------------------------------------------------------------

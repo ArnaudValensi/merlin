@@ -15,7 +15,9 @@ Body: the state, then what happened.
 - ``Needs an answer: <snippet>`` for ``ask``
 - ``Finished after <duration>: <snippet>`` for ``done`` with a known duration
 - ``Finished: <snippet>`` for ``done`` without one
-- the same three without the colon and the snippet when there is no snippet
+- ``Failed (exit N) after <duration>: <snippet>`` (or without the duration)
+  for a job run's ``done`` with a non-zero exit code
+- the same without the colon and the snippet when there is no snippet
 
 The snippet is the tail of the agent's last message as read from its pane:
 the input chrome (the prompt line and everything below it, rule lines, the
@@ -38,8 +40,10 @@ SNIPPET_MAX = 240
 _PROMPT = re.compile(r"^\s*[❯›]")
 # Rule and box lines start with a box-drawing character (``────``, ``╭``,
 # ``│``, ``╰``): the input box borders, the welcome box, Codex's
-# ``─ Worked for 1m 16s ───`` rule.
-_RULE = re.compile(r"^\s*[─-╿]")
+# ``─ Worked for 1m 16s ───`` rule. A line starting with a block element
+# (``░▒▓``) is a powerline shell prompt, the one a job window's shell draws
+# once the run is over.
+_RULE = re.compile(r"^\s*[─-╿▀-▟]")
 # Claude Code's timing line after a turn: ``✻ Cogitated for 1m 14s · done``.
 _TIMING = re.compile(r"^\s*[^\w\s]{1,2}\s+\w+ for \d+")
 # The first line of a message: ``●`` (Claude Code), ``•`` (Codex).
@@ -72,13 +76,22 @@ def compose_title(window_name: str, session: str, machine: str) -> str:
     return SEPARATOR.join(parts)
 
 
-def compose_body(state: str, busy_seconds: int | None, snippet: str) -> str:
+def compose_body(
+    state: str,
+    busy_seconds: int | None,
+    snippet: str,
+    exit_code: int | None = None,
+) -> str:
+    """``Needs an answer`` for ``ask``; ``Finished``, or ``Failed (exit N)``
+    for a job run that ended with a non-zero code; ``after <duration>``
+    when the busy span is known; the snippet after a colon when there is
+    one."""
     if state == "ask":
         lead = "Needs an answer"
-    elif busy_seconds is not None:
-        lead = f"Finished after {format_duration(busy_seconds)}"
     else:
-        lead = "Finished"
+        lead = "Finished" if not exit_code else f"Failed (exit {exit_code})"
+        if busy_seconds is not None:
+            lead = f"{lead} after {format_duration(busy_seconds)}"
     return f"{lead}: {snippet}" if snippet else lead
 
 
@@ -90,11 +103,12 @@ def compose(
     machine: str,
     busy_seconds: int | None,
     snippet: str,
+    exit_code: int | None = None,
 ) -> tuple[str, str]:
     """The ``(title, body)`` of one attention event."""
     return (
         compose_title(window_name, session, machine),
-        compose_body(state, busy_seconds, snippet),
+        compose_body(state, busy_seconds, snippet, exit_code),
     )
 
 

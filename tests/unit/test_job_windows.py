@@ -153,7 +153,7 @@ def agent_job(scenario: str = "done", **over) -> dict:
 
 def test_agent_run_from_launch_to_done(iso):
     tmp, log = iso
-    result = job_runner.run_job("digest", agent_job("done"), emit_result=False)
+    result = job_runner.run_job("digest", agent_job("done"))
     assert result is not None
     assert result.exit_code == 0
     assert result.agent == "claude"
@@ -191,9 +191,7 @@ def test_agent_run_from_launch_to_done(iso):
 
 def test_codex_job_uses_its_launch_line(iso):
     tmp, log = iso
-    result = job_runner.run_job(
-        "cx", agent_job("done", agent="codex"), emit_result=False
-    )
+    result = job_runner.run_job("cx", agent_job("done", agent="codex"))
     assert result is not None and result.exit_code == 0
     assert result.agent == "codex"
     argv = (log / "argv.codex").read_text().splitlines()
@@ -204,13 +202,13 @@ def test_codex_job_uses_its_launch_line(iso):
 def test_run_watched_live_finishes_on_busy_then_idle(iso):
     """``done`` can be missed (the window selected, Esc): busy then idle is
     a finish."""
-    result = job_runner.run_job("live", agent_job("live"), emit_result=False)
+    result = job_runner.run_job("live", agent_job("live"))
     assert result is not None and result.exit_code == 0
     assert windows()[0]["@job_exit"] == "0"
 
 
 def test_agent_crash_is_its_exit_code(iso):
-    result = job_runner.run_job("boom", agent_job("crash"), emit_result=False)
+    result = job_runner.run_job("boom", agent_job("crash"))
     assert result is not None and result.exit_code == 2
     # The supervisor saw the exit file the instant it was published; run.sh
     # stamps the window right after.
@@ -237,7 +235,7 @@ def test_stuck_start_is_marked_asking_then_bounded_by_the_deadline(iso, monkeypa
 
     t = threading.Thread(target=watch)
     t.start()
-    result = job_runner.run_job("stuck", agent_job("stuck"), emit_result=False)
+    result = job_runner.run_job("stuck", agent_job("stuck"))
     t.join()
     assert result is not None and result.exit_code == 124
     assert "ask" in seen, seen
@@ -246,8 +244,8 @@ def test_stuck_start_is_marked_asking_then_bounded_by_the_deadline(iso, monkeypa
 
 
 def test_deadline_ends_the_process_group_and_keeps_the_window(iso, monkeypatch):
-    monkeypatch.setattr(job_runner, "AGENT_TIMEOUT_SECONDS", 1.0)
-    result = job_runner.run_job("hang", agent_job("hang"), emit_result=False)
+    monkeypatch.setattr(job_runner, "AGENT_TIMEOUT_SECONDS", 2.0)
+    result = job_runner.run_job("hang", agent_job("hang"))
     assert result is not None and result.exit_code == 124
     pgid = runs.read_pgid(runs.run_dirs()[0])
     assert pgid is not None
@@ -264,7 +262,7 @@ def test_a_missing_hook_install_refuses_the_launch_with_no_window(iso):
     from lib import skills
 
     skills.claude_settings_path().write_text("{}")
-    result = job_runner.run_job("nohooks", agent_job("done"), emit_result=False)
+    result = job_runner.run_job("nohooks", agent_job("done"))
     assert result is not None and result.exit_code == 1
     assert "merlin config agent-state-hooks auto" in result.result
     assert sweep.run_session_sweep_checked() in (None, [])
@@ -281,7 +279,7 @@ def test_a_missing_binary_refuses_the_launch_with_127(iso, monkeypatch):
         "which",
         lambda name: None if name == "claude" else real_which(name),
     )
-    result = job_runner.run_job("nobin", agent_job("done"), emit_result=False)
+    result = job_runner.run_job("nobin", agent_job("done"))
     assert result is not None and result.exit_code == 127
     assert "not found on PATH" in result.result
 
@@ -294,7 +292,7 @@ def test_a_missing_binary_refuses_the_launch_with_127(iso, monkeypatch):
 def test_command_with_a_failing_exit_code(iso):
     tmp, _ = iso
     job = {"type": "command", "command": "echo out; echo err >&2; exit 3"}
-    result = job_runner.run_job("fail", job, emit_result=False)
+    result = job_runner.run_job("fail", job)
     assert result is not None and result.exit_code == 3
     assert "out" in result.result and "err" in result.result
     row = windows()[0]
@@ -303,6 +301,11 @@ def test_command_with_a_failing_exit_code(iso):
     assert state.get_history("fail")[0]["exit_code"] == 3
     assert state.get_history("fail")[0]["agent"] is None
     assert runs.read_output(tmp / "job-runs" / result.run_id) == "out\nerr\n"
+    # No job-control chatter in the window: its last lines (a notification's
+    # snippet) are the job's own.
+    pane = sweep.capture_pane(JOBS, row["window_id"], history=True) or ""
+    assert "PIPESTATUS" not in pane and "fg:" not in pane
+    assert pane.rstrip().splitlines()[-2:][0].strip() in ("out", "err") or "err" in pane
 
 
 def test_command_stdin_is_closed_and_output_is_not_a_tty(iso):
@@ -311,7 +314,7 @@ def test_command_stdin_is_closed_and_output_is_not_a_tty(iso):
         "command": "if [ -t 1 ]; then echo tty; else echo notty; fi; "
         'read -r line && echo "got $line" || echo eof',
     }
-    result = job_runner.run_job("stdin", job, emit_result=False)
+    result = job_runner.run_job("stdin", job)
     assert result is not None and result.exit_code == 0
     assert "notty" in result.result
     assert "eof" in result.result
@@ -335,7 +338,7 @@ def test_job_reaches_the_same_merlin_whatever_server_it_was_born_under(
         "command": 'echo "home=$MERLIN_HOME id=$MERLIN_JOB_ID run=$MERLIN_JOB_RUN_ID '
         'trig=$MERLIN_JOB_TRIGGER cc=${CLAUDECODE:-unset}"',
     }
-    result = job_runner.run_job("env", job, emit_result=False, trigger="webhook")
+    result = job_runner.run_job("env", job, trigger="webhook")
     assert result is not None and result.exit_code == 0
     assert f"home={tmp / 'mh'}" in result.result
     assert "id=env" in result.result
@@ -352,7 +355,7 @@ def test_window_closed_mid_run_is_130(iso):
     out: dict = {}
 
     def run():
-        out["result"] = job_runner.run_job("closed", job, emit_result=False)
+        out["result"] = job_runner.run_job("closed", job)
 
     t = threading.Thread(target=run)
     t.start()
@@ -374,7 +377,7 @@ def test_window_closed_mid_run_is_130(iso):
 def test_prompt_with_shell_metacharacters_reaches_the_agent_verbatim(iso):
     _, log = iso
     prompt = "say \"hi\" $(touch /tmp/never) `date` 'x' \\n and\nreal newline"
-    result = job_runner.run_job("quote", {"prompt": prompt}, emit_result=False)
+    result = job_runner.run_job("quote", {"prompt": prompt})
     assert result is not None and result.exit_code == 0
     assert (log / "prompt.claude").read_text() == f"[Job: quote]\n\n{prompt}"
 
@@ -528,7 +531,7 @@ def test_a_trigger_adopts_the_unfinished_run_instead_of_a_second_window(
     # A manual trigger with an unfinished run of its own job: the same.
     second = _launch_unsupervised("busy-orphan-2", agent_job("hang"), deadline=2.0)
     assert wait_until(lambda: len(windows()) == 2, timeout=10)
-    result = job_runner.run_job("busy-orphan-2", agent_job("hang"), emit_result=False)
+    result = job_runner.run_job("busy-orphan-2", agent_job("hang"))
     assert result is not None and result.run_id == second.run_id
     assert len(windows()) == 2
 
@@ -669,7 +672,7 @@ def test_supervised_run_is_left_alone_by_the_tick(iso):
     out: dict = {}
 
     def run():
-        out["result"] = job_runner.run_job("held", job, emit_result=False)
+        out["result"] = job_runner.run_job("held", job)
 
     t = threading.Thread(target=run)
     t.start()

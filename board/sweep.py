@@ -33,6 +33,12 @@ _FIELDS = (
     "window_active",
     "window_activity",
     "window_name",
+    # A job run's window (job/runs.py): the attention watcher applies the
+    # job's report mode and names the failure from these.
+    "@job_id",
+    "@job_report",
+    "@job_exit",
+    "@job_finished",
 )
 _FMT = "\t".join("#{" + f + "}" for f in _FIELDS)
 
@@ -73,10 +79,21 @@ class Window:
     active: bool
     activity: int
     name: str
+    # Job run fields, empty on any other window. ``job_report`` is the job's
+    # report mode (``always``, ``silent``, ``off``), ``job_exit`` the run's
+    # exit code once known, ``job_finished`` the finish time once stamped.
+    job_id: str = ""
+    job_report: str = ""
+    job_exit: str = ""
+    job_finished: str = ""
 
     @property
     def is_agent(self) -> bool:
         return bool(self.state)
+
+    @property
+    def is_job(self) -> bool:
+        return bool(self.job_report)
 
 
 @dataclass(frozen=True)
@@ -129,6 +146,10 @@ def parse_sweep(raw: str) -> list[Window]:
             active,
             activity,
             name,
+            job_id,
+            job_report,
+            job_exit,
+            job_finished,
         ) = parts
         windows.append(
             Window(
@@ -143,6 +164,10 @@ def parse_sweep(raw: str) -> list[Window]:
                 active=active == "1",
                 activity=int(activity) if activity.isdigit() else 0,
                 name=name,
+                job_id=job_id,
+                job_report=job_report.strip().lower(),
+                job_exit=job_exit.strip(),
+                job_finished=job_finished.strip(),
             )
         )
     return windows

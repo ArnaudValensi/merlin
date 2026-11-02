@@ -150,9 +150,14 @@ an answer").
 
 ## Set notifications
 
-**Notify** is Always, Errors only, or Never: a report after each run. When
-the Discord [bot](bot.md) is enabled you can override the destination channel
-per job; leave it empty to use the bot's default channel.
+**Notify** is Always, Failures and questions only, or Never: a Merlin
+[notification](notifications.md) from the run's window, on every device you
+turned notifications on. Always tells you when the run finished, failed or
+needs an answer; Failures and questions only skips the successful finish;
+Never skips everything the run itself does. A failed run reads
+`Failed (exit N) after <duration>` with the window's last lines; tap it to
+land in the window. Once the run is over, a turn you start in that window
+notifies as usual, whatever the setting.
 
 ## The run's window
 

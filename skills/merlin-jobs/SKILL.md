@@ -160,6 +160,7 @@ merlin job history
 ## Tips
 
 - Use `--dry-run` to preview job creation before confirming
-- Report modes: `always` (digests, reports), `silent` (errors only, good
-  for monitoring jobs), `off` (no notifications); see `merlin job add --help`
+- Report modes (Merlin notifications from the run's window): `always`
+  (digests, reports), `silent` (failures and questions only, good for
+  monitoring jobs), `off` (nothing from the run); see `merlin job add --help`
 - The command validates cron expressions — invalid ones will error

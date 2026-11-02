@@ -117,7 +117,6 @@ class TestCmdAdd:
             id="test-job",
             schedule="0 9 * * *",
             prompt="Test prompt",
-            discord_channel="123",
             description="Test job",
             report_mode="always",
             max_turns=20,
@@ -137,7 +136,6 @@ class TestCmdAdd:
             id="test-job",
             schedule="0 9 * * *",
             prompt="Test prompt",
-            discord_channel="123",
             description="Test job",
             report_mode="always",
             max_turns=20,
@@ -157,7 +155,6 @@ class TestCmdAdd:
             id="test-job",
             schedule="invalid",
             prompt="Test prompt",
-            discord_channel="123",
             description="Test job",
             report_mode="always",
             max_turns=20,
@@ -179,7 +176,6 @@ class TestCmdAdd:
             id="test-job",
             schedule="0 9 * * *",
             prompt="Test prompt",
-            discord_channel="123",
             description="Test job",
             report_mode="always",
             max_turns=20,
@@ -198,7 +194,6 @@ class TestCmdAdd:
             id=None,
             schedule="0 9 * * *",
             prompt="Test prompt",
-            discord_channel="123",
             description="My Daily Check",
             report_mode="always",
             max_turns=20,
@@ -249,30 +244,6 @@ class TestCmdList:
         result = cmd_list(args)
         assert result["ok"] is True
         assert result["count"] == 2
-
-    def test_list_discord_format(self, temp_jobs_dir):
-        from job.manage import cmd_list, save_job
-        from types import SimpleNamespace
-
-        save_job(
-            "test-job",
-            {
-                "schedule": "0 9 * * *",
-                "prompt": "x",
-                "channel": "1",
-                "description": "Test",
-                "enabled": True,
-                "report_mode": "silent",
-            },
-        )
-
-        args = SimpleNamespace(discord=True)
-        result = cmd_list(args)
-        assert isinstance(result, str)
-        assert "**Jobs (1 active)**" in result
-        assert "**test-job**" in result
-        assert "at 09:00" in result
-        assert "silent" in result
 
 
 class TestCmdEnableDisable:
@@ -368,48 +339,6 @@ class TestCmdHistory:
         assert result["ok"] is True
         assert len(result["runs"]) == 2
 
-    def test_history_discord_format(self, temp_jobs_dir):
-        from job.manage import cmd_history
-        from job.state import append_history
-        from types import SimpleNamespace
-
-        append_history("test-job", exit_code=0, duration=1.5)
-
-        args = SimpleNamespace(job_id="test-job", limit=None, discord=True)
-        result = cmd_history(args)
-        assert isinstance(result, str)
-        assert "**Recent runs: test-job**" in result
-
-
-class TestFormatting:
-    """Tests for Discord formatting functions."""
-
-    def test_format_jobs_empty(self):
-        from job.manage import format_jobs_discord
-
-        result = format_jobs_discord([])
-        assert result == "**No jobs configured.**"
-
-    def test_format_jobs_with_disabled(self):
-        from job.manage import format_jobs_discord
-
-        jobs = [
-            {
-                "id": "job1",
-                "schedule": "0 9 * * *",
-                "enabled": True,
-                "report_mode": "silent",
-            },
-            {
-                "id": "job2",
-                "schedule": "0 10 * * *",
-                "enabled": False,
-                "report_mode": "always",
-            },
-        ]
-        result = format_jobs_discord(jobs)
-        assert "1 active, 1 disabled" in result
-
 
 class TestTrigger:
     """Tests for cmd_trigger — manual job execution via merlin job trigger."""
@@ -446,8 +375,8 @@ class TestTrigger:
 
         ran: list[str] = []
 
-        def fake_run(job_id, *, emit_result=True):
-            ran.append((job_id, emit_result))
+        def fake_run(job_id):
+            ran.append(job_id)
             return self._fake_result()
 
         monkeypatch.setattr(
@@ -461,8 +390,7 @@ class TestTrigger:
         assert result["duration_seconds"] == 1.23
         assert result["run_id"] == "run-1"
         assert result["window"] == "merlin-jobs:@7"
-        # In-process trigger must suppress the runner's stdout job_complete line
-        assert ran == [("my-job", False)]
+        assert ran == ["my-job"]
 
     def test_trigger_reports_failed_job(self, temp_jobs_dir, monkeypatch):
         """A job that ran but exited non-zero is reported as ok: false."""
@@ -477,7 +405,7 @@ class TestTrigger:
         monkeypatch.setattr(
             runner,
             "run_single_job",
-            lambda job_id, *, emit_result=True: self._fake_result(exit_code=1),
+            lambda job_id: self._fake_result(exit_code=1),
         )
 
         result = cmd_trigger(SimpleNamespace(job_id="my-job"))
@@ -494,9 +422,7 @@ class TestTrigger:
         monkeypatch.setattr(
             runner, "load_all_jobs", lambda: {"my-job": {"schedule": "* * * * *"}}
         )
-        monkeypatch.setattr(
-            runner, "run_single_job", lambda job_id, *, emit_result=True: None
-        )
+        monkeypatch.setattr(runner, "run_single_job", lambda job_id: None)
 
         result = cmd_trigger(SimpleNamespace(job_id="my-job"))
         assert result["ok"] is False
@@ -508,7 +434,7 @@ class TestTrigger:
         from job import runner
         from job.manage import cmd_trigger
 
-        def boom(job_id, *, emit_result=True):
+        def boom(job_id):
             raise SystemExit(1)
 
         monkeypatch.setattr(

@@ -64,7 +64,6 @@ class JobCreate(BaseModel):
     enabled: bool = True
     report_mode: str = "always"
     grace_minutes: int = 15
-    discord_channel: str | None = None
     webhook: WebhookConfig | None = None
 
     @field_validator("agent")
@@ -132,7 +131,6 @@ class JobUpdate(BaseModel):
     enabled: bool | None = None
     report_mode: str | None = None
     grace_minutes: int | None = None
-    discord_channel: str | None = None
 
     @field_validator("agent")
     @classmethod

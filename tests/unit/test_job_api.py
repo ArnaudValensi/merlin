@@ -169,7 +169,6 @@ class TestCreateJob:
                 report_mode="silent",
                 agent="codex",
                 grace_minutes=30,
-                discord_channel="123456",
             ),
         )
         assert resp.status_code == 201
@@ -177,7 +176,7 @@ class TestCreateJob:
         assert data["enabled"] is False
         assert data["report_mode"] == "silent"
         assert data["agent"] == "codex"
-        assert data["discord_channel"] == "123456"
+        assert "discord_channel" not in data
 
     def test_create_defaults_to_claude(self, client):
         """A prompt job without an agent runs Claude Code."""

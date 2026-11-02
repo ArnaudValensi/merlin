@@ -51,7 +51,6 @@ job/
 ├── routes.py       # REST API endpoints + /jobs dashboard page
 ├── schemas.py      # Pydantic models (JobCreate, JobUpdate)
 ├── logs.py         # Hybrid log storage (individual files + metadata index)
-├── notify.py       # Notification delivery after a run (report_mode logic)
 ├── webhook.py      # Webhook trigger (single-flight launch, secret lifecycle)
 └── templates/
     └── jobs.html   # Dashboard page template
@@ -132,9 +131,8 @@ Job ID is the filename without `.json` (e.g., `daily-digest.json` -> job ID `dai
 | `webhook` | object | `null` | Optional webhook trigger: `{"secret": "whk_..."}`. Present = the job is webhook-firable; the secret is required and generated server-side |
 | `created_at` | string | -- | ISO 8601 creation timestamp |
 
-Fields of earlier versions (`max_turns`, `ephemeral`) still load and drop at
-the next save (`manage.LEGACY_FIELDS`). `discord_channel` is the Discord
-destination override, read by `notify.py`.
+Fields of earlier versions (`max_turns`, `ephemeral`, `discord_channel`)
+still load and drop at the next save (`manage.LEGACY_FIELDS`).
 
 ### The agent table (`job/agents.py`)
 
@@ -168,8 +166,7 @@ UUID) and a private directory, `~/.merlin/job-runs/<run_id>/` (mode 0700,
 | `meta.json` | `new_run`, `launch` | The run's facts: job id, the job, trigger, type, agent, cwd, start, deadline, `report_mode`, the window target once open. The orphan finalizer reads it |
 | `run.sh` | `new_run` | What the window runs (below) |
 | `prompt` | `new_run` | The agent's prompt: `[Job: id]` or `[Triggered by webhook: id]`, a blank line, the job's prompt. Never on a tmux command line |
-| `pid` | `run.sh` | The job's process group and its leader's start ticks (procfs), so a pid reused after a reboot is never signalled as the job |
-| `status` | `run.sh` | The job's own exit code |
+| `pid` | the job's subshell | The job's process group and its leader's start ticks (procfs), so a pid reused after a reboot is never signalled as the job |
 | `output.log` | `run.sh` | A command's output (`tee`) |
 | `exit` | `run.sh` or the supervisor | The run's exit code, published no-clobber: a private temporary file hard-linked to `exit`, so the first publisher wins atomically and the other reads the winner (`ln` in the shell, `os.link` in Python) |
 | `outcome.json` | `record_run` | The canonical outcome of the finished run (exit code, finish time, output, note), published first, no-clobber too |
@@ -207,15 +204,18 @@ exports `MERLIN_JOB_ID`, `MERLIN_JOB_RUN_ID`, `MERLIN_JOB_TRIGGER`,
 `MERLIN_HOME` and the forwarded `MERLIN_*` variables (`runs.FORWARDED_ENV`,
 never a secret), so a job reaches the same Merlin whichever tmux server
 environment its window was born under, enters the working directory and runs
-the job **in its own process group** (`set -m`, the job backgrounded then
-brought to the foreground, its pgid in `pid`), so a deadline can end the job
-and leave the script to record the end:
+the job as **a foreground subshell under job control** (`set -m`: its own
+process group, the terminal in its hands from its first instruction, its
+pgid and start ticks written to `pid` by the subshell itself), so a deadline
+can end the job and leave the script to record the end, and nothing but the
+job writes to the window:
 
 - **Command**: `bash -lc <command> </dev/null 2>&1 | tee output.log`, the
   exit code taken from the command (`PIPESTATUS[0]`), not the pipe. Stdout
   is not a TTY, which is what scripts had before; stdin is `/dev/null`, so a
   script never hangs on input it never had.
-- **Agent**: `exec <launch line> "$(cat prompt)"`.
+- **Agent**: `exec <launch line> "$(cat prompt)"`: the subshell's exit is
+  the agent's.
 
 When the job ends, `run.sh` writes `exit` (unless the supervisor already
 did), stamps `@job_exit` (unless already set) and `@agent_state done` if the
@@ -347,14 +347,28 @@ natural default for backups and maintenance commands.
 
 ### Report Mode
 
-Handled after a run, not in the prompt:
+No delivery code lives in `job/`. The run's window carries `@job_report`
+(the job's `report_mode`), `@job_exit` once the exit code is known and
+`@job_finished` once the supervisor closed the run; the attention watcher
+(`notifications/watcher.py`) reads them through the sweep and applies the
+mode to the run's own finish, with the ordinary notification channels (the
+page, Web Push), the failure wording `Failed (exit N) after <duration>:
+<snippet>` and the event's `job_id` and `exit_code`:
 
-- **`always`** (default): notify after every run.
-- **`silent`**: only on errors (non-zero exit code).
-- **`off`**: never.
+| `report_mode` | Run finished, exit 0 | Run finished, failed | Blocked (`ask`) |
+|---|---|---|---|
+| `always` | notify | notify | notify |
+| `silent` | quiet | notify | notify |
+| `off` | quiet | quiet | quiet |
 
-The dashboard modal exposes this as a single **Notify** select (Always / Errors
-only / Never).
+An agent's `done` reaches the window before the supervisor stamps the exit,
+so a job window's `done` without `@job_exit` is held back by the watcher and
+decided once the code is there: a run's own finish never slips through
+`silent` as a plain `done`. Once `@job_finished` stands, a turn a human
+starts in the window notifies like any other window, whatever the mode. The
+dashboard modal exposes the mode as one **Notify** select (Always /
+Failures and questions only / Never). Full reference:
+[`notifications.md`](notifications.md).
 
 ## Schedule Expression
 
@@ -658,7 +672,6 @@ No test ever touches the default tmux server (`tests/conftest.py` points
 | `job/schemas.py` | Pydantic models for REST API validation |
 | `job/routes.py` | REST API endpoints + dashboard page |
 | `job/logs.py` | Hybrid log storage (individual files + metadata) |
-| `job/notify.py` | Notification delivery after a run (report_mode) |
 | `job/webhook.py` | Webhook trigger: resolver, single-flight launch, secret lifecycle, public URL |
 | `webhooks/__init__.py` | The front desk: public route, secret check, request logging |
 | `job/templates/jobs.html` | Dashboard page template |
