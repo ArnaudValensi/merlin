@@ -393,17 +393,102 @@ class TestRunJob:
 
     def test_record_run_records_once(self, temp_jobs_dir, fake_launch):
         """A second record of the same run (the orphan path racing a
-        supervisor) writes nothing."""
-        from job import supervisor
+        supervisor) writes nothing, and the first published outcome is the
+        run's."""
+        from job import runs, supervisor
         from job.runner import record_run, run_job
         from job.state import get_history
 
         run_job("test-job", self._job())
         run = fake_launch.runs[0]
-        record_run(
-            run, supervisor.Outcome(exit_code=0, finished=run.started, output="")
+        again = record_run(
+            run, supervisor.Outcome(exit_code=9, finished=run.started, output="late")
         )
+        assert again.exit_code == 0  # the first outcome won
         assert len(get_history("test-job")) == 1
+        assert runs.read_outcome(run.dir)["exit_code"] == 0
+
+    def test_a_record_interrupted_before_its_marker_is_materialized_once(
+        self, temp_jobs_dir, fake_launch, monkeypatch
+    ):
+        """History was written, the log write crashed: no marker. The next
+        materialization writes the same entry (not a second one) and the log,
+        then the marker."""
+        from job import logs as job_logs
+        from job import runner, runs
+        from job.state import get_history
+
+        monkeypatch.setattr(job_logs, "_logs_base_dir", lambda: temp_jobs_dir / "rl")
+        real_write_log = job_logs.write_log
+        calls = {"n": 0}
+
+        def failing_once(job_id, entry):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError("disk full")
+            return real_write_log(job_id, entry)
+
+        monkeypatch.setattr(job_logs, "write_log", failing_once)
+        fake_launch.output = "the output"
+        result = runner.run_job("test-job", self._job())
+        run = fake_launch.runs[0]
+        assert result is not None and result.exit_code == 0
+        assert runs.read_outcome(run.dir) is not None
+        assert not runs.is_recorded(run.dir)
+        assert len(get_history("test-job")) == 1
+        assert job_logs.list_logs("test-job") == []
+
+        # The repair: the tick materializes the published outcome again.
+        runner.materialize(run, runs.read_outcome(run.dir))
+        assert runs.is_recorded(run.dir)
+        assert len(get_history("test-job")) == 1
+        assert get_history("test-job")[0]["run_id"] == run.run_id
+        assert len(job_logs.list_logs("test-job")) == 1
+        # A third pass writes nothing more.
+        runner.materialize(run, runs.read_outcome(run.dir))
+        assert len(get_history("test-job")) == 1
+        assert len(job_logs.list_logs("test-job")) == 1
+
+    def test_a_run_recorded_by_an_earlier_version_is_not_adopted(
+        self, temp_jobs_dir, fake_launch
+    ):
+        """A run directory with the recorded marker but no outcome file (the
+        shape the first M1 code left) is finished: a new trigger launches a
+        new run instead of joining it."""
+        from job import runs
+        from job.runner import run_job
+
+        run_job("test-job", self._job())
+        old = fake_launch.runs[0]
+        (old.dir / "outcome.json").unlink()
+        assert runs.is_recorded(old.dir)
+        assert runs.unfinished_run("test-job") is None
+        result = run_job("test-job", self._job())
+        assert result is not None and result.run_id != old.run_id
+        assert len(fake_launch.runs) == 2
+
+    def test_a_trigger_adopts_an_unfinished_run(self, temp_jobs_dir, fake_launch):
+        """An unfinished run of the job (no outcome, its window there): the
+        trigger supervises it instead of opening a second window."""
+        from job import runs
+        from job.runner import run_job
+        from job.state import get_history
+
+        pending = runs.new_run(
+            "test-job",
+            self._job(),
+            trigger="webhook",
+            run_id="pending-1",
+            cwd="/tmp",
+            deadline=60,
+        )
+        pending.target = "merlin-jobs:@77"
+        runs.write_meta(pending)
+        result = run_job("test-job", self._job(), trigger="schedule")
+        assert result is not None and result.run_id == "pending-1"
+        assert fake_launch.runs == []  # nothing new was launched
+        assert get_history("test-job")[0]["trigger"] == "webhook"
+        assert runs.is_recorded(pending.dir)
 
     def test_non_scheduled_run_does_not_advance_cursor(
         self, temp_jobs_dir, fake_launch
@@ -635,7 +720,9 @@ class TestRunDispatcher:
         monkeypatch.setattr(
             runner.retention,
             "tick",
-            lambda **kw: calls.append(1) or {"finalized": 0, "closed": 0, "removed": 0},
+            lambda **kw: (
+                calls.append(1) or ({"finalized": 0, "closed": 0, "removed": 0}, [])
+            ),
         )
         runner.run_dispatcher()
         assert calls == [1]

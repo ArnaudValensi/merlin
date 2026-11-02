@@ -21,9 +21,20 @@ def srv(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     s = Server(tmp_path / "s.sock", home)
-    s.tmux("new-session", "-d", "-s", "t", "-x", "100", "-y", "30")
+    # Bash without init files in every window: the session init hook, which
+    # carries a payload, must run inside the pane (see Server.run_in_pane).
+    shell = "bash --norc --noprofile"
+    s.tmux("new-session", "-d", "-s", "t", "-x", "100", "-y", "30", shell)
     wins = {"a": s.tmux("display-message", "-p", "#{window_id}")}
-    wins["b"] = s.tmux("new-window", "-P", "-F", "#{window_id}", "-t", "t:")
+    wins["b"] = s.tmux("new-window", "-P", "-F", "#{window_id}", "-t", "t:", shell)
+    for win in wins.values():
+        for _ in range(50):
+            if (
+                s.tmux("display-message", "-p", "-t", win, "#{pane_current_command}")
+                == "bash"
+            ):
+                break
+            time.sleep(0.1)
     yield s, wins
     s.kill()
 
@@ -80,7 +91,9 @@ class TestTranscriptStamp:
             '{"session_id": "abc", "transcript_path": '
             '"/home/u/.claude/projects/-home-u-my dir/abc.jsonl", "cwd": "/x"}'
         )
-        s.run(INIT_SH, "claude", pane=s.pane_of(w["a"]), cwd=s.home, stdin=payload)
+        s.run_in_pane(
+            INIT_SH, "claude", pane=s.pane_of(w["a"]), cwd=s.home, stdin=payload
+        )
         assert s.wopt(w["a"], "@agent_transcript") == (
             "/home/u/.claude/projects/-home-u-my dir/abc.jsonl"
         )
@@ -90,7 +103,7 @@ class TestTranscriptStamp:
         pane = s.pane_of(w["a"])
         for conv in ("first", "second"):
             payload = f'{{"session_id":"{conv}","transcript_path":"/t/{conv}.jsonl"}}'
-            s.run(INIT_SH, "claude", pane=pane, cwd=s.home, stdin=payload)
+            s.run_in_pane(INIT_SH, "claude", pane=pane, cwd=s.home, stdin=payload)
         assert s.wopt(w["a"], "@agent_transcript") == "/t/second.jsonl"
 
     def test_escaped_or_relative_paths_are_skipped(self, srv):
@@ -98,13 +111,13 @@ class TestTranscriptStamp:
         pane = s.pane_of(w["a"])
         for path in (r"/t/we\\\"ird.jsonl", "relative/x.jsonl"):
             payload = f'{{"session_id": "c", "transcript_path": "{path}"}}'
-            s.run(INIT_SH, "claude", pane=pane, cwd=s.home, stdin=payload)
+            s.run_in_pane(INIT_SH, "claude", pane=pane, cwd=s.home, stdin=payload)
             assert s.wopt(w["a"], "@agent_transcript") == ""
 
     def test_not_stamped_without_a_provider(self, srv):
         s, w = srv
         payload = '{"session_id": "c", "transcript_path": "/t/c.jsonl"}'
-        s.run(INIT_SH, pane=s.pane_of(w["a"]), cwd=s.home, stdin=payload)
+        s.run_in_pane(INIT_SH, pane=s.pane_of(w["a"]), cwd=s.home, stdin=payload)
         assert s.wopt(w["a"], "@agent_transcript") == ""
 
 
@@ -113,7 +126,9 @@ class TestTranscriptMark:
         s, w = srv
         payload = '{"session_id": "c", "transcript_path": "/nonexistent/new.jsonl"}'
         before = int(time.time())
-        s.run(INIT_SH, "claude", pane=s.pane_of(w["a"]), cwd=s.home, stdin=payload)
+        s.run_in_pane(
+            INIT_SH, "claude", pane=s.pane_of(w["a"]), cwd=s.home, stdin=payload
+        )
         size, epoch = s.wopt(w["a"], "@agent_transcript_mark").split()
         assert size == "0"
         assert before <= int(epoch) <= int(time.time())
@@ -123,6 +138,8 @@ class TestTranscriptMark:
         resumed = tmp_path / "resumed.jsonl"
         resumed.write_text("x" * 1234)
         payload = f'{{"session_id": "c", "transcript_path": "{resumed}"}}'
-        s.run(INIT_SH, "claude", pane=s.pane_of(w["a"]), cwd=s.home, stdin=payload)
+        s.run_in_pane(
+            INIT_SH, "claude", pane=s.pane_of(w["a"]), cwd=s.home, stdin=payload
+        )
         assert s.wopt(w["a"], "@agent_transcript_mark").split()[0] == "1234"
         assert s.wopt(w["a"], "@agent_transcript") == str(resumed)

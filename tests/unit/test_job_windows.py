@@ -212,9 +212,11 @@ def test_run_watched_live_finishes_on_busy_then_idle(iso):
 def test_agent_crash_is_its_exit_code(iso):
     result = job_runner.run_job("boom", agent_job("crash"), emit_result=False)
     assert result is not None and result.exit_code == 2
+    # The supervisor saw the exit file the instant it was published; run.sh
+    # stamps the window right after.
+    assert wait_until(lambda: windows()[0]["@agent_state"] == "done", timeout=5)
     row = windows()[0]
     assert row["@job_exit"] == "2"
-    assert row["@agent_state"] == "done"  # run.sh stamped the end
     # The window stays, on a shell.
     assert tmux("display-message", "-p", "-t", result.window, "#{pane_dead}") == "0"
     assert state.get_history("boom")[0]["exit_code"] == 2
@@ -410,7 +412,7 @@ def test_orphan_finalized_once_under_overlapping_ticks(iso):
 
     def tick():
         barrier.wait()
-        results.append(retention.tick())
+        results.append(retention.tick()[0])
 
     threads = [threading.Thread(target=tick) for _ in range(2)]
     for t in threads:
@@ -423,27 +425,242 @@ def test_orphan_finalized_once_under_overlapping_ticks(iso):
     assert history[0]["exit_code"] == 5
     assert runs.is_recorded(run.dir)
     # A third tick records nothing more.
-    assert retention.tick()["finalized"] == 0
+    assert retention.tick()[0]["finalized"] == 0
     assert len(state.get_history("orphan")) == 1
 
 
 def test_orphan_with_its_window_gone_is_130(iso):
     run = _launch_unsupervised("gone", {"type": "command", "command": "sleep 30"})
     assert sweep.kill_window(JOBS, run.window_id)
-    counts = retention.tick()
-    assert counts["finalized"] == 1
+    counts, adoptable = retention.tick()
+    assert counts["finalized"] == 1 and adoptable == []
     assert state.get_history("gone")[0]["exit_code"] == 130
     # Recorded with no window: the directory goes at once.
     assert counts["removed"] == 1
     assert not run.dir.exists()
-    assert retention.tick() == {"finalized": 0, "closed": 0, "removed": 0}
+    assert retention.tick()[0] == {"finalized": 0, "closed": 0, "removed": 0}
 
 
-def test_orphan_agent_run_finishes_on_done(iso):
-    _launch_unsupervised("oagent", agent_job("done"))
+def test_orphan_agent_run_is_adopted_and_finishes_on_done(iso):
+    """A run still going on (no exit file, its window there) is not guessed
+    at: the tick hands it to the dispatcher, which adopts it under the flock
+    and supervises it to its end."""
+    run = _launch_unsupervised("oagent", agent_job("done"))
     assert wait_until(lambda: windows()[0]["@agent_state"] == "done", timeout=10)
-    assert retention.tick()["finalized"] == 1
+    counts, adoptable = retention.tick()
+    assert counts["finalized"] == 0
+    assert [r.run_id for r in adoptable] == [run.run_id]
+    result = job_runner.adopt_run(adoptable[0])
+    assert result is not None and result.exit_code == 0
     assert state.get_history("oagent")[0]["exit_code"] == 0
+    assert runs.is_recorded(run.dir)
+    assert retention.tick() == ({"finalized": 0, "closed": 0, "removed": 0}, [])
+
+
+def test_restart_before_first_busy_marks_ask_and_bounds_the_run(iso, monkeypatch):
+    """F9: a never-started agent (stuck on a dialog) whose supervisor died
+    is not declared successful: the adopter's watchdog marks it asking and
+    its deadline ends it."""
+    monkeypatch.setattr(supervisor, "START_WATCHDOG", 0.4)
+    run = _launch_unsupervised("stuck-orphan", agent_job("stuck"), deadline=2.5)
+    time.sleep(0.6)  # idle for longer than the watchdog, nobody watching
+    counts, adoptable = retention.tick()
+    assert counts["finalized"] == 0 and [r.run_id for r in adoptable] == [run.run_id]
+    seen: list[str] = []
+
+    def watch():
+        end = time.monotonic() + 6
+        while time.monotonic() < end:
+            rows = windows()
+            if rows:
+                seen.append(rows[0]["@agent_state"])
+            time.sleep(0.05)
+
+    t = threading.Thread(target=watch)
+    t.start()
+    result = job_runner.adopt_run(run)
+    t.join()
+    assert result is not None and result.exit_code == 124
+    assert "ask" in seen
+    assert state.get_history("stuck-orphan")[0]["exit_code"] == 124
+
+
+def test_restart_after_busy_then_idle_finishes_the_adopted_run(iso):
+    """F9: the first supervisor saw busy (stamped on the window) and died;
+    the agent then went idle: the adopter finishes the run at once."""
+    run = _launch_unsupervised("live-orphan", agent_job("live"))
+    assert wait_until(lambda: windows()[0]["@agent_state"] == "busy", timeout=10)
+    sweep.set_window_option(run.target, "@job_busy_seen", "1")  # the dead supervisor's
+    assert wait_until(lambda: windows()[0]["@agent_state"] == "idle", timeout=10)
+    result = job_runner.adopt_run(run)
+    assert result is not None and result.exit_code == 0
+
+
+def test_a_trigger_adopts_the_unfinished_run_instead_of_a_second_window(
+    iso, monkeypatch
+):
+    """F4: the supervisor died while the agent works on; the next trigger of
+    the job, by hand or by webhook, joins that run: one window, one run."""
+    import asyncio
+
+    from job import manage, webhook
+
+    monkeypatch.setattr(job_runner, "AGENT_TIMEOUT_SECONDS", 2.0)
+    pending = _launch_unsupervised("busy-orphan", agent_job("hang"), deadline=2.0)
+    assert wait_until(lambda: windows()[0]["@agent_state"] == "busy", timeout=10)
+
+    manage.JOBS_DIR = job_runner.JOBS_DIR
+    job = {**agent_job("hang"), "webhook": {"secret": "whk_s"}}
+    manage.save_job("busy-orphan", job)
+
+    async def fire():
+        first = webhook._fire("busy-orphan", job)
+        assert first.status == "coalesced"
+        assert first.run_id == pending.run_id
+        await asyncio.gather(*list(webhook._tasks))
+
+    asyncio.run(fire())
+    assert len(windows()) == 1
+    history = state.get_history("busy-orphan")
+    assert len(history) == 1 and history[0]["run_id"] == pending.run_id
+    assert history[0]["exit_code"] == 124
+
+    # A manual trigger with an unfinished run of its own job: the same.
+    second = _launch_unsupervised("busy-orphan-2", agent_job("hang"), deadline=2.0)
+    assert wait_until(lambda: len(windows()) == 2, timeout=10)
+    result = job_runner.run_job("busy-orphan-2", agent_job("hang"), emit_result=False)
+    assert result is not None and result.run_id == second.run_id
+    assert len(windows()) == 2
+
+
+def test_orphan_recovery_never_touches_a_reused_window_id(iso):
+    """F3: an old run directory points at a window id that now carries
+    another run: the old run is 130, the window untouched."""
+    live = _launch_unsupervised("live-job", {"type": "command", "command": "sleep 30"})
+    old = runs.new_run(
+        "old-job",
+        {"type": "command", "command": "sleep 30"},
+        trigger="manual",
+        run_id="run-old",
+        cwd=str(Path.home()),
+        deadline=3600,
+    )
+    old.target = live.target  # the id, reused after a restart
+    runs.write_meta(old)
+    counts, adoptable = retention.tick()
+    assert counts["finalized"] == 1 and [r.run_id for r in adoptable] == [live.run_id]
+    assert state.get_history("old-job")[0]["exit_code"] == 130
+    assert state.get_history("live-job") == []
+    row = windows()[0]
+    assert row["@job_run"] == live.run_id and row["@job_exit"] == ""
+    assert row["@job_finished"] == ""
+    assert runs.read_exit(live.dir) is None
+
+
+def test_the_supervisor_finishes_on_a_reused_window_id_too(iso):
+    """F3: the supervisor's own ownership check."""
+    run = _launch_unsupervised("owner", {"type": "command", "command": "sleep 30"})
+    assert sweep.set_window_option(run.target, "@job_run", "someone-else")
+    status, opts = supervisor.observe(run)
+    assert status == "gone" and opts is None
+    assert supervisor.finish_from_window(run, status, opts, seen_busy=False) == 130
+    sweep.set_window_option(run.target, "@job_run", run.run_id)
+    assert supervisor.observe(run)[0] == "ok"
+
+
+def test_unavailable_observations_finalize_close_and_signal_nothing(iso):
+    """F6: a tmux that does not answer is not an absent window."""
+    run = _launch_unsupervised("flaky", {"type": "command", "command": "exit 0"})
+    assert (
+        wait_until(lambda: runs.read_exit(run.dir) is not None, timeout=10) is not None
+    )
+    assert retention.tick()[0]["finalized"] == 1
+    busy = _launch_unsupervised("flaky-busy", agent_job("hang"))
+    assert wait_until(lambda: len(windows()) == 2, timeout=10)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(sweep, "_tmux_observe", lambda args: ("unavailable", ""))
+        counts, adoptable = retention.tick(now=time.time() + 3601)
+        assert counts == {"finalized": 0, "closed": 0, "removed": 0}
+        assert adoptable == []
+        assert supervisor.observe(busy)[0] == "unavailable"
+        assert (
+            supervisor.finish_from_window(busy, "unavailable", None, seen_busy=True)
+            is None
+        )
+    assert len(windows()) == 2 and run.dir.exists()
+
+    # The client list alone unavailable: no window closed either.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(sweep, "displayed_windows_checked", lambda: ("unavailable", set()))
+        assert retention.tick(now=time.time() + 3601)[0]["closed"] == 0
+    assert retention.tick(now=time.time() + 3601)[0]["closed"] == 1
+
+
+def test_the_exit_is_first_writer_wins(iso):
+    """F7: the command finished (run.sh published 3) as the deadline fired:
+    the deadline path reads the winner and stamps it, nothing disagrees."""
+    run = _launch_unsupervised("race", {"type": "command", "command": "exit 3"})
+    assert wait_until(lambda: runs.read_exit(run.dir) == 3, timeout=10)
+    code = supervisor.end_run(run, 124)
+    assert code == 3
+    assert runs.read_exit(run.dir) == 3
+    assert windows()[0]["@job_exit"] == "3"
+    outcome = supervisor.finish(run, code)
+    job_runner.record_run(run, outcome)
+    assert state.get_history("race")[0]["exit_code"] == 3
+
+
+def test_write_exit_once_admits_one_writer(iso, tmp_path):
+    d = tmp_path / "r"
+    d.mkdir()
+    wins: list[bool] = []
+    barrier = threading.Barrier(8)
+
+    def go(code):
+        barrier.wait()
+        wins.append(runs.write_exit_once(d, code))
+
+    threads = [threading.Thread(target=go, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert wins.count(True) == 1
+    assert runs.read_exit(d) in range(8)
+    assert [p.name for p in d.iterdir()] == ["exit"]
+
+
+def test_two_first_launches_both_get_a_window(iso):
+    """F8: two jobs dispatched together into an absent merlin-jobs: both
+    open their window, one session, no stray shell."""
+    results: dict[str, str | None] = {}
+    barrier = threading.Barrier(2)
+
+    def launch(job_id):
+        barrier.wait()
+        run = runs.new_run(
+            job_id,
+            {"type": "command", "command": "sleep 5"},
+            trigger="manual",
+            run_id=f"run-{job_id}",
+            cwd=str(Path.home()),
+            deadline=60,
+        )
+        try:
+            results[job_id] = runs.launch(run)
+        except runs.LaunchError as e:
+            results[job_id] = None
+            results[job_id + "-error"] = e.message
+
+    threads = [threading.Thread(target=launch, args=(j,)) for j in ("first", "second")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert results["first"] and results["second"], results
+    assert {s.name for s in sweep.run_session_sweep()} == {JOBS}
+    assert sorted(r["window_name"] for r in windows()) == ["first", "second"]
 
 
 def test_supervised_run_is_left_alone_by_the_tick(iso):
@@ -457,7 +674,7 @@ def test_supervised_run_is_left_alone_by_the_tick(iso):
     t = threading.Thread(target=run)
     t.start()
     wait_until(lambda: windows() or None, timeout=10)
-    assert retention.tick()["finalized"] == 0
+    assert retention.tick()[0]["finalized"] == 0
     t.join(timeout=20)
     assert out["result"].exit_code == 0
     assert len(state.get_history("held")) == 1
@@ -579,19 +796,19 @@ def test_tick_closes_windows_past_retention_and_spares_the_rest(iso):
             is not None
         )
     # Both finalized now (recorded, @job_finished stamped).
-    assert retention.tick()["finalized"] == 2
+    assert retention.tick()[0]["finalized"] == 2
     # A plain window in merlin-jobs and another session must never be touched.
     tmux("new-window", "-d", "-t", f"{JOBS}:", "-n", "plain")
     tmux("new-session", "-d", "-s", "mine")
 
-    assert retention.tick()["closed"] == 0  # nothing is an hour old yet
-    counts = retention.tick(now=time.time() + 3601)
+    assert retention.tick()[0]["closed"] == 0  # nothing is an hour old yet
+    counts, _ = retention.tick(now=time.time() + 3601)
     assert counts["closed"] == 1 and counts["removed"] == 1
     assert {r["window_name"] for r in windows()} == {"failed", "plain"}
     assert not ok.dir.exists() and failed.dir.exists()
     assert "mine" in {s.name for s in sweep.run_session_sweep()}
 
-    counts = retention.tick(now=time.time() + 86401)
+    counts, _ = retention.tick(now=time.time() + 86401)
     assert counts["closed"] == 1 and counts["removed"] == 1
     assert {r["window_name"] for r in windows()} == {"plain"}
     assert not failed.dir.exists()
@@ -603,8 +820,8 @@ def test_success_closes_at_the_next_run_of_the_job(iso):
         wait_until(lambda: runs.read_exit(first.dir) is not None, timeout=10)
         is not None
     )
-    assert retention.tick()["finalized"] == 1
-    assert retention.tick()["closed"] == 0
+    assert retention.tick()[0]["finalized"] == 1
+    assert retention.tick()[0]["closed"] == 0
     # The next run of the same job opens, a whole second later.
     time.sleep(1.1)
     second = runs.new_run(
@@ -616,7 +833,7 @@ def test_success_closes_at_the_next_run_of_the_job(iso):
         deadline=3600,
     )
     runs.launch(second)
-    counts = retention.tick()
+    counts, _ = retention.tick()
     assert counts["closed"] == 1
     assert [r["@job_run"] for r in windows()] == ["run-same-2"]
     assert not first.dir.exists() and second.dir.exists()
@@ -627,7 +844,7 @@ def test_a_window_a_client_is_showing_is_never_closed(iso):
     assert (
         wait_until(lambda: runs.read_exit(old.dir) is not None, timeout=10) is not None
     )
-    assert retention.tick()["finalized"] == 1
+    assert retention.tick()[0]["finalized"] == 1
     later = time.time() + 3601
 
     # A client on that window: tmux attach under a pty.
@@ -641,7 +858,7 @@ def test_a_window_a_client_is_showing_is_never_closed(iso):
     )
     try:
         assert wait_until(lambda: old.target in sweep.displayed_windows(), timeout=10)
-        assert retention.tick(now=later)["closed"] == 0
+        assert retention.tick(now=later)[0]["closed"] == 0
         assert old.dir.exists()
     finally:
         client.terminate()
@@ -650,13 +867,13 @@ def test_a_window_a_client_is_showing_is_never_closed(iso):
         os.close(slave)
     assert wait_until(lambda: old.target not in sweep.displayed_windows(), timeout=10)
     # Nobody is looking any more: the ordinary rule applies.
-    assert retention.tick(now=later)["closed"] == 1
+    assert retention.tick(now=later)[0]["closed"] == 1
 
 
 def test_tick_with_nothing_to_do_touches_no_tmux(iso, monkeypatch):
     calls: list = []
     monkeypatch.setattr(sweep, "displayed_windows", lambda: calls.append(1) or set())
-    assert retention.tick() == {"finalized": 0, "closed": 0, "removed": 0}
+    assert retention.tick()[0] == {"finalized": 0, "closed": 0, "removed": 0}
     assert calls == []
 
 

@@ -353,6 +353,23 @@ def _execute_job(
         set_last_run(job_id, _now())
 
     started = _now()
+    pending = runs.unfinished_run(job_id)
+    if pending is not None:
+        # A run of this job is still going on without a supervisor (its
+        # supervisor died with a Merlin restart): one run at a time, so this
+        # trigger adopts it instead of opening a second window.
+        logger.info(
+            "[%s] Job %s has an unfinished run %s, adopting it",
+            request_id[:8],
+            job_id,
+            pending.run_id,
+        )
+        result = _adopt_locked(pending)
+        if is_scheduled:
+            set_last_run(job_id, _now())
+        _emit(job_id, job, result, emit_result)
+        return result
+
     run: Run | None = None
     try:
         run = runs.new_run(
@@ -382,29 +399,59 @@ def _execute_job(
     if is_scheduled:
         set_last_run(job_id, _now())
 
-    # Emit structured JSON to stdout so the scheduler (main process) can
-    # pick it up for the job_complete contract.
-    if emit_result:
-        try:
-            print(
-                json.dumps(
-                    {
-                        "type": "job_complete",
-                        "job_id": job_id,
-                        "job": job,
-                        "result": {
-                            "exit_code": result.exit_code,
-                            "duration_seconds": round(result.duration, 2),
-                            "output": result.result or "",
-                        },
-                    }
-                ),
-                flush=True,
-            )
-        except Exception:
-            pass  # Never fail the job for a notification issue
-
+    _emit(job_id, job, result, emit_result)
     return result
+
+
+def _emit(job_id: str, job: dict, result: RunResult, emit_result: bool) -> None:
+    """The structured job_complete line on stdout, the subprocess contract
+    the scheduler and the REST trigger parse."""
+    if not emit_result:
+        return
+    try:
+        print(
+            json.dumps(
+                {
+                    "type": "job_complete",
+                    "job_id": job_id,
+                    "job": job,
+                    "result": {
+                        "exit_code": result.exit_code,
+                        "duration_seconds": round(result.duration, 2),
+                        "output": result.result or "",
+                    },
+                }
+            ),
+            flush=True,
+        )
+    except Exception:
+        pass  # Never fail the job for a notification issue
+
+
+def adopt_run(run: Run) -> RunResult | None:
+    """Supervise a run whose supervisor died, under the job's flock, and
+    record it. None when the job is locked (someone supervises it) or the
+    run was recorded meanwhile."""
+    lock = acquire_job_lock(run.job_id)
+    if lock is None:
+        return None
+    try:
+        if runs.is_recorded(run.dir):
+            return None
+        logger.info("Adopting unfinished run %s of job %s", run.run_id, run.job_id)
+        return _adopt_locked(run)
+    finally:
+        release_job_lock(lock)
+
+
+def _adopt_locked(run: Run) -> RunResult:
+    """Finish an unfinished run (the lock held): its outcome if published,
+    else supervise it to its end from the window's own evidence; then
+    materialize the record."""
+    canonical = runs.read_outcome(run.dir)
+    if canonical is None:
+        return record_run(run, supervisor.supervise(run))
+    return materialize(run, canonical)
 
 
 def _record_failure(
@@ -445,42 +492,67 @@ def _record_failure(
 
 
 def record_run(run: Run, outcome: Outcome) -> RunResult:
-    """Record a finished run (history, run log, events) exactly once: the
-    run directory is marked recorded, and a second call for the same run
-    (the orphan path racing a supervisor) writes nothing."""
-    duration = max(0.0, outcome.finished - run.started)
+    """Record a finished run exactly once, in two steps: the canonical
+    outcome is published first (no-clobber: a second supervisor of the same
+    run reads the first one's), then history and the run log are
+    materialized from it, idempotently by run id, and the directory is
+    marked recorded. A crash between the steps leaves an outcome without a
+    marker, which the next tick materializes again: the same entry, the same
+    log file."""
+    canonical = {
+        "exit_code": outcome.exit_code,
+        "finished": outcome.finished,
+        "output": outcome.output,
+        "note": outcome.note,
+    }
+    if not runs.write_outcome(run.dir, canonical):
+        canonical = runs.read_outcome(run.dir) or canonical
+    return materialize(run, canonical)
+
+
+def materialize(run: Run, canonical: dict) -> RunResult:
+    """History, the run log and the events from the canonical outcome, then
+    the recorded marker. Nothing is marked when a write failed: the next
+    tick tries again. Returns the result either way."""
+    exit_code = int(canonical.get("exit_code", 1))
+    finished = float(canonical.get("finished") or run.started)
+    output = str(canonical.get("output") or "")
+    note = str(canonical.get("note") or "")
+    duration = max(0.0, finished - run.started)
     result = RunResult(
-        exit_code=outcome.exit_code,
+        exit_code=exit_code,
         duration=duration,
-        result=outcome.output,
-        stderr=outcome.note,
+        result=output,
+        stderr=note,
         run_id=run.run_id,
         agent=run.agent,
         window=run.target,
     )
     if runs.is_recorded(run.dir):
         return result
-    timestamp = datetime.fromtimestamp(outcome.finished, tz=timezone.utc)
+    timestamp = datetime.fromtimestamp(finished, tz=timezone.utc)
     if JOB_TZ:
         timestamp = timestamp.astimezone(JOB_TZ)
-    _write_record(
-        run.job_id,
-        exit_code=outcome.exit_code,
-        duration=duration,
-        output=outcome.output,
-        trigger=run.trigger,
-        request_id=run.run_id,
-        agent=run.agent,
-        timestamp=timestamp,
-        stderr=outcome.note,
-    )
     try:
-        runs.mark_recorded(
-            run.dir,
-            {"exit_code": outcome.exit_code, "finished": outcome.finished},
+        _write_record(
+            run.job_id,
+            exit_code=exit_code,
+            duration=duration,
+            output=output,
+            trigger=run.trigger,
+            request_id=run.run_id,
+            agent=run.agent,
+            timestamp=timestamp,
+            stderr=note,
         )
-    except OSError:
-        logger.warning("Could not mark run %s recorded", run.run_id, exc_info=True)
+        runs.mark_recorded(run.dir, {"exit_code": exit_code, "finished": finished})
+    except Exception:
+        logger.warning(
+            "Could not record run %s of job %s, will retry",
+            run.run_id,
+            run.job_id,
+            exc_info=True,
+        )
     return result
 
 
@@ -506,28 +578,24 @@ def _write_record(
         run_id=request_id,
     )
 
-    # Write detailed execution log (hybrid storage)
-    try:
-        from job.logs import cleanup_logs, write_log
+    # Write detailed execution log (hybrid storage). A failure propagates:
+    # the run must not be marked recorded with its log missing.
+    from job.logs import cleanup_logs, write_log
 
-        write_log(
-            job_id,
-            {
-                "job_id": job_id,
-                "timestamp": timestamp.isoformat(),
-                "exit_code": exit_code,
-                "duration_seconds": round(duration, 2),
-                "trigger": trigger,
-                "agent": agent,
-                "run_id": request_id,
-                "output": output,
-            },
-        )
-        cleanup_logs(job_id)
-    except Exception:
-        logger.warning(
-            "Failed to write execution log for job %s", job_id, exc_info=True
-        )
+    write_log(
+        job_id,
+        {
+            "job_id": job_id,
+            "timestamp": timestamp.isoformat(),
+            "exit_code": exit_code,
+            "duration_seconds": round(duration, 2),
+            "trigger": trigger,
+            "agent": agent,
+            "run_id": request_id,
+            "output": output,
+        },
+    )
+    cleanup_logs(job_id)
 
     if exit_code == 0:
         logger.info(
@@ -604,7 +672,7 @@ def run_dispatcher() -> None:
     now = _now()
     logger.info("Dispatcher started at %s", now.isoformat())
 
-    counts = retention.tick()
+    counts, adoptable = retention.tick()
     if any(counts.values()):
         logger.info(
             "Retention: %d orphan(s) finalized, %d window(s) closed, %d run dir(s) removed",
@@ -641,22 +709,26 @@ def run_dispatcher() -> None:
 
         due_jobs.append((job_id, job))
 
-    if not due_jobs:
+    if not due_jobs and not adoptable:
         logger.info("No jobs due, dispatcher finished")
         return
 
-    logger.info(
-        "Running %d due job(s) in parallel: %s",
-        len(due_jobs),
-        ", ".join(j[0] for j in due_jobs),
-    )
+    if due_jobs:
+        logger.info(
+            "Running %d due job(s) in parallel: %s",
+            len(due_jobs),
+            ", ".join(j[0] for j in due_jobs),
+        )
 
-    # Execute due jobs in parallel
+    # Execute due jobs in parallel; unfinished runs whose supervisor died
+    # are adopted alongside, each under its job's flock.
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {
             executor.submit(run_job, job_id, job, trigger="schedule"): job_id
             for job_id, job in due_jobs
         }
+        for run in adoptable:
+            futures[executor.submit(adopt_run, run)] = run.job_id
 
         for future in as_completed(futures):
             job_id = futures[future]

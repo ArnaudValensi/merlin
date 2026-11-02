@@ -47,7 +47,7 @@ command -v tmux >/dev/null 2>&1 || exit 0
 # pane, the ancestor walk when a helper process stripped the environment,
 # the session id and cwd when a daemon runs the hook (see agent-window.sh).
 . "$(dirname "$0")/agent-window.sh"
-win=$(agent_window "$conv" "$cwd")
+win=$(agent_window "$conv" "$cwd" SessionStart)
 [ -n "$win" ] || exit 0
 
 # Mint a stable id once. Resume in the same window keeps the existing id.

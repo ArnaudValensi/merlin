@@ -48,6 +48,6 @@ def fake_launch(monkeypatch):
     monkeypatch.setattr(
         runner.retention,
         "tick",
-        lambda **kw: {"finalized": 0, "closed": 0, "removed": 0},
+        lambda **kw: ({"finalized": 0, "closed": 0, "removed": 0}, []),
     )
     return rec

@@ -17,9 +17,14 @@ sits in a private directory, ``~/.merlin/job-runs/<run_id>/`` (mode 0700):
   stays readable.
 - ``prompt``: the agent's prompt, read by ``run.sh``. It is never put on a
   tmux command line: the window command is only ``bash <run.sh>``.
-- ``pid``: the process group of the job, ``status``: the job's own exit code,
-  ``output.log``: a command's output (``tee``), ``exit``: the run's exit code,
-  ``result.json``: written once the run is recorded (history and run log).
+- ``pid``: the process group of the job and its start ticks, ``status``:
+  the job's own exit code, ``output.log``: a command's output (``tee``),
+  ``exit``: the run's exit code, published no-clobber (a hard link of a
+  private temporary file: the first publisher wins, the other reads the
+  winner), ``outcome.json``: the canonical record of the finished run,
+  written first, ``result.json``: written once history and the run log are
+  materialized from it (the exactly-once marker; a crash in between is
+  repaired by materializing again, idempotently by run id).
 
 The window carries ``@job_id``, ``@job_run``, ``@job_report`` and
 ``@job_started``, plus ``@agent_sid`` (``job-<run_id>``), ``@agent_cwd`` and
@@ -33,8 +38,10 @@ second.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import secrets
 import shlex
 import shutil
 import time
@@ -179,22 +186,73 @@ def read_exit(directory: Path) -> int | None:
 
 
 def write_exit_once(directory: Path, code: int) -> bool:
-    """Write the ``exit`` file unless one exists. Temp file then rename, so a
-    reader never sees a half-written code. True when this call wrote it."""
+    """Publish ``code`` as the run's exit unless one is published already:
+    a private temporary file hard-linked to ``exit``, so the first publisher
+    wins atomically and a reader never sees a partial code (``run.sh`` does
+    the same with ``ln``). True when this call won; the loser reads the
+    winning code with ``read_exit``."""
     path = directory / "exit"
-    if path.exists():
+    tmp = directory / f".exit.{os.getpid()}.{secrets.token_hex(4)}"
+    try:
+        tmp.write_text(f"{code}\n")
+        os.link(tmp, path)
+        return True
+    except FileExistsError:
         return False
-    _write_atomic(path, f"{code}\n")
-    return True
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
 
 
 def read_pgid(directory: Path) -> int | None:
     """The job's process group, written by ``run.sh``."""
+    found = _read_pid_file(directory)
+    return found[0] if found else None
+
+
+def read_process(directory: Path) -> tuple[int, str] | None:
+    """``(pgid, start_ticks)`` of the job, written by ``run.sh``: the group
+    to signal and the start time of its leader (``/proc/<pid>/stat``, empty
+    where there is no procfs), so a pid reused after a reboot is never
+    signalled as the job."""
+    return _read_pid_file(directory)
+
+
+def _read_pid_file(directory: Path) -> tuple[int, str] | None:
     try:
         text = (directory / "pid").read_text().strip()
     except OSError:
         return None
-    return int(text) if text.isdigit() else None
+    parts = text.split()
+    if not parts or not parts[0].isdigit():
+        return None
+    return int(parts[0]), (parts[1] if len(parts) > 1 else "")
+
+
+def process_matches(pgid: int, start_ticks: str) -> bool:
+    """True when ``pgid``'s leader is alive and, where procfs can say, is the
+    process the run started (same start ticks)."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return False
+    if not start_ticks:
+        return True
+    now = process_start_ticks(pgid)
+    return now is None or now == start_ticks
+
+
+def process_start_ticks(pid: int) -> str | None:
+    """The start ticks of ``pid`` from procfs, None without procfs."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return None
+    # The command name sits in parentheses and may hold spaces: split after it.
+    rest = stat.rsplit(")", 1)[-1].split()
+    return rest[19] if len(rest) > 19 else None
 
 
 def read_output(directory: Path) -> str:
@@ -205,11 +263,50 @@ def read_output(directory: Path) -> str:
 
 
 def is_recorded(directory: Path) -> bool:
+    """True once history and the run log were materialized for the run."""
     return (directory / "result.json").exists()
 
 
 def mark_recorded(directory: Path, result: dict) -> None:
     _write_atomic(directory / "result.json", json.dumps(result))
+
+
+def write_outcome(directory: Path, outcome: dict) -> bool:
+    """Publish the canonical outcome of the run, once: no-clobber like the
+    exit file. True when this call published it."""
+    path = directory / "outcome.json"
+    tmp = directory / f".outcome.{os.getpid()}.{secrets.token_hex(4)}"
+    try:
+        tmp.write_text(json.dumps(outcome))
+        os.link(tmp, path)
+        return True
+    except FileExistsError:
+        return False
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+
+
+def read_outcome(directory: Path) -> dict | None:
+    try:
+        data = json.loads((directory / "outcome.json").read_text())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def unfinished_run(job_id: str) -> Run | None:
+    """The launched run of ``job_id`` that has no outcome yet (its window
+    may still be going on without a supervisor), or None. A launch that
+    never reached its window (no target) is not a run to adopt."""
+    for directory in run_dirs():
+        run = read_meta(directory)
+        if run is None or run.job_id != job_id or not run.target:
+            continue
+        if is_recorded(directory) or read_outcome(directory) is not None:
+            continue
+        return run
+    return None
 
 
 def remove(directory: Path) -> None:
@@ -340,10 +437,14 @@ RUN_DIR={shlex.quote(str(run.dir))}
 win="$TMUX_PANE"
 
 finish() {{
-  code="$1"
-  if [ ! -e "$RUN_DIR/exit" ]; then
-    printf '%s\\n' "$code" > "$RUN_DIR/exit.tmp" && mv -f "$RUN_DIR/exit.tmp" "$RUN_DIR/exit"
-  fi
+  # Publish the exit no-clobber: a private file hard-linked to exit, so the
+  # first publisher (this script, or the supervisor on a deadline) wins and
+  # the other reads the winning code back. Both stamp that same code.
+  printf '%s\\n' "$1" > "$RUN_DIR/.exit.$$"
+  ln "$RUN_DIR/.exit.$$" "$RUN_DIR/exit" 2>/dev/null
+  rm -f "$RUN_DIR/.exit.$$"
+  code=$(cat "$RUN_DIR/exit" 2>/dev/null)
+  case "$code" in ''|*[!0-9]*) code="$1" ;; esac
   if [ -z "$(tmux show-option -wqv -t "$win" @job_exit 2>/dev/null)" ]; then
     tmux set-option -w -t "$win" @job_exit "$code" 2>/dev/null
   fi
@@ -376,7 +477,10 @@ cd {shlex.quote(run.cwd)} || {{ echo "merlin: cannot enter {shlex.quote(run.cwd)
 set -m
 {launch_fn}{{ {job_line}; }} &
 pid=$!
-printf '%s\\n' "$pid" > "$RUN_DIR/pid"
+# The group and its leader's start ticks (procfs), so a pid reused later
+# is never signalled as this job.
+ticks=$(cut -d' ' -f22 "/proc/$pid/stat" 2>/dev/null)
+printf '%s %s\\n' "$pid" "$ticks" > "$RUN_DIR/pid"
 fg %+
 wait "$pid" 2>/dev/null
 code=$(cat "$RUN_DIR/status" 2>/dev/null)

@@ -2,7 +2,7 @@
 # Shared by the agent hooks: the tmux window of the agent session this hook
 # runs for. Sourced, defines agent_window. Prints the window id or nothing.
 #
-#   agent_window [session_id] [cwd]
+#   agent_window [session_id] [cwd] [event]
 #
 # The normal path is $TMUX_PANE, which tmux gives every process it starts,
 # checked against the hook's own ancestry: a hook run from inside the pane
@@ -21,12 +21,15 @@
 #   and TMUX are those of whichever pane started the daemon, dead or alive,
 #   and no ancestor is a pane. The hook payload names the session and its
 #   cwd, which identify the window instead: the window already stamped with
-#   this conversation (@agent_conv, by the session init hook), else the pane
-#   in that directory whose newest process is a Codex TUI (SessionStart fires
-#   right after it started). A $TMUX whose socket is gone is dropped first, so
-#   tmux reaches the default server.
+#   this conversation (@agent_conv, by the session init hook); at SessionStart
+#   only, when no window carries it yet, the one pane in that directory that
+#   runs a Codex TUI and has no conversation yet. Two such panes, or a later
+#   event whose conversation no window carries, resolve to nothing: a hook
+#   that cannot prove its window stamps none. A $TMUX whose socket is gone is
+#   dropped first, so tmux reaches the default server.
 #
-# The last resort is TMUX_PANE as given, for a hook with no payload.
+# TMUX_PANE as given is the last resort for a hook with no payload at all;
+# with a payload it is never reinstated once its ancestry check failed.
 
 # Dropped at source time, in the hook's own shell, so every tmux call of the
 # hook benefits (agent_window runs in a command substitution).
@@ -35,7 +38,7 @@ if [ -n "$TMUX" ] && [ ! -S "${TMUX%%,*}" ]; then
 fi
 
 agent_window() {
-  local conv="$1" cwd="$2" win="" p pid_line pane_pid pane_win
+  local conv="$1" cwd="$2" event="$3" win="" p pid_line pane_pid pane_win
   if [ -n "$TMUX_PANE" ]; then
     pane_win=$(tmux display-message -p -t "$TMUX_PANE" '#{window_id} #{pane_pid}' 2>/dev/null)
     pane_pid="${pane_win#* }"
@@ -58,10 +61,10 @@ agent_window() {
     win=$(tmux list-windows -a -F '#{window_id} #{@agent_conv}' 2>/dev/null \
       | awk -v c="$conv" '$2 == c { print $1; exit }')
   fi
-  if [ -z "$win" ] && [ -n "$cwd" ]; then
+  if [ -z "$win" ] && [ -n "$cwd" ] && [ "$event" = "SessionStart" ]; then
     win=$(_agent_window_by_cwd "$cwd")
   fi
-  if [ -z "$win" ] && [ -n "$pane_win" ]; then
+  if [ -z "$win" ] && [ -z "$conv" ] && [ -z "$cwd" ] && [ -n "$pane_win" ]; then
     win="$pane_win"
   fi
   [ -n "$win" ] && printf '%s\n' "$win"
@@ -79,45 +82,40 @@ _agent_descends_from() {
   return 1
 }
 
-# The window of the pane in directory $1 whose newest process is a Codex TUI
-# (a process named codex that is not the app-server daemon), a window not yet
-# stamped with a conversation first. Nothing when no pane qualifies, or when
-# ps cannot report elapsed times (then the caller's last resort applies).
+# The window of the one pane in directory $1 that runs a Codex TUI (a
+# process named codex that is not the app-server daemon) and carries no
+# conversation yet. Nothing when no pane qualifies, when two do (the binding
+# would be a guess), or when ps cannot report processes.
 _agent_window_by_cwd() {
   local cwd="$1" panes procs
-  panes=$(tmux list-panes -a -F '#{pane_pid} #{window_id} #{@agent_conv} #{pane_current_path}' 2>/dev/null) || return 0
+  panes=$(tmux list-panes -a -F '#{pane_pid}	#{window_id}	#{@agent_conv}	#{pane_current_path}' 2>/dev/null) || return 0
   [ -n "$panes" ] || return 0
-  procs=$(ps -eo pid=,ppid=,etimes=,comm=,args= 2>/dev/null) || return 0
-  printf '%s\n%s\n' "$panes" "---" "$procs" | awk -v cwd="$cwd" '
-    BEGIN { section = "panes" }
+  procs=$(ps -eo pid=,ppid=,comm=,args= 2>/dev/null) || return 0
+  printf '%s\n%s\n%s\n' "$panes" "---" "$procs" | awk -v cwd="$cwd" '
+    BEGIN { section = "panes"; FS = "\t" }
     section == "panes" {
-      if ($0 == "---") { section = "procs"; next }
-      pane_pid = $1; win = $2; conv = $3
-      path = $0; sub(/^[^ ]+ [^ ]+ [^ ]* /, "", path)
-      if (path == cwd) { pane[pane_pid] = win; stamped[pane_pid] = (conv != "") }
+      if ($0 == "---") { section = "procs"; FS = " "; next }
+      if ($4 == cwd && $3 == "") pane[$1] = $2
       next
     }
     {
-      pid = $1; parent[pid] = $2; age[pid] = $3 + 0; comm[pid] = $4
-      line = $0; sub(/^ *[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +/, "", line); args[pid] = line
+      pid = $1; parent[pid] = $2; comm[pid] = $3
+      line = $0; sub(/^ *[^ ]+ +[^ ]+ +[^ ]+ +/, "", line); args[pid] = line
     }
     END {
-      best = ""; best_age = -1; best_stamped = 1
+      found = ""; n = 0
       for (pid in comm) {
         if (comm[pid] != "codex" || index(args[pid], "app-server") > 0) continue
         p = pid
         while (p != "" && p != "0" && p != "1") {
           if (p in pane) {
-            s = stamped[p]
-            if (best == "" || (s < best_stamped) || (s == best_stamped && age[pid] < best_age)) {
-              best = pane[p]; best_age = age[pid]; best_stamped = s
-            }
+            if (pane[p] != found) { n++; found = pane[p] }
             break
           }
           p = parent[p]
         }
       }
-      if (best != "") print best
+      if (n == 1) print found
     }'
   return 0
 }

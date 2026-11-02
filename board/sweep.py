@@ -237,8 +237,31 @@ def run_session_sweep_checked() -> list[TmuxSession] | None:
 
 def _tmux_capture(args: list[str]) -> str | None:
     """Run a read-only tmux command, returning stdout or None on any failure."""
+    status, out = _tmux_observe(args)
+    return out if status == "ok" else None
+
+
+# tmux's own words for a target that does not exist, as opposed to a call
+# that could not be made (no binary, a timeout, a server that did not answer).
+_GONE_MARKERS = (
+    "can't find",
+    "no server running",
+    "no sessions",
+    "no such file or directory",
+    "no current client",
+    "no clients",
+)
+
+
+def _tmux_observe(args: list[str]) -> tuple[str, str]:
+    """Run a read-only tmux command and say what its answer means:
+    ``("ok", stdout)`` when it answered, ``("gone", "")`` when tmux says the
+    target (or the server) does not exist, ``("unavailable", "")`` when the
+    observation could not be made: tmux missing, a timeout, an error of
+    another kind. A caller that finalizes, deletes or closes on absence must
+    act on ``gone`` only, never on ``unavailable``."""
     if not shutil.which("tmux"):
-        return None
+        return "unavailable", ""
     try:
         proc = subprocess.run(
             ["tmux", *args],
@@ -248,8 +271,13 @@ def _tmux_capture(args: list[str]) -> str | None:
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return None
-    return proc.stdout if proc.returncode == 0 else None
+        return "unavailable", ""
+    if proc.returncode == 0:
+        return "ok", proc.stdout
+    error = proc.stderr.lower()
+    if any(marker in error for marker in _GONE_MARKERS):
+        return "gone", ""
+    return "unavailable", ""
 
 
 def capture_pane(
@@ -426,20 +454,31 @@ def window_options(target: str, names: tuple[str, ...]) -> dict[str, str] | None
     for the window at ``target``, in one tmux call. None when the window is
     gone or tmux fails, so it doubles as an existence check. Unset options
     read as empty strings. Blocking: run it off the event loop."""
+    status, values = window_options_checked(target, names)
+    return values if status == "ok" else None
+
+
+def window_options_checked(
+    target: str, names: tuple[str, ...]
+) -> tuple[str, dict[str, str] | None]:
+    """``(status, values)`` of ``window_options``: ``ok`` with the values,
+    ``gone`` when tmux says the window does not exist (or resolves the
+    target to another window), ``unavailable`` when the read could not be
+    made. A supervisor finishes a run on ``gone`` only."""
     if not target or not names:
-        return None
+        return "unavailable", None
     fmt = "\t".join("#{" + n + "}" for n in ("window_id", *names))
-    out = _tmux_capture(["display-message", "-p", "-t", target, fmt])
-    if out is None:
-        return None
+    status, out = _tmux_observe(["display-message", "-p", "-t", target, fmt])
+    if status != "ok":
+        return status, None
     values = out.rstrip("\n").split("\t")
     # display-message on a target that does not resolve prints nothing useful:
     # the window id is the proof the window exists.
     if len(values) != len(names) + 1 or not values[0].startswith("@"):
-        return None
+        return "gone", None
     if ":" in target and values[0] != target.rsplit(":", 1)[1]:
-        return None
-    return dict(zip(names, values[1:]))
+        return "gone", None
+    return "ok", dict(zip(names, values[1:]))
 
 
 def _window_id(target: str) -> str:
@@ -676,25 +715,22 @@ def open_window(
         return None
     from terminal.tmux import server_spawn_prefix, tmux_conf_args
 
+    tail = ["-n", name, "-c", directory, command]
+    in_session = ["new-window", "-d", "-P", "-F", "#{window_id}", "-t", f"{session}:"]
     existing = {s.name for s in run_session_sweep()}
     if session in existing:
-        args = ["new-window", "-d", "-P", "-F", "#{window_id}", "-t", f"{session}:"]
-        prefix: list[str] = []
+        out = _run_out([*in_session, *tail], env=env)
     else:
-        args = [
-            *tmux_conf_args(),
-            "new-session",
-            "-d",
-            "-P",
-            "-F",
-            "#{window_id}",
-            "-s",
-            session,
-        ]
-        prefix = server_spawn_prefix(bool(existing))
-    out = _run_out(
-        [*args, "-n", name, "-c", directory, command], prefix=prefix, env=env
-    )
+        create = [*tmux_conf_args(), "new-session", "-d", "-P", "-F", "#{window_id}"]
+        out = _run_out(
+            [*create, "-s", session, *tail],
+            prefix=server_spawn_prefix(bool(existing)),
+            env=env,
+        )
+        if out is None and session in {s.name for s in run_session_sweep()}:
+            # Two launches saw no session and both created it: the loser
+            # opens its window in the session the winner made.
+            out = _run_out([*in_session, *tail], env=env)
     if not out:
         return None
     wid = out.strip().splitlines()[-1].strip()
@@ -704,10 +740,19 @@ def open_window(
 def displayed_windows() -> set[str]:
     """``session:window_id`` of every window a tmux client is showing right
     now. Empty when tmux is unavailable, has no server or no client."""
-    out = _tmux_capture(["list-clients", "-F", "#{session_name}:#{window_id}"])
-    if not out:
-        return set()
-    return {line.strip() for line in out.splitlines() if ":@" in line}
+    return displayed_windows_checked()[1]
+
+
+def displayed_windows_checked() -> tuple[str, set[str]]:
+    """``(status, targets)``: the windows clients show, with ``status``
+    ``ok`` (a server answered, perhaps with no client), or ``unavailable``
+    when the list could not be read (then the set is empty and means
+    nothing: a caller must not close a window on it). No server is ``ok``
+    with no window."""
+    status, out = _tmux_observe(["list-clients", "-F", "#{session_name}:#{window_id}"])
+    if status == "unavailable":
+        return "unavailable", set()
+    return "ok", {line.strip() for line in out.splitlines() if ":@" in line}
 
 
 def list_window_options(session: str, names: tuple[str, ...]) -> list[dict] | None:
@@ -716,20 +761,31 @@ def list_window_options(session: str, names: tuple[str, ...]) -> list[dict] | No
     empty strings). None when tmux is unavailable, the session does not
     exist or the call fails, so a caller can tell "no such session" from
     "no window"."""
+    status, rows = list_window_options_checked(session, names)
+    return rows if status == "ok" else None
+
+
+def list_window_options_checked(
+    session: str, names: tuple[str, ...]
+) -> tuple[str, list[dict]]:
+    """``(status, rows)`` of ``list_window_options``: ``ok`` with the rows,
+    ``gone`` when the session (or the server) does not exist, ``unavailable``
+    when the listing could not be made. Only ``gone`` says a window is not
+    there."""
     if not session or not names:
-        return None
+        return "unavailable", []
     fields = ("window_id", *names)
     fmt = "\t".join("#{" + n + "}" for n in fields)
-    out = _tmux_capture(["list-windows", "-t", f"={session}:", "-F", fmt])
-    if out is None:
-        return None
+    status, out = _tmux_observe(["list-windows", "-t", f"={session}:", "-F", fmt])
+    if status != "ok":
+        return status, []
     rows: list[dict] = []
     for line in out.splitlines():
         values = line.split("\t")
         if len(values) != len(fields) or not values[0].startswith("@"):
             continue
         rows.append(dict(zip(fields, values)))
-    return rows
+    return "ok", rows
 
 
 def _window_cmd(cmd: str, session: str, window_id: str) -> bool:

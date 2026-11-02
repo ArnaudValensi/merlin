@@ -1,27 +1,42 @@
 """What every scheduler tick does besides dispatching: orphans and windows.
 
 **Orphans.** A supervisor can die with its run: a Merlin restart kills a
-webhook thread, a reboot kills everything. A run directory with no
-``result.json`` whose job flock is free is finalized from what is left: its
-``exit`` file, its window's state, or exit 130 if the window is gone. The
-flock is what keeps two overlapping ticks from finalizing one run twice, and
-``result.json`` is re-checked under it, so nothing is recorded twice. A run
-still supervised holds its flock and is left alone.
+webhook thread, a reboot kills everything. A run directory without its
+recorded marker, whose job flock is free, is looked at under that flock:
+
+- an outcome already published is materialized again (history and the run
+  log, idempotent by run id): the record was interrupted between its steps;
+- an ``exit`` file is a finished run: recorded from it;
+- a window tmux confirmed gone, or whose id now carries another run's
+  ``@job_run`` (ids are reused after a server restart), is exit 130;
+- anything else is a run still going on: it is handed back to the
+  dispatcher, which adopts it (``runner.adopt_run``) and supervises it to
+  its end with the window's own evidence, under the flock, so the watchdog
+  and the deadline apply to it and no second run of the job can start.
+
+The flock is what keeps two overlapping ticks from recording one run twice,
+and the marker is re-checked under it. A run still supervised holds its
+flock and is left alone. An observation that could not be made (tmux did
+not answer) finalizes nothing. A directory without ``meta.json`` older than
+an hour was abandoned mid-creation and is removed.
 
 **Windows do not pile up.** Each tick closes ``merlin-jobs`` windows and
 removes their run directories:
 
-- a window a tmux client is showing right now is never closed;
+- a window a tmux client is showing right now is never closed, and when
+  the client list could not be read no window is closed at all;
 - finished with exit 0 and no pane activity since: closed after
   ``SUCCESS_TTL`` (1 hour), or at the next run of the same job, whichever
   comes first;
 - failed, or activity after the finish (someone stepped in): closed
   ``ACTIVITY_TTL`` (24 hours) after the last activity;
 - closing never touches a window without ``@job_run``, nor any other
-  session.
+  session, and the window is read again right before the kill: it must
+  still carry the same ``@job_run`` and still be shown by nobody.
 
-A recorded run whose window is already gone loses its directory at once.
-A tick with no ``merlin-jobs`` session and no run directory does no work.
+A recorded run whose window tmux confirmed gone loses its directory at
+once. A tick with no ``merlin-jobs`` session and no run directory does no
+work.
 """
 
 from __future__ import annotations
@@ -56,29 +71,31 @@ _WINDOW_FIELDS = (
 )
 
 
-def tick(*, now: float | None = None, record=None) -> dict[str, int]:
-    """Finalize orphans and close windows past their retention. ``record``
-    is the recorder the orphan path calls (``runner.record_run`` by
-    default; tests pass their own). Never raises: a tmux hiccup is retried
-    on the next tick."""
+def tick(*, now: float | None = None, record=None) -> tuple[dict[str, int], list[Run]]:
+    """Finalize what can be finalized and close windows past their
+    retention. Returns the counts and the unfinished runs to adopt (their
+    flock free, their window going on). ``record`` is the materializer the
+    orphan path calls (``runner.materialize`` by default). Never raises: a
+    tmux hiccup is retried on the next tick."""
     now = time.time() if now is None else now
     counts = {"finalized": 0, "closed": 0, "removed": 0}
     dirs = runs.run_dirs()
-    rows = sweep.list_window_options(runs.JOBS_SESSION, _WINDOW_FIELDS)
-    if not dirs and not rows:
-        return counts
+    status, rows = sweep.list_window_options_checked(runs.JOBS_SESSION, _WINDOW_FIELDS)
+    if not dirs and status == "gone":
+        return counts, []
+    adoptable: list[Run] = []
     try:
-        counts["finalized"] = finalize_orphans(dirs, rows, now=now, record=record)
+        counts["finalized"], adoptable = finalize_orphans(
+            dirs, status, rows, now=now, record=record
+        )
     except Exception:
         logger.exception("Finalizing orphan job runs failed")
     try:
-        closed, removed = close_windows(
-            runs.run_dirs(), rows if rows is not None else [], now=now
-        )
+        closed, removed = close_windows(runs.run_dirs(), status, rows, now=now)
         counts["closed"], counts["removed"] = closed, removed
     except Exception:
         logger.exception("Closing job windows failed")
-    return counts
+    return counts, adoptable
 
 
 # ---------------------------------------------------------------------------
@@ -86,37 +103,31 @@ def tick(*, now: float | None = None, record=None) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 
-def orphan_exit(run: Run, opts: dict[str, str] | None, *, now: float) -> int | None:
-    """What an unsupervised run's remains say, or None while it still goes
-    on. The window's state reads as the supervisor would: ``done`` finishes
-    an agent run, and so does an ``idle`` older than the start watchdog
-    (nobody saw it busy, so nobody can tell the difference). The deadline
-    applies to an orphan too."""
+def orphan_exit(run: Run, status: str, present: bool) -> int | None:
+    """What an unsupervised run's remains say: its exit file, or 130 when
+    tmux confirmed its window gone (``present`` is whether the listing holds
+    a window carrying this run's ``@job_run``). None while it goes on, or
+    while the window could not be observed."""
     code = runs.read_exit(run.dir)
     if code is not None:
         return code
-    if opts is None:
+    if status == "unavailable":
+        return None
+    if status == "gone" or not present:
         return 130
-    if run.is_agent:
-        state = opts.get("@agent_state", "").strip().lower()
-        if state == "done":
-            return 0
-        if state == "idle" and now - run.started >= supervisor.START_WATCHDOG:
-            return 0
-    if now - run.started > run.deadline:
-        return 124
     return None
 
 
 def finalize_orphans(
-    dirs: list[Path], rows: list[dict] | None, *, now: float, record=None
-) -> int:
+    dirs: list[Path], status: str, rows: list[dict], *, now: float, record=None
+) -> tuple[int, list[Run]]:
     if record is None:
-        from job.runner import record_run
+        from job.runner import materialize
 
-        record = record_run
-    windows = {r["@job_run"]: r for r in (rows or []) if r.get("@job_run")}
+        record = materialize
+    owned = {r["@job_run"]: r["window_id"] for r in rows if r.get("@job_run")}
     count = 0
+    adoptable: list[Run] = []
     for directory in dirs:
         run = runs.read_meta(directory)
         if run is None:
@@ -131,26 +142,30 @@ def finalize_orphans(
         try:
             if runs.is_recorded(directory):
                 continue
-            opts = None
-            if run.target and run.window_id in {
-                r["window_id"] for r in windows.values()
-            }:
-                opts = sweep.window_options(run.target, supervisor.WINDOW_FIELDS)
-            code = orphan_exit(run, opts, now=now)
+            canonical = runs.read_outcome(directory)
+            if canonical is not None:
+                record(run, canonical)  # the record was interrupted
+                count += 1
+                continue
+            if not run.target:
+                continue  # never reached a window: a stray, aged out above
+            present = owned.get(run.run_id) == run.window_id
+            code = orphan_exit(run, status, present)
             if code is None:
+                if status == "ok" and present:
+                    adoptable.append(run)
                 continue
             note = "finalized after its supervisor died"
-            if code == 124:
-                note = f"deadline of {int(run.deadline)} s passed, {note}"
-                supervisor.end_run(run, code)
-            elif code == 130 and opts is None:
+            if code == 130:
                 note = f"window closed before the run ended, {note}"
             outcome = supervisor.finish(run, code, note=note, now=now)
-            record(run, outcome)
+            from job.runner import record_run
+
+            record_run(run, outcome)
             count += 1
         finally:
             release_job_lock(lock)
-    return count
+    return count, adoptable
 
 
 def _age(directory: Path) -> float:
@@ -192,13 +207,17 @@ def should_close(
     return now - last >= ACTIVITY_TTL
 
 
-def close_windows(dirs: list[Path], rows: list[dict], *, now: float) -> tuple[int, int]:
+def close_windows(
+    dirs: list[Path], status: str, rows: list[dict], *, now: float
+) -> tuple[int, int]:
     """Close the windows past their retention and remove their run
-    directories; remove the directory of a recorded run whose window is
-    gone. Returns ``(closed, removed)``."""
-    displayed = sweep.displayed_windows()
+    directories; remove the directory of a recorded run whose window tmux
+    confirmed gone. Returns ``(closed, removed)``. Nothing is closed when
+    the window listing or the client list could not be read."""
+    if status == "unavailable":
+        return 0, 0
+    client_status, displayed = sweep.displayed_windows_checked()
     by_run = {r["@job_run"]: r for r in rows if r.get("@job_run")}
-    # The newest start per job, from the windows and the run directories.
     # Whole seconds throughout, like the stamped options, so a run's own
     # start never reads as newer than itself.
     newest: dict[str, float] = {}
@@ -215,28 +234,42 @@ def close_windows(dirs: list[Path], rows: list[dict], *, now: float) -> tuple[in
         newest[run.job_id] = max(newest.get(run.job_id, 0.0), float(int(run.started)))
 
     closed = removed = 0
-    for run_id, row in by_run.items():
-        job_id = row.get("@job_id", "")
-        newer = newest.get(job_id)
-        finished_s = row.get("@job_finished", "")
-        own_start = (
-            float(row["@job_started"]) if row.get("@job_started", "").isdigit() else 0.0
-        )
-        newer_started = newer if newer is not None and newer > own_start else None
-        if not should_close(
-            row, now=now, displayed=displayed, newer_run_started=newer_started
-        ):
-            continue
-        if not finished_s.isdigit():
-            continue
-        if sweep.kill_window(runs.JOBS_SESSION, row["window_id"]):
-            closed += 1
-            run = metas.pop(run_id, None)
-            if run is not None:
-                runs.remove(run.dir)
-                removed += 1
+    if client_status == "ok":
+        for run_id, row in by_run.items():
+            job_id = row.get("@job_id", "")
+            newer = newest.get(job_id)
+            own_start = (
+                float(row["@job_started"])
+                if row.get("@job_started", "").isdigit()
+                else 0.0
+            )
+            newer_started = newer if newer is not None and newer > own_start else None
+            if not should_close(
+                row, now=now, displayed=displayed, newer_run_started=newer_started
+            ):
+                continue
+            if not _still_closable(row):
+                continue
+            if sweep.kill_window(runs.JOBS_SESSION, row["window_id"]):
+                closed += 1
+                run = metas.pop(run_id, None)
+                if run is not None:
+                    runs.remove(run.dir)
+                    removed += 1
     for run_id, run in metas.items():
         if run_id not in by_run and runs.is_recorded(run.dir):
             runs.remove(run.dir)
             removed += 1
     return closed, removed
+
+
+def _still_closable(row: dict[str, str]) -> bool:
+    """Read the window again right before the kill: it must still carry
+    the same run and still be shown by nobody. A read that fails closes
+    nothing."""
+    target = f"{runs.JOBS_SESSION}:{row['window_id']}"
+    status, opts = sweep.window_options_checked(target, ("@job_run",))
+    if status != "ok" or opts is None or opts.get("@job_run") != row["@job_run"]:
+        return False
+    client_status, displayed = sweep.displayed_windows_checked()
+    return client_status == "ok" and target not in displayed

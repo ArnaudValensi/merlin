@@ -29,6 +29,11 @@ re='"cwd"[[:space:]]*:[[:space:]]*"(/[^"\\]*)"'
 if [[ $payload =~ $re ]]; then
   cwd="${BASH_REMATCH[1]}"
 fi
+event=""
+re='"hook_event_name"[[:space:]]*:[[:space:]]*"([A-Za-z]+)"'
+if [[ $payload =~ $re ]]; then
+  event="${BASH_REMATCH[1]}"
+fi
 
 state="${1:-idle}"
 command -v tmux >/dev/null 2>&1 || exit 0
@@ -37,7 +42,7 @@ command -v tmux >/dev/null 2>&1 || exit 0
 # pane, the ancestor walk when a helper process stripped the environment,
 # the session id and cwd when a daemon runs the hook (see agent-window.sh).
 . "$(dirname "$0")/agent-window.sh"
-win=$(agent_window "$conv" "$cwd")
+win=$(agent_window "$conv" "$cwd" "$event")
 [ -n "$win" ] || exit 0
 
 tmux set-option -w -t "$win" @agent_state "$state" 2>/dev/null

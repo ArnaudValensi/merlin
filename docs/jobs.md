@@ -174,6 +174,10 @@ land in files (the notes, the knowledge base, a report in the repo).
   the job is ended, exit code 124), or when the window is closed (exit code
   130). The agent keeps running after the run finished: the window is yours
   now.
+- **A restart does not lose a run.** A run whose Merlin restarted
+  underneath it goes on in its window; the next scheduler tick picks it up
+  again and the job's next trigger joins it instead of starting a second
+  one.
 - **Windows are tidied up.** A run that succeeded, untouched since, closes
   after an hour or when the job runs again, whichever comes first. A run
   that failed, or a window you stepped into, stays a day after the last

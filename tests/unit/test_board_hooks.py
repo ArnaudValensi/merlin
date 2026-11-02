@@ -13,6 +13,7 @@ Skips cleanly when tmux is not installed.
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -100,6 +101,33 @@ class Server:
             cwd=str(cwd) if cwd else None,
         )
 
+    def run_in_pane(self, script: Path, *args, pane: str, cwd=None, stdin: str = ""):
+        """Run a hook from inside the pane's shell, as the agent's own hook
+        would: a hook carrying a payload is trusted only when it descends
+        from the pane it names (agent-window.sh), so a payload test cannot
+        drive it from outside. Synchronized with ``wait-for``."""
+        import shlex
+
+        self._counter = getattr(self, "_counter", 0) + 1
+        token = f"hook-{self._counter}"
+        payload = Path(self.home) / f"payload-{self._counter}.json"
+        payload.write_text(stdin)
+        words = " ".join(shlex.quote(str(a)) for a in args)
+        line = (
+            f"cd {shlex.quote(str(cwd or self.home))}; "
+            f"bash {shlex.quote(str(script))} {words} < {shlex.quote(str(payload))}; "
+            f"tmux -S {shlex.quote(self.socket)} wait-for -S {token}"
+        )
+        self.tmux("send-keys", "-t", pane, "-l", line)
+        self.tmux("send-keys", "-t", pane, "Enter")
+        subprocess.run(
+            [*self._base(), "wait-for", token],
+            capture_output=True,
+            env=self._env(),
+            check=False,
+            timeout=20,
+        )
+
 
 @pytest.fixture
 def srv(tmp_path):
@@ -107,9 +135,20 @@ def srv(tmp_path):
     home.mkdir()
     s = Server(tmp_path / "s.sock", home)
     s.kill()
-    s.tmux("new-session", "-d", "-s", "t", "-x", "100", "-y", "30")
+    # Bash without init files in every window: a hook test that must run
+    # inside the pane types into this shell.
+    shell = "bash --norc --noprofile"
+    s.tmux("new-session", "-d", "-s", "t", "-x", "100", "-y", "30", shell)
     wins = {"a": s.tmux("display-message", "-p", "#{window_id}")}
-    wins["b"] = s.tmux("new-window", "-P", "-F", "#{window_id}", "-t", "t:")
+    wins["b"] = s.tmux("new-window", "-P", "-F", "#{window_id}", "-t", "t:", shell)
+    for win in wins.values():
+        for _ in range(50):
+            if (
+                s.tmux("display-message", "-p", "-t", win, "#{pane_current_command}")
+                == "bash"
+            ):
+                break
+            time.sleep(0.1)
     yield s, wins
     s.kill()
 
@@ -153,7 +192,9 @@ class TestSessionInit:
     def test_stamps_provider_and_conversation(self, srv):
         s, w = srv
         payload = '{"hook_event_name": "SessionStart", "session_id": "abc-123_x"}'
-        s.run(INIT_SH, "codex", pane=s.pane_of(w["a"]), cwd=s.home, stdin=payload)
+        s.run_in_pane(
+            INIT_SH, "codex", pane=s.pane_of(w["a"]), cwd=s.home, stdin=payload
+        )
         assert s.wopt(w["a"], "@agent_provider") == "codex"
         assert s.wopt(w["a"], "@agent_conv") == "abc-123_x"
 
@@ -161,16 +202,22 @@ class TestSessionInit:
         # /clear and resume start a new conversation in the same window.
         s, w = srv
         pane = s.pane_of(w["a"])
-        s.run(INIT_SH, "claude", pane=pane, cwd=s.home, stdin='{"session_id": "first"}')
-        s.run(INIT_SH, "claude", pane=pane, cwd=s.home, stdin='{"session_id":"second"}')
+        s.run_in_pane(
+            INIT_SH, "claude", pane=pane, cwd=s.home, stdin='{"session_id": "first"}'
+        )
+        s.run_in_pane(
+            INIT_SH, "claude", pane=pane, cwd=s.home, stdin='{"session_id":"second"}'
+        )
         assert s.wopt(w["a"], "@agent_conv") == "second"
 
     def test_no_conversation_without_provider_or_id(self, srv):
         s, w = srv
         pane = s.pane_of(w["a"])
-        s.run(INIT_SH, pane=pane, cwd=s.home, stdin='{"session_id": "x1"}')
-        s.run(INIT_SH, "claude", pane=pane, cwd=s.home, stdin="not json")
-        s.run(INIT_SH, "other", pane=pane, cwd=s.home, stdin='{"session_id": "x2"}')
+        s.run_in_pane(INIT_SH, pane=pane, cwd=s.home, stdin='{"session_id": "x1"}')
+        s.run_in_pane(INIT_SH, "claude", pane=pane, cwd=s.home, stdin="not json")
+        s.run_in_pane(
+            INIT_SH, "other", pane=pane, cwd=s.home, stdin='{"session_id": "x2"}'
+        )
         assert s.wopt(w["a"], "@agent_conv") == ""
         assert s.wopt(w["a"], "@agent_provider") == ""
         assert s.wopt(w["a"], "@agent_sid") != ""  # the rest still runs

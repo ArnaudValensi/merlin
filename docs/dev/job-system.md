@@ -168,19 +168,21 @@ UUID) and a private directory, `~/.merlin/job-runs/<run_id>/` (mode 0700,
 | `meta.json` | `new_run`, `launch` | The run's facts: job id, the job, trigger, type, agent, cwd, start, deadline, `report_mode`, the window target once open. The orphan finalizer reads it |
 | `run.sh` | `new_run` | What the window runs (below) |
 | `prompt` | `new_run` | The agent's prompt: `[Job: id]` or `[Triggered by webhook: id]`, a blank line, the job's prompt. Never on a tmux command line |
-| `pid` | `run.sh` | The job's process group |
+| `pid` | `run.sh` | The job's process group and its leader's start ticks (procfs), so a pid reused after a reboot is never signalled as the job |
 | `status` | `run.sh` | The job's own exit code |
 | `output.log` | `run.sh` | A command's output (`tee`) |
-| `exit` | `run.sh` or the supervisor | The run's exit code, written atomically (temp file then rename), first writer wins |
-| `result.json` | `record_run` | Present once the run is recorded (history and run log): the exactly-once marker |
+| `exit` | `run.sh` or the supervisor | The run's exit code, published no-clobber: a private temporary file hard-linked to `exit`, so the first publisher wins atomically and the other reads the winner (`ln` in the shell, `os.link` in Python) |
+| `outcome.json` | `record_run` | The canonical outcome of the finished run (exit code, finish time, output, note), published first, no-clobber too |
+| `result.json` | `materialize` | Present once history and the run log were materialized from the outcome: the exactly-once marker. A crash between the two is repaired at the next tick by materializing again, idempotently by run id |
 
 `runs.launch` opens the window detached in session `merlin-jobs`
 (`board.sweep.open_window`): when the session does not exist, it is created
 with this window as its only one, through the `terminal/tmux.py` policy (the
 config flag, the spawn prefix when this call creates the server, and
 `terminal_process_env` as the server's environment, since tmux reads its
-config and `MERLIN_TERMINAL_HOOKS` only at server creation). No stray shell
-window. The window is named after the job id (`-n`, which turns automatic
+config and `MERLIN_TERMINAL_HOOKS` only at server creation). Two launches
+that both saw no session both try to create it; the loser opens its window
+in the session the winner made. No stray shell window. The window is named after the job id (`-n`, which turns automatic
 rename off), opens in the job's working directory (`resolve_working_dir`:
 `working_dir` then `MERLIN_LAUNCH_CWD` then `$HOME`) and runs `bash
 <run.sh>`. Right after, one chained tmux call stamps its options:
@@ -223,15 +225,28 @@ webhook path's thread, which is off the event loop). It polls every
 wins:
 
 1. The `exit` file exists: exit code from the file.
-2. Agent only: `@agent_state` is `done`, or it is `idle` after the supervisor
-   saw it `busy` (`done` can be missed: a run watched live goes busy to idle
-   when the window is selected, or on Esc): exit 0. The agent keeps running.
+2. Agent only: `@agent_state` is `done`, or it is `idle` after the window
+   was seen `busy` (`done` can be missed: a run watched live goes busy to
+   idle when the window is selected, or on Esc): exit 0. The agent keeps
+   running. `busy` once seen is stamped on the window (`@job_busy_seen`), so
+   a supervisor that adopts the run after the first one died tells an idle
+   after busy from a never-started idle.
 3. The deadline passed (`COMMAND_TIMEOUT_SECONDS` 3600,
    `AGENT_TIMEOUT_SECONDS` 21600, constants in `runner.py`): the supervisor
-   writes `exit` = 124 and `@job_exit` first, then SIGTERM then SIGKILL to the
-   job's process group (`end_run`), so `run.sh` stamps the end and the window
-   stays. Exit 124.
-4. The window vanished: exit 130, "window closed before the run ended".
+   publishes `exit` = 124 (no-clobber: if `run.sh` published first, that
+   code is the run's and the job is already over), stamps `@job_exit`, then
+   SIGTERM then SIGKILL to the job's process group (`end_run`) after checking
+   the group is still the job's (its leader's start ticks), so `run.sh`
+   stamps the end and the window stays.
+4. The window is gone: tmux confirmed it does not exist, or the window id
+   now carries another run's `@job_run` (ids are reused after a server
+   restart): exit 130, "window closed before the run ended".
+
+Every observation is tri-state (`board.sweep.window_options_checked`,
+`list_window_options_checked`, `displayed_windows_checked`): `ok`, `gone`
+(tmux said so) or `unavailable` (tmux did not answer). An unavailable
+observation finishes, finalizes, deletes and closes nothing: the supervisor
+keeps polling, bounded by the deadline.
 
 An agent still not `busy` `START_WATCHDOG` (120 s) after the launch is stuck
 on something no hook reports (a trust or bypass dialog on a fresh machine):
@@ -250,11 +265,16 @@ History entries and run logs keep their shape, minus `cost_usd` and
 `session_id`, plus `agent` and `run_id`. Old entries that still carry the
 former read fine. `trigger` provenance, the schedule cursor rule,
 `grace_minutes` and the staleness guard are unchanged. The 100 KB output cap,
-the 50 logs per job and the 100 history entries stay. `record_run` marks the
-run directory recorded (`result.json`): a second call for the same run (the
-orphan path racing a supervisor) writes nothing. `merlin job trigger` still
-blocks until the run finishes and prints one JSON document, with `run_id` and
-`window`.
+the 50 logs per job and the 100 history entries stay.
+
+The record is exactly once, in two steps. `record_run` publishes the
+canonical outcome (`outcome.json`, no-clobber: a second supervisor of the
+same run reads the first one's), then `materialize` writes history (an entry
+with the same `run_id` replaces the earlier one), the run log (named by the
+canonical finish time, so a retry writes the same file) and the events, and
+only then the marker (`result.json`). A write that fails leaves no marker and
+is retried at the next tick. `merlin job trigger` still blocks until the run
+finishes and prints one JSON document, with `run_id` and `window`.
 
 A launch that cannot happen (no tmux, the agent binary missing, its hooks not
 installed, the window not opening) is recorded at once as a failed run with
@@ -265,14 +285,20 @@ the message as its output, and no window.
 A supervisor can die with its run: a Merlin restart kills a webhook thread, a
 reboot kills everything. Every scheduler tick runs `retention.tick()` first:
 
-**Orphans.** A run directory with no `result.json` whose job flock is free is
-finalized from what is left (`orphan_exit`): its `exit` file; its window gone,
-exit 130; an agent window `done`, or `idle` older than the start watchdog
-(nobody saw it busy, so nobody can tell the difference), exit 0; its deadline
-passed, exit 124 with the process group ended. A run still `busy`, `ask` or
-young is left for a later tick. The flock is taken for the finalization and
-`result.json` re-checked under it, so two overlapping ticks cannot both
-finalize one run and nothing is recorded twice. A run still supervised holds
+**Orphans.** A run directory without its marker whose job flock is free is
+looked at under that flock: an outcome already published is materialized
+again (the record was interrupted); an `exit` file is a finished run,
+recorded from it; a window tmux confirmed gone, or whose id now carries
+another run's `@job_run`, is exit 130; anything else is a run still going
+on, which the tick hands back to the dispatcher. The dispatcher **adopts**
+it (`runner.adopt_run`, in the same pool as the due jobs): it supervises the
+run to its end under the flock, from the window's own evidence
+(`@job_busy_seen`), so the watchdog and the deadline apply to it and no
+second run of the job can start. A trigger that finds an unfinished run of
+its job (`runs.unfinished_run`) adopts it too instead of opening a second
+window: `run_job` supervises it, and a webhook fire answers `coalesced` with
+that run's id. `result.json` is re-checked under the flock, so two
+overlapping ticks cannot both record one run. A run still supervised holds
 its flock and is never touched. A directory without `meta.json` older than
 an hour was abandoned mid-creation and is removed.
 
@@ -280,17 +306,20 @@ an hour was abandoned mid-creation and is removed.
 removes their run directories (`should_close` is the pure rule):
 
 - a window a tmux client is showing right now (`sweep.displayed_windows`,
-  from `list-clients`) is never closed;
+  from `list-clients`) is never closed, and when the client list could not
+  be read no window is closed at all;
 - finished with exit 0 and no pane activity since (`window_activity` within
   `ACTIVITY_SLACK`, 5 s, of `@job_finished`: the finish's own output): closed
   after 1 hour, or at the next run of the same job (a newer `@job_started` or
   run directory of that job), whichever comes first;
 - failed, or activity after the finish (someone stepped in): closed 24 hours
   after the last activity;
-- closing never touches a window without `@job_run`, nor any other session.
+- closing never touches a window without `@job_run`, nor any other
+  session, and the window is read again right before the kill: it must still
+  carry the same `@job_run` and still be shown by nobody.
 
-A recorded run whose window is already gone loses its directory at once. A
-tick with no `merlin-jobs` session and no run directory does no work.
+A recorded run whose window tmux confirmed gone loses its directory at once.
+A tick with no `merlin-jobs` session and no run directory does no work.
 
 `workspace/` neither snapshots nor restores `merlin-jobs`
 (`terminal.tmux.JOBS_SESSION_NAME`): a job run is not part of the workspace.
@@ -444,9 +473,10 @@ coalesce into a single catch-up run, never a burst.
 **Restart during a run**: the runner is a separate process and survives a
 Merlin restart, so a scheduled run keeps its supervisor. A webhook run's
 supervisor is a thread of the Merlin process and dies with it: the run goes
-on in its window and the orphan path records it at a later tick. State is
-marked *before* execution, so the slot is never double-fired; the flock blocks
-re-dispatch while the run is still executing.
+on in its window and the next tick adopts it (above). State is marked
+*before* execution, so the slot is never double-fired; the flock blocks
+re-dispatch while the run is still executing, and the unfinished-run check
+blocks a second window once the flock died with its holder.
 
 ## Parallel Execution
 
@@ -575,9 +605,12 @@ uv run job/runner.py --job <job-id>
   stuck start, a deadline ending the process group, a refused launch (hooks,
   binary), a failing command, closed stdin, the job environment under a
   foreign server, a window closed mid-run, a prompt with shell
-  metacharacters, orphans under overlapping ticks, a coalesced webhook, the
-  retention rules (pure and real), a displayed window, the workspace
-  exclusion.
+  metacharacters, orphans under overlapping ticks, adoption (a run going on
+  without its supervisor: by the tick, by a trigger, by a webhook fire;
+  before the first busy and after busy then idle), a reused window id, an
+  unavailable tmux, the exit file's first writer, two first launches, a
+  coalesced webhook, the retention rules (pure and real), a displayed
+  window, the workspace exclusion.
 - `tests/unit/test_job_core_runner.py` and friends: the dispatcher, the
   record and the CLI with the launch and the supervisor replaced by the
   `fake_launch` fixture (`tests/unit/conftest.py`).

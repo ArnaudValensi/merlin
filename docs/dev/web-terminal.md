@@ -269,11 +269,16 @@ app-server daemon, a process shared by every Codex session of the user and
 born with the environment of whichever pane started it: its `TMUX_PANE` is
 that pane, dead or alive, and no ancestor is a pane. The window already
 stamped with the payload's session id (`@agent_conv`, by the session init
-hook) wins, else the pane in the payload's cwd whose newest process is a
-Codex TUI (SessionStart fires right after it started). A `$TMUX` whose
-socket is gone is dropped first, so tmux reaches the default server. Codex
-runs its hooks only in a directory it trusts; elsewhere no hook fires and
-the pills stay blank. Pinned by `tests/unit/test_agent_state_hooks.py`.
+hook) wins; at SessionStart only, when no window carries it yet, the one
+pane in the payload's cwd that runs a Codex TUI and has no conversation yet
+is bound. Two such panes, or a later event whose conversation no window
+carries, resolve to nothing: a hook that cannot prove its window stamps
+none, and an inherited `TMUX_PANE` is never reinstated once its ancestry
+check failed (it is the last resort for a hook with no payload at all). A
+`$TMUX` whose socket is gone is dropped first, so tmux reaches the default
+server. Codex runs its hooks only in a directory it trusts; elsewhere no
+hook fires and the pills stay blank. Pinned by
+`tests/unit/test_agent_state_hooks.py`.
 
 The same `@agent_state` feeds the notifications feature: a server-side watcher
 sweeps it every two seconds and turns transitions into browser notifications

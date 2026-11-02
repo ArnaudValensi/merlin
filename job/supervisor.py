@@ -6,18 +6,29 @@ finished when any of these holds, first match wins:
 
 1. The ``exit`` file exists: the exit code is read from it.
 2. Agent only: ``@agent_state`` is ``done``, or it is ``idle`` after the
-   supervisor saw it ``busy``: exit 0. The agent keeps running: finishing a
+   window was seen ``busy``: exit 0. The agent keeps running: finishing a
    run does not end the conversation, and a human may step in.
-3. The deadline passed: exit 124. The supervisor writes the ``exit`` file and
-   ``@job_exit`` first, then sends SIGTERM then SIGKILL to the job's process
-   group, so ``run.sh`` stamps the end and the window stays.
-4. The window vanished: exit 130.
+3. The deadline passed: exit 124. The supervisor publishes the ``exit`` file
+   (no-clobber: if ``run.sh`` published first, that code wins and is the
+   run's), stamps ``@job_exit``, then sends SIGTERM then SIGKILL to the job's
+   process group after checking it is still the job's, so ``run.sh`` stamps
+   the end and the window stays.
+4. The window is gone: tmux confirmed it does not exist, or the window id
+   now carries another run's ``@job_run`` (an id reused after a server
+   restart): exit 130.
+
+An observation that could not be made (tmux did not answer) finishes
+nothing: the supervisor keeps polling, bounded by the deadline.
 
 An agent still not ``busy`` ``START_WATCHDOG`` seconds after the launch is
 stuck on something no hook reports (a trust or bypass dialog on a fresh
 machine): the supervisor stamps ``@agent_state ask`` so the ordinary "Needs
 an answer" notification fires, and keeps waiting. The deadline still bounds
 the run.
+
+``busy`` once seen is stamped on the window (``@job_busy_seen``), so a
+supervisor that adopts the run after the first one died (a Merlin restart
+kills a webhook thread) tells an idle after busy from a never-started idle.
 
 At the finish the supervisor stamps ``@job_exit`` (when ``run.sh`` has not)
 and ``@job_finished`` on the window, and reads the record's output: the
@@ -43,7 +54,7 @@ START_WATCHDOG = 120.0
 # How long SIGTERM gets before SIGKILL on a deadline (seconds).
 TERM_GRACE = 5.0
 
-WINDOW_FIELDS = ("@agent_state", "@job_exit")
+WINDOW_FIELDS = ("@agent_state", "@job_exit", "@job_run", "@job_busy_seen")
 
 
 @dataclass
@@ -54,13 +65,31 @@ class Outcome:
     note: str = ""  # why the run ended, when not by its own exit
 
 
+def observe(run: Run) -> tuple[str, dict[str, str] | None]:
+    """The run's window as the supervisor reads it: ``("ok", options)``,
+    ``("gone", None)`` when tmux confirmed the window does not exist or it
+    belongs to another run now, ``("unavailable", None)`` when the read
+    could not be made."""
+    if not run.target:
+        return "gone", None
+    status, opts = sweep.window_options_checked(run.target, WINDOW_FIELDS)
+    if status != "ok" or opts is None:
+        return status, None
+    if opts.get("@job_run", "") != run.run_id:
+        return "gone", None
+    return "ok", opts
+
+
 def finish_from_window(
-    run: Run, opts: dict[str, str] | None, *, seen_busy: bool
+    run: Run, status: str, opts: dict[str, str] | None, *, seen_busy: bool
 ) -> int | None:
-    """Rules 2 and 4 on one read of the window (rule 1, the ``exit`` file, is
-    checked by the caller first). None while the run goes on."""
-    if opts is None:
+    """Rules 2 and 4 on one observation (rule 1, the ``exit`` file, is
+    checked by the caller first). None while the run goes on, or while the
+    window could not be observed."""
+    if status == "gone":
         return 130
+    if status != "ok" or opts is None:
+        return None
     if run.is_agent:
         state = opts.get("@agent_state", "").strip().lower()
         if state == "done" or (state == "idle" and seen_busy):
@@ -77,7 +106,8 @@ def supervise(
 ) -> Outcome:
     """Wait for the run to finish and return its outcome. Blocking: the
     caller runs it in the thread that holds the job's flock. The timings
-    default to the module constants, read at call time."""
+    default to the module constants, read at call time. A run adopted after
+    its first supervisor died resumes from the window's own evidence."""
     interval = POLL_INTERVAL if interval is None else interval
     watchdog = START_WATCHDOG if watchdog is None else watchdog
     term_grace = TERM_GRACE if term_grace is None else term_grace
@@ -88,28 +118,33 @@ def supervise(
         code = runs.read_exit(run.dir)
         if code is not None:
             break
-        opts = sweep.window_options(run.target, WINDOW_FIELDS)
-        if opts is not None and run.is_agent:
+        status, opts = observe(run)
+        if status == "ok" and opts is not None and run.is_agent:
             state = opts.get("@agent_state", "").strip().lower()
-            if state == "busy":
+            if opts.get("@job_busy_seen"):
                 seen_busy = True
-        code = finish_from_window(run, opts, seen_busy=seen_busy)
+            if state == "busy" and not seen_busy:
+                seen_busy = True
+                sweep.set_window_option(run.target, "@job_busy_seen", "1")
+            if state == "ask":
+                asked = True
+        code = finish_from_window(run, status, opts, seen_busy=seen_busy)
         if code is not None:
             if code == 130:
                 note = "window closed before the run ended"
             break
         now = time.time()
         if now - run.started > run.deadline:
-            code = 124
             note = f"deadline of {int(run.deadline)} s passed"
-            end_run(run, code, term_grace=term_grace)
+            code = end_run(run, 124, term_grace=term_grace)
+            if code != 124:
+                note = f"finished as the deadline of {int(run.deadline)} s passed"
             break
         if (
             run.is_agent
             and not seen_busy
             and not asked
-            and opts is not None
-            and opts.get("@agent_state", "").strip().lower() != "ask"
+            and status == "ok"
             and now - run.started >= watchdog
         ):
             asked = True
@@ -124,23 +159,30 @@ def supervise(
     return finish(run, code, note=note)
 
 
-def end_run(run: Run, code: int, *, term_grace: float | None = None) -> None:
-    """Record ``code`` as the run's exit (file and window option) and end the
-    job's process group, SIGTERM then SIGKILL. ``run.sh`` then stamps the
-    end and keeps the window."""
+def end_run(run: Run, code: int, *, term_grace: float | None = None) -> int:
+    """Publish ``code`` as the run's exit unless ``run.sh`` published first
+    (then that code is the run's, and the job is already over), stamp it on
+    the window, and end the job's process group, SIGTERM then SIGKILL, after
+    checking the group is still the job's. Returns the run's exit code."""
     term_grace = TERM_GRACE if term_grace is None else term_grace
-    runs.write_exit_once(run.dir, code)
-    if run.target:
-        sweep.set_window_option(run.target, "@job_exit", str(code))
-    pgid = runs.read_pgid(run.dir)
-    if pgid is None:
-        return
+    if not runs.write_exit_once(run.dir, code):
+        published = runs.read_exit(run.dir)
+        if published is not None:
+            return published
+    _stamp_exit_if_unset(run, code)
+    process = runs.read_process(run.dir)
+    if process is None:
+        return code
+    pgid, ticks = process
+    if not runs.process_matches(pgid, ticks):
+        return code
     if _signal_group(pgid, signal.SIGTERM):
         deadline = time.monotonic() + term_grace
-        while time.monotonic() < deadline and _group_alive(pgid):
+        while time.monotonic() < deadline and runs.process_matches(pgid, ticks):
             time.sleep(0.1)
-        if _group_alive(pgid):
+        if runs.process_matches(pgid, ticks):
             _signal_group(pgid, signal.SIGKILL)
+    return code
 
 
 def _signal_group(pgid: int, sig: signal.Signals) -> bool:
@@ -155,27 +197,29 @@ def _signal_group(pgid: int, sig: signal.Signals) -> bool:
 
 
 def _group_alive(pgid: int) -> bool:
-    try:
-        os.killpg(pgid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
+    """True while a process of group ``pgid`` exists."""
+    return runs.process_matches(pgid, "")
+
+
+def _stamp_exit_if_unset(run: Run, code: int) -> None:
+    status, opts = observe(run)
+    if status == "ok" and opts is not None and not opts.get("@job_exit"):
+        sweep.set_window_option(run.target, "@job_exit", str(code))
 
 
 def finish(run: Run, code: int, *, note: str = "", now: float | None = None) -> Outcome:
-    """Stamp the finish on the window (``@job_exit`` unless ``run.sh`` wrote
-    it, ``@job_finished``) and gather the record's output."""
+    """Stamp the finish on the run's own window (``@job_exit`` unless
+    ``run.sh`` wrote it, ``@job_finished``) and gather the record's output."""
     finished = time.time() if now is None else now
-    opts = sweep.window_options(run.target, ("@job_exit",)) if run.target else None
-    if opts is not None:
+    status, opts = observe(run)
+    alive = status == "ok" and opts is not None
+    if alive:
         stamps: dict[str, str] = {}
-        if not opts.get("@job_exit"):
+        if not (opts or {}).get("@job_exit"):
             stamps["@job_exit"] = str(code)
         stamps["@job_finished"] = str(int(finished))
         sweep.set_window_options(run.target, stamps)
-    output = read_output(run, alive=opts is not None)
+    output = read_output(run, alive=alive)
     if note:
         output = (output + "\n\n" if output else "") + f"[merlin: {note}]"
     return Outcome(exit_code=code, finished=finished, output=output, note=note)

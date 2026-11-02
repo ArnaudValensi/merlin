@@ -86,12 +86,43 @@ def _fire(job_id: str, job: dict) -> FireResult:
         logger.info("Webhook fire for %s coalesced (job locked)", job_id)
         return FireResult(status="coalesced", run_id=None)
 
+    # A run still going on without a supervisor (a restart killed it):
+    # coalesce into it and adopt it, rather than open a second window.
+    from job import runs
+
+    pending = runs.unfinished_run(job_id)
+    if pending is not None:
+        logger.info(
+            "Webhook fire for %s coalesced into unfinished run %s",
+            job_id,
+            pending.run_id,
+        )
+        _in_flight[job_id] = pending.run_id
+        task = asyncio.create_task(_adopt(job_id, pending, lock))
+        _tasks.add(task)
+        task.add_done_callback(_tasks.discard)
+        return FireResult(status="coalesced", run_id=pending.run_id)
+
     run_id = str(uuid.uuid4())
     _in_flight[job_id] = run_id
     task = asyncio.create_task(_run(job_id, job, run_id, lock))
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
     return FireResult(status="launched", run_id=run_id)
+
+
+async def _adopt(job_id: str, pending, lock) -> None:
+    """Supervise an unfinished run to its end, off the loop, holding the
+    flock the fire acquired."""
+    from job import runner
+
+    try:
+        await asyncio.to_thread(runner._adopt_locked, pending)
+    except Exception:
+        logger.exception("Adopting run %s of job %s crashed", pending.run_id, job_id)
+    finally:
+        state.release_job_lock(lock)
+        _in_flight.pop(job_id, None)
 
 
 async def _run(job_id: str, job: dict, run_id: str, lock) -> None:

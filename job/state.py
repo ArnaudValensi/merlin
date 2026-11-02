@@ -144,7 +144,12 @@ def append_history(
         if job_id not in history:
             history[job_id] = []
 
-        history[job_id].append(entry)
+        # Idempotent by run id: a record materialized again after a crash
+        # replaces its earlier entry instead of adding a second one.
+        entries = history[job_id]
+        if run_id is not None:
+            entries[:] = [e for e in entries if e.get("run_id") != run_id]
+        entries.append(entry)
 
         # Enforce rolling limit
         if len(history[job_id]) > HISTORY_LIMIT:
