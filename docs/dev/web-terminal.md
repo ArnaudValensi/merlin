@@ -326,3 +326,17 @@ Terminal access requires the same cookie auth as the rest of the dashboard. WebS
 | `terminal/transcribe.py` | Audio transcription (faster-whisper) |
 | `auth.py` | `verify_ws_cookie()` for WebSocket auth |
 | `main.py` | Mounts terminal router |
+
+## What a terminal inherits
+
+A tmux server gives its environment to every shell, agent and job it ever
+starts, and keeps it for its whole life. So every path that can create one goes
+through `terminal.tmux.terminal_process_env`, which withholds the secrets
+(`DASHBOARD_USER`, `DASHBOARD_PASS`, `MERLIN_SAAS_TOKEN`) and Merlin's own
+settings present in `config.env` (`paths.own_settings_in_config`: the server and
+the CLI read the file themselves, and a copy would outlive any change to it).
+Anything else a user keeps in `config.env`, an API key for their agents say,
+passes through. At startup `scrub_server_env` removes the same names from a
+running server's global environment, without ever starting one. A shell already
+open keeps its copy until it closes, which is why `merlin restart`
+(`server_control._relaunch_env`) drops those settings too.

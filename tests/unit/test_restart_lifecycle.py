@@ -268,6 +268,22 @@ class TestRelaunchEnv:
         assert "TMUX_PANE" not in env
         assert env["MERLIN_KEEP"] == "yes"
 
+    def test_a_restart_applies_config_env_over_a_stale_copy(
+        self, monkeypatch, tmp_path
+    ):
+        """Every pane of a tmux server may hold an old copy of a setting: the
+        Timeline flag read from it would retire the Timeline's hooks."""
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        (tmp_path / "config.env").write_text("MERLIN_FEATURES=app,timeline\n")
+        monkeypatch.setenv("MERLIN_FEATURES", "app")
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", "from-the-container")
+
+        env = server_control._relaunch_env()
+
+        assert "MERLIN_FEATURES" not in env
+        # Not in the file: only the environment has it, so it stays.
+        assert env["MERLIN_SAAS_TOKEN"] == "from-the-container"
+
 
 # ---------------------------------------------------------------------------
 # restart: supervised vs self-managed, and port continuity

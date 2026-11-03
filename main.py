@@ -978,7 +978,7 @@ def api_agent_state_hooks_consent(body: dict = Body(...), _auth=Depends(require_
 def _extension_audit(info: ExtensionInfo) -> tuple[list[dict], list[dict]]:
     """Skills and commands an extension ships — the security audit surface.
 
-    Both are code-equivalent (skills instruct the engine, commands execute),
+    Both are code-equivalent (skills instruct the agent, commands execute),
     so the Extensions page lists them read-only per extension.
     """
     if info.tier == "built-in":
@@ -1693,6 +1693,14 @@ def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
         cleared = await asyncio.to_thread(voice_session.clear_stale_marks)
         if cleared:
             logger.info("Voice mode: cleared @voice on %s", ", ".join(cleared))
+
+        # A tmux server started by an older Merlin holds its settings and
+        # secrets: new windows must not inherit them.
+        from terminal.tmux import scrub_server_env
+
+        scrubbed = await asyncio.to_thread(scrub_server_env)
+        if scrubbed:
+            logger.info("Tmux server environment cleaned of %d names", len(scrubbed))
 
         # Timeline flag off: the hooks of a previous version stop capturing.
         if await asyncio.to_thread(_retire_timeline_hooks):

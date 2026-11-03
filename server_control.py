@@ -245,12 +245,16 @@ def _relaunch_env() -> dict[str, str]:
     """Environment for the relaunched server, independent of the launch shell.
 
     Merlin is a daemon: it must not inherit a tmux client's TMUX/TMUX_PANE or a
-    dumb TERM from whichever pane restarted it. (Kept local rather than importing
+    dumb TERM from whichever pane restarted it, nor that pane's old copy of a
+    setting config.env holds: a restart applies the file. A setting the file
+    does not hold still passes through. (Kept local rather than importing
     terminal.tmux, to keep this module import-light — see the module docstring.)
     """
     env = dict(os.environ)
     env.pop("TMUX", None)
     env.pop("TMUX_PANE", None)
+    for key in paths.own_settings_in_config():
+        env.pop(key, None)
     env["TERM"] = "xterm-256color"
     return env
 

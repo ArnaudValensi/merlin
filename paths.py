@@ -79,22 +79,19 @@ def config_path() -> Path:
     return merlin_home() / "config.env"
 
 
-def load_config_env() -> None:
-    """Load config.env into os.environ (existing env vars win).
+def read_config_env() -> dict[str, str]:
+    """The KEY=VALUE pairs of config.env, empty when it cannot be read.
 
-    Stdlib-only equivalent of dotenv's load_dotenv for KEY=VALUE files, so
-    dependency-free command scripts can honor config.env (e.g. NOTES_DIR)
-    from any cwd. Matches dotenv's handling of hand-edited files: an
-    optional ``export `` prefix and matching surrounding quotes are
-    stripped, so every Merlin process resolves the same values.
+    Stdlib-only equivalent of dotenv's parser, so dependency-free command
+    scripts read the file like every other Merlin process: an optional
+    ``export `` prefix and matching surrounding quotes are stripped.
     """
     config = config_path()
-    if not config.exists():
-        return
     try:
         lines = config.read_text().splitlines()
     except OSError:
-        return
+        return {}
+    items: dict[str, str] = {}
     for line in lines:
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -107,7 +104,33 @@ def load_config_env() -> None:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
         if key:
-            os.environ.setdefault(key, value)
+            items[key] = value
+    return items
+
+
+def load_config_env() -> None:
+    """Load config.env into os.environ (existing env vars win), so a script
+    honors it (e.g. NOTES_DIR) from any cwd."""
+    for key, value in read_config_env().items():
+        os.environ.setdefault(key, value)
+
+
+# The settings of Merlin itself, as opposed to whatever else a user keeps in
+# config.env for their agents (an API key, a PATH addition).
+_OWN_SETTING_PREFIXES = ("MERLIN_", "DASHBOARD_", "TUNNEL_")
+_OWN_SETTINGS = frozenset({"AGENT_STATE_HOOKS", "NOTES_DIR"})
+
+
+def own_settings_in_config() -> set[str]:
+    """The Merlin settings config.env holds. For these the file is the truth:
+    a value inherited through a shell or a tmux server is a stale copy of it,
+    so a process Merlin spawns does not inherit them (the server and the CLI
+    read the file themselves)."""
+    return {
+        key
+        for key in read_config_env()
+        if key in _OWN_SETTINGS or key.startswith(_OWN_SETTING_PREFIXES)
+    }
 
 
 def launch_cwd() -> Path:

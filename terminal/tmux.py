@@ -11,6 +11,7 @@ half-configured server depending on which door the user came through.
 
 import re
 import shutil
+import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,6 +71,18 @@ class SessionIdentity:
     created: int
 
 
+# Never in a terminal, wherever the server got them from: every shell, agent
+# and job in the tmux server inherits its environment.
+_SECRET_ENV = frozenset({"DASHBOARD_USER", "DASHBOARD_PASS", "MERLIN_SAAS_TOKEN"})
+
+
+def _withheld_from_terminals() -> set[str]:
+    """What a tmux server must not hold: the secrets, and the settings
+    config.env owns (the server loaded them into its own environment, and a
+    copy in a tmux server would outlive any later change to the file)."""
+    return {*_SECRET_ENV, *paths.own_settings_in_config()}
+
+
 def terminal_process_env(base_env: Mapping[str, str], *, term: str) -> dict[str, str]:
     """Build a terminal environment independent of Merlin's launch shell.
 
@@ -78,11 +91,50 @@ def terminal_process_env(base_env: Mapping[str, str], *, term: str) -> dict[str,
     without it runs those hooks as no-ops for its whole life.
     """
     env = dict(base_env)
+    for key in _withheld_from_terminals():
+        env.pop(key, None)
     env["TERM"] = term
     env["MERLIN_TERMINAL_HOOKS"] = str(HOOKS_DIR)
     env.pop("TMUX", None)
     env.pop("TMUX_PANE", None)
     return env
+
+
+def scrub_server_env() -> list[str]:
+    """Remove from a running tmux server's global environment what it must
+    not hold (a server started by an older Merlin has it all), so new windows
+    are clean. Never starts a server. Returns the names removed; a shell
+    already open keeps its own copy until it closes."""
+    try:
+        listed = subprocess.run(
+            ["tmux", "show-environment", "-g"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if listed.returncode != 0:
+        return []
+    withheld = _withheld_from_terminals()
+    removed = []
+    for line in listed.stdout.splitlines():
+        name = line.partition("=")[0]
+        if name not in withheld:
+            continue
+        try:
+            done = subprocess.run(
+                ["tmux", "set-environment", "-gu", name],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if done.returncode == 0:
+            removed.append(name)
+    return removed
 
 
 def parse_session_identity(

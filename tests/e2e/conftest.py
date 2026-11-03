@@ -97,6 +97,11 @@ def start_merlin(
             # internet's STUN (the namespace tests build their own world).
             "MERLIN_APP_UPNP": "0",
             "MERLIN_APP_STUN": "",
+            # Decided, whatever the shell running the suite holds: undecided
+            # is a consent banner over the page, and only a test of it wants
+            # that (through extra_env, or its config).
+            "AGENT_STATE_HOOKS": "off",
+            "MERLIN_ACTIVITY_HOOKS": "off",
         }
     )
     env.update(extra_env or {})

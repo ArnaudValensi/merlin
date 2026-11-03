@@ -37,6 +37,12 @@ then `config.env`:
 MERLIN_FEATURES=timeline,app
 ```
 
+An inherited copy is not a choice: a tmux server never holds the settings
+`config.env` holds (`terminal_process_env`, `scrub_server_env`), and
+`merlin restart` drops them from the environment it passes on, so the file
+decides. An explicit `MERLIN_FEATURES=... merlin start`, or a value only the
+environment has, still wins.
+
 `ext_commands.FLAGGED_BUILTINS` maps a built-in's id to its feature name.
 With the flag off, `builtin_extension_dirs()` omits it (no CLI namespace, no
 help line, no skills) and `main.py` never loads it (no registry entry,
