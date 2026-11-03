@@ -81,7 +81,7 @@ Dark theme using CSS custom properties in `:root`:
 --accent-red: #f87171       /* errors */
 --accent-orange: #fb923c    /* job badge */
 --accent-yellow: #fbbf24    /* warnings */
---accent-purple: #a78bfa    /* invocation badge */
+--accent-purple: #a78bfa    /* agent badge */
 ```
 
 Always use these variables — never hardcode colors.
@@ -191,7 +191,7 @@ The notes editor uses Geist at `15px` with `line-height: 1.75`, matching the ren
 | `accent-red` | Errors, destructive actions (delete hover) |
 | `accent-yellow` | Warnings (push failed) |
 | `accent-orange` | Job-related badges |
-| `accent-purple` | Invocation badges |
+| `accent-purple` | Agent badges |
 
 For tinted backgrounds (active states, hover), use the accent color at 8–15% opacity:
 ```css
