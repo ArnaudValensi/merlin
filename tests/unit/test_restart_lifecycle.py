@@ -284,6 +284,41 @@ class TestRelaunchEnv:
         # Not in the file: only the environment has it, so it stays.
         assert env["MERLIN_SAAS_TOKEN"] == "from-the-container"
 
+    def test_a_restart_from_a_clean_pane_keeps_the_server_credentials(
+        self, monkeypatch, tmp_path
+    ):
+        """Merlin Cloud gives a container its token in the environment only,
+        and no terminal holds it: the server leaves it where a restart finds
+        it, private to the user, instead of losing SaaS mode."""
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        (tmp_path / "config.env").write_text("DASHBOARD_PASS=from-the-file\n")
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", "from-the-container")
+        monkeypatch.setenv("DASHBOARD_PASS", "from-the-file")
+        monkeypatch.setenv("MERLIN_TTS_API_KEY", "voice")
+        paths.save_server_secrets()
+        saved = paths.server_secrets_path()
+        assert saved.stat().st_mode & 0o777 == 0o600
+        assert "from-the-file" not in saved.read_text()
+
+        # The pane restarting it has none of them.
+        monkeypatch.delenv("MERLIN_SAAS_TOKEN")
+        monkeypatch.delenv("MERLIN_TTS_API_KEY")
+        env = server_control._relaunch_env()
+        assert env["MERLIN_SAAS_TOKEN"] == "from-the-container"
+        assert env["MERLIN_TTS_API_KEY"] == "voice"
+        assert "DASHBOARD_PASS" not in env  # the file gives it to the new server
+
+    def test_a_credential_gone_from_the_next_start_is_forgotten(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", "old")
+        paths.save_server_secrets()
+        monkeypatch.delenv("MERLIN_SAAS_TOKEN")
+        paths.save_server_secrets()
+        assert not paths.server_secrets_path().exists()
+        assert paths.read_server_secrets() == {}
+
 
 # ---------------------------------------------------------------------------
 # restart: supervised vs self-managed, and port continuity

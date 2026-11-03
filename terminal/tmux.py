@@ -71,16 +71,12 @@ class SessionIdentity:
     created: int
 
 
-# Never in a terminal, wherever the server got them from: every shell, agent
-# and job in the tmux server inherits its environment.
-_SECRET_ENV = frozenset({"DASHBOARD_USER", "DASHBOARD_PASS", "MERLIN_SAAS_TOKEN"})
-
-
 def _withheld_from_terminals() -> set[str]:
-    """What a tmux server must not hold: the secrets, and the settings
+    """What a tmux server must not hold, since every shell, agent and job it
+    starts inherits its environment: the credentials, and the settings
     config.env owns (the server loaded them into its own environment, and a
     copy in a tmux server would outlive any later change to the file)."""
-    return {*_SECRET_ENV, *paths.own_settings_in_config()}
+    return {*paths.SECRET_ENV, *paths.own_settings_in_config()}
 
 
 def terminal_process_env(base_env: Mapping[str, str], *, term: str) -> dict[str, str]:

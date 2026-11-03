@@ -331,8 +331,8 @@ Terminal access requires the same cookie auth as the rest of the dashboard. WebS
 
 A tmux server gives its environment to every shell, agent and job it ever
 starts, and keeps it for its whole life. So every path that can create one goes
-through `terminal.tmux.terminal_process_env`, which withholds the secrets
-(`DASHBOARD_USER`, `DASHBOARD_PASS`, `MERLIN_SAAS_TOKEN`) and Merlin's own
+through `terminal.tmux.terminal_process_env`, which withholds Merlin's
+credentials (`paths.SECRET_ENV`) and its own
 settings present in `config.env` (`paths.own_settings_in_config`: the server and
 the CLI read the file themselves, and a copy would outlive any change to it).
 Anything else a user keeps in `config.env`, an API key for their agents say,
@@ -340,3 +340,8 @@ passes through. At startup `scrub_server_env` removes the same names from a
 running server's global environment, without ever starting one. A shell already
 open keeps its copy until it closes, which is why `merlin restart`
 (`server_control._relaunch_env`) drops those settings too.
+
+A credential only the server's environment has (Merlin Cloud gives a container
+its token that way) is kept, mode 0600, in `data/server-secrets.json`, rewritten
+at every start. A restart and a CLI command in a pane read it there, so a
+terminal never needs a copy.

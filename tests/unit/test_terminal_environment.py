@@ -55,6 +55,7 @@ def test_terminal_process_env_withholds_secrets_and_owned_settings(
             "AGENT_STATE_HOOKS": "auto",
             "DASHBOARD_PASS": "secret",
             "MERLIN_SAAS_TOKEN": "secret",
+            "MERLIN_TTS_API_KEY": "secret",
             "ANTHROPIC_API_KEY": "k",
             "MERLIN_HOME": str(tmp_path),
             "MERLIN_LAUNCH_CWD": "/work",
@@ -66,6 +67,7 @@ def test_terminal_process_env_withholds_secrets_and_owned_settings(
         "AGENT_STATE_HOOKS",
         "DASHBOARD_PASS",
         "MERLIN_SAAS_TOKEN",
+        "MERLIN_TTS_API_KEY",
     } & set(env)
     # A user's own key is theirs to hand their agents, and what config.env
     # does not hold is not a stale copy.

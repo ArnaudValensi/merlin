@@ -929,6 +929,13 @@ def cli_main(argv: list[str] | None = None) -> None:
     if argv and argv[0].startswith("-") and argv[0] not in ("-h", "--help"):
         argv = ["start", *argv]
 
+    # A terminal never holds the server's credentials, and a command may need
+    # them (Merlin Cloud's token lives in the server's environment alone). A
+    # start takes only what it was given.
+    if argv and argv[0] != "start":
+        for key, value in paths.read_server_secrets().items():
+            os.environ.setdefault(key, value)
+
     # Curated top-level aliases (built-in privilege): expand to their
     # extension command, then fall through to dispatch below.
     if argv and argv[0] in ext_commands.TOP_LEVEL_ALIASES:

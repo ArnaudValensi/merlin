@@ -18,6 +18,7 @@ Override the base install directory with MERLIN_HOME env var (default: ~/.merlin
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -114,6 +115,11 @@ def load_config_env() -> None:
     for key, value in read_config_env().items():
         os.environ.setdefault(key, value)
 
+
+# Merlin's own credentials. They never reach a terminal (terminal/tmux.py).
+SECRET_ENV = frozenset(
+    {"DASHBOARD_USER", "DASHBOARD_PASS", "MERLIN_SAAS_TOKEN", "MERLIN_TTS_API_KEY"}
+)
 
 # The settings of Merlin itself, as opposed to whatever else a user keeps in
 # config.env for their agents (an API key, a PATH addition).
@@ -289,3 +295,50 @@ def is_supervised() -> bool:
     an update stop Merlin with nothing to bring it back.
     """
     return os.environ.get("MERLIN_SUPERVISED", "").lower() in ("1", "true", "yes")
+
+
+def server_secrets_path() -> Path:
+    """The credentials the running server got from its environment alone."""
+    return data_dir() / "data" / "server-secrets.json"
+
+
+def save_server_secrets() -> None:
+    """Keep the credentials only this server's environment holds (Merlin Cloud
+    gives a container its token that way), private to the user. Terminals do
+    not inherit them, so a ``merlin restart`` or a CLI command in a pane has no
+    other way to find them. Rewritten at every start, so one the next start
+    no longer has is gone."""
+    in_config = read_config_env()
+    secrets = {
+        key: os.environ[key]
+        for key in SECRET_ENV
+        if os.environ.get(key) and key not in in_config
+    }
+    path = server_secrets_path()
+    if not secrets:
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(secrets, f)
+    os.replace(tmp, path)
+
+
+def read_server_secrets() -> dict[str, str]:
+    """What ``save_server_secrets`` kept, minus what config.env holds now: the
+    file decides for those. Empty when there is nothing to read."""
+    try:
+        saved = json.loads(server_secrets_path().read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(saved, dict):
+        return {}
+    in_config = read_config_env()
+    return {
+        key: value
+        for key, value in saved.items()
+        if key in SECRET_ENV and isinstance(value, str) and key not in in_config
+    }
