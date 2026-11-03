@@ -8,7 +8,7 @@ are implemented. Timeline deliberately does not observe `AgentEngine`.
 
 ## Ownership
 
-Timeline is the enabled-by-default built-in extension under `timeline/`. It uses
+Timeline is the built-in extension under `timeline/`, behind the `timeline` feature flag (`MERLIN_FEATURES=timeline` in `config.env`; with the flag off it does not exist and the provider hooks a previous version installed are removed at startup, the recorded data kept). It uses
 the same extension contract as Notes and installed extensions:
 
 - `page_router` at `/timeline`;

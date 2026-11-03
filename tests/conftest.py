@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import sys
@@ -24,9 +25,14 @@ sys.path.insert(0, str(Path(_project_root) / "lib"))
 # ---------------------------------------------------------------------------
 _session_merlin_home = tempfile.mkdtemp(prefix="merlin-test-")
 os.environ["MERLIN_HOME"] = _session_merlin_home
-# Feature flags too: the suite imports main with no flag set, so an ambient
-# MERLIN_FEATURES (exported by a shell that sourced config.env) must not leak in.
-os.environ.pop("MERLIN_FEATURES", None)
+# The suite imports main with the Timeline flag on and the notes extension
+# enabled, so their routes exist for the suites that exercise them; an
+# ambient MERLIN_FEATURES (exported by a shell that sourced config.env)
+# must not leak in. Tests of the flag off, or of notes off by default,
+# set the environment and a state file of their own.
+os.environ["MERLIN_FEATURES"] = "timeline"
+with open(os.path.join(_session_merlin_home, "extensions.json"), "w") as _state:
+    json.dump({"notes": True}, _state)
 
 # tmux too: Merlin's bare ``tmux`` calls (a job run opening its window, the
 # board, the workspace sweep) must never reach the developer's own server.
@@ -57,18 +63,19 @@ tmux_isolation.remove_stale("merlin-tmux-", _session_tmux_dir)
 def _isolated_merlin_home(monkeypatch, tmp_path):
     """Point MERLIN_HOME to a per-test temp dir so no test touches ~/.merlin/.
 
-    Also clear any ambient MERLIN_DEV so dev-mode detection is deterministic
-    (and MERLIN_FEATURES, so feature flags start off):
+    Also clear any ambient MERLIN_DEV so dev-mode detection is deterministic:
     with the override reset and the env var gone, is_dev_mode() falls back to
     the repo's .git presence (dev mode), so app_dir() resolves to the repo.
     Tests that need a specific mode set it explicitly (MERLIN_DEV in the test
     body, or paths.set_dev_mode), which still wins over this default.
+    MERLIN_FEATURES holds the Timeline flag alone, as at import: the app
+    flag starts off, and a test of a flag off deletes the variable.
     """
     import paths
 
     monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
     monkeypatch.delenv("MERLIN_DEV", raising=False)
-    monkeypatch.delenv("MERLIN_FEATURES", raising=False)
+    monkeypatch.setenv("MERLIN_FEATURES", "timeline")
     paths._dev_mode_override = None
     yield
     paths._dev_mode_override = None

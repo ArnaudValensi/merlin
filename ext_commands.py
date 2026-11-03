@@ -68,6 +68,7 @@ BUILTIN_IDS: tuple[str, ...] = (
 # namespace, no help entry, no skills. Its id stays reserved either way.
 FLAGGED_BUILTINS: dict[str, str] = {
     "app": "app",
+    "timeline": "timeline",
 }
 
 
@@ -78,10 +79,18 @@ TOP_LEVEL_ALIASES: dict[str, tuple[str, str]] = {
     "remember": ("notes", "remember"),
 }
 
+# Built-ins whose commands follow their enabled state: disabled (or off by
+# default), 'merlin <ext> ...' says so and how to turn it on. The others
+# keep their commands reachable while disabled (the Timeline's capture
+# consent is changed from the CLI with the extension off).
+COMMANDS_FOLLOW_ENABLED: frozenset[str] = frozenset({"notes"})
+
 # Default enabled state for built-in extensions when extensions.json has no
-# entry. Shared with main.py so the CLI and the server agree.
+# entry. Shared with main.py so the CLI and the server agree. Notes is off
+# until the user turns it on (the Extensions page, or extensions.json); a
+# flagged built-in is on once its flag is.
 BUILTIN_DEFAULT_ENABLED: dict[str, bool] = {
-    "notes": True,
+    "notes": False,
     "timeline": True,
     "app": True,
 }
@@ -322,6 +331,16 @@ def dispatch(argv: list[str]) -> NoReturn:
         _fail(
             f"Unknown command: '{token}'. Run 'merlin --help' for the full "
             f"command list.{hint}"
+        )
+
+    if token in COMMANDS_FOLLOW_ENABLED and not all_extension_states()[token][1]:
+        # Disabled in extensions.json (or off by default, as notes is): the
+        # extension's commands are not available; say how to turn it on.
+        _fail(
+            f"The {token} extension is disabled, so 'merlin {token}' is not "
+            "available. Enable it on the Extensions page of the dashboard "
+            f'(/extensions), or set "{token}": true in '
+            f"{paths.extensions_state_path()} and restart Merlin."
         )
 
     commands = list_commands(ext_dir)

@@ -34,7 +34,7 @@ anyone who has not opted in. `features.enabled(name)` reads `MERLIN_FEATURES`
 then `config.env`:
 
 ```bash
-MERLIN_FEATURES=app
+MERLIN_FEATURES=timeline,app
 ```
 
 `ext_commands.FLAGGED_BUILTINS` maps a built-in's id to its feature name.

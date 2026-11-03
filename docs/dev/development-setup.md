@@ -84,11 +84,22 @@ printf 'DASHBOARD_USER=admin\nDASHBOARD_PASS=sandbox\n' > "$TMPHOME/config.env"
 
 env -u MERLIN_SAAS_TOKEN -u MERLIN_ENVIRONMENT_SLUG -u TMUX \
   MERLIN_HOME="$TMPHOME" TMUX_TMPDIR="$TT" MERLIN_DEV=1 \
+  AGENT_STATE_HOOKS=ask MERLIN_ACTIVITY_HOOKS=ask \
   nohup uv run main.py --port 3199 > "$TMPHOME/server.log" 2>&1 &
 echo "PID=$!"    # capture it, you need it to stop the instance
 ```
 
 Why each part:
+
+- **`AGENT_STATE_HOOKS=ask MERLIN_ACTIVITY_HOOKS=ask`**: the two consent
+  modes fall back to the process environment when the instance's
+  `config.env` does not set them, and a shell that sourced your own
+  `config.env` exports them as `auto`. In `auto` the instance reconciles
+  the hooks into **your** `~/.claude/settings.json` and
+  `~/.codex/hooks.json` at startup (it has no idea it is a throwaway).
+  `ask` reads those files and writes nothing. Point `CLAUDE_CONFIG_DIR`
+  and `CODEX_HOME` at temp dirs as well when the instance must install
+  hooks for a test.
 
 - **`-u MERLIN_SAAS_TOKEN`**: the SaaS tunnel starts whenever the token is
   set, so a naive run connects your test instance to the real portal and

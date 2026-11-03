@@ -5,10 +5,8 @@ dataclass, registry population, error handling, and folder naming.
 """
 
 import sys
-from unittest import mock
 
 
-import main
 import paths
 from main import (
     ExtensionInfo,
@@ -88,13 +86,12 @@ class TestResolveEnabled:
         assert _resolve_enabled("notes", "built-in", {"notes": False}) is False
 
     def test_resolve_enabled_builtin_default_on(self):
-        """Notes not in state → uses built-in default True."""
-        assert _resolve_enabled("notes", "built-in", {}) is True
+        """Timeline not in state → uses built-in default True."""
+        assert _resolve_enabled("timeline", "built-in", {}) is True
 
     def test_resolve_enabled_builtin_default_off(self):
-        """A built-in whose default is off (none ships today) resolves off."""
-        with mock.patch.dict(main.BUILT_IN_DEFAULTS, {"demo": False}):
-            assert _resolve_enabled("demo", "built-in", {}) is False
+        """Notes not in state → off by default."""
+        assert _resolve_enabled("notes", "built-in", {}) is False
 
     def test_resolve_enabled_installed_default(self):
         """Unknown installed extension not in state → True."""

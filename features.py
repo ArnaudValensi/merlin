@@ -6,7 +6,7 @@ has not opted in: no nav entry, no page, no CLI namespace, no skill. Opt in
 by listing the feature in ``MERLIN_FEATURES`` (comma- or space-separated,
 case-insensitive), either in the environment or in ``config.env``:
 
-    MERLIN_FEATURES=app
+    MERLIN_FEATURES=timeline,app
 
 The environment wins when set, so a test or a one-off run can flip a flag
 without touching the config. Changing a flag takes effect on the next start

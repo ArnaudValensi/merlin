@@ -95,7 +95,7 @@ class TestCliSurfaces:
 
 class TestServer:
     def test_flag_off_at_import(self):
-        # The suite imports main with no flag set (isolated MERLIN_HOME).
+        # The suite imports main without the app flag (isolated MERLIN_HOME).
         assert "app" not in app_mod.extension_registry
         assert not any(i.get("url") == "/apps" for i in app_mod.nav_items)
 

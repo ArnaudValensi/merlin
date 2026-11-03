@@ -32,6 +32,7 @@ def timeline_server(tmp_path_factory):
         {
             "DASHBOARD_PASS": "",
             "MERLIN_SAAS_TOKEN": "",
+            "MERLIN_FEATURES": "timeline",
             "MERLIN_TIMELINE_FIXTURES": "1",
             "MERLIN_ACTIVITY_HOOKS": "ask",
             "MERLIN_HOME": str(merlin_home),
@@ -75,6 +76,7 @@ def real_timeline_server(tmp_path_factory):
         {
             "DASHBOARD_PASS": "",
             "MERLIN_SAAS_TOKEN": "",
+            "MERLIN_FEATURES": "timeline",
             "MERLIN_ACTIVITY_HOOKS": "off",
             "MERLIN_HOME": str(merlin_home),
             "CLAUDE_CONFIG_DIR": str(provider_home / "claude"),

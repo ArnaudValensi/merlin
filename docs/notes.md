@@ -1,6 +1,9 @@
 # Notes
 
-The Notes page is a browser-based markdown editor over Merlin's notes
+Notes is a built-in extension that is off until you switch it on, on the
+Extensions page (`/extensions`): without it Merlin keeps no memory of its
+own, and `merlin notes`, `merlin kb` and `merlin remember` say so.
+Enabled, the Notes page is a browser-based markdown editor over Merlin's notes
 directory (`~/.merlin/notes` by default, `~/shared/notes` on
 [Merlin Cloud](getting-started.md#merlin-cloud); `merlin config notes-dir`
 always prints the resolved path). This is the third pillar, the living knowledge base:

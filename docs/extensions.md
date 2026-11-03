@@ -5,10 +5,10 @@ see everything plugged into Merlin: switch extensions on or off, fill in
 their configuration, and audit exactly what skills and commands each one
 ships before trusting it. Extensions come in three tiers, shown as card
 groups: **Core** (Files, Terminal, Commits: always on, a lock icon
-instead of a toggle), **Built-in** (Notes and Timeline on by default,
-Merlin Bot off by default), and **Installed** (anything in
-`~/.merlin/extensions/`, on by
-default; the group appears once something is installed).
+instead of a toggle), **Built-in** (Notes, off until you switch it on;
+Timeline, which exists only with `MERLIN_FEATURES=timeline` in
+`config.env`), and **Installed** (anything in `~/.merlin/extensions/`,
+on by default; the group appears once something is installed).
 
 ![Extensions page on mobile](creating-extensions/extensions-page-mobile.png)
 

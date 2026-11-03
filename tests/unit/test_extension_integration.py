@@ -110,7 +110,8 @@ class TestExtensionLifecycle:
         state = _load_extensions_state()
         assert state == {}
         # Built-in defaults apply
-        assert _resolve_enabled("notes", "built-in", state) is True
+        assert _resolve_enabled("notes", "built-in", state) is False
+        assert _resolve_enabled("timeline", "built-in", state) is True
         # Installed defaults to True
         assert _resolve_enabled("video-scenes", "installed", state) is True
 

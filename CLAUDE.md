@@ -43,7 +43,7 @@ merlin/
 │   └── commands/              # merlin notes search / kb / remember commands
 ├── timeline/                  # Built-in private agent-activity Timeline extension
 │   └── commands/emit.py       # Provider-neutral, server-independent emitter
-├── skills/                    # Core operational skills (merlin/, merlin-jobs/, merlin-notes/, merlin-dashboard/, merlin-review/) — always active
+├── skills/                    # Core operational skills (merlin/, merlin-jobs/, merlin-dashboard/, merlin-review/) — always active; merlin-notes ships in notes/skills/
 ├── tools/                     # Standalone scripts (kokoro-tts-server.py: the reference voice-mode TTS server)
 ├── tests/                     # Tests for core modules
 ├── agent/
@@ -117,7 +117,7 @@ When creating new scripts:
 │  Built-in Extensions:                                     │
 │  ┌───────────┐ ┌───────────┐                             │
 │  │  notes/    │ │ timeline/ │                             │
-│  │  Markdown  │ │ (flagged) │                             │
+│  │ (off by    │ │ (flagged) │                             │
 │  └───────────┘ └───────────┘                             │
 │                                                           │
 │  Installed Extensions: ~/.merlin/extensions/               │
@@ -240,7 +240,7 @@ Web-based dashboard served by FastAPI on port 3123, started by `main.py`.
 
 - **Auth:** Cookie-based auth (`DASHBOARD_USER` / `DASHBOARD_PASS` in `.env`) — see [`docs/dev/auth-and-tunnel.md`](docs/dev/auth-and-tunnel.md)
 - **Core pages:** Files, Terminal, Commits (always available)
-- **Built-in extensions:** Notes and Timeline
+- **Built-in extensions:** Notes (off by default), Timeline (only with `MERLIN_FEATURES=timeline`)
 - **Management pages:** Extensions (`/extensions`), Settings (gear dropdown → Settings)
 - **Start:** `uv run main.py` starts everything (dashboard + jobs) in one process
 - **Screenshots:** `uv run .claude/skills/screenshot/screenshot.py --all http://localhost:3123 --user admin --pass <pass>`

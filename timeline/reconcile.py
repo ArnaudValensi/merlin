@@ -171,6 +171,20 @@ def remove_hooks() -> bool:
     return claude or codex
 
 
+def hooks_present() -> bool:
+    """Whether either provider file carries a Timeline-owned hook group.
+    A read, never a write: the check a flag-off Merlin makes at startup."""
+    for path in (claude_settings_path(), codex_hooks_path()):
+        settings = _read(path)
+        hooks = settings.get("hooks") if settings else None
+        if not isinstance(hooks, dict):
+            continue
+        for groups in hooks.values():
+            if isinstance(groups, list) and any(_is_owned(g) for g in groups):
+                return True
+    return False
+
+
 def hooks_drift() -> bool:
     for path, provider, events in (
         (claude_settings_path(), "claude", CLAUDE_EVENTS),

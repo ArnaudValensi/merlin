@@ -89,7 +89,10 @@ EXTENSION_META = {
 
 
 async def start():
-    """Start the git sync watcher (if enabled)."""
+    """Create the notes directory if needed and start the git sync watcher
+    (if enabled). The extension owns its directory: nothing else creates
+    it, and disabling the extension never touches it."""
+    paths.notes_dir().mkdir(parents=True, exist_ok=True)
     await start_sync(paths.notes_dir())
 
 

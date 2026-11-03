@@ -1332,17 +1332,13 @@ def _load_notes():
 _load_extension("notes", "built-in", _load_notes)
 
 
-# --- Built-in: Agent activity timeline ---
+# --- Built-ins behind a feature flag (MERLIN_FEATURES=timeline,app) ---
 def _load_timeline():
     import timeline
 
     return timeline
 
 
-_load_extension("timeline", "built-in", _load_timeline)
-
-
-# --- Built-in behind a feature flag: App streaming (MERLIN_FEATURES=app) ---
 def _load_app():
     import app as _app
 
@@ -1353,8 +1349,25 @@ def _load_flagged_builtins() -> None:
     """Load the flagged built-ins whose feature is on; the rest never exist."""
     import features
 
+    if features.enabled(_ext_commands.FLAGGED_BUILTINS["timeline"]):
+        _load_extension("timeline", "built-in", _load_timeline)
     if features.enabled(_ext_commands.FLAGGED_BUILTINS["app"]):
         _load_extension("app", "built-in", _load_app)
+
+
+def _retire_timeline_hooks() -> bool:
+    """With the Timeline flag off, the provider hooks a previous version
+    installed must not keep capturing: remove them, only when they are
+    there, without loading the extension. Recorded data is kept."""
+    import features
+
+    if features.enabled(_ext_commands.FLAGGED_BUILTINS["timeline"]):
+        return False
+    from timeline import reconcile
+
+    if not reconcile.hooks_present():
+        return False
+    return reconcile.remove_hooks()
 
 
 _load_flagged_builtins()
@@ -1674,6 +1687,10 @@ def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
         cleared = await asyncio.to_thread(voice_session.clear_stale_marks)
         if cleared:
             logger.info("Voice mode: cleared @voice on %s", ", ".join(cleared))
+
+        # Timeline flag off: the hooks of a previous version stop capturing.
+        if await asyncio.to_thread(_retire_timeline_hooks):
+            logger.info("Timeline: provider hooks removed (feature flag off)")
 
         # Start all extensions with start() hooks
         for info in extension_registry.values():

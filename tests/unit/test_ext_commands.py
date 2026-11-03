@@ -323,6 +323,9 @@ class TestDispatch:
         monkeypatch.setattr(
             ext_commands, "builtin_extension_dirs", lambda: {"notes": builtin}
         )
+        state = paths.extensions_state_path()
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text('{"notes": true}')  # off by default
         make_command(paths.extensions_dir() / "notes", "search")
         with pytest.raises(SystemExit):
             ext_commands.dispatch(["notes", "search"])
@@ -509,7 +512,12 @@ class TestEndToEnd:
 class TestBuiltinNotesEndToEnd:
     """The notes built-in ships real convention commands — exercise them."""
 
+    def _enable_notes(self, home: Path) -> None:
+        # Notes is off by default: the commands run once it is enabled.
+        (home / "extensions.json").write_text('{"notes": true}')
+
     def _make_kb(self, home: Path) -> None:
+        self._enable_notes(home)
         kb = home / "notes" / "kb"
         kb.mkdir(parents=True)
         (kb / "docker-tips.md").write_text(
@@ -550,6 +558,7 @@ class TestBuiltinNotesEndToEnd:
         assert "new-note.md" in result.stdout
 
     def test_merlin_remember_help(self, tmp_path):
+        self._enable_notes(tmp_path)
         result = run_cli(["remember", "--help"], tmp_path)
         assert result.returncode == 0, result.stderr
         assert "merlin remember" in result.stdout
@@ -566,24 +575,26 @@ class TestEnabledExtensionSourceDirs:
         path.write_text(json.dumps(state))
 
     def test_builtin_defaults_applied(self, tmp_path):
-        # No state file: notes and timeline enabled.
+        # No state file: timeline (its flag is on for the suite) enabled,
+        # notes off until the user turns it on.
         sources = ext_commands.enabled_extension_source_dirs()
-        assert "notes" in sources
+        assert "notes" not in sources
         assert "timeline" in sources
+        assert ext_commands.all_extension_states()["notes"][1] is False
 
     def test_explicit_state_wins(self, tmp_path):
-        self._write_state({"timeline": False, "notes": False})
+        self._write_state({"timeline": False, "notes": True})
         sources = ext_commands.enabled_extension_source_dirs()
         assert "timeline" not in sources
-        assert "notes" not in sources
+        assert "notes" in sources
 
     def test_a_stale_state_entry_is_ignored(self, tmp_path):
         """An extensions.json from a release that shipped the Discord bot
         still names it: the entry is ignored, nothing else changes."""
-        self._write_state({"merlin-bot": True, "notes": False})
+        self._write_state({"merlin-bot": True, "notes": True})
         states = ext_commands.all_extension_states()
         assert "merlin-bot" not in states
-        assert states["notes"][1] is False
+        assert states["notes"][1] is True
         assert "merlin-bot" not in ext_commands.enabled_extension_source_dirs()
 
     def test_installed_default_enabled_and_state_disable(self, tmp_path):
@@ -602,7 +613,7 @@ class TestEnabledExtensionSourceDirs:
         self._write_state({"timeline": False, "tasks": False})
 
         states = ext_commands.all_extension_states()
-        assert states["notes"][1] is True  # built-in default
+        assert states["notes"][1] is False  # built-in default
         assert states["timeline"][1] is False  # explicitly disabled
         assert states["tasks"][1] is False  # explicitly disabled, still listed
 
