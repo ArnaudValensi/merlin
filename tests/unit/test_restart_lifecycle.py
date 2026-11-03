@@ -12,6 +12,7 @@ pattern-kill fallback is replaced with a spy — its real patterns
 never execute for real in the suite.
 """
 
+import os
 import subprocess
 import sys
 import time
@@ -307,6 +308,39 @@ class TestRelaunchEnv:
         assert env["MERLIN_SAAS_TOKEN"] == "from-the-container"
         assert env["MERLIN_TTS_API_KEY"] == "voice"
         assert "DASHBOARD_PASS" not in env  # the file gives it to the new server
+
+    def test_a_command_in_a_pane_hands_its_programs_no_credentials(
+        self, monkeypatch, tmp_path
+    ):
+        """Only the operation that needs a credential reads it: `merlin app run`
+        from a clean pane must not hand the token to the game it launches."""
+        import cli
+
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", "from-the-container")
+        paths.save_server_secrets()
+        monkeypatch.delenv("MERLIN_SAAS_TOKEN")
+        with pytest.raises(SystemExit):
+            cli.cli_main(["job", "--help"])
+        assert "MERLIN_SAAS_TOKEN" not in os.environ
+
+    def test_merlin_job_url_finds_the_token_from_a_pane(self, monkeypatch, tmp_path):
+        from job import webhook
+
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", "from-the-container")
+        paths.save_server_secrets()
+        monkeypatch.delenv("MERLIN_SAAS_TOKEN")
+        monkeypatch.setattr(webhook, "_whoami_at", None)
+        seen = {}
+
+        def fake_urlopen(request, **_):
+            seen.update(request.headers)
+            raise OSError("offline")
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        webhook._saas_public_host()
+        assert "from-the-container" in str(seen)
 
     def test_a_credential_gone_from_the_next_start_is_forgotten(
         self, monkeypatch, tmp_path
