@@ -69,13 +69,25 @@ def _group(provider: str, matcher: str | None) -> dict:
 
 
 def _read(path: Path) -> dict | None:
+    """The provider object, ``{}`` for a missing file, None for one that
+    cannot be read or decoded (left alone by every caller)."""
     if not path.exists():
         return {}
     try:
         value = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def _has_owned(settings: dict) -> bool:
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    return any(
+        isinstance(groups, list) and any(_is_owned(g) for g in groups)
+        for groups in hooks.values()
+    )
 
 
 def _shape_ok(settings: dict, events: dict[str, str | None]) -> bool:
@@ -139,6 +151,10 @@ def _reconcile_file(
             return False
         if not _shape_ok(settings, events):
             return False
+        if not install and not _has_owned(settings):
+            # Nothing of ours in this file: it is left byte for byte, even
+            # when a removal would tidy an empty event list.
+            return False
         desired = (
             _installed(settings, provider, events) if install else _removed(settings)
         )
@@ -173,15 +189,12 @@ def remove_hooks() -> bool:
 
 def hooks_present() -> bool:
     """Whether either provider file carries a Timeline-owned hook group.
-    A read, never a write: the check a flag-off Merlin makes at startup."""
+    A read, never a write: the check a flag-off Merlin makes at startup. A
+    file that cannot be read or decoded counts as carrying nothing."""
     for path in (claude_settings_path(), codex_hooks_path()):
         settings = _read(path)
-        hooks = settings.get("hooks") if settings else None
-        if not isinstance(hooks, dict):
-            continue
-        for groups in hooks.values():
-            if isinstance(groups, list) and any(_is_owned(g) for g in groups):
-                return True
+        if settings and _has_owned(settings):
+            return True
     return False
 
 

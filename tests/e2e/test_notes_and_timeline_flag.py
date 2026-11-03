@@ -12,7 +12,6 @@ the hooks are left to the extension's own consent (``ask`` touches nothing).
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import time
 import urllib.error
@@ -205,4 +204,3 @@ class TestEnabled:
         server, claude = enabled_server
         time.sleep(2)
         assert MARKER in claude.read_text()
-        assert os.environ.get("MERLIN_FEATURES") != "timeline" or True

@@ -82,8 +82,10 @@ TMPHOME=/tmp/merlin-sandbox TT=/tmp/merlin-sandbox-tmux
 rm -rf "$TMPHOME" "$TT"; mkdir -p "$TMPHOME" "$TT"
 printf 'DASHBOARD_USER=admin\nDASHBOARD_PASS=sandbox\n' > "$TMPHOME/config.env"
 
+mkdir -p "$TMPHOME/claude" "$TMPHOME/codex"
 env -u MERLIN_SAAS_TOKEN -u MERLIN_ENVIRONMENT_SLUG -u TMUX \
   MERLIN_HOME="$TMPHOME" TMUX_TMPDIR="$TT" MERLIN_DEV=1 \
+  CLAUDE_CONFIG_DIR="$TMPHOME/claude" CODEX_HOME="$TMPHOME/codex" \
   AGENT_STATE_HOOKS=ask MERLIN_ACTIVITY_HOOKS=ask \
   nohup uv run main.py --port 3199 > "$TMPHOME/server.log" 2>&1 &
 echo "PID=$!"    # capture it, you need it to stop the instance
@@ -91,15 +93,23 @@ echo "PID=$!"    # capture it, you need it to stop the instance
 
 Why each part:
 
+- **`CLAUDE_CONFIG_DIR` and `CODEX_HOME` on temp dirs**: every hook
+  reconciler (the agent-state pills, the Timeline capture hooks, and the
+  startup retirement of Timeline hooks when `MERLIN_FEATURES` lacks
+  `timeline`) resolves the provider files through these two variables.
+  Without them a throwaway edits **your** `~/.claude/settings.json` and
+  `~/.codex/hooks.json`: the retirement path ignores consent by design (a
+  flag-off Merlin must not keep capturing), so no consent setting protects
+  the real files; only the paths do. The price: an agent you launch from
+  that instance's windows sees an empty config (no login, no trust), so a
+  throwaway that must run a real agent needs the real paths, and then the
+  flag must match your live instance and both consents must be `ask`.
 - **`AGENT_STATE_HOOKS=ask MERLIN_ACTIVITY_HOOKS=ask`**: the two consent
   modes fall back to the process environment when the instance's
   `config.env` does not set them, and a shell that sourced your own
   `config.env` exports them as `auto`. In `auto` the instance reconciles
-  the hooks into **your** `~/.claude/settings.json` and
-  `~/.codex/hooks.json` at startup (it has no idea it is a throwaway).
-  `ask` reads those files and writes nothing. Point `CLAUDE_CONFIG_DIR`
-  and `CODEX_HOME` at temp dirs as well when the instance must install
-  hooks for a test.
+  the hooks into whatever provider files it resolves at startup (it has
+  no idea it is a throwaway); `ask` reads them and writes nothing.
 
 - **`-u MERLIN_SAAS_TOKEN`**: the SaaS tunnel starts whenever the token is
   set, so a naive run connects your test instance to the real portal and

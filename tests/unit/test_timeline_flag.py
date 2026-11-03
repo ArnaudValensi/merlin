@@ -194,6 +194,50 @@ class TestHookRetirement:
         assert app_mod._retire_timeline_hooks() is False
         assert claude.read_text() == "{not json"
 
+    def test_an_undecodable_file_never_aborts_startup(self, flag_off, hook_files):
+        """One provider file is not UTF-8: it is left untouched, the other
+        provider is still retired, and nothing raises into the startup."""
+        claude, codex = hook_files
+        claude.parent.mkdir(parents=True)
+        claude.write_bytes(b'{"hooks": \xff}')
+        _seed(codex, {"Stop": [_owned("codex")]}, model="o3")
+        assert reconcile.hooks_present()
+        assert app_mod._retire_timeline_hooks() is True
+        assert claude.read_bytes() == b'{"hooks": \xff}'
+        assert json.loads(codex.read_text()) == {"model": "o3"}
+        # And with nothing left to retire, the undecodable file alone is a
+        # quiet no-op, not an exception.
+        assert app_mod._retire_timeline_hooks() is False
+
+    def test_a_provider_without_owned_groups_is_kept_byte_for_byte(
+        self, flag_off, hook_files
+    ):
+        """Presence is decided per provider under its lock: the file with
+        an owned group is rewritten, the other is not, even when a removal
+        would have tidied an empty event list."""
+        claude, codex = hook_files
+        _seed(claude, {"Stop": [_owned("claude")]})
+        codex.parent.mkdir(parents=True)
+        codex.write_text('{"model": "user-choice", "hooks": {"Stop": []}}')
+        before = codex.read_bytes()
+        stat = codex.stat()
+        assert app_mod._retire_timeline_hooks() is True
+        assert "hooks" not in json.loads(claude.read_text())
+        assert codex.read_bytes() == before
+        assert codex.stat().st_mtime_ns == stat.st_mtime_ns
+
+    def test_an_exception_in_retirement_is_logged_not_raised(
+        self, flag_off, hook_files, monkeypatch, caplog
+    ):
+        _seed(hook_files[0], {"Stop": [_owned("claude")]})
+
+        def boom():
+            raise RuntimeError("disk on fire")
+
+        monkeypatch.setattr(reconcile, "remove_hooks", boom)
+        assert app_mod._retire_timeline_hooks() is False
+        assert "could not retire" in caplog.text
+
     def test_hooks_present_is_a_read(self, hook_files):
         claude, codex = hook_files
         assert reconcile.hooks_present() is False

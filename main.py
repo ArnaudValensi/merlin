@@ -1363,11 +1363,17 @@ def _retire_timeline_hooks() -> bool:
 
     if features.enabled(_ext_commands.FLAGGED_BUILTINS["timeline"]):
         return False
-    from timeline import reconcile
+    try:
+        from timeline import reconcile
 
-    if not reconcile.hooks_present():
+        if not reconcile.hooks_present():
+            return False
+        # Each provider file is checked again under its lock and rewritten
+        # only when it carries an owned group; the other is left as it is.
+        return reconcile.remove_hooks()
+    except Exception:
+        logger.warning("Timeline: could not retire the provider hooks", exc_info=True)
         return False
-    return reconcile.remove_hooks()
 
 
 _load_flagged_builtins()
