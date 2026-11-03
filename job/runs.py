@@ -14,8 +14,9 @@ sits in a private directory, ``~/.merlin/job-runs/<run_id>/`` (mode 0700):
   the terminal in its hands, so a deadline can kill the job and leave the
   script to stamp the end), publishes the exit code no-clobber to ``exit``
   and the ``@job_exit`` window option, stamps ``@agent_state done`` if the
-  state is not already ``done``, and execs an interactive login shell so the
-  window stays readable.
+  state is not already ``done``, and waits for Enter before it execs an
+  interactive login shell: the window stays readable, and silent until someone
+  steps in.
 - ``prompt``: the agent's prompt, read by ``run.sh``. It is never put on a
   tmux command line: the window command is only ``bash <run.sh>``.
 - ``pid``: the process group of the job and its start ticks (written by the
@@ -414,9 +415,12 @@ def _exports(run: Run) -> list[str]:
         f"export MERLIN_JOB_TRIGGER={shlex.quote(run.trigger)}",
         f"export MERLIN_HOME={shlex.quote(str(paths.merlin_home()))}",
     ]
+    # What config.env holds the CLI reads there: a copy here would stay in
+    # the shell the window keeps, past any change to the file.
+    in_config = paths.own_settings_in_config()
     for name in FORWARDED_ENV:
         value = os.environ.get(name)
-        if value:
+        if value and name not in in_config:
             lines.append(f"export {name}={shlex.quote(value)}")
     return lines
 
@@ -462,6 +466,11 @@ finish() {{
     tmux set-option -w -t "$win" @agent_state done 2>/dev/null
   fi
   tmux refresh-client -S 2>/dev/null
+  # No shell until someone asks: its first prompt can take a minute to come
+  # and would read as a person stepping in. Silence until then means nobody
+  # did (retention.py), and an untouched window costs no login shell.
+  printf '\\n[merlin] Finished with exit %s. Press Enter for a shell.\\n' "$code"
+  read -r _ || true
   exec "${{SHELL:-/bin/bash}}" -l
 }}
 

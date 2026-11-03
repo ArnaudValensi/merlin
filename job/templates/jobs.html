@@ -2077,7 +2077,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Populate relative times
     document.querySelectorAll('.job-next-run').forEach(el => {
         const iso = el.dataset.iso;
-        if (iso) el.textContent = timeAgo(iso).replace(' ago', '').replace('just now', 'now');
+        if (iso) el.textContent = timeUntil(iso);
     });
     document.querySelectorAll('.job-last-run').forEach(el => {
         const iso = el.dataset.iso;

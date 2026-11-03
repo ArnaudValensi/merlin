@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,25 +87,70 @@ def hooks_missing(agent: Agent) -> bool:
     return not state_hooks_present(agent.hooks)
 
 
+def _spellings(path: Path) -> list[str]:
+    """A directory as Codex looks it up: canonical, then as written."""
+    canonical = os.path.realpath(path)
+    written = os.path.abspath(path)
+    return [canonical] if canonical == written else [canonical, written]
+
+
+def _git_project_roots(cwd: Path, markers: list[str]) -> list[Path]:
+    """The project root (nearest ancestor holding a marker, ``.git`` by
+    default) and, from a linked worktree, the repository it belongs to."""
+    start = Path(os.path.realpath(cwd))
+    for directory in (start, *start.parents):
+        if any((directory / marker).exists() for marker in markers):
+            roots = [directory]
+            if (directory / ".git").is_file():
+                common = _git_common_dir(directory)
+                if common is not None and common.name == ".git":
+                    roots.append(common.parent)
+            return roots
+    return []
+
+
+def _git_common_dir(directory: Path) -> Path | None:
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(directory), "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
+    return (directory / out.stdout.strip()).resolve()
+
+
 def codex_distrusts(cwd: str) -> bool:
-    """True when Codex's config does not trust ``cwd``: the nearest entry of
-    its ``[projects]`` table, from the directory up, is not ``trusted``, or
-    there is none. Codex runs no hook in such a directory. A config that
-    cannot be read proves nothing, so it does not count as distrust."""
+    """True when Codex would not trust ``cwd``, and so run no hook there. Its
+    rule (``codex-rs/config/src/loader``, 0.165): the first entry of its
+    ``[projects]`` table for the directory, then its project root, then its
+    repository root, each canonical then as written. No other ancestor counts:
+    a trusted parent does not cover a directory below it. A config that cannot
+    be read proves nothing, so it does not count as distrust."""
     home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
     try:
-        projects = tomllib.loads((home / "config.toml").read_text()).get("projects")
+        config = tomllib.loads((home / "config.toml").read_text())
     except FileNotFoundError:
         return True
     except (OSError, ValueError):
         return False
+    projects = config.get("projects")
     if not isinstance(projects, dict):
         return True
-    path = Path(os.path.realpath(cwd))
-    for directory in (path, *path.parents):
-        entry = projects.get(str(directory))
-        if isinstance(entry, dict) and "trust_level" in entry:
-            return entry["trust_level"] != "trusted"
+    markers = config.get("project_root_markers", [".git"])
+    if not isinstance(markers, list):
+        markers = [".git"]
+    path = Path(cwd)
+    for directory in (path, *_git_project_roots(path, [str(m) for m in markers])):
+        for key in _spellings(directory):
+            entry = projects.get(key)
+            if isinstance(entry, dict) and "trust_level" in entry:
+                return entry["trust_level"] != "trusted"
     return True
 
 

@@ -176,13 +176,18 @@ def cmd_add(args) -> dict:
 
     # Build job
     command = getattr(args, "shell_command", None)
+    if command is not None and not command.strip():
+        return {
+            "ok": False,
+            "error": "--command was given but empty (an unset shell variable?).",
+        }
     job: dict = {
         "description": args.description or job_id,
         "enabled": True,
         "report_mode": args.report_mode,
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
     }
-    if command:
+    if command is not None:
         job.update(type="command", command=command)
     else:
         job.update(agent=getattr(args, "agent", DEFAULT_AGENT), prompt=args.prompt)
@@ -211,7 +216,7 @@ def cmd_add(args) -> dict:
     # Save job
     path = save_job(job_id, job)
     # The warning goes to stderr so stdout stays one JSON document.
-    if not command:
+    if command is None:
         print(f"Warning: {BYPASS_WARNING}", file=sys.stderr)
 
     result = {

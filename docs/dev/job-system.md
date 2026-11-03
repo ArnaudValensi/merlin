@@ -219,8 +219,8 @@ job writes to the window:
 
 When the job ends, `run.sh` writes `exit` (unless the supervisor already
 did), stamps `@job_exit` (unless already set) and `@agent_state done` if the
-state is not already `done`, and execs an interactive login shell so the
-window stays readable.
+state is not already `done`, and waits for Enter before it execs an interactive
+login shell: the window stays readable, and silent until someone steps in.
 
 ### Knowing it finished (`job/supervisor.py`)
 
@@ -322,7 +322,7 @@ removes their run directories (`should_close` is the pure rule):
   from `list-clients`) is never closed, and when the client list could not
   be read no window is closed at all;
 - finished with exit 0 and no pane activity since (`window_activity` within
-  `ACTIVITY_SLACK`, 120 s, of `@job_finished`: the finish's own output, including the first prompt of the shell `run.sh` execs into): closed
+  `ACTIVITY_SLACK`, 5 s, of `@job_finished`: the finish's own output): closed
   after 1 hour, or at the next run of the same job (a newer `@job_started` or
   run directory of that job), whichever comes first;
 - failed, or activity after the finish (someone stepped in): closed 24 hours

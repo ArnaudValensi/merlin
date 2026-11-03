@@ -794,8 +794,7 @@ class TestShouldClose:
         )
 
     def test_the_finish_own_output_is_not_stepping_in(self):
-        # The login shell's first prompt, measured at 59 s on a loaded machine.
-        row = _row(window_activity="1059")
+        row = _row(window_activity="1004")  # within the slack
         assert retention.should_close(
             row, now=1000 + 3600, displayed=set(), newer_run_started=None
         )
@@ -1195,7 +1194,7 @@ def test_activity_after_the_sweep_keeps_the_window(iso):
     assert retention.tick()[0]["finalized"] == 1
     # The finish is a while behind us: anything typed now is a step-in.
     assert sweep.set_window_option(
-        run.target, "@job_finished", str(int(time.time()) - 300)
+        run.target, "@job_finished", str(int(time.time()) - 60)
     )
     later = time.time() + 3601
     real = sweep.displayed_windows_checked
@@ -1225,29 +1224,86 @@ def test_activity_after_the_sweep_keeps_the_window(iso):
 
 
 class TestCodexTrust:
-    def _config(self, monkeypatch, tmp_path, text):
-        monkeypatch.setenv("CODEX_HOME", str(tmp_path))
-        (tmp_path / "config.toml").write_text(text)
+    """Codex's own rule (rust-v0.165.0, codex-rs/config/src/loader/mod.rs)."""
 
-    def test_nearest_entry_decides(self, monkeypatch, tmp_path):
+    def _config(self, monkeypatch, tmp_path, *entries, extra=""):
+        home = tmp_path / "codex-home"
+        home.mkdir()
+        monkeypatch.setenv("CODEX_HOME", str(home))
+        tables = "".join(
+            f'[projects."{path}"]\ntrust_level = "{level}"\n' for path, level in entries
+        )
+        (home / "config.toml").write_text(extra + tables)
+
+    def test_a_trusted_parent_does_not_cover_what_is_below(self, monkeypatch, tmp_path):
         from job.agents import codex_distrusts
 
-        top = tmp_path / "work"
-        (top / "a" / "b").mkdir(parents=True)
-        (top / "no").mkdir()
+        (tmp_path / "work" / "a").mkdir(parents=True)
+        self._config(monkeypatch, tmp_path, (tmp_path / "work", "trusted"))
+        assert codex_distrusts(str(tmp_path / "work")) is False
+        assert codex_distrusts(str(tmp_path / "work" / "a")) is True
+
+    def test_a_subdirectory_of_a_trusted_repository_is_trusted(
+        self, monkeypatch, tmp_path
+    ):
+        from job.agents import codex_distrusts
+
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        (repo / "src" / "deep").mkdir(parents=True)
+        self._config(monkeypatch, tmp_path, (repo, "trusted"))
+        assert codex_distrusts(str(repo / "src" / "deep")) is False
+
+    def test_the_directory_entry_decides_before_the_repository(
+        self, monkeypatch, tmp_path
+    ):
+        from job.agents import codex_distrusts
+
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        (repo / "no").mkdir()
+        self._config(
+            monkeypatch, tmp_path, (repo, "trusted"), (repo / "no", "untrusted")
+        )
+        assert codex_distrusts(str(repo / "no")) is True
+
+    def test_a_linked_worktree_follows_its_repository(self, monkeypatch, tmp_path):
+        from job.agents import codex_distrusts
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-C", str(repo)]
+        subprocess.run([*git, "init", "-q"], check=True)
+        subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+        worktree = tmp_path / "linked"
+        subprocess.run([*git, "worktree", "add", "-q", str(worktree)], check=True)
+        self._config(monkeypatch, tmp_path, (repo, "trusted"))
+        assert codex_distrusts(str(worktree)) is False
+
+    def test_a_symlink_is_trusted_under_either_spelling(self, monkeypatch, tmp_path):
+        from job.agents import codex_distrusts
+
+        real = tmp_path / "real"
+        real.mkdir()
+        link = tmp_path / "link"
+        link.symlink_to(real)
+        self._config(monkeypatch, tmp_path, (link, "trusted"))
+        assert codex_distrusts(str(link)) is False
+        assert codex_distrusts(str(real)) is True
+
+    def test_custom_root_markers(self, monkeypatch, tmp_path):
+        from job.agents import codex_distrusts
+
+        top = tmp_path / "top"
+        (top / "sub").mkdir(parents=True)
+        (top / ".marker").write_text("")
         self._config(
             monkeypatch,
             tmp_path,
-            f'''[projects."{top}"]
-trust_level = "trusted"
-[projects."{top}/no"]
-trust_level = "untrusted"
-''',
+            (top, "trusted"),
+            extra='project_root_markers = [".marker"]\n',
         )
-        assert codex_distrusts(str(top)) is False
-        assert codex_distrusts(str(top / "a" / "b")) is False
-        assert codex_distrusts(str(top / "no")) is True
-        assert codex_distrusts(str(tmp_path)) is True
+        assert codex_distrusts(str(top / "sub")) is False
 
     def test_no_config_is_no_trust(self, monkeypatch, tmp_path):
         from job.agents import codex_distrusts
@@ -1258,7 +1314,8 @@ trust_level = "untrusted"
     def test_an_unreadable_config_proves_nothing(self, monkeypatch, tmp_path):
         from job.agents import codex_distrusts
 
-        self._config(monkeypatch, tmp_path, "not = [toml")
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+        (tmp_path / "config.toml").write_text("not = [toml")
         assert codex_distrusts(str(tmp_path)) is False
 
     def test_a_run_in_an_untrusted_directory_is_refused_up_front(
@@ -1276,3 +1333,56 @@ trust_level = "untrusted"
         # Claude Code asks in its window instead, and the form knows no cwd.
         assert agents.launch_problem(agents.AGENTS["claude"], str(tmp_path)) is None
         assert agents.launch_problem(agents.AGENTS["codex"]) is None
+
+
+def test_a_finished_command_window_stays_silent_until_someone_asks(iso):
+    """No shell starts by itself: its first prompt could come a minute later
+    and read as someone stepping in. Enter gets one, and that is activity."""
+    run = _launch_unsupervised("quiet", {"type": "command", "command": "exit 0"})
+    assert wait_until(lambda: runs.read_exit(run.dir) is not None, timeout=10)
+
+    def pane() -> str:
+        out = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", run.target],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return out.stdout
+
+    assert wait_until(lambda: "Press Enter for a shell" in pane(), timeout=10)
+    # Typed before Enter, this is only the line run.sh reads and drops.
+    sweep.send_literal(run.target, "echo dropped-$((1+1))")
+    sweep.send_enter(run.target)
+    assert wait_until(lambda: "dropped-2" not in pane(), timeout=2)
+
+    def shell_answers() -> bool:
+        sweep.send_literal(run.target, "echo shell-$((1+1))")
+        sweep.send_enter(run.target)
+        time.sleep(0.5)
+        return "shell-2" in pane()
+
+    assert wait_until(shell_answers, timeout=30)
+
+
+def test_a_job_script_leaves_config_settings_to_the_file(monkeypatch, tmp_path):
+    """A copy exported here would stay in the shell the window keeps."""
+    monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+    (tmp_path / "config.env").write_text("MERLIN_FEATURES=timeline\n")
+    monkeypatch.setenv("MERLIN_FEATURES", "timeline")
+    monkeypatch.setenv("MERLIN_SAAS_API", "http://portal")
+    run = runs.Run(
+        run_id="r",
+        job_id="j",
+        job={},
+        trigger="manual",
+        type="command",
+        agent=None,
+        cwd=str(tmp_path),
+        started=0.0,
+        deadline=0.0,
+        report_mode="always",
+    )
+    lines = runs._exports(run)
+    assert not any("MERLIN_FEATURES" in line for line in lines)
+    assert any("MERLIN_SAAS_API" in line for line in lines)

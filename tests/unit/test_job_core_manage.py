@@ -153,6 +153,17 @@ class TestCmdAdd:
         assert "prompt" not in job and "agent" not in job
         assert "bypassed" not in capsys.readouterr().err
 
+    @pytest.mark.parametrize("empty", ["", "   "])
+    def test_add_refuses_an_empty_command(self, temp_jobs_dir, empty):
+        """`--command "$SCRIPT"` with the variable unset is a mistake, not an
+        agent job with no prompt."""
+        from job.manage import cmd_add, load_job
+
+        result = cmd_add(self._add_args(shell_command=empty))
+        assert result["ok"] is False
+        assert "--command" in result["error"]
+        assert load_job("cli-job") is None
+
     def test_add_with_a_working_dir(self, temp_jobs_dir, tmp_path):
         from job.manage import cmd_add, load_job
 

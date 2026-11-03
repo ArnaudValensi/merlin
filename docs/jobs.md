@@ -170,8 +170,8 @@ land in files (the notes, the knowledge base, a report in the repo).
   window, with the same pills), or follow the **open** link on the card,
   in the Logs tab, or in the notification. An agent job is the real agent:
   answer its question, give it a follow-up, or talk to it by voice. A
-  command job's window shows the command's output and then drops you in a
-  shell in the job's directory.
+  command job's window shows the command's output and how it ended. Press
+  Enter there for a shell in the job's directory.
 - **The run ends, the window stays.** A run is finished when the agent
   finishes its turn (or when you take over and it goes idle), when a command
   exits, when a deadline passes (1 hour for a command, 6 hours for an agent:
