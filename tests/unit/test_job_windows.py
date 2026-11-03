@@ -315,7 +315,8 @@ def test_command_with_a_failing_exit_code(iso):
     assert "out" in result.result and "err" in result.result
     row = windows()[0]
     assert row["@job_exit"] == "3"
-    assert row["@agent_state"] == "done"
+    # run.sh stamps the state just after it publishes the exit the run ends on.
+    assert wait_until(lambda: windows()[0]["@agent_state"] == "done", timeout=5)
     assert state.get_history("fail")[0]["exit_code"] == 3
     assert state.get_history("fail")[0]["agent"] is None
     assert runs.read_output(tmp / "job-runs" / result.run_id) == "out\nerr\n"
@@ -764,7 +765,7 @@ class TestShouldClose:
             _row(), now=1000 + 3599, displayed=set(), newer_run_started=None
         )
         assert retention.should_close(
-            _row(), now=1000 + 86400, displayed=set(), newer_run_started=None
+            _row(), now=1004 + 86400, displayed=set(), newer_run_started=None
         )
 
     def test_success_closes_at_the_next_run_of_the_job(self):
@@ -784,10 +785,18 @@ class TestShouldClose:
             row, now=2000 + 86400, displayed=set(), newer_run_started=None
         )
 
-    def test_stepping_in_keeps_a_success_for_a_day(self):
-        row = _row(window_activity="1500")  # someone typed after the finish
+    def test_a_repaint_after_the_finish_changes_nothing(self):
+        """Measured on real agents: 8 to 22 s of output after the turn. Read as
+        someone there, every run of an hourly agent job would stay all day."""
+        row = _row(window_activity="1022")
+        assert retention.should_close(
+            row, now=1061, displayed=set(), newer_run_started=1060
+        )
+
+    def test_the_day_counts_from_the_last_activity(self):
+        row = _row(window_activity="1500")
         assert not retention.should_close(
-            row, now=1000 + 3600, displayed=set(), newer_run_started=1050
+            row, now=1000 + 86400, displayed=set(), newer_run_started=None
         )
         assert retention.should_close(
             row, now=1500 + 86400, displayed=set(), newer_run_started=None
@@ -811,19 +820,13 @@ class TestShouldClose:
     def test_a_nights_run_is_still_there_in_the_morning(self):
         """An untouched success waits for the next run, a day at most."""
         row = _row()
-        for now, closed in ((1000 + 6 * 3600, False), (1000 + 86400, True)):
+        for now, closed in ((1000 + 6 * 3600, False), (1004 + 86400, True)):
             assert (
                 retention.should_close(
                     row, now=now, displayed=set(), newer_run_started=None
                 )
                 is closed
             )
-
-    def test_the_finish_own_output_is_not_stepping_in(self):
-        row = _row(window_activity="1004")  # within the slack
-        assert retention.should_close(
-            row, now=1000 + 86400, displayed=set(), newer_run_started=None
-        )
 
     def test_unfinished_window_is_kept(self):
         row = _row(**{"@job_finished": "", "@job_exit": ""})

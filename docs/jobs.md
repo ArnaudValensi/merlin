@@ -182,8 +182,8 @@ land in files (the notes, the knowledge base, a report in the repo).
   underneath it goes on in its window; the next scheduler tick picks it up
   again and the job's next trigger joins it instead of starting a second
   one.
-- **Windows are tidied up.** A run that succeeded, untouched since, closes
-  when the job runs again or after a day, whichever comes first, so a night's
+- **Windows are tidied up.** A run that succeeded closes when the job runs
+  again or after a day, whichever comes first, so a night's
   run is still there in the morning. A run that failed stays a day after its
   last activity. A window someone is looking at is never closed. With the
   window goes its private run directory; the run log stays.

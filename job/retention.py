@@ -29,10 +29,9 @@ removes their run directories:
   prompt, a prompt after the run's first, Esc on it), or kept by its job's choice
   (``@job_keep_window``), is theirs: never closed, and the workspace snapshot
   brings it back after a reboot;
-- finished with exit 0 and no pane activity since: closed at the next run of
-  the same job, or after ``WINDOW_TTL`` (24 hours), whichever comes first;
-- failed, or activity after the finish with no marker (maybe someone, maybe
-  a late repaint): closed ``WINDOW_TTL`` after the last activity;
+- finished with exit 0: closed at the next run of the same job, or
+  ``WINDOW_TTL`` (24 hours) after its last activity, whichever comes first;
+- failed: closed ``WINDOW_TTL`` after its last activity;
 - closing never touches a window without ``@job_run``, nor any other
   session, and the window is read again right before the kill: it must
   still carry the same ``@job_run`` and still be shown by nobody.
@@ -58,12 +57,6 @@ logger = logging.getLogger("merlin.job")
 # Long enough to find a night's run in the morning; an idle agent holds a few
 # hundred MB, so a rare job's window does not stay for its whole period.
 WINDOW_TTL = 86400.0
-# The finish itself writes to the pane (the agent's last render, run.sh's
-# closing line): activity within this many seconds of the finish is the run's
-# own, not a human's. run.sh starts no shell until someone presses Enter, so
-# nothing else writes there unless a person does, and that is stamped too
-# (``@job_stepped_in``).
-ACTIVITY_SLACK = 5.0
 # A directory without a meta.json this old was abandoned mid-creation.
 STRAY_TTL = 3600.0
 
@@ -233,15 +226,18 @@ def should_close(
     activity_s = row.get("window_activity", "")
     activity = float(activity_s) if activity_s.isdigit() else 0.0
     if row.get("@job_stepped_in") or row.get("@job_keep_window"):
-        return False  # it is someone's now, whatever the output timing says
-    active_since = activity > finished + ACTIVITY_SLACK
-    succeeded = row.get("@job_exit", "") == "0"
-    if succeeded and not active_since:
-        if now - finished >= WINDOW_TTL:
-            return True
-        return newer_run_started is not None and newer_run_started > finished
+        return False  # it is someone's now
     last = max(activity, finished)
-    return now - last >= WINDOW_TTL
+    if now - last >= WINDOW_TTL:
+        return True
+    # Output alone says nothing here: an agent repaints for some twenty seconds
+    # after its turn, so reading that as someone there would keep every run's
+    # window, and its agent, for the whole day.
+    return (
+        row.get("@job_exit", "") == "0"
+        and newer_run_started is not None
+        and newer_run_started > finished
+    )
 
 
 def close_windows(

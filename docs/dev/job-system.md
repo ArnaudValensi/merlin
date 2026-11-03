@@ -330,13 +330,12 @@ removes their run directories (`should_close` is the pure rule):
   run, and the restore skips a run still alive in tmux. Only these explicit
   signs count: activity can be a late repaint and a tool hook can fire late,
   and either would leave an idle agent in memory for good;
-- finished with exit 0 and no pane activity since (`window_activity` within
-  `ACTIVITY_SLACK`, 5 s, of `@job_finished`: the finish's own output): closed
-  at the next run of the same job (a newer `@job_started` or run directory of
-  that job), or after 24 hours (`WINDOW_TTL`), whichever comes first. An idle
-  agent holds a few hundred MB, which is what bounds it;
-- failed, or activity after the finish with no marker: closed 24 hours after
-  the last activity;
+- finished with exit 0: closed at the next run of the same job (a newer
+  `@job_started` or run directory of that job), or 24 hours (`WINDOW_TTL`) after
+  its last activity, whichever comes first. An idle agent holds a few hundred
+  MB, which is what bounds it. Output is not a sign of anyone: an agent repaints
+  for some twenty seconds after its turn;
+- failed: closed 24 hours after the last activity;
 - closing never touches a window without `@job_run`, nor any other
   session, and the window is read again right before the kill: it must still
   carry the same `@job_run`, its retention fields read now must still say
