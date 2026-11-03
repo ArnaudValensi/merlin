@@ -12,22 +12,12 @@ const API = {
 };
 
 // Time formatting
-function formatTime(isoString) {
-    const d = new Date(isoString);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
 function formatDateTime(isoString) {
     const d = new Date(isoString);
     return d.toLocaleString([], {
         month: 'short', day: 'numeric',
         hour: '2-digit', minute: '2-digit'
     });
-}
-
-function formatDateTimeFull(isoString) {
-    const d = new Date(isoString);
-    return d.toLocaleString();
 }
 
 function utcString(isoString) {
@@ -40,6 +30,14 @@ function timeAgo(isoString) {
     if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
     if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
     return Math.floor(seconds / 86400) + 'd ago';
+}
+
+function timeUntil(isoString) {
+    const seconds = (new Date(isoString).getTime() - Date.now()) / 1000;
+    if (seconds < 60) return 'now';
+    if (seconds < 3600) return 'in ' + Math.floor(seconds / 60) + 'm';
+    if (seconds < 86400) return 'in ' + Math.floor(seconds / 3600) + 'h';
+    return 'in ' + Math.floor(seconds / 86400) + 'd';
 }
 
 function formatDuration(seconds) {
@@ -131,21 +129,6 @@ async function checkVersion() {
         el.textContent = 'v' + data.current;
         el.title = 'Merlin v' + data.current;
     }
-}
-
-// Chart.js defaults for dark theme
-function configureChartDefaults() {
-    if (typeof Chart === 'undefined') return;
-    Chart.defaults.color = '#8b8fa3';
-    Chart.defaults.borderColor = '#2e3347';
-    Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
-}
-
-// Navigation helper
-function navigateTo(page, params = {}) {
-    const url = new URL(page, window.location.origin);
-    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-    window.location.href = url.toString();
 }
 
 // Environment switcher (SaaS mode)

@@ -5,7 +5,7 @@ Launch on any Linux machine to get a web-based development environment.
 Served locally; remote access comes from Merlin Cloud (SaaS mode) or a
 tunnel/reverse proxy you bring yourself.
 
-Core modules: File browser, Terminal, Commit browser, Notes editor.
+Core modules: File browser, Terminal, Commit browser, Jobs.
 Extensions (built-in or installed) add pages to the sidebar.
 
 Usage:
@@ -139,7 +139,6 @@ configure_auth(DASHBOARD_PASS)
 ICON_FILES = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>'
 ICON_TERMINAL = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>'
 ICON_COMMITS = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><line x1="12" y1="3" x2="12" y2="9"/><line x1="12" y1="15" x2="12" y2="21"/></svg>'
-ICON_NOTES = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><rect x="6" y="2" width="16" height="20" rx="2"/><path d="M10 8h8"/><path d="M10 12h8"/><path d="M10 16h8"/></svg>'
 ICON_EXTENSIONS = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.315 8.685a.98.98 0 0 1 .837-.276c.47.07.802.48.968.925a2.501 2.501 0 1 0 3.214-3.214c-.446-.166-.855-.497-.925-.968a.979.979 0 0 1 .276-.837l1.61-1.61a2.404 2.404 0 0 1 1.705-.707c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>'
 
 ICON_JOBS = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'
@@ -1016,6 +1015,8 @@ def _build_extensions_list() -> list[dict]:
         items = getattr(info.module, "NAV_ITEMS", None)
         if items:
             nav_icon = items[0].get("icon")
+        else:
+            nav_icon = info.meta.get("icon")
 
         meta = dict(info.meta)
         # Enrich config_fields with current values from config.env
@@ -1242,6 +1243,19 @@ _extensions_with_errors: int = 0
 _ext_state = _load_extensions_state()
 
 
+def _builtin_card(tier: str, module_loader) -> dict:
+    """What a disabled built-in shows on the Extensions page, the card someone
+    decides from. Reading it mounts nothing. Installed code does not run until
+    it is enabled, so an installed extension gets no card."""
+    if tier != "built-in":
+        return {}
+    try:
+        return dict(getattr(module_loader(), "EXTENSION_META", {}))
+    except Exception:
+        logger.warning("Could not read a disabled built-in's card", exc_info=True)
+        return {}
+
+
 def _load_extension(
     ext_id: str, tier: str, module_loader, static_name: str | None = None
 ) -> None:
@@ -1257,6 +1271,7 @@ def _load_extension(
             enabled=False,
             loaded=False,
             error=None,
+            meta=_builtin_card(tier, module_loader),
         )
         logger.info(f"Extension disabled: {ext_id}")
         return
@@ -1698,6 +1713,7 @@ def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:
         # secrets: new windows must not inherit them.
         from terminal.tmux import scrub_server_env
 
+        paths.save_server_secrets()
         scrubbed = await asyncio.to_thread(scrub_server_env)
         if scrubbed:
             logger.info("Tmux server environment cleaned of %d names", len(scrubbed))

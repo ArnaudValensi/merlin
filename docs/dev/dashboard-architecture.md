@@ -8,7 +8,6 @@ Reference for maintaining and extending the Merlin monitoring dashboard.
 |-------|------|-------|
 | Backend | FastAPI | Async, one event loop for the pages, the scheduler and the watcher |
 | Templates | Jinja2 | Server-side rendered, extends `base.html` |
-| Charts | Chart.js 4 + chartjs-adapter-date-fns + chartjs-plugin-zoom | CDN |
 | Syntax highlighting | highlight.js 11 | CDN, `github-dark-dimmed` theme |
 | Auth | Cookie-based (HMAC-signed) | See [`auth-and-tunnel.md`](auth-and-tunnel.md) |
 | Data | JSONL flat file | `logs/events.jsonl`, append-only |
@@ -71,7 +70,7 @@ Dark theme using CSS custom properties in `:root`:
 ```css
 --bg-primary: #0f1117      /* page background */
 --bg-secondary: #1a1d27    /* sidebar, detail sections */
---bg-card: #222633          /* cards, chart containers */
+--bg-card: #222633          /* cards */
 --bg-hover: #2a2e3d         /* row hover */
 --border: #2e3347           /* borders, grid lines */
 --text-primary: #e4e6ed     /* headings, main text */
@@ -98,17 +97,13 @@ Single breakpoint at `768px`:
 | Class | Usage |
 |-------|-------|
 | `.card` | Container with bg-card, border, border-radius |
-| `.card-grid` | CSS grid for status cards (auto-fill, minmax 200px) |
-| `.feed-item` | Row in activity feed |
-| `.feed-badge` | Colored label (`.badge-invocation`, `.badge-bot_event`, `.badge-job_dispatch`, `.badge-error`, `.badge-success`) |
+| `.feed-badge` | Colored label (`.badge-success`, `.badge-error`) |
 | `.log-table` | Full-width table for logs |
 | `.row-detail` | Hidden expandable row (toggle `.open` to show) |
 | `.detail-section` | Styled block inside expandable row (blue left border) |
 | `.tabs` / `.tab` | Tab bar with `.active` state |
 | `.filters` | Flexbox row for filter controls |
 | `.empty-state` | Centered icon + message when no data |
-| `.chart-container` | Wrapper for Chart.js canvases |
-| `.time-range` | Button group for time range selector |
 
 ## Design System
 
@@ -229,14 +224,7 @@ Buttons that only appear in certain modes (edit vs view) are toggled via inline 
 ### Modules in `dashboard.js`
 
 - **`API.get(url)`** — fetch wrapper, auto-handles 401 (reloads page for re-auth)
-- **`Refresh`** — mtime-based auto-refresh. Call `.register(cb)` then `.start(ms)`
-- **Time formatting** — `formatTime`, `formatDateTime`, `timeAgo`, `formatDuration`, `utcString` — all render in browser local timezone, UTC on hover via `title` attribute
-- **`typeBadge(type)`** — returns badge HTML for event type
-- **`statusBadge(event)`** — returns OK/Error badge
-- **`eventSummary(event)`** — one-line summary string per event type
-- **`updateBotStatus()`** — green/red dot in sidebar header
-- **`configureChartDefaults()`** — sets Chart.js colors for dark theme
-- **`navigateTo(page, params)`** — cross-page linking with query params
+- **Time formatting** — `formatDateTime`, `timeUntil`, `timeAgo`, `formatDuration`, `utcString` — all render in browser local timezone, UTC on hover via `title` attribute
 
 ### Per-page JS
 
@@ -244,20 +232,11 @@ Each template has a `{% block scripts %}` with page-specific logic. Pattern:
 
 ```javascript
 document.addEventListener('DOMContentLoaded', () => {
-    loadData();                    // initial fetch
-    Refresh.register(loadData);    // re-fetch on data change
-    Refresh.start(5000);           // poll every 5s
+    loadData();                       // initial fetch
+    setInterval(loadData, 5000);      // poll every 5s
 });
 ```
 
-### Chart.js Patterns
-
-- Call `configureChartDefaults()` before creating charts
-- Use `type: 'time'` axis with `chartjs-adapter-date-fns` for time series
-- Scatter for execution time over time (color by caller type)
-- Bar for per-job breakdown (grouped: avg + p95)
-- Doughnut for success rate
-- Enable zoom plugin for scatter: `zoom: { zoom: { wheel: { enabled: true } }, pan: { enabled: true } }`
 
 ## API Endpoints
 

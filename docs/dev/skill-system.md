@@ -53,9 +53,9 @@ the **canonical dir** `~/.merlin/skills/<name>`, rebuilt at server startup and
 by `merlin setup` so a disabled extension's skills disappear. Only symlinks are
 managed; a real directory a user placed there is left alone with a warning.
 
-`list_canonical_skills()` reads the canonical dir back (works across
-processes — job runner subprocesses never see the server's in-memory
-registry).
+`list_canonical_skills()` reads the canonical dir back, for what runs outside
+the server and never sees its in-memory registry: the CLI's `merlin skills` and
+the link synchronization.
 
 ## The shims (the user's own agents)
 

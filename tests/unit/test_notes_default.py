@@ -40,6 +40,26 @@ class TestDefault:
         assert "notes" in ext_commands.enabled_extension_source_dirs()
         assert app_mod._resolve_enabled("notes", "built-in", {"notes": True}) is True
 
+    def test_a_disabled_built_in_still_shows_who_it_is(self):
+        """Someone decides from that card: a bare id with no description is no
+        way to offer the extension. Reading it mounts nothing."""
+        card = app_mod._builtin_card("built-in", lambda: __import__("notes"))
+        assert card["name"] == "Notes"
+        assert card["description"]
+        assert card["icon"]
+
+    def test_installed_code_does_not_run_while_disabled(self):
+        def loader():
+            raise AssertionError("imported a disabled installed extension")
+
+        assert app_mod._builtin_card("installed", loader) == {}
+
+    def test_a_broken_built_in_card_stops_nothing(self):
+        def loader():
+            raise ImportError("no")
+
+        assert app_mod._builtin_card("built-in", loader) == {}
+
     def test_the_skill_follows_the_extension(self):
         """merlin-notes ships under notes/skills/, so a skill rebuild
         without the extension carries no notes skill, and one with it does."""

@@ -20,9 +20,11 @@ Usage:
 
 import json
 import logging
+import os
 import shutil
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 
 import paths
 
@@ -70,20 +72,8 @@ def retire_old_logs() -> None:
     transcripts and bot logs go. Each step stands alone, so one that fails is
     retried at the next startup and stops nothing."""
     logs = EVENT_LOG_PATH.parent
-    old = logs / _OLD_EVENT_LOG
     try:
-        if old.exists():
-            kept = [
-                line
-                for line in old.read_text(
-                    encoding="utf-8", errors="replace"
-                ).splitlines(keepends=True)
-                if _event_type(line) not in _OLD_EVENT_TYPES
-            ]
-            with _write_lock, open(EVENT_LOG_PATH, "a", encoding="utf-8") as f:
-                f.writelines(kept)
-            old.unlink()
-            _logger.info("Event log moved to %s", EVENT_LOG_PATH.name)
+        _move_old_event_log(logs / _OLD_EVENT_LOG)
     except OSError as e:
         _logger.warning("Failed to move the old event log: %s", e)
     for name in _OLD_LOG_FILES:
@@ -101,12 +91,43 @@ def retire_old_logs() -> None:
                 _logger.info("Removed the old logs in %s", directory)
 
 
+def _move_old_event_log(old: Path) -> None:
+    """Merge ``old`` into the event log, then remove it. Idempotent: a record
+    already there is not added again, so a crash before the removal, or an
+    older release writing the old file again after a downgrade, loses nothing
+    and doubles nothing. A new file replaces the log whole, so every record
+    keeps its own line whatever the last one of either file looked like."""
+    if not old.exists():
+        return
+    with _write_lock:
+        current = _lines(EVENT_LOG_PATH)
+        seen = set(current)
+        merged = list(current)
+        for line in _lines(old):
+            if line not in seen and _event_type(line) not in _OLD_EVENT_TYPES:
+                seen.add(line)
+                merged.append(line)
+        tmp = EVENT_LOG_PATH.with_name(f".{EVENT_LOG_PATH.name}.tmp")
+        tmp.write_text("".join(f"{line}\n" for line in merged), encoding="utf-8")
+        os.replace(tmp, EVENT_LOG_PATH)
+        old.unlink()
+    _logger.info("Event log moved to %s", EVENT_LOG_PATH.name)
+
+
+def _lines(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return [line for line in text.splitlines() if line.strip()]
+
+
 def _event_type(line: str) -> str | None:
     try:
         event = json.loads(line)
     except ValueError:
         return None
-    return event.get("type") if isinstance(event, dict) else None
+    kind = event.get("type") if isinstance(event, dict) else None
+    return kind if isinstance(kind, str) else None
 
 
 def cleanup_old_logs() -> None:
@@ -130,13 +151,13 @@ def cleanup_old_logs() -> None:
                         continue
                     try:
                         event = json.loads(line)
-                        ts = event.get("timestamp", "")
-                        if ts >= cutoff_str:
+                        ts = event.get("timestamp")
+                        if not ts or ts >= cutoff_str:
                             kept.append(line)
                         else:
                             removed += 1
-                    except (json.JSONDecodeError, KeyError):
-                        kept.append(line)  # keep unparseable lines
+                    except (ValueError, AttributeError, TypeError):
+                        kept.append(line)  # keep what cannot be dated
 
                 if removed:
                     EVENT_LOG_PATH.write_text(

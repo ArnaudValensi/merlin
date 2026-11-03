@@ -20,7 +20,7 @@ All notable user-facing changes to Merlin are documented in this file.
 ### Fixed
 - **Passwords and tokens no longer reach your terminals**: A tmux server started by Merlin inherited its dashboard password and Merlin Cloud token, and handed them to every shell, agent and job. New windows no longer get them, and Merlin cleans a running server at startup. A shell already open keeps its copy until you close it.
 - **`merlin restart` applies `config.env`**: Restarted from a tmux window, Merlin used to read that window's old copy of a setting instead of the file. A changed `MERLIN_FEATURES` could be ignored, and the Timeline lose its hooks.
-- **A succeeded command job's window closes after an hour**: A slow first shell prompt used to read as someone stepping in, which kept the window a day.
+- **A succeeded command job's window closes after an hour**: A finished window now waits for Enter before it starts a shell, because that shell's slow first prompt used to read as someone stepping in, which kept the window a day.
 
 ### Added
 - **Get your workspace back after a reboot or a power cut**: Merlin now keeps a snapshot of your tmux sessions, saved every 15 seconds when something changed. After the machine restarts, the first page you open offers to restore them: every session and window comes back with its layout and directories, and every Claude Code and Codex conversation resumes where it was, with its launch options. Other programs come back as a shell in their directory; Merlin never reruns them.

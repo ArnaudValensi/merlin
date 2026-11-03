@@ -91,9 +91,9 @@ Every file in `<notes-dir>/media/` must be claimed by exactly one note's `resour
 | `merlin notes search kb` | List all (title, type, description, tags), or filter with `--keyword`, `--tag`, `--type`. |
 | `merlin notes search tags` | Tag vocabulary with counts and files. |
 
-### Index injection
+### Reading the index
 
-`lib/agent_context.py` exposes a `kb_index` layer: `kb/index.md` with its frontmatter stripped, included in both the `managed-assistant` and `headless-worker` recipes. Every agent session starts knowing the full KB catalog; retrieval is reading comprehension over the index followed by targeted `cat`s, not blind keyword search. At 75 notes the index costs ~4k tokens per session. If the corpus grows past the point where this is comfortable (several hundred notes), the planned evolution is narrowing layers (type/tag filters first, embeddings as an advisory shortlist last); the epic doc records that design.
+Nothing is injected: an agent running the `merlin-notes` skill starts by reading `kb/index.md` (`notes/skills/merlin-notes/SKILL.md`), then opens the notes it points to. Retrieval is reading comprehension over the index followed by targeted `cat`s, not blind keyword search.
 
 ### Maintenance loop
 
@@ -113,4 +113,4 @@ One file per day; entries are `## HH:MM — <title>` blocks. Written directly by
 
 ## Tests
 
-`tests/unit/test_kb_add.py` (add/index/check), `test_notes_search.py`, `test_notes_e2e.py` (cross-command flows), `test_agent_context.py` (index injection), `test_ext_commands.py` (CLI dispatch end to end).
+`tests/unit/test_kb_add.py` (add/index/check), `test_notes_search.py`, `test_notes_e2e.py` (cross-command flows), `test_ext_commands.py` (CLI dispatch end to end).

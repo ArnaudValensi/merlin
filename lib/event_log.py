@@ -124,9 +124,9 @@ def read_events(
 
     Returns:
         A list of event models (subclasses of :class:`BaseEvent`). Each line is
-        validated against the model for its ``type``; ``invocation`` lines come
-        back as :class:`InvocationEvent`, and so on. Unknown types come back as
-        :class:`BaseEvent`.
+        validated against the model for its ``type``; ``job_runner_crash`` lines
+        come back as :class:`JobRunnerCrashEvent`, and so on. Unknown types come
+        back as :class:`BaseEvent`.
 
     Resilience:
         Missing, empty, or unreadable file returns ``[]`` (a transient I/O
@@ -138,7 +138,7 @@ def read_events(
     if not EVENT_LOG_PATH.exists():
         return []
 
-    # Engine timestamps are timezone-aware; coerce naive bounds to UTC so a
+    # Event timestamps are timezone-aware; coerce naive bounds to UTC so a
     # naive since/until never raises TypeError when compared against them.
     if since is not None and since.tzinfo is None:
         since = since.replace(tzinfo=timezone.utc)

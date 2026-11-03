@@ -27,7 +27,6 @@ Only `app_dir()` differs between modes. User data always lives in `~/.merlin/`.
 | `app_dir()` | Repo root (where paths.py lives) | `~/.merlin/current/` |
 | `data_dir()` | `~/.merlin/` | `~/.merlin/` |
 | `config_path()` | `~/.merlin/config.env` | `~/.merlin/config.env` |
-| `bot_config_path()` | `~/.merlin/config.env` | `~/.merlin/config.env` |
 | `notes_dir()` | `~/.merlin/notes/` | `~/.merlin/notes/` |
 | `jobs_dir()` | `~/.merlin/jobs/` | `~/.merlin/jobs/` |
 | `logs_dir()` | `~/.merlin/logs/` | `~/.merlin/logs/` |
@@ -97,7 +96,7 @@ merlin config home                   # Print Merlin home (~/.merlin)
 cat "$(merlin config notes-dir)/kb/topic.md"  # Use in shell commands
 ```
 
-Available keys: `notes-dir`, `skills-user-dir`, `home`, `app-dir`, `data-dir`, `config-path`, `logs-dir`, `sessions-dir`, `jobs-dir`, `extensions-dir`, `version`.
+Available keys: `notes-dir`, `skills-user-dir`, `home`, `app-dir`, `data-dir`, `config-path`, `logs-dir`, `jobs-dir`, `extensions-dir`, `version`.
 
 Read-only — use the Settings/Extensions UI or edit `config.env` directly to change values.
 

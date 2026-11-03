@@ -165,6 +165,56 @@ class TestRetireOldLogs:
         assert (logs / "merlin.log").exists()
         assert (tmp_path / "user.md").read_text() == "mine"
 
+    def test_a_retry_after_a_crash_doubles_nothing(self, monkeypatch, tmp_path):
+        """Crash after the merge, before the removal: the next start sees both."""
+        logs = self._logs(monkeypatch, tmp_path)
+        event = '{"type": "job_dispatch", "timestamp": "t"}\n'
+        (logs / "events.jsonl").write_text(event)
+        (logs / "engine-log.jsonl").write_text(event)
+        sl.retire_old_logs()
+        assert (logs / "events.jsonl").read_text() == event
+        assert not (logs / "engine-log.jsonl").exists()
+
+    def test_a_downgrade_and_back_keeps_both_sides(self, monkeypatch, tmp_path):
+        logs = self._logs(monkeypatch, tmp_path)
+        (logs / "events.jsonl").write_text('{"type": "a"}\n')
+        (logs / "engine-log.jsonl").write_text('{"type": "b"}\n')
+        sl.retire_old_logs()
+        assert (logs / "events.jsonl").read_text() == '{"type": "a"}\n{"type": "b"}\n'
+
+    @pytest.mark.parametrize("kind", ["[]", "{}", "1", "null"])
+    def test_an_odd_type_stops_nothing(self, monkeypatch, tmp_path, kind):
+        logs = self._logs(monkeypatch, tmp_path)
+        (logs / "raw-sessions").mkdir()
+        odd = f'{{"type": {kind}}}'
+        (logs / "engine-log.jsonl").write_text(f'{odd}\n{{"type": "app_started"}}\n')
+        sl.retire_old_logs()
+        assert (logs / "events.jsonl").read_text().splitlines()[0] == odd
+        assert not (logs / "raw-sessions").exists()
+
+    def test_retention_keeps_what_it_cannot_date(self, monkeypatch, tmp_path):
+        logs = self._logs(monkeypatch, tmp_path)
+        lines = ['{"timestamp": []}', "[1]", '{"type": "x"}']
+        old = '{"timestamp": "2020-01-01T00:00:00+00:00"}'
+        (logs / "events.jsonl").write_text("\n".join([*lines, old]) + "\n")
+        sl.cleanup_old_logs()
+        assert (logs / "events.jsonl").read_text().splitlines() == lines
+
+    @pytest.mark.parametrize(
+        "existing",
+        ["", '{"type": "a"}', '{"type": "a"}\n'],
+        ids=["empty", "unterminated", "terminated"],
+    )
+    def test_every_record_keeps_its_own_line(self, monkeypatch, tmp_path, existing):
+        """No final newline on either side must not glue the next record on."""
+        logs = self._logs(monkeypatch, tmp_path)
+        (logs / "events.jsonl").write_text(existing)
+        (logs / "engine-log.jsonl").write_text('{"type": "b"}')
+        sl.retire_old_logs()
+        sl.log_event("c")
+        records = (logs / "events.jsonl").read_text().splitlines()
+        assert [json.loads(r)["type"] for r in records][-2:] == ["b", "c"]
+
     def test_is_quiet_when_nothing_is_left(self, monkeypatch, tmp_path):
         logs = self._logs(monkeypatch, tmp_path)
         sl.retire_old_logs()

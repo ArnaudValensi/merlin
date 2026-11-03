@@ -1,9 +1,9 @@
 """
 Skill registry — agent-agnostic discovery and aggregation of SKILL.md skills.
 
-Merlin owns one canonical skill registry; per-agent adapters surface it in
-each agent's native format (Claude Code plugin, ~/.agents/skills symlinks,
-system-prompt fallback). Sources, in precedence order:
+Merlin owns one canonical skill registry, and links each skill into the
+directories the agents read natively (~/.claude/skills, ~/.agents/skills,
+$CODEX_HOME/skills). Sources, in precedence order:
 
 1. The core repo ``skills/`` directory (shipped operational skills, always
    active)
@@ -297,8 +297,8 @@ def get_registry() -> dict[str, SkillSpec]:
 def list_canonical_skills() -> list[SkillSpec]:
     """Read skills back from the canonical dir (works across processes).
 
-    The in-memory registry only exists in the process that built it; job
-    runner subprocesses read the aggregation instead.
+    The in-memory registry only exists in the process that built it; the CLI
+    and the link synchronization read the aggregation instead.
     """
     return list_source_skills("canonical", canonical_dir())
 

@@ -134,7 +134,7 @@ Old versions are kept in `~/.merlin/versions/` and never auto-deleted, so a bad 
 
 ## Check version, config, and what landed on disk
 
-`merlin version` prints the active version. `merlin config` lists every resolved path (notes dir, logs, jobs, sessions, ...); `merlin config <key>` prints one value for use in shell commands.
+`merlin version` prints the active version. `merlin config` lists every resolved path (notes dir, logs, jobs, ...); `merlin config <key>` prints one value for use in shell commands.
 
 Inside `~/.merlin`:
 
@@ -143,7 +143,7 @@ Inside `~/.merlin`:
 - `notes/`: your agent's knowledge base, once the notes extension is enabled
 - `jobs/`: scheduled job definitions
 - `logs/merlin.log`: the app log (rotating)
-- runtime dirs created as needed: `skills/`, `sessions/`, `data/`, `extensions/`
+- runtime dirs created as needed: `skills/`, `data/`, `extensions/`, `job-runs/`
 
 ## Mobile notes
 
