@@ -28,8 +28,8 @@ removes their run directories:
 - finished with exit 0 and no pane activity since: closed after
   ``SUCCESS_TTL`` (1 hour), or at the next run of the same job, whichever
   comes first;
-- failed, or activity after the finish (someone stepped in): closed
-  ``ACTIVITY_TTL`` (24 hours) after the last activity;
+- failed, or someone stepped in (``@job_stepped_in``, or activity after the
+  finish): closed ``ACTIVITY_TTL`` (24 hours) after the last activity;
 - closing never touches a window without ``@job_run``, nor any other
   session, and the window is read again right before the kill: it must
   still carry the same ``@job_run`` and still be shown by nobody.
@@ -57,7 +57,8 @@ ACTIVITY_TTL = 86400.0
 # The finish itself writes to the pane (the agent's last render, run.sh's
 # closing line): activity within this many seconds of the finish is the run's
 # own, not a human's. run.sh starts no shell until someone presses Enter, so
-# nothing else writes there unless a person does.
+# nothing else writes there unless a person does, and that is stamped too
+# (``@job_stepped_in``).
 ACTIVITY_SLACK = 5.0
 # A directory without a meta.json this old was abandoned mid-creation.
 STRAY_TTL = 3600.0
@@ -68,6 +69,7 @@ _WINDOW_FIELDS = (
     "@job_exit",
     "@job_finished",
     "@job_started",
+    "@job_stepped_in",
     "window_activity",
 )
 
@@ -225,7 +227,11 @@ def should_close(
     finished = float(finished_s)
     activity_s = row.get("window_activity", "")
     activity = float(activity_s) if activity_s.isdigit() else 0.0
-    stepped_in = activity > finished + ACTIVITY_SLACK
+    # The marker says so outright (Enter at run.sh's prompt, a follow-up to the
+    # agent), even when all the output since came within the slack.
+    stepped_in = bool(row.get("@job_stepped_in")) or (
+        activity > finished + ACTIVITY_SLACK
+    )
     succeeded = row.get("@job_exit", "") == "0"
     if succeeded and not stepped_in:
         if now - finished >= SUCCESS_TTL:

@@ -470,7 +470,9 @@ finish() {{
   # and would read as a person stepping in. Silence until then means nobody
   # did (retention.py), and an untouched window costs no login shell.
   printf '\\n[merlin] Finished with exit %s. Press Enter for a shell.\\n' "$code"
-  read -r _ || true
+  if read -r _; then
+    tmux set-option -w -t "$win" @job_stepped_in 1 2>/dev/null
+  fi
   exec "${{SHELL:-/bin/bash}}" -l
 }}
 

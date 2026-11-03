@@ -325,7 +325,9 @@ removes their run directories (`should_close` is the pure rule):
   `ACTIVITY_SLACK`, 5 s, of `@job_finished`: the finish's own output): closed
   after 1 hour, or at the next run of the same job (a newer `@job_started` or
   run directory of that job), whichever comes first;
-- failed, or activity after the finish (someone stepped in): closed 24 hours
+- failed, or someone stepped in (`@job_stepped_in`, stamped by Enter at the
+  closing prompt and by a follow-up to the agent, or activity after the
+  finish): closed 24 hours
   after the last activity;
 - closing never touches a window without `@job_run`, nor any other
   session, and the window is read again right before the kill: it must still

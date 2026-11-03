@@ -94,19 +94,28 @@ def _spellings(path: Path) -> list[str]:
     return [canonical] if canonical == written else [canonical, written]
 
 
-def _git_project_roots(cwd: Path, markers: list[str]) -> list[Path]:
-    """The project root (nearest ancestor holding a marker, ``.git`` by
-    default) and, from a linked worktree, the repository it belongs to."""
-    start = Path(os.path.realpath(cwd))
-    for directory in (start, *start.parents):
+def _project_root(cwd: Path, markers: list[str]) -> Path | None:
+    """The nearest ancestor holding a marker, walking the path as written, so
+    its own spelling can still be looked up."""
+    for directory in (cwd, *cwd.parents):
         if any((directory / marker).exists() for marker in markers):
-            roots = [directory]
-            if (directory / ".git").is_file():
-                common = _git_common_dir(directory)
-                if common is not None and common.name == ".git":
-                    roots.append(common.parent)
-            return roots
-    return []
+            return directory
+    return None
+
+
+def _repository_root(cwd: Path) -> Path | None:
+    """The Git repository, whatever the markers say: the nearest ``.git``, and
+    from a linked worktree the repository it belongs to."""
+    for directory in (cwd, *cwd.parents):
+        dot_git = directory / ".git"
+        if dot_git.is_dir():
+            return directory
+        if dot_git.is_file():
+            common = _git_common_dir(directory)
+            if common is not None and common.name == ".git":
+                return common.parent
+            return directory
+    return None
 
 
 def _git_common_dir(directory: Path) -> Path | None:
@@ -145,8 +154,11 @@ def codex_distrusts(cwd: str) -> bool:
     markers = config.get("project_root_markers", [".git"])
     if not isinstance(markers, list):
         markers = [".git"]
-    path = Path(cwd)
-    for directory in (path, *_git_project_roots(path, [str(m) for m in markers])):
+    path = Path(os.path.abspath(cwd))
+    project_root = _project_root(path, [str(m) for m in markers])
+    for directory in (path, project_root, _repository_root(path)):
+        if directory is None:
+            continue
         for key in _spellings(directory):
             entry = projects.get(key)
             if isinstance(entry, dict) and "trust_level" in entry:

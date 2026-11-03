@@ -28,6 +28,7 @@ import time
 import uuid
 from urllib.parse import urlparse
 
+import paths
 from job import manage, state
 from webhooks import FireResult, WebhookTarget
 
@@ -190,7 +191,11 @@ def _saas_public_host() -> str | None:
     """
     global _whoami_host, _whoami_slug, _whoami_at
 
-    token = os.getenv("MERLIN_SAAS_TOKEN", "").strip()
+    # From a terminal (merlin job url) the token is not in the environment.
+    token = (
+        os.getenv("MERLIN_SAAS_TOKEN")
+        or paths.read_server_secrets().get("MERLIN_SAAS_TOKEN", "")
+    ).strip()
     if not token:
         return None
 

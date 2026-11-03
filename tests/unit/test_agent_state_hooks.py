@@ -166,6 +166,22 @@ class TestStateSetter:
         assert r.returncode == 0
         assert s.state(w["a"]) == "busy"
 
+    def test_a_follow_up_after_a_job_finished_is_stepping_in(self, srv):
+        """busy once the run has finished: someone gave the agent a follow-up.
+        Before the finish, or any other state, it is only the run."""
+        s, w = srv
+        pane = s.pane_of(w["a"])
+        stepped = lambda: s.tmux(  # noqa: E731
+            "show-option", "-wqv", "-t", w["a"], "@job_stepped_in"
+        ).strip()
+        s.run_state("busy", pane=pane)
+        assert stepped() == ""
+        s.tmux("set-option", "-w", "-t", w["a"], "@job_finished", "1000")
+        s.run_state("done", pane=pane)
+        assert stepped() == ""
+        s.run_state("busy", pane=pane)
+        assert stepped() == "1"
+
     def test_sets_done(self, srv):
         s, w = srv
         s.run_state("done", pane=s.pane_of(w["a"]))

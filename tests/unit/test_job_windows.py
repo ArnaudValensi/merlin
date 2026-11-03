@@ -793,6 +793,17 @@ class TestShouldClose:
             row, now=1500 + 86400, displayed=set(), newer_run_started=None
         )
 
+    def test_a_takeover_within_the_slack_keeps_the_window(self):
+        """Enter right after the finish, a quiet long command, a switch to
+        another window, then the next run: no output says so, the marker does."""
+        row = _row(window_activity="1003", **{"@job_stepped_in": "1"})
+        assert not retention.should_close(
+            row, now=1061, displayed=set(), newer_run_started=1060
+        )
+        assert retention.should_close(
+            row, now=1003 + 86400, displayed=set(), newer_run_started=1060
+        )
+
     def test_the_finish_own_output_is_not_stepping_in(self):
         row = _row(window_activity="1004")  # within the slack
         assert retention.should_close(
@@ -1291,6 +1302,38 @@ class TestCodexTrust:
         assert codex_distrusts(str(link)) is False
         assert codex_distrusts(str(real)) is True
 
+    def test_a_child_of_a_trusted_symlink_root(self, monkeypatch, tmp_path):
+        from job.agents import codex_distrusts
+
+        real = tmp_path / "real"
+        (real / ".git").mkdir(parents=True)
+        (real / "src").mkdir()
+        alias = tmp_path / "alias"
+        alias.symlink_to(real)
+        self._config(monkeypatch, tmp_path, (alias, "trusted"))
+        assert codex_distrusts(str(alias / "src")) is False
+
+    def test_the_repository_counts_whatever_the_markers(self, monkeypatch, tmp_path):
+        from job.agents import codex_distrusts
+
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        (repo / "pkg" / "src").mkdir(parents=True)
+        (repo / "pkg" / ".marker").write_text("")
+        self._config(
+            monkeypatch,
+            tmp_path,
+            (repo, "trusted"),
+            extra="project_root_markers = []\n",
+        )
+        assert codex_distrusts(str(repo / "pkg")) is False
+
+        (tmp_path / "codex-home" / "config.toml").write_text(
+            f'project_root_markers = [".marker"]\n'
+            f'[projects."{repo}"]\ntrust_level = "trusted"\n'
+        )
+        assert codex_distrusts(str(repo / "pkg" / "src")) is False
+
     def test_custom_root_markers(self, monkeypatch, tmp_path):
         from job.agents import codex_distrusts
 
@@ -1351,9 +1394,19 @@ def test_a_finished_command_window_stays_silent_until_someone_asks(iso):
         return out.stdout
 
     assert wait_until(lambda: "Press Enter for a shell" in pane(), timeout=10)
+    options = {"@job_stepped_in"}
+    assert not sweep.window_options_checked(run.target, tuple(options))[1].get(
+        "@job_stepped_in"
+    )
     # Typed before Enter, this is only the line run.sh reads and drops.
     sweep.send_literal(run.target, "echo dropped-$((1+1))")
     sweep.send_enter(run.target)
+    assert wait_until(
+        lambda: sweep.window_options_checked(run.target, tuple(options))[1].get(
+            "@job_stepped_in"
+        ),
+        timeout=5,
+    )
     assert wait_until(lambda: "dropped-2" not in pane(), timeout=2)
 
     def shell_answers() -> bool:
