@@ -253,6 +253,11 @@ Every observation is tri-state (`board.sweep.window_options_checked`,
 observation finishes, finalizes, deletes and closes nothing: the supervisor
 keeps polling, bounded by the deadline.
 
+A Codex job in a directory Codex does not trust never starts
+(`agents.codex_distrusts`, the nearest `[projects]` entry in its `config.toml`):
+Codex runs no hook there, so the run could not be seen finishing. It fails at
+once, like a missing binary, with the fix in its log.
+
 An agent still not `busy` `START_WATCHDOG` (120 s) after the launch is stuck
 on something no hook reports (a trust or bypass dialog on a fresh machine):
 the supervisor stamps `@agent_state ask`, so the ordinary "Needs an answer"
@@ -317,7 +322,7 @@ removes their run directories (`should_close` is the pure rule):
   from `list-clients`) is never closed, and when the client list could not
   be read no window is closed at all;
 - finished with exit 0 and no pane activity since (`window_activity` within
-  `ACTIVITY_SLACK`, 5 s, of `@job_finished`: the finish's own output): closed
+  `ACTIVITY_SLACK`, 120 s, of `@job_finished`: the finish's own output, including the first prompt of the shell `run.sh` execs into): closed
   after 1 hour, or at the next run of the same job (a newer `@job_started` or
   run directory of that job), whichever comes first;
 - failed, or activity after the finish (someone stepped in): closed 24 hours
@@ -537,7 +542,7 @@ async def _job_scheduler() -> None:
 - Fire-and-forget: spawns `job/runner.py` as subprocess.
 - Multiple dispatchers can overlap (per-job locks prevent double dispatch,
   and the orphan path takes the flock too).
-- Crash handling: non-zero exit -> logged to `engine-log.jsonl`.
+- Crash handling: non-zero exit -> logged to `events.jsonl`.
 
 ## Webhook Trigger
 
@@ -658,7 +663,7 @@ No test ever touches the default tmux server (`tests/conftest.py` points
 |-----|---------|
 | `~/.merlin/job-logs/{job-id}/*.json` | Per-execution full output (hybrid storage) |
 | `~/.merlin/job-runs/{run_id}/` | A run's script, prompt, exit code and output while its window lives |
-| `logs/engine-log.jsonl` | `job_dispatch` and `job_runner_crash` events |
+| `logs/events.jsonl` | `job_dispatch` and `job_runner_crash` events |
 
 ## Key Files
 

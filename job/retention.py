@@ -55,9 +55,11 @@ logger = logging.getLogger("merlin.job")
 SUCCESS_TTL = 3600.0
 ACTIVITY_TTL = 86400.0
 # The finish itself writes to the pane (the agent's last render, the shell
-# prompt run.sh execs into): activity within this many seconds of the finish
-# is the run's own, not a human's.
-ACTIVITY_SLACK = 5.0
+# run.sh execs into, whose first prompt was measured at 59 s on a loaded
+# machine): activity within this many seconds of the finish is the run's own,
+# not a human's. Someone whose whole visit fits in it still loses nothing they
+# are looking at: a displayed window is never closed.
+ACTIVITY_SLACK = 120.0
 # A directory without a meta.json this old was abandoned mid-creation.
 STRAY_TTL = 3600.0
 

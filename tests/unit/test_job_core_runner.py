@@ -47,7 +47,6 @@ def create_job_file(directory: Path, job_id: str, **overrides) -> Path:
         "description": f"Test job {job_id}",
         "schedule": "0 9 * * *",
         "prompt": f"Test prompt for {job_id}",
-        "channel": "123456789",
         "enabled": True,
         "report_mode": "always",
         "created_at": "2026-02-05T00:00:00Z",
@@ -561,7 +560,9 @@ class TestRunJob:
 
         monkeypatch.setattr(job_logs, "_logs_base_dir", lambda: temp_jobs_dir / "rl")
         monkeypatch.setattr(
-            agents, "launch_problem", lambda agent: (127, "claude is not installed")
+            agents,
+            "launch_problem",
+            lambda agent, cwd=None: (127, "claude is not installed"),
         )
         result = run_job("test-job", self._job())
         assert result is not None

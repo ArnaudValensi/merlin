@@ -128,6 +128,46 @@ class TestCmdAdd:
         assert result["job_id"] == "test-job"
         assert (temp_jobs_dir / "test-job.json").exists()
 
+    def _add_args(self, **overrides):
+        from types import SimpleNamespace
+
+        values = {
+            "id": "cli-job",
+            "schedule": None,
+            "prompt": None,
+            "description": None,
+            "report_mode": "always",
+            "dry_run": False,
+            "webhook": False,
+        }
+        return SimpleNamespace(**{**values, **overrides})
+
+    def test_add_a_command_job_warns_of_no_bypass(self, temp_jobs_dir, capsys):
+        from job.manage import cmd_add, load_job
+
+        result = cmd_add(self._add_args(shell_command="echo hi"))
+        assert result["ok"] is True
+        job = load_job("cli-job")
+        assert job["type"] == "command"
+        assert job["command"] == "echo hi"
+        assert "prompt" not in job and "agent" not in job
+        assert "bypassed" not in capsys.readouterr().err
+
+    def test_add_with_a_working_dir(self, temp_jobs_dir, tmp_path):
+        from job.manage import cmd_add, load_job
+
+        result = cmd_add(self._add_args(prompt="x", working_dir=str(tmp_path)))
+        assert result["ok"] is True
+        assert load_job("cli-job")["working_dir"] == str(tmp_path.resolve())
+
+    def test_add_refuses_a_working_dir_that_is_not_one(self, temp_jobs_dir, tmp_path):
+        from job.manage import cmd_add, load_job
+
+        result = cmd_add(self._add_args(prompt="x", working_dir=str(tmp_path / "no")))
+        assert result["ok"] is False
+        assert "Not a directory" in result["error"]
+        assert load_job("cli-job") is None
+
     def test_add_job_dry_run(self, temp_jobs_dir):
         from job.manage import cmd_add
         from types import SimpleNamespace
@@ -170,7 +210,7 @@ class TestCmdAdd:
         from types import SimpleNamespace
 
         # Create existing job
-        save_job("test-job", {"schedule": "0 9 * * *", "prompt": "x", "channel": "1"})
+        save_job("test-job", {"schedule": "0 9 * * *", "prompt": "x"})
 
         args = SimpleNamespace(
             id="test-job",
@@ -226,7 +266,6 @@ class TestCmdList:
             {
                 "schedule": "0 9 * * *",
                 "prompt": "x",
-                "channel": "1",
                 "description": "Job 1",
             },
         )
@@ -235,7 +274,6 @@ class TestCmdList:
             {
                 "schedule": "0 10 * * *",
                 "prompt": "y",
-                "channel": "2",
                 "description": "Job 2",
             },
         )
@@ -255,7 +293,7 @@ class TestCmdEnableDisable:
 
         save_job(
             "test-job",
-            {"schedule": "0 9 * * *", "prompt": "x", "channel": "1", "enabled": True},
+            {"schedule": "0 9 * * *", "prompt": "x", "enabled": True},
         )
 
         args = SimpleNamespace(job_id="test-job")
@@ -271,7 +309,7 @@ class TestCmdEnableDisable:
 
         save_job(
             "test-job",
-            {"schedule": "0 9 * * *", "prompt": "x", "channel": "1", "enabled": False},
+            {"schedule": "0 9 * * *", "prompt": "x", "enabled": False},
         )
 
         args = SimpleNamespace(job_id="test-job")
@@ -298,7 +336,7 @@ class TestCmdRemove:
         from job.manage import cmd_remove, save_job
         from types import SimpleNamespace
 
-        save_job("test-job", {"schedule": "0 9 * * *", "prompt": "x", "channel": "1"})
+        save_job("test-job", {"schedule": "0 9 * * *", "prompt": "x"})
 
         args = SimpleNamespace(job_id="test-job")
         result = cmd_remove(args)
@@ -474,6 +512,24 @@ class TestMainArgv:
         out = capsys.readouterr().out
         assert "usage:" in out.lower()
 
+    @pytest.mark.parametrize(
+        "what, field, value",
+        [
+            (["--prompt", "say ok"], "prompt", "say ok"),
+            (["--command", "echo hi"], "command", "echo hi"),
+        ],
+    )
+    def test_main_add_really_adds(self, temp_jobs_dir, capsys, what, field, value):
+        """Through the real parser: the two ways to say what a job runs."""
+        from job.manage import load_job, main
+
+        try:
+            main(["add", "--id", "real", *what])
+        except SystemExit as stop:
+            assert stop.code == 0
+        assert '"ok": true' in capsys.readouterr().out
+        assert load_job("real")[field] == value
+
     def test_main_leaf_missing_required_shows_help(self, temp_jobs_dir, capsys):
         from job.manage import main
 
@@ -484,4 +540,4 @@ class TestMainArgv:
         assert exc_info.value.code == 2
         err = capsys.readouterr().err
         assert "--schedule" in err and "--prompt" in err
-        assert "the following arguments are required" in err
+        assert "one of the arguments --prompt --command is required" in err

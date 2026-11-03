@@ -138,13 +138,12 @@ them, or with the agent's binary missing from `PATH`, the editor warns you up
 front and a run fails at once with that message in its log, opening no
 window.
 
-**Codex runs its hooks only in a directory it trusts.** In a directory Codex
-does not know, a Codex job still does its work, but no hook fires: Merlin
-cannot see the turn end, marks the run as needing an answer after two
-minutes, and only the deadline closes it. Point a Codex job at a directory
-Codex trusts (one under a trusted project in its `config.toml`, or trust it
-once from a Codex session there), the way you would before working in it by
-hand. Claude Code asks instead: a directory it has never seen gets its trust
+**Codex runs its hooks only in a directory it trusts.** Merlin could not see
+such a run finish, so a Codex job in a directory Codex does not trust fails at
+once with that message in its log, opening no window. Point the job at a
+directory Codex trusts (one under a trusted project in its `config.toml`, or
+trust it once from a Codex session there), the way you would before working in
+it by hand. Claude Code asks instead: a directory it has never seen gets its trust
 dialog in the window (see the troubleshooting entry on a run marked "Needs
 an answer").
 
@@ -250,10 +249,10 @@ merlin job url incident-triage
 The ID is auto-slugged from the description unless you pass one. Omit
 `--schedule` for a webhook- or manual-only job (passing an empty
 `--schedule ""` is an error, to catch an unset shell variable). `--agent`
-picks Claude Code (the default) or Codex. The CLI creates agent prompt jobs;
-command jobs, working directories, and per-job timezones are set in the web
-UI. `merlin job add` prints the bypass warning on stderr, so its stdout stays
-one JSON document. `merlin job trigger <id>` runs a job immediately,
+picks Claude Code (the default) or Codex, `--command` runs a shell command
+instead of a prompt, and `--working-dir` sets where the run starts. Per-job
+timezones are set in the web UI. For an agent job, `merlin job add` prints the
+bypass warning on stderr, so its stdout stays one JSON document. `merlin job trigger <id>` runs a job immediately,
 bypassing the schedule, waits for the run and prints its exit code, run id
 and window; `merlin job history` shows recent runs.
 

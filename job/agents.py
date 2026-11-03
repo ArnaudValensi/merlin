@@ -12,8 +12,11 @@ supervisor to see the run finish.
 
 from __future__ import annotations
 
+import os
 import shutil
+import tomllib
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -83,10 +86,34 @@ def hooks_missing(agent: Agent) -> bool:
     return not state_hooks_present(agent.hooks)
 
 
-def launch_problem(agent: Agent) -> tuple[int, str] | None:
+def codex_distrusts(cwd: str) -> bool:
+    """True when Codex's config does not trust ``cwd``: the nearest entry of
+    its ``[projects]`` table, from the directory up, is not ``trusted``, or
+    there is none. Codex runs no hook in such a directory. A config that
+    cannot be read proves nothing, so it does not count as distrust."""
+    home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    try:
+        projects = tomllib.loads((home / "config.toml").read_text()).get("projects")
+    except FileNotFoundError:
+        return True
+    except (OSError, ValueError):
+        return False
+    if not isinstance(projects, dict):
+        return True
+    path = Path(os.path.realpath(cwd))
+    for directory in (path, *path.parents):
+        entry = projects.get(str(directory))
+        if isinstance(entry, dict) and "trust_level" in entry:
+            return entry["trust_level"] != "trusted"
+    return True
+
+
+def launch_problem(agent: Agent, cwd: str | None = None) -> tuple[int, str] | None:
     """What stops this agent from running right now: ``(exit_code,
-    message)``, or None. 127 for a missing binary, 1 for missing hooks,
-    the message naming the fix."""
+    message)``, or None. 127 for a missing binary, 1 for missing hooks or,
+    given the run's ``cwd``, a directory Codex does not trust (no hook would
+    fire and the run would only end on its deadline). The message names the
+    fix."""
     if binary_missing(agent):
         return 127, (
             f"{agent.label} is not installed: '{agent.binary}' was not found on "
@@ -97,6 +124,13 @@ def launch_problem(agent: Agent) -> tuple[int, str] | None:
             f"Merlin's state hooks are not installed for {agent.label}, so a job "
             "run could not be seen finishing. Install them with: "
             "merlin config agent-state-hooks auto"
+        )
+    if cwd and agent.id == "codex" and codex_distrusts(cwd):
+        return 1, (
+            f"Codex does not trust {cwd}, and runs no hook in a directory it does "
+            "not trust, so a job run could not be seen finishing. Open codex once "
+            "in that directory and trust it, or point the job at a trusted "
+            "project."
         )
     return None
 

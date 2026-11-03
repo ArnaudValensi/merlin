@@ -175,14 +175,23 @@ def cmd_add(args) -> dict:
         return {"ok": False, "error": f"Job '{job_id}' already exists"}
 
     # Build job
+    command = getattr(args, "shell_command", None)
     job: dict = {
         "description": args.description or job_id,
-        "agent": getattr(args, "agent", DEFAULT_AGENT),
-        "prompt": args.prompt,
         "enabled": True,
         "report_mode": args.report_mode,
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
     }
+    if command:
+        job.update(type="command", command=command)
+    else:
+        job.update(agent=getattr(args, "agent", DEFAULT_AGENT), prompt=args.prompt)
+    working_dir = getattr(args, "working_dir", None)
+    if working_dir:
+        resolved = Path(working_dir).expanduser().resolve()
+        if not resolved.is_dir():
+            return {"ok": False, "error": f"Not a directory: {working_dir}"}
+        job["working_dir"] = str(resolved)
     if args.schedule:
         job["schedule"] = args.schedule
     if getattr(args, "webhook", False):
@@ -202,7 +211,8 @@ def cmd_add(args) -> dict:
     # Save job
     path = save_job(job_id, job)
     # The warning goes to stderr so stdout stays one JSON document.
-    print(f"Warning: {BYPASS_WARNING}", file=sys.stderr)
+    if not command:
+        print(f"Warning: {BYPASS_WARNING}", file=sys.stderr)
 
     result = {
         "ok": True,
@@ -566,7 +576,17 @@ Output:
         "--schedule",
         help="Cron expression (e.g., '0 9 * * *'). Omit for a webhook- or manual-only job",
     )
-    p_add.add_argument("--prompt", required=True, help="The prompt the agent runs")
+    what = p_add.add_mutually_exclusive_group(required=True)
+    what.add_argument("--prompt", help="The prompt the agent runs")
+    what.add_argument(
+        "--command",
+        dest="shell_command",  # "command" is the subcommand's own dest
+        help="The shell command to run, instead of an agent",
+    )
+    p_add.add_argument(
+        "--working-dir",
+        help="Where the run starts (default: where Merlin was launched, else $HOME)",
+    )
     p_add.add_argument(
         "--agent",
         choices=agent_ids(),

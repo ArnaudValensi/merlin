@@ -65,12 +65,12 @@ let run unattended.
 
 **Options:**
 - `--schedule` — Cron expression (optional; omit for a webhook- or manual-only job)
-- `--prompt` — The prompt the agent runs (required)
+- `--prompt` — The prompt the agent runs, or `--command` — a shell command instead (one of the two is required)
+- `--working-dir` — Where the run starts. A Codex job needs a directory Codex trusts
 - `--agent` — `claude` (default) or `codex`
 - `--webhook` — Also enable the webhook trigger (generates a secret)
 
-For all other flags (report mode, description, explicit id, channel
-routing) run `merlin job add --help`; never restate them from memory.
+For all other flags (report mode, description, explicit id) run `merlin job add --help`; never restate them from memory.
 
 ### Enable/Disable Job
 

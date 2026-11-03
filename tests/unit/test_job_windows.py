@@ -25,6 +25,7 @@ import pytest
 import tmux_isolation
 
 from board import sweep
+from job import agents as job_agents
 from job import retention, runs, state, supervisor
 from job import runner as job_runner
 
@@ -189,8 +190,9 @@ def test_agent_run_from_launch_to_done(iso):
     assert runs.is_recorded(tmp / "job-runs" / result.run_id)
 
 
-def test_codex_job_uses_its_launch_line(iso):
+def test_codex_job_uses_its_launch_line(iso, monkeypatch):
     tmp, log = iso
+    monkeypatch.setattr(job_agents, "codex_distrusts", lambda cwd: False)
     result = job_runner.run_job("cx", agent_job("done", agent="codex"))
     assert result is not None and result.exit_code == 0
     assert result.agent == "codex"
@@ -792,7 +794,8 @@ class TestShouldClose:
         )
 
     def test_the_finish_own_output_is_not_stepping_in(self):
-        row = _row(window_activity="1004")  # within the slack
+        # The login shell's first prompt, measured at 59 s on a loaded machine.
+        row = _row(window_activity="1059")
         assert retention.should_close(
             row, now=1000 + 3600, displayed=set(), newer_run_started=None
         )
@@ -1192,7 +1195,7 @@ def test_activity_after_the_sweep_keeps_the_window(iso):
     assert retention.tick()[0]["finalized"] == 1
     # The finish is a while behind us: anything typed now is a step-in.
     assert sweep.set_window_option(
-        run.target, "@job_finished", str(int(time.time()) - 60)
+        run.target, "@job_finished", str(int(time.time()) - 300)
     )
     later = time.time() + 3601
     real = sweep.displayed_windows_checked
@@ -1219,3 +1222,57 @@ def test_activity_after_the_sweep_keeps_the_window(iso):
     assert counts["closed"] == 0
     assert len(windows()) == 1
     assert retention.tick(now=time.time() + 86401 + 10)[0]["closed"] == 1
+
+
+class TestCodexTrust:
+    def _config(self, monkeypatch, tmp_path, text):
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+        (tmp_path / "config.toml").write_text(text)
+
+    def test_nearest_entry_decides(self, monkeypatch, tmp_path):
+        from job.agents import codex_distrusts
+
+        top = tmp_path / "work"
+        (top / "a" / "b").mkdir(parents=True)
+        (top / "no").mkdir()
+        self._config(
+            monkeypatch,
+            tmp_path,
+            f'''[projects."{top}"]
+trust_level = "trusted"
+[projects."{top}/no"]
+trust_level = "untrusted"
+''',
+        )
+        assert codex_distrusts(str(top)) is False
+        assert codex_distrusts(str(top / "a" / "b")) is False
+        assert codex_distrusts(str(top / "no")) is True
+        assert codex_distrusts(str(tmp_path)) is True
+
+    def test_no_config_is_no_trust(self, monkeypatch, tmp_path):
+        from job.agents import codex_distrusts
+
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+        assert codex_distrusts(str(tmp_path)) is True
+
+    def test_an_unreadable_config_proves_nothing(self, monkeypatch, tmp_path):
+        from job.agents import codex_distrusts
+
+        self._config(monkeypatch, tmp_path, "not = [toml")
+        assert codex_distrusts(str(tmp_path)) is False
+
+    def test_a_run_in_an_untrusted_directory_is_refused_up_front(
+        self, monkeypatch, tmp_path
+    ):
+        from job import agents
+
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+        monkeypatch.setattr(agents, "binary_missing", lambda agent: False)
+        monkeypatch.setattr(agents, "hooks_missing", lambda agent: False)
+        code, message = agents.launch_problem(agents.AGENTS["codex"], str(tmp_path))
+        assert code == 1
+        assert "does not trust" in message
+        assert str(tmp_path) in message
+        # Claude Code asks in its window instead, and the form knows no cwd.
+        assert agents.launch_problem(agents.AGENTS["claude"], str(tmp_path)) is None
+        assert agents.launch_problem(agents.AGENTS["codex"]) is None

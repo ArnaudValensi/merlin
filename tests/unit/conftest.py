@@ -44,7 +44,7 @@ def fake_launch(monkeypatch):
     monkeypatch.setattr(runner.runs, "launch", fake_open)
     monkeypatch.setattr(runner.supervisor, "supervise", fake_supervise)
     monkeypatch.setattr(runs.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(agents, "launch_problem", lambda agent: None)
+    monkeypatch.setattr(agents, "launch_problem", lambda agent, cwd=None: None)
     monkeypatch.setattr(
         runner.retention,
         "tick",

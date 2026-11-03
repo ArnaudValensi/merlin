@@ -371,7 +371,7 @@ def new_run(
     agent_id: str | None = None
     if job_type != "command":
         agent = agents.resolve(job)
-        problem = agents.launch_problem(agent)
+        problem = agents.launch_problem(agent, cwd)
         if problem is not None:
             raise LaunchError(*problem)
         agent_id = agent.id
