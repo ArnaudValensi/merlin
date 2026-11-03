@@ -266,8 +266,8 @@ unambiguous.
 
 Desktop details use a side drawer; narrow screens use a bottom sheet. Status is
 not color-only. Local transcript and artifact links appear only when a producer
-explicitly emits their paths; Timeline does not manufacture AgentEngine session
-links.
+explicitly emits their paths; Timeline does not manufacture session links of
+its own.
 
 ## Clover reference integration
 

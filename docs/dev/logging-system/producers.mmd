@@ -19,9 +19,10 @@ flowchart TB
     end
 
     subgraph Structured["Engine Log Writers"]
+        SE_JOB["job/runner.py\nlog_event(job_dispatch:\nstarted/completed/failed)"]
         SE_WH["webhooks/\nlog_event(webhook_request)"]
         SE_CRASH["job/__init__.py\nlog_event(job_runner_crash)"]
-        SE_ATT["notifications/push.py\nlog_event(attention_routed)"]
+        SE_ATT["notifications/routes.py\nlog_event(attention_routed)\npush.py: push_failed/removed"]
         SE_APP["main.py\nlog_event(app_started/stopped)"]
     end
 
@@ -45,6 +46,7 @@ flowchart TB
     ATT --> ML_NOTIF
     TUN --> ML_SAAS
 
+    CJ --> SE_JOB
     WH --> SE_WH
     CJ --> SE_CRASH
     ATT --> SE_ATT
@@ -55,7 +57,7 @@ flowchart TB
 
     Loggers --> F_ML
 
-    SE_WH & SE_CRASH & SE_ATT & SE_APP --> F_EL
+    SE_JOB & SE_WH & SE_CRASH & SE_ATT & SE_APP --> F_EL
     PR_WIN --> F_TMUX
     PR_DIR --> F_RUNS
     PR_LOG --> F_JLG

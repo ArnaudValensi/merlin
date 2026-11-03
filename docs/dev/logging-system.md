@@ -38,7 +38,7 @@ A `logs/raw-sessions/` or `sessions/` directory left by an older release (the re
 | **Webhook** | The front desk checks the secret and fires, or rejects | `webhooks/`, `job/webhook.py` |
 | **HTTP request** | FastAPI handles request → file browse, auth, API, static files | `main.py`, `files/`, `commits/`, `auth.py` |
 | **WebSocket** | Terminal session → PTY bridge → tmux | `terminal/routes.py` |
-| **Attention** | A window finished or asks → an event, routed to the page and the push sender | `notifications/` |
+| **Attention** | A window finished or asks → an event, routed to the page and the push sender | `notifications/routes.py` (the routing record), `notifications/push.py` (delivery failures) |
 | **Tunnel lifecycle** | SaaS tunnel (Merlin Cloud) → connect, reconnect, fail | `saas_tunnel.py` |
 | **App lifecycle** | Startup and shutdown | `main.py` |
 
@@ -79,7 +79,8 @@ The job runner (`job/runner.py`) runs as a separate subprocess. When running sta
 
 **engine-log.jsonl** (JSONL):
 ```json
-{"type": "webhook_request", "timestamp": "2026-11-02T10:30:50+00:00", "source": "job", "target": "digest", "ip": "203.0.113.4", "outcome": "fired", "run_id": "7f861aa7", "request_id": "a1b2c3d4-..."}
+{"type": "job_dispatch", "timestamp": "2026-11-02T10:30:46+00:00", "job_id": "digest", "event": "started", "trigger": "webhook", "request_id": "7f861aa7-...", "duration": 0, "exit_code": 0}
+{"type": "webhook_request", "timestamp": "2026-11-02T10:30:50+00:00", "source": "job", "target": "digest", "ip": "203.0.113.4", "outcome": "launched", "run_id": "7f861aa7-...", "request_id": "a1b2c3d4-..."}
 ```
 
 ## A job run's data flow
@@ -121,15 +122,23 @@ complete contract is
 
 | Event type | When | Key fields |
 |---|---|---|
+| `job_dispatch` / `started` | A run is about to start (`job/runner.py`) | job_id, trigger, request_id (the run id) |
+| `job_dispatch` / `completed` | A run finished with exit 0 | job_id, duration, exit_code, trigger, request_id |
+| `job_dispatch` / `failed` | A run finished with a non-zero exit (a deadline is 124, a closed window 130) | job_id, duration, exit_code, trigger, request_id |
 | `job_runner_crash` | The job runner subprocess died | exit_code, stderr |
-| `webhook_request` | Inbound webhook handled by the front desk (every outcome, incl. rejected secrets) | source, target, ip, outcome, run_id, request_id |
-| `attention_routed` | A notification routed to the push sender | target, window, pushed, skipped |
+| `webhook_request` | Inbound webhook handled by the front desk (every outcome: `launched`, `coalesced`, `rejected_secret`, `throttled`, ...) | source, target, ip, outcome, run_id, request_id |
+| `attention_routed` | A notification event routed (`notifications/routes.py`): to the page, and to the push sender when devices are subscribed | seq, target, window, state, pushed, skipped, looking |
+| `push_failed`, `push_removed` | A push delivery failed, or a dead subscription was dropped (`notifications/push.py`) | the endpoint's host, the status |
 | `app_started` | Merlin server started | host, port, cwd, extensions |
 | `app_stopped` | Merlin server stopped | — |
 
-Lines of a type an older release wrote (`invocation`, `bot_event`,
-`job_dispatch`) still read: the reader returns them as `BaseEvent` with
-every field kept.
+The `request_id` of a `job_dispatch` line is the run id: it correlates the
+three lifecycle records of one run with its `webhook_request` line, its run
+log and its window. Each typed event has a model in `lib/event_log.py`
+(`JobDispatchEvent`, `JobRunnerCrashEvent`, `WebhookRequestEvent`,
+`AppLifecycleEvent`); lines of a type an older release wrote (`invocation`,
+`bot_event`) have none and still read: the reader returns them as
+`BaseEvent` with every field kept.
 
 ## Who Reads What
 
@@ -140,7 +149,7 @@ every field kept.
 2. **Timeline page** (`/timeline`, flag on) → reads `logs/activity/`.
 3. **`merlin.log`** → manual debugging only (SSH into server and read).
 
-> **Consumer-side schema.** Writers stay free-form (`log_event(**fields)`), but every reader goes through typed Pydantic models in `lib/event_log.py` (`JobRunnerCrashEvent`, `WebhookRequestEvent`, `AppLifecycleEvent`, `JobDispatchEvent`). Each model sets `extra="allow"`, so adding a field on the writer side never breaks a reader; lines that fail JSON decoding or model validation are skipped and counted (a single `WARNING` summary), never raised; unknown types come back as `BaseEvent`.
+> **Consumer-side schema.** Writers stay free-form (`log_event(**fields)`), but every reader goes through typed Pydantic models in `lib/event_log.py` (`JobDispatchEvent`, `JobRunnerCrashEvent`, `WebhookRequestEvent`, `AppLifecycleEvent`). Each model sets `extra="allow"`, so adding a field on the writer side never breaks a reader; lines that fail JSON decoding or model validation are skipped and counted (a single `WARNING` summary), never raised; unknown types come back as `BaseEvent`.
 
 ## Rotation
 
@@ -175,13 +184,14 @@ These parts of the app produce no structured events (though app-level errors go 
 | `lib/event_log.py` | Canonical **reader** for `engine-log.jsonl` — typed Pydantic event models, malformed-line resilience. Used by the jobs page (crash banner, webhook requests). |
 | `timeline/schema.py`, `timeline/writer.py`, `timeline/store.py` | Timeline's independent typed record, locked writer, bounded reader, and retention. |
 | `main.py` | `_setup_logging()` — configures `merlin.*` RotatingFileHandler, calls cleanup at startup |
-| `job/runner.py` | Job dispatcher — the record of a run (`.history.json`, the run log, `result.json`) |
+| `job/runner.py` | Job dispatcher — writes `job_dispatch` started/completed/failed to the engine log, and the record of a run (`.history.json`, the run log, `result.json`) |
 | `job/runs.py`, `job/supervisor.py`, `job/retention.py` | The run directory, the finish, the removal with the window |
 | `job/__init__.py` | Job scheduler — writes to engine log on crash (job_runner_crash) |
 | `job/logs.py` | Job run log CRUD — reads/writes `job-logs/`, has `cleanup_logs()` |
 | `job/routes.py` | Jobs dashboard API — reads `engine-log.jsonl` via `lib/event_log.py` (crash banner, webhook events), `job-logs/` for history |
 | `webhooks/` | The front desk — writes `webhook_request` for every outcome |
-| `notifications/push.py` | Writes `attention_routed` when an event is routed to the push sender |
+| `notifications/routes.py` | Writes `attention_routed` for every routed notification event |
+| `notifications/push.py` | Writes `push_failed` and `push_removed` on delivery failures |
 | `terminal/routes.py` | Terminal WebSocket — logs connect/disconnect, PTY errors |
 | `saas_tunnel.py` | SaaS tunnel — logs connect/disconnect, port forwarding, auth |
 | `ssh_server.py` | SSH server — logs host key, sessions, PTY operations |

@@ -255,7 +255,7 @@ the stable per-window `@agent_sid` plus pinned `@agent_cwd`. The built-in
 tmux in its own separately consented provider hooks. It never writes those core
 options or the state pill; when identity is not ready, it uses a private actor
 key without claiming liveness. It no-ops outside tmux. Historical capture is
-therefore independent of both the PTY bridge and `AgentEngine`.
+therefore independent of the PTY bridge, and of a job run's supervision.
 
 The state hooks find their window through `terminal/hooks/agent-window.sh`,
 in this order: `$TMUX_PANE` when the hook descends from that pane's process

@@ -50,7 +50,7 @@ Pages are Jinja2 templates served by FastAPI. Data is fetched client-side via JS
 
 ### Single JSONL event file
 
-Lifecycle events go to one file (`logs/engine-log.jsonl`). Each line is a JSON object with a `type` field (`job_runner_crash`, `webhook_request`, `attention_routed`, `app_started`, `app_stopped`); the jobs page reads the crashes and the webhook requests from it through `lib/event_log.py`. See [`logging-system.md`](logging-system.md).
+Lifecycle events go to one file (`logs/engine-log.jsonl`). Each line is a JSON object with a `type` field (`job_dispatch` started/completed/failed, `job_runner_crash`, `webhook_request`, `attention_routed`, `push_failed`, `push_removed`, `app_started`, `app_stopped`); the jobs page reads the crashes and the webhook requests from it through `lib/event_log.py`. See [`logging-system.md`](logging-system.md).
 
 ### Live data
 
