@@ -47,17 +47,18 @@ Set `MERLIN_HOME=/custom/path` to override the default `~/.merlin/` location. Al
 │       └── bin/merlin   # Launcher ships in the release; PATH points at current/bin
 ├── current -> versions/0.2.0  # Symlink to active version
 ├── config.env           # User config (created by merlin setup)
-├── notes/               # User data (survives updates)
-├── jobs/           # Scheduled jobs
+├── notes/               # User data of the notes extension, once enabled (survives updates)
+├── jobs/                # Jobs, their state and history
+├── job-logs/            # One log per run
+├── job-runs/            # A run's private directory while its window lives
 ├── logs/                # Logs
-├── data/                # Session registry, structured log
+├── data/                # Server state
 ├── extensions/          # Installed extensions (each may ship commands/ and skills/)
 ├── skills/              # Canonical aggregated skill dir (managed symlinks)
-├── skills-user/         # Personal skills (per-environment, unsynced)
-└── skills-plugin/       # Generated Claude Code plugin wrapping skills/
+└── skills-user/         # Personal skills (per-environment, unsynced)
 ```
 
-See [`skill-system.md`](skill-system.md) for how `skills/`, `skills-user/`, and `skills-plugin/` are built and surfaced to each engine.
+See [`skill-system.md`](skill-system.md) for how `skills/` and `skills-user/` are built and mirrored to the agents.
 
 ## CLI Subcommands (`cli.py`)
 
@@ -74,14 +75,14 @@ See [`skill-system.md`](skill-system.md) for how `skills/`, `skills-user/`, and 
 | `merlin skills` | List every skill and its source (see [`skill-system.md`](skill-system.md)) |
 | `merlin agent` | Print the agent-facing brain doc |
 | `merlin job ...` | Manage scheduled jobs (wraps `job/manage.py`) |
-| `merlin chat ...` | Discord transport: `send`/`reply`/`react`/`rename-thread` |
+| `merlin review ...` | Read and answer the Commits page reviews |
 | `merlin dashboard-url` | Print the dashboard URL |
 
 ### First-Run Setup
 
 When `merlin start` runs and no `config.env` exists, it automatically triggers `merlin setup` which prompts for:
 - Dashboard password
-- Discord bot token (optional)
+- OpenAI API key for voice transcription (optional)
 
 Results are written to `~/.merlin/config.env`.
 

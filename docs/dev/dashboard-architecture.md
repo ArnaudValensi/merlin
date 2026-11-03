@@ -6,7 +6,7 @@ Reference for maintaining and extending the Merlin monitoring dashboard.
 
 | Layer | Tech | Notes |
 |-------|------|-------|
-| Backend | FastAPI | Async, same event loop as Discord bot |
+| Backend | FastAPI | Async, one event loop for the pages, the scheduler and the watcher |
 | Templates | Jinja2 | Server-side rendered, extends `base.html` |
 | Charts | Chart.js 4 + chartjs-adapter-date-fns + chartjs-plugin-zoom | CDN |
 | Syntax highlighting | highlight.js 11 | CDN, `github-dark-dimmed` theme |
@@ -31,13 +31,12 @@ merlin/
 ├── files/                     # File browser module
 ├── terminal/                  # Web terminal module
 ├── commits/                   # Commit browser module
-├── sessions/                  # Session transcript viewer (/session, /api/session)
-├── notes/                     # Notes editor module
-├── timeline/                  # Built-in activity-history extension
-└── merlin-bot/
-    ├── merlin_app.py          # Bot extension: monitoring page with tabs (/bot, /bot/performance, /bot/logs)
-    ├── structured_log.py      # JSONL writer (thread-safe, used by all emitters)
-    └── templates/             # Bot-specific templates (bot.html with tabs)
+├── job/                       # Jobs page and API
+├── board/                     # The Sessions board of the terminal
+├── notifications/             # The attention watcher, the event feed, Web Push
+├── notes/                     # Notes editor module (built-in extension, off by default)
+├── timeline/                  # Built-in activity-history extension (behind MERLIN_FEATURES=timeline)
+└── lib/structured_log.py      # JSONL event writer (thread-safe, used by all emitters)
 ```
 
 ## Architecture Decisions
@@ -49,25 +48,17 @@ Pages are Jinja2 templates served by FastAPI. Data is fetched client-side via JS
 - Dynamic data refresh without full page reload
 - Easy to add new pages (just a template + route)
 
-### Single JSONL log file
+### Single JSONL event file
 
-All events go to one file (`logs/engine-log.jsonl`). Each line is a JSON object with a `type` field. Types:
-- `invocation` — Claude Code call (fields: caller, prompt, duration, exit_code, num_turns, tokens_in, tokens_out, session_id, model)
-- `bot_event` — Discord bot events (fields: event, details, content for message_received)
-- `job_dispatch` — Job lifecycle (fields: job_id, event, duration, exit_code)
+Lifecycle events go to one file (`logs/engine-log.jsonl`). Each line is a JSON object with a `type` field (`job_runner_crash`, `webhook_request`, `attention_routed`, `app_started`, `app_stopped`); the jobs page reads the crashes and the webhook requests from it through `lib/event_log.py`. See [`logging-system.md`](logging-system.md).
 
-### Auto-refresh via mtime polling
+### Live data
 
-JS polls `/api/bot/last-modified` every 5 seconds. The endpoint returns the mtime of `engine-log.jsonl`. When mtime changes, registered callbacks re-fetch data. This avoids unnecessary API calls when nothing has changed.
-
-```
-Refresh.register(myLoadFunction);  // register callback
-Refresh.start(5000);               // start polling
-```
+The Jobs page polls its own API; the terminal's Sessions board and the notifications ride `/api/board?since=` (a cursor, see [`notifications.md`](notifications.md)).
 
 ### Dashboard is the entry point
 
-`main.py` starts uvicorn + Discord bot + job scheduler in a single process. Port 3123 by default.
+`main.py` starts uvicorn + the job scheduler + the attention watcher in a single process. Port 3123 by default.
 
 Start command: `uv run main.py` (or `merlin restart` / `uv run cli.py restart` to restart in the background).
 
@@ -270,16 +261,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
 ## API Endpoints
 
-### Core (main.py + merlin_app.py)
+### Core (main.py + job/routes.py)
 
 | Endpoint | Returns |
 |----------|---------|
-| `GET /api/bot/health` | `{ bot_start_time, invocations_today, errors_24h, ... }` |
-| `GET /api/events?type=&since=&until=&status=` | Array of all events, filtered |
-| `GET /api/invocations?since=&until=&caller=` | Invocation events only |
-| `GET /api/jobs` | Per-job stats with recent run history |
-| `GET /api/bot/last-modified` | `{ mtime }` of engine-log.jsonl |
-| `GET /api/session/{filename}` | Session JSONL events as JSON array |
+| `GET /api/jobs/jobs` | The jobs with their state and next run |
+| `GET /api/jobs/jobs/{id}/logs` | A job's run history, one entry per run |
+| `GET /api/jobs/crashes` | Recent `job_runner_crash` events (the banner) |
+| `GET /api/board?since=` | The windows and the notification events since a cursor |
+| `GET /api/settings` | The settings state (booleans and masked values) |
 
 ### Notes
 
@@ -749,7 +739,7 @@ its icons, the Settings row, a click saved and reflected on the next load).
 1. Create `templates/newpage.html` extending `base.html`
 2. Add the route to the module's `page_router` (relative path, e.g. `@page_router.get("/newpage")` → `/{slug}/newpage`); app-shell pages go in `main.py`
 3. For extensions: export `NAV_ITEMS` from the extension module. For core pages: add to `CORE_NAV_ITEMS` in `main.py`
-4. Use `Refresh.register()` + `Refresh.start()` for live data
+4. Poll the page's own API for live data (the Jobs page is the model)
 5. Validate with screenshots: `uv run .claude/skills/screenshot/screenshot.py --all http://localhost:3123 --user admin --pass <pass>`
 
 ## Structured Log Format
@@ -759,14 +749,20 @@ its icons, the Settings row, a click saved and reflected on the next load).
 ```python
 from structured_log import log_event
 
-log_event("invocation", caller="discord", prompt="...", duration=5.2, exit_code=0, ...)
-log_event("bot_event", event="message_received", details="...", content="...")
-log_event("job_dispatch", job_id="daily-digest", event="completed", duration=45.0, ...)
+log_event("job_runner_crash", exit_code=1, stderr="...")
+log_event(
+    "webhook_request",
+    source="job",
+    target="daily-digest",
+    outcome="fired",
+    ip="...",
+    run_id="...",
+)
 ```
 
 ### Reading events
 
-`merlin_app.py` has `read_events(event_type=None, since=None, until=None)` which parses the JSONL with optional filtering.
+`lib/event_log.py` has `read_events(event_type=None, since=None, until=None)` which parses the JSONL into typed models with optional filtering.
 
 ## Visual Validation
 

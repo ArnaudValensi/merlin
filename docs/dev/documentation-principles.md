@@ -12,11 +12,11 @@ links to it instead of restating it.
 
 | Surface | Owns | Audience |
 |---|---|---|
-| `README.md` | the pitch, the three-pillars overview, and the complete index of user docs | a visitor deciding whether to install |
+| `README.md` | the pitch, the two-pillars overview, and the complete index of user docs | a visitor deciding whether to install |
 | `docs/*.md` (top level) | task guides: what each feature is for and how to use it | users |
 | `docs/dev/*.md` | implementation: how it is built | contributors |
 | `merlin <cmd> --help` | exact syntax and options | anyone, terse |
-| `agent/MERLIN.md` | the agent operating model, compressed (injected per run) | agents |
+| `agent/MERLIN.md` | the agent operating model, compressed (printed by `merlin agent`, never injected) | agents |
 
 Consequences:
 
@@ -32,22 +32,22 @@ Consequences:
 
 The dashboard is the product surface, so user docs mirror it: one doc per
 Merlin page (`terminal.md`, `files.md`, `commits.md`, `notes.md`,
-`jobs.md`, `bot.md`, `extensions.md`), plus the non-page guides
+`jobs.md`, `notifications.md`, `extensions.md`), plus the non-page guides
 (`getting-started.md`, `agents.md`, `creating-extensions.md`, `cli.md`).
 `cli.md` is the command map: what each command family is for, syntax
 deferred to `--help` per the single-source rule.
 
-Voice input is folded into the docs of the surfaces that have it
-(`terminal.md`, `bot.md`), not a doc of its own.
+Voice input is folded into the doc of the surface that has it
+(`terminal.md`), not a doc of its own.
 
 ## The page-doc template
 
 Every page doc follows the same shape, in this order:
 
 1. **What it is**: one short paragraph, then a screenshot. Place the
-   page in the product in plain words: which of the three pillars it
-   serves (coding environment, agent orchestration, living knowledge
-   base) and what it feeds (the shared memory, the other channels).
+   page in the product in plain words: which of the two pillars it
+   serves (coding environment, agent orchestration) and what it feeds
+   (the agent's windows, the jobs, the notifications).
    The pillar vocabulary comes from the README; "flywheel" is retired
    as reader-facing vocabulary, so describe the compounding loop in
    plain language instead of naming it.
@@ -70,8 +70,8 @@ sequence tables do not (they go to `docs/dev/`).
 - New captures are taken on a throwaway instance (temp `MERLIN_HOME`,
   separate port) so no real user data leaks, and every image is reviewed
   before it is embedded.
-- When a shot cannot be taken safely or needs real channels (a Discord
-  exchange, a live terminal session), leave a
+- When a shot cannot be taken safely or needs a real agent (a live
+  terminal session, a job run), leave a
   `[SCREENSHOT PLACEHOLDER (...)]` with a precise description of the shot
   to take.
 - Images live in a per-doc asset folder named after the doc

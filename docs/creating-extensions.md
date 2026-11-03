@@ -9,14 +9,13 @@ This guide is written for humans and agents alike. The most frequent
 extension author is an agent asked to "build me an extension that does X";
 everything below works from a shell with no prior context.
 
-Merlin runs the user's AI agent (Claude Code, OpenCode, pluggable
-engines): run `merlin agent` to see the operating doc that agent gets;
-the Discord bot and jobs are that same agent on other channels, and
-skills are how it learns to use your extension. An extension is how you
-grow Merlin: commands the agent can call from any surface
-(terminal, Discord, jobs), a skill that tells it when, and optionally a
-scheduled job that runs it for you. Ship one directory and the whole
-assistant learns the capability.
+Merlin is where the user's AI agent (Claude Code or Codex) works: run
+`merlin agent` to see the operating doc that agent reads; jobs run that
+same agent in windows of their own, and skills are how it learns to use
+your extension. An extension is how you grow Merlin: commands the agent
+can call from any window (yours in the terminal, a job's), a skill that
+tells it when, and optionally a scheduled job that runs it for you. Ship
+one directory and every agent window learns the capability.
 
 ## The model in one minute
 
@@ -94,8 +93,8 @@ import argparse
 
 Namespacing is solved by construction: each extension owns exactly its
 own id, and two extensions cannot collide because directory names are
-unique. Core command names (`start`, `agent`, `job`, `chat`, `config`,
-`skills`, ...), built-in extension ids (`notes`, `merlin-bot`, ...), and
+unique. Core command names (`start`, `agent`, `job`, `review`, `config`,
+`skills`, ...), built-in extension ids (`notes`, `timeline`, ...), and
 the curated aliases (`kb`, `remember`) are reserved: an extension claiming
 one is rejected with a clear error at dispatch and at server load.
 Top-level aliases are a built-in privilege; installed extensions always
@@ -142,7 +141,7 @@ enabled and aggregated into the agent-facing skill set automatically.
 
 Skill bodies should follow CLI-as-API: instruct the agent to call your
 extension's commands, never to run files inside your extension by path.
-Registry mechanics (aggregation, per-engine adapters, shims) are
+Registry mechanics (aggregation, shims) are
 documented for contributors in [`docs/dev/skill-system.md`](dev/skill-system.md).
 
 ## Web pages (optional, in-process)

@@ -9,7 +9,7 @@ Extensions add functionality to the Merlin dashboard — pages, sidebar nav item
 ```
 main.py (_load_extension)
   ├─ Core (files, terminal, commits) — always active, registered manually
-  ├─ Built-in (notes, timeline, merlin-bot) — ship with Merlin, toggleable
+  ├─ Built-in (notes, timeline, app) — ship with Merlin, toggleable; timeline and app behind a feature flag
   └─ Installed (~/.merlin/extensions/*) — user-installed, toggleable
       └─ each folder is a Python module with routers
 ```
@@ -21,7 +21,7 @@ Key property: **Merlin always starts.** A broken extension is recorded in the re
 | Tier | Location | Default | Can disable? | Example |
 |------|----------|---------|-------------|---------|
 | Core | Hardcoded in `main.py` | Always on | No | files, terminal, commits |
-| Built-in | Ships with Merlin source | Per `BUILT_IN_DEFAULTS` | Yes | notes and timeline (on), merlin-bot (off) |
+| Built-in | Ships with Merlin source | Per `BUILT_IN_DEFAULTS` | Yes | notes (off until enabled), timeline and app (on, once their flag is) |
 | Installed | `~/.merlin/extensions/` | On | Yes | video-scenes |
 
 An extension cannot declare itself as core or built-in. The tier is inferred from where it lives.
@@ -47,7 +47,14 @@ works. A flag change takes effect on the next start (`merlin restart`).
 
 | Flagged built-in | Feature | Doc |
 |---|---|---|
+| `timeline` | `timeline` | [`agent-activity-timeline.md`](agent-activity-timeline.md) |
 | `app` | `app` | [`app-streaming.md`](app-streaming.md) |
+
+The Timeline has one more rule: with its flag off, the provider hooks a
+previous version installed in the agents' settings are removed at startup
+(`main._retire_timeline_hooks`, off the event loop, only when one is there,
+per provider file, without loading the extension). A flag-off Merlin must
+not keep capturing; the recorded data is kept.
 
 ## Extension Interface
 
@@ -101,11 +108,11 @@ EXTENSION_META = {
     "icon": "<svg .../>",
     "config_fields": [
         {
-            "key": "DISCORD_BOT_TOKEN",
-            "label": "Discord Bot Token",
+            "key": "SCENES_API_TOKEN",
+            "label": "Scenes API Token",
             "secret": True,
             "required": True,
-            "help": "Create at discord.com/developers",
+            "help": "Create one on the scenes service",
         },
     ],
 }
@@ -118,7 +125,7 @@ def validate():
 
 
 async def start():
-    """Async startup (e.g., Discord client)."""
+    """Async startup (e.g., a watcher task)."""
     ...
 
 
@@ -231,7 +238,7 @@ Stores explicit user toggle choices only:
 
 **Resolution logic** (`_resolve_enabled` in `main.py`):
 1. In `extensions.json`? → use that value
-2. Built-in? → use `BUILT_IN_DEFAULTS` (`notes=True`, `timeline=True`, `merlin-bot=False`)
+2. Built-in? → use `BUILT_IN_DEFAULTS` (`notes=False`, `timeline=True`, `app=True`; a flagged built-in only exists with its flag on)
 3. Installed? → `True` (you put it there, you want it active)
 4. Core? → always `True` regardless
 
@@ -260,7 +267,6 @@ class ExtensionInfo:
 The registry is used by:
 - `start_server()` — iterates for `start()` hooks
 - `/api/extensions/{id}/toggle` — invokes `disable()` before persisting off
-- `_validate_config()` — validates bot config if loaded
 - Extensions page — lists all extensions with status
 - `register_template_globals()` — publishes `extensions_error_count` to all template instances for the sidebar badge
 
@@ -355,44 +361,52 @@ Nav items are built dynamically from enabled extensions:
 Files           ← core (always)
 Terminal        ← core (always)
 Commits         ← core (always)
-Notes           ← built-in (if enabled)
-Timeline        ← built-in (if enabled)
-Bot             ← built-in (if enabled, single entry with tabs)
+Notes           ← built-in (if enabled; off by default)
+Timeline        ← built-in (if enabled, and only with MERLIN_FEATURES=timeline)
+Apps            ← built-in (if enabled, and only with MERLIN_FEATURES=app)
 Video Scenes    ← installed (if enabled)
 Extensions      ← always shown (management page, puzzle icon)
 ```
 
 When any extension has an error, the Extensions nav item shows a small red dot badge.
 
-## merlin-bot as Extension Example
+## Notes as Extension Example
 
-The merlin-bot extension is a good example of a full-featured built-in extension with `EXTENSION_META` and `config_fields`:
+The notes extension is a good example of a full-featured built-in extension with `EXTENSION_META`, `config_fields`, an async `start()` and a `skills/` directory:
 
 ```python
 EXTENSION_META = {
-    "name": "Merlin Bot",
-    "description": "Discord AI assistant powered by Claude Code",
+    "name": "Notes",
+    "description": "A knowledge base that grows with you ...",
     "icon": "<svg .../>",
     "config_fields": [
         {
-            "key": "DISCORD_BOT_TOKEN",
-            "label": "Discord Bot Token",
-            "secret": True,
-            "required": True,
+            "key": "NOTES_DIR",
+            "label": "Notes Directory",
+            "secret": False,
+            "required": False,
+            "type": "text",
         },
         {
-            "key": "DISCORD_CHANNEL_IDS",
-            "label": "Discord Channel IDs (comma-separated)",
+            "key": "NOTES_GIT_SYNC",
+            "label": "Git Sync",
             "secret": False,
-            "required": True,
+            "required": False,
+            "type": "checkbox",
+        },
+        {
+            "key": "NOTES_GIT_REMOTE",
+            "label": "Git Remote URL",
+            "secret": False,
+            "required": False,
+            "type": "text",
+            "depends_on": "NOTES_GIT_SYNC",
         },
     ],
 }
 ```
 
-The `config_fields` metadata enables the Extensions page to render configuration forms for `DISCORD_BOT_TOKEN` and `DISCORD_CHANNEL_IDS`, saved to `config.env` via the config API endpoint.
-
-Note: merlin-bot is **Discord-only** in scope. It handles message listening, thread creation, voice transcription, and prompt building. Job scheduling and the Claude wrapper are separate core modules (`job/` and `lib/claude.py`).
+The `config_fields` metadata enables the Extensions page to render configuration forms, saved to `config.env` via the config API endpoint. Notes is off by default: its page, routes, `merlin notes` commands and `merlin-notes` skill (under `notes/skills/`) exist once the user enables it, and `start()` creates the notes directory then. The Timeline (`timeline/`) shows the other side: a consent-aware `start()`, a bounded `disable()` and a feature flag.
 
 ## Key Files
 
@@ -409,4 +423,3 @@ Note: merlin-bot is **Discord-only** in scope. It handles message listening, thr
 | `templates/base.html` | Sidebar nav rendering, error badge, Settings link |
 | `notes/__init__.py` | Built-in extension example (exports api_router, page_router, STATIC_DIR, NAV_ITEMS) |
 | `timeline/__init__.py` | Built-in example with routers, navigation, static assets, CLI commands, consent-aware `start()`, and bounded `disable()` cleanup |
-| `merlin-bot/merlin_bot.py` | Built-in extension example (exports api_router, page_router, URL_SLUG, NAV_ITEMS, EXTENSION_META, start, validate) |

@@ -1,172 +1,127 @@
 # Merlin — System Architecture
 
-Merlin is a suite of dev tools built around the user's preferred AI agent. An **AgentEngine** abstraction invokes any AI coding tool (Claude Code, OpenCode, etc.), and Merlin manages its own conversation history as JSONL transcripts. The bot and job handlers capture engine output and deliver it to the appropriate channel (Discord, etc.).
+Merlin is a suite of dev tools built around the user's own AI agent CLI
+(Claude Code or Codex), run as it is: Merlin never wraps an agent, drives
+it through a subprocess API, or keeps a conversation of its own. Two
+pillars, one process: the **coding environment** (the web terminal where
+the agent works, its windows watched and notified) and **agent
+orchestration** (jobs, each run in its own tmux window). Everything else is
+an extension.
 
 ## System at a glance
 
 Four planes, one process:
 
-- **Dashboard surface**: files, terminal, commits, notes, and the private agent activity timeline served by FastAPI (see [`dashboard-architecture.md`](dashboard-architecture.md), [`web-terminal.md`](web-terminal.md), [`agent-activity-timeline.md`](agent-activity-timeline.md)). Timeline captures supported interactive-agent hooks and explicit emitters; it does not use `AgentEngine`.
-- **Agent loop**: chat and job invocations through `lib/engine.py`, with persona composition in `lib/agent_context.py` (this doc, below)
-- **Scheduling**: the job core module dispatching agent jobs (see [`job-system.md`](job-system.md))
-- **Extensibility**: extensions contribute commands, skills, and pages (see [`extension-system.md`](extension-system.md), [`skill-system.md`](skill-system.md))
+- **Dashboard surface**: files, terminal, commits, the Sessions board, the
+  Jobs page, Settings and Extensions, served by FastAPI (see
+  [`dashboard-architecture.md`](dashboard-architecture.md),
+  [`web-terminal.md`](web-terminal.md)). Built-in extensions add pages:
+  Notes (off by default) and the private agent activity Timeline (behind
+  `MERLIN_FEATURES=timeline`, see
+  [`agent-activity-timeline.md`](agent-activity-timeline.md)).
+- **Agent windows**: every agent runs in a tmux window. Hooks Merlin
+  installs in the agent's own settings (with consent) stamp the window's
+  state and conversation as tmux options; the attention watcher sweeps them
+  and notifies (see [`notifications.md`](notifications.md),
+  [`workspace-restore.md`](workspace-restore.md)).
+- **Scheduling**: the job core module launching runs in the `merlin-jobs`
+  tmux session and supervising them to their record (see
+  [`job-system.md`](job-system.md)).
+- **Extensibility**: extensions contribute commands, skills, and pages (see
+  [`extension-system.md`](extension-system.md),
+  [`skill-system.md`](skill-system.md)).
 
 ## Entry Points
 
 ```
 ╔═══════════════════════════════════════════════════════════════════════════╗
-║                           ENTRY POINTS                                  ║
-╠═══════════════════════════╦═══════════════════════════════════════════════╣
-║                           ║                                             ║
-║   USER (Discord)          ║   TIME (job/ scheduler in main.py)          ║
-║   Sends a message         ║   Fires every minute                        ║
-║                           ║                                             ║
-╚═════════════╤═════════════╩═══════════════════╤═══════════════════════════╝
-              │                                 │
-              ▼                                 │
-┌──────────────────────────┐                    │
-│      Discord API         │                    │
-│   (discord.com gateway)  │                    │
-│                          │                    │
-│  Pushes events via       │                    │
-│  WebSocket to bot        │                    │
-└────────────┬─────────────┘                    │
-             │                                  │
-             ▼                                  ▼
-┌──────────────────────────┐     ┌──────────────────────────────────┐
-│     merlin_bot.py        │     │        job/runner.py             │
-│   (Discord handler)      │     │     (spawned subprocess)          │
-│                          │     │                                   │
-│  on_message():           │     │  1. Load jobs/*.json         │
-│  1. Filter: bot? allowed │     │  2. croniter: is job due?         │
-│     channel?             │     │  3. Execute via lib/engine.py     │
-│  2. Thread or channel?   │     │  4. Log + emit job_complete JSON  │
-│  3. Build rich prompt    │     │                                   │
-│  4. Add thinking reaction│     └───────────────┬───────────────────┘
-│                          │                     │
-└────────────┬─────────────┘                     │
-             │                                   │
-             │  invoke(prompt,                   │  invoke(prompt,
-             │    session_id=uuid5(thread))       │    session_id=uuid4() or uuid5(job_id))
-             │                                   │
-             ▼                                   ▼
-┌══════════════════════════════════════════════════════════════════════════┐
-║                        lib/engine.py                                    ║
-║             (Provider-agnostic entry point — ALL calls go here)         ║
-║                                                                         ║
-║  1. Assemble system prompt from caller-provided parts                    ║
-║     (callers compose brain/personality/user via lib/agent_context.py)    ║
-║  2. Load session history (~/.merlin/sessions/<session_id>.jsonl)         ║
-║  3. Get configured engine (AGENT_ENGINE env var, default: claude-code)   ║
-║  4. engine.invoke(prompt, history, system_prompt)                        ║
-║  5. Record turns to session JSONL                                        ║
-║  6. Save raw session → logs/raw-sessions/<timestamp>.jsonl               ║
-║  7. Log structured event → logs/engine-log.jsonl                         ║
-║  8. Return AgentResult                                                   ║
-║                                                                         ║
-╚════════════════════════════════╤═════════════════════════════════════════╝
-                                 │
-        ┌────────────────────────┼────────────────────────┐
-        │                        │                        │
-        ▼                        ▼                        ▼
-┌──────────────┐   ┌──────────────────┐   ┌──────────────────┐
-│ ClaudeCode   │   │   OpenCode       │   │   (future        │
-│ Engine       │   │   Engine         │   │    engines)      │
-│              │   │                  │   │                  │
-│ claude -p    │   │ opencode run     │   │                  │
-└──────┬───────┘   └────────┬─────────┘   └──────────────────┘
-       │                    │
-       │  subprocess.run    │  subprocess.run
-       ▼                    ▼
-   AI coding tool returns text output (stdout)
-                                 │
-                                 │  AgentResult.content
-                                 ▼
-             ┌───────────────────────────────────────┐
-             │         Caller handles delivery        │
-             │                                       │
-             │  Bot: send_message(thread_id, content) │
-             │  Jobs: notify.py → Discord channel     │
-             └───────────────────────────────────────┘
+║                              ENTRY POINTS                                 ║
+╠═════════════════════════╦═════════════════════════╦═══════════════════════╣
+║  YOU (browser, phone)   ║  TIME (the scheduler)   ║  THE WORLD (webhook)  ║
+║  open the web terminal  ║  fires every minute     ║  POST /webhooks/job/… ║
+╚════════════╤════════════╩════════════╤════════════╩═══════════╤═══════════╝
+             │                         │                        │
+             ▼                         ▼                        ▼
+┌────────────────────────┐  ┌──────────────────────┐  ┌──────────────────────┐
+│ terminal/              │  │ job/runner.py        │  │ webhooks/ front desk │
+│ xterm.js over a PTY    │  │ (spawned subprocess) │  │ secret check, then   │
+│ attached to tmux       │  │ due jobs, retention  │  │ job/webhook.py fires │
+└────────────┬───────────┘  └──────────┬───────────┘  └──────────┬───────────┘
+             │                         │                        │
+             │ you launch claude       │ runs.launch(): a window in the
+             │ or codex yourself       │ merlin-jobs session, the agent's
+             │                         │ real interface, permissions bypassed
+             ▼                         ▼                        ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          tmux windows                                    │
+│  @agent_state  idle | busy | ask | done     (stamped by the agent hooks)  │
+│  @agent_conv   the conversation id          (workspace restore, voice)   │
+│  @job_id @job_run @job_exit @job_finished   (a job run's window only)    │
+└──────────────────────────────┬───────────────────────────────────────────┘
+                               │ board/sweep.py reads the options
+             ┌─────────────────┼──────────────────────┐
+             ▼                 ▼                      ▼
+┌──────────────────┐ ┌──────────────────────┐ ┌───────────────────────────┐
+│ Sessions board   │ │ notifications/       │ │ job/supervisor.py          │
+│ (the terminal's  │ │ attention watcher:   │ │ finish rules, deadline,    │
+│  drawer, pills)  │ │ page events, Web Push│ │ then runner.record_run()   │
+└──────────────────┘ └──────────────────────┘ └───────────────────────────┘
 ```
 
-## Session Continuity
+## The Agent
+
+Merlin has no agent engine. In the terminal you launch `claude` or `codex`
+yourself; a job run does the same in a window of its own (`job/agents.py`
+holds the launch lines, `claude --dangerously-skip-permissions` and
+`codex --dangerously-bypass-approvals-and-sandbox`, and the warning the UI
+and the CLI show). What the agent gets from Merlin:
+
+- **Skills**: the canonical skill set (`~/.merlin/skills`) mirrored into
+  `~/.claude/skills`, `~/.agents/skills` and `$CODEX_HOME/skills` at every
+  start and by `merlin setup` (see [`skill-system.md`](skill-system.md)).
+  `merlin agent` prints the brain doc (`agent/MERLIN.md`) for an agent that
+  wants the operating model in one read; nothing injects it.
+- **Hooks**: the agent-state hooks (`terminal/hooks/`) installed in
+  `~/.claude/settings.json` and `~/.codex/hooks.json` under the
+  `AGENT_STATE_HOOKS` consent (`lib/skills.py` reconcilers). They stamp the
+  window's state and bind its conversation, and they are how a job run's
+  finish is known.
+- **The `merlin` CLI**: every capability is a subcommand that works from any
+  directory (`merlin job`, `merlin skills`, `merlin config`, the
+  extension commands).
+
+## A job run
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    Session Management                                │
-│                                                                     │
-│  Merlin manages its own conversation history as JSONL files.        │
-│  No reliance on any engine's built-in session/resume mechanism.     │
-│                                                                     │
-│  Location: ~/.merlin/sessions/<session_id>.jsonl                    │
-│                                                                     │
-│  Format (one JSON line per entry):                                  │
-│    Header: {"v":1, "session_id":"...", "engine":"...", "model":"..."}│
-│    Turn:   {"role":"user", "content":"...", "ts":"..."}             │
-│    Turn:   {"role":"assistant", "content":"...", "duration":3.2}    │
-│                                                                     │
-│  Session resolution (unchanged):                                    │
-│    Channel msg  → create thread → uuid5("discord-thread-{id}")      │
-│    Thread msg   → lookup registry → use existing session            │
-│    Job          → uuid4() per run (ephemeral default);              │
-│                   uuid5("job-{job_id}") if "ephemeral": false  │
-│    Reply to bot → lookup message_id → resume that session           │
-│                                                                     │
-│  Compaction: when history exceeds engine context window,            │
-│  oldest turns are dropped (system prompt + recent turns kept).      │
-│                                                                     │
-│  Registry: session_registry.py (thread/message → session mapping)   │
-│  Persists across restarts (JSON on disk, file-locked)               │
-└─────────────────────────────────────────────────────────────────────┘
+scheduler tick (every minute, job/runner.py)         webhook fire (in-process)
+  └─ retention.tick(): finalize orphans, close          └─ job/webhook.py: per-job
+     windows past retention                                lock, coalesce, adopt
+  └─ for each due job, under its flock:
+       runs.new_run()  -> a run directory (meta.json, the prompt, the log)
+       runs.launch()   -> a window in merlin-jobs, @job_* options stamped,
+                          run.sh runs the agent or the command foreground
+       supervisor.supervise() -> watches the window: done, or busy then
+                          idle, or the exit file, or the deadline (124),
+                          or the window gone (130)
+       runner.record_run() -> outcome.json, then history and the run log,
+                          then result.json (exactly once, resumable)
 ```
 
-## Memory System
+The window outlives the run: a succeeded, untouched window closes after an
+hour or at the job's next run; a failed one, or one the user stepped into,
+stays a day after the last activity; a window someone is looking at is
+never closed. A run whose Merlin restarted underneath it is adopted at the
+next tick. Full reference: [`job-system.md`](job-system.md).
 
-```
-notes/
-├── user.md           ← User memory layer (injected by the managed recipes)
-├── logs/
-│   └── YYYY-MM-DD.md ← Daily notes, decisions, discoveries
-└── kb/               ← Knowledge base (typed OKF-style notes)
-    ├── index.md        (generated catalog, injected by the recipes)
-    └── *.md            (atomic notes, linked in prose)
-```
+## Notifications
 
-Both loops, and the user in the web terminal, read and write this tree through the notes CLI (`merlin notes`, `merlin kb`, `merlin remember`). Jobs write findings into `kb/` and `logs/`; the bot reads `user.md`, and both recipes inject the generated KB index through agent_context. One assistant, several entry points, one accumulating memory: the shared state is what makes invocations compound instead of starting cold.
-
-## The Three Loops
-
-| Loop | Trigger | Path |
-|------|---------|------|
-| **Discord** | User sends message | Discord Gateway → `merlin_bot.py` → `lib/engine.py` → engine → `AgentResult` → bot sends to Discord |
-| **Jobs** | `job/` scheduler (every min) | `main.py` → `job/runner.py` (subprocess) → `lib/engine.py` → engine → `AgentResult` → `notify.py` sends to Discord |
-| **Terminal** | You, in the web terminal | interactive agent CLIs (Claude Code, etc.) get the same skills via the shims and the same notes/KB; `merlin agent` prints the brain doc on demand |
-
-The Discord and job loops converge at `lib/engine.py` — the single chokepoint where every managed invocation is logged and sessions are managed (the terminal loop runs the agent CLIs directly). The engine is a black box — it has no notion of Discord, delivery, or persona. Contextual system-prompt content (brain doc, personality, user memory, channel overlays) is composed by `lib/agent_context.py`: each managed caller selects a recipe (the bot: managed-assistant; job agent runs: headless-worker) and passes the result into `invoke()`.
-
-The job system is a **core module** started from `main.py`, independent of merlin-bot. The bot extension only provides Discord connectivity; jobs work standalone (notifications are silently skipped if the bot is not loaded).
-
-## Agent context composition (`lib/agent_context.py`)
-
-Contextual system-prompt content is composed above the engine, in `lib/agent_context.py`. Layers, each defined once there (legacy fallback paths noted in the module):
-
-| Layer | Source |
-|-------|--------|
-| brain | `agent/MERLIN.md` (app dir, refreshed by `merlin update`) |
-| personality | `~/.merlin/personality.md` |
-| user memory | `~/.merlin/user.md` (fallback: `<notes-dir>/user.md`) |
-| channel overlay | e.g. `merlin-bot/discord_directives.md` |
-
-Recipes select layer sets per caller:
-
-| Recipe | Caller | Layers |
-|--------|--------|--------|
-| managed-assistant | Discord bot | brain + personality + user + Discord overlay |
-| headless-worker | job agent runs | brain + user (no personality by design) |
-| interactive | `merlin agent` | brain printed; `--personality` / `--user` append the same layers |
-
-The composed prompt reaches the engine through `invoke(append_system_prompt=...)`; the engine stays channel-agnostic and appends its own skill fallback (non-native engines) after it, so the brain always precedes the skill table. Skills are not a layer; they are always-on and owned by the engine adapters (see [`skill-system.md`](skill-system.md)).
+`notifications/watcher.py` sweeps the windows every two seconds and turns
+state transitions into events: a plain window's `done` or `ask`, a job
+run's finish decided once by the job's `report_mode` (`always`, `silent`,
+`off`) from the `@job_*` options, with the failure wording and the exit
+code. Events ride `/api/board?since=` to the page and go to Web Push for
+subscribed devices (`notifications/push.py`). Full reference:
+[`notifications.md`](notifications.md).
 
 ## Path Resolution
 
@@ -184,12 +139,12 @@ The composed prompt reaches the engine through `invoke(append_system_prompt=...)
 │  ┌─────────────────────────┐    ┌──────────────────────────────┐   │
 │  │ app_dir → repo root     │    │ app_dir → ~/.merlin/current/ │   │
 │  │ data_dir → ~/.merlin/   │    │ data_dir → ~/.merlin/        │   │
-│  │ config → .env           │    │ config → config.env          │   │
-│  │ notes → ~/.merlin/notes/ │    │ notes → ~/.merlin/notes/     │
-│  │                         │    │                              │   │
+│  │ config → config.env     │    │ config → config.env          │   │
+│  │ jobs → ~/.merlin/jobs/  │    │ jobs → ~/.merlin/jobs/       │   │
 │  └─────────────────────────┘    └──────────────────────────────┘   │
 │                                                                     │
-│  MERLIN_HOME overrides ~/.merlin/, NOTES_DIR overrides notes path   │
+│  MERLIN_HOME overrides ~/.merlin/; the notes extension resolves its │
+│  own directory (NOTES_DIR) when it is enabled                       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -203,17 +158,22 @@ cli.py (merlin start)
   │
   └── main.start_server(port, host)
         │
+        ├── structured_log.cleanup_old_logs()  (engine-log retention)
         ├── _validate_config()
         │     ├── Check DASHBOARD_PASS (warn if empty)
         │     └── _check_optional_deps()
         │           └── tmux missing → TMUX_AVAILABLE=False, disable nav item
         │
         ├── _rebuild_skill_registry()  (aggregate ~/.merlin/skills, refresh
-        │     the ~/.claude & ~/.agents shims — see skill-system.md)
+        │     the ~/.claude, ~/.agents and $CODEX_HOME shims, reconcile the
+        │     agent-state hooks per consent — see skill-system.md)
         │
         └── asyncio.run()
               ├── uvicorn.Server (FastAPI app)
               ├── start_saas_tunnel() + SSH server (SaaS mode only)
+              ├── job.start() (the scheduler), the attention watcher,
+              │   the workspace snapshot service
+              ├── Timeline flag off: retire its provider hooks if present
               └── extension.start() for each extension with start() hook
 ```
 
@@ -222,16 +182,20 @@ cli.py (merlin start)
 | File | Purpose |
 |------|---------|
 | `main.py` | FastAPI app, startup, extension loader, settings API |
-| `cli.py` | CLI entry point and subcommands (`start`, `version`, `setup`, `update`, `config`, `skills`, `agent`, `job`, `chat`, `dashboard-url`) |
+| `cli.py` | CLI entry point and subcommands (`start`, `version`, `setup`, `update`, `config`, `skills`, `agent`, `job`, `review`, `dashboard-url`) |
 | `paths.py` | Path resolution (dev mode vs installed) |
-| `lib/engine.py` | AgentEngine abstraction, `invoke()` entry point, engine registry |
-| `lib/session.py` | JSONL session manager (create, load, append, compact) |
-| `lib/skills.py` | Skill registry, canonical aggregation, engine adapters, shims (see [`skill-system.md`](skill-system.md)) |
-| `lib/engines/claude_code.py` | Claude Code CLI engine (default) |
-| `lib/engines/opencode.py` | OpenCode CLI engine |
-| `merlin-bot/merlin_bot.py` | Discord handler, session resolution, prompt building |
-| `merlin-bot/discord_send.py` | Discord REST transport (send/reply/react/rename; CLI: `merlin chat`) |
-| `merlin-bot/session_registry.py` | Thread/message → session mapping |
-| `job/runner.py` | Job dispatcher (check due, execute via engine) |
-| `job/notify.py` | Notification delivery (report_mode logic, Discord fallback) |
+| `lib/skills.py` | Skill registry, canonical aggregation, shims, the agent-state hook reconcilers (see [`skill-system.md`](skill-system.md)) |
+| `lib/structured_log.py`, `lib/event_log.py` | The engine log writer and its typed reader (see [`logging-system.md`](logging-system.md)) |
+| `terminal/` | The web terminal: PTY bridge, tmux, the agent hooks (`terminal/hooks/`), dictation (`terminal/transcribe.py`) |
+| `board/` | The tmux sweep (`board/sweep.py`) and the Sessions board |
+| `notifications/` | The attention watcher, the event content, Web Push |
+| `job/agents.py` | The agent table: launch lines, the bypass warning, launch problems |
+| `job/runs.py` | A run: its directory, its window, `run.sh` |
+| `job/supervisor.py` | Watching a run to its finish; ending one |
+| `job/retention.py` | Orphans finalized, windows closed by the retention rules |
+| `job/runner.py` | Job dispatcher (due jobs, the record), spawned every minute |
+| `job/webhook.py` | The webhook fire, single-flight per job |
 | `job/__init__.py` | Scheduler loop |
+| `workspace/` | Continuous tmux snapshot and the restore after a reboot |
+| `voice/` | Voice mode |
+| `notes/`, `timeline/` | Built-in extensions (notes off by default; the Timeline behind its flag) |

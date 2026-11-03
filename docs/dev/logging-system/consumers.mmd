@@ -1,40 +1,32 @@
 flowchart LR
     subgraph Storage["Log Files"]
         EL["engine-log.jsonl"]
-        RS["logs/raw-sessions/*.jsonl"]
         JLG["job-logs/{job}/*.json"]
+        ACT["logs/activity/*.jsonl"]
         ML["merlin.log"]
-        SS["sessions/*.jsonl"]
+        TMUX["merlin-jobs tmux session\n(the run's window)"]
     end
 
     subgraph Dashboard["Dashboard Pages"]
-        BO["Bot Overview\n/bot\n(health cards)"]
-        BP["Bot Performance\n/bot/performance\n(charts)"]
-        BLG["Bot Logs\n/bot/logs\n(event tables)"]
-        SV["Session Viewer\n/session/{file}\n(full transcript)"]
-        CD["Jobs Dashboard\n/jobs\n(history, crashes, performance)"]
+        JD["Jobs Dashboard\n/jobs\n(history, run logs, crash banner,\nwebhook requests)"]
+        TL["Timeline\n/timeline\n(flag on)"]
+        TERM["Terminal and Sessions board\n(watch a run, step in)"]
     end
 
     subgraph Internal["Internal"]
-        ER["Engine resume\n(rebuild history\nfor --resume)"]
+        SUP["job/supervisor.py\n(the finish, the pane capture)"]
         DBG["Manual debugging\n(SSH + read)"]
     end
 
-    EL --> BO
-    EL --> BP
-    EL --> BLG
-    EL --> CD
-
-    RS --> SV
-
-    JLG --> CD
-
-    SS --> ER
-
+    EL --> JD
+    JLG --> JD
+    ACT --> TL
+    TMUX --> TERM
+    TMUX --> SUP
     ML --> DBG
 
     style EL fill:#1e3a2f,stroke:#4ade80
-    style RS fill:#1e3a2f,stroke:#4ade80
+    style ACT fill:#1e3a2f,stroke:#4ade80
     style JLG fill:#1e2d4a,stroke:#60a5fa
-    style SS fill:#1e2d4a,stroke:#60a5fa
     style ML fill:#1e3a2f,stroke:#4ade80
+    style TMUX fill:#1e2d4a,stroke:#60a5fa

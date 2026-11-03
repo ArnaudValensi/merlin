@@ -1,58 +1,55 @@
 # Your Agent
 
-Merlin does not ship its own AI. You bring your agent CLI (Claude Code by
-default, OpenCode and Codex too) and Merlin gives it a body: open the
+Merlin does not ship its own AI. You bring your agent CLI (Claude Code or
+Codex) and Merlin gives it a place to work: open the
 [web terminal](terminal.md) from anywhere, phone included, run your agent,
-and it already knows Merlin. Its skills are in place, the `merlin` CLI is
-its toolbox, and the [notes system](notes.md) is its memory. One agent,
-every channel: what you teach your agent in the
-terminal lands in the shared notes and knowledge base, and
-[jobs](jobs.md) run the same agent with the same brain doc, so every
-channel gets sharper together.
-
-Open `/timeline` when you need history across several interactive agent windows.
-The [Agent Activity Timeline](dev/agent-activity-timeline.md) records only
-separately consented lifecycle metadata: turns, tools, waits, review, and
-handoffs. It does not store prompt, answer, command, tool-result, or model-output
-content, and it does not route terminal agents through Merlin's `AgentEngine`.
+and it already knows Merlin. Its skills are in place and the `merlin` CLI
+is its toolbox. Merlin puts nothing between you and the agent: no wrapper,
+no injected persona, no conversation of its own. One agent, two places to
+operate: the windows you open in the terminal, and the windows
+[jobs](jobs.md) open for it when you are not there.
 
 ## Run your agent anywhere
 
-Open the terminal (or any shell on the machine) and launch `claude`, `codex`, or
-`opencode`. No per-project setup: Merlin mirrors its canonical skill set
+Open the terminal (or any shell on the machine) and launch `claude` or
+`codex`. No per-project setup: Merlin mirrors its canonical skill set
 (`~/.merlin/skills`) as symlinks into `~/.claude/skills` (read by Claude
-Code) and `~/.agents/skills` (read by Codex, OpenCode, and other agent CLIs), so
-your agent finds Merlin's skills from any working directory. The mirror is
-refreshed automatically at every server startup; `merlin setup` refreshes
-it on demand.
+Code), `~/.agents/skills` and `~/.codex/skills` (read by Codex and other
+agent CLIs), so your agent finds Merlin's skills from any working
+directory. The mirror is refreshed automatically at every server startup;
+`merlin setup` refreshes it on demand.
+
+## Windows, states and notifications
+
+Every agent runs in a tmux window. With your consent (the Settings page,
+or `merlin config agent-state-hooks auto`), Merlin installs a small hook
+in your agent's own settings that stamps the window's state: idle, busy,
+waiting for an answer, done. The Sessions panel of the terminal shows
+every window with that state, and [notifications](notifications.md) tell
+you, on your phone too, when an agent finishes or asks something in a
+window you are not looking at. The same hook is how a job run's finish is
+known, so jobs need it installed.
+
+A window survives closing the tab or losing signal: reopen the page and
+you are exactly where you left off. After a reboot, the
+[workspace restore](dev/workspace-restore.md) brings every window back on
+the same conversation.
 
 ## Hand your agent the brain doc
 
 `merlin agent` prints the agent operating doc: what Merlin is and how to
 drive it. Pipe it into a prompt, or let the agent run it when it needs a
-refresher. Optional layers stack on top:
-
-```bash
-merlin agent                        # the brain doc
-merlin agent --personality          # plus your personality file
-merlin agent --personality --user   # plus your user memory
-```
-
-Each layer comes from the module that composes Merlin's managed
-channels, so a layer printed here is byte-identical to that layer as the
-bot or a job injects it (the channels pick different layer sets: jobs
-skips personality by design, and the bot adds a Discord style overlay). `merlin agent --help` has the
-details.
+refresher. Nothing injects it: the agent you launch is the agent as it
+is, and the doc is one read away.
 
 What the doc teaches, in short: every capability is a `merlin` subcommand
 that works from any directory, with `merlin --help` as the catalog and
-`merlin config` to resolve data paths instead of hardcoding them; the
-three-layer notes system (user memory via `merlin remember`, daily logs,
-the Zettelkasten knowledge base) is the shared memory across channels and
-anything worth keeping must land there, because scheduled runs start
-fresh; `merlin job` manages scheduled jobs; `merlin skills` lists skills
-and where personal ones live; the extension authoring guide adds new
-capabilities; and edits to repo-tracked notes get committed and pushed.
+`merlin config` to resolve data paths instead of hardcoding them; how
+windows, states and notifications work; what a job run is (the `[Job:
+<id>]` prompt line, every permission check bypassed, the deadline) and
+how to behave in one; `merlin skills` lists skills and where personal ones
+live; the extension authoring guide adds new capabilities; and edits to
+repo-tracked files get committed and pushed.
 
 ## See what your agent knows
 
@@ -65,19 +62,21 @@ then user: shadowed skills and skills from disabled extensions show up
 dimmed. Personal skills live in your skills-user directory (resolve it
 with `merlin config skills-user-dir`).
 
-## Pick the engine for managed channels
+## Give it a memory (optional)
 
-The Discord bot and jobs invoke your agent through Merlin's engine
-abstraction. Set `AGENT_ENGINE` in the environment to choose:
-`claude-code` (default) or `opencode`. This only affects Merlin's managed
-channels; in the terminal you run whatever CLI you launch yourself.
+The [notes extension](notes.md), off until you enable it on the
+Extensions page, gives your agent a knowledge base, daily logs and user
+memory under `merlin notes`, `merlin kb` and `merlin remember`, with the
+`merlin-notes` skill that teaches it the method. Without it, Merlin keeps
+no memory of its own and does not expect the agent to keep one: what must
+outlive a window goes in files.
 
 ## Teach it new tricks
 
-Any capability you add as an extension becomes available to every
-channel: executable files under `~/.merlin/extensions/<id>/commands/`
-appear as `merlin` subcommands with no restart, and `SKILL.md` folders
-under `skills/` teach the agent when to use them. The full walkthrough is
+Any capability you add as an extension becomes available in every window:
+executable files under `~/.merlin/extensions/<id>/commands/` appear as
+`merlin` subcommands with no restart, and `SKILL.md` folders under
+`skills/` teach the agent when to use them. The full walkthrough is
 [creating extensions](creating-extensions.md); the brain doc points
 agents at the same guide, so your agent can author extensions for itself.
 
@@ -107,3 +106,8 @@ the Merlin install; `merlin update` restores it.
 **`merlin setup` warns it could not refresh skill shims.** The refresh is
 best-effort and setup still succeeds; the server repeats the sync at
 every startup, so a restart usually clears it.
+
+**No pills, no notifications, jobs stuck "starting".** The agent-state
+hook is not installed: check the consent on the Settings page or run
+`merlin config agent-state-hooks auto`. Codex runs its hooks only in a
+directory it trusts; see [Jobs](jobs.md#the-state-hooks-must-be-installed).

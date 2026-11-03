@@ -1,6 +1,6 @@
 # Getting Started
 
-Merlin runs as one process on your machine: a web dashboard on port 3123 with a web terminal, files, commits, notes, and jobs, behind a password login. This page takes you from a fresh machine to that dashboard in your pocket. Everything else builds on what you set up here: the one process you start hosts all three pillars, and the `~/.merlin` home the installer creates is where your notes, jobs, and config live.
+Merlin runs as one process on your machine: a web dashboard on port 3123 with a web terminal, files, commits, and jobs, behind a password login. This page takes you from a fresh machine to that dashboard in your pocket. Everything else builds on what you set up here: the one process you start hosts both pillars, the coding environment and the jobs, and the `~/.merlin` home the installer creates is where your jobs, logs, and config live.
 
 ![Merlin running on a phone](terminal/phone-merlin.jpg)
 
@@ -39,7 +39,7 @@ Bare `merlin` is `merlin start`. It prints `Merlin starting on http://0.0.0.0:31
 
 **Serving on a different port.** Pass `--port 8080` for a one-off, or — to make it stick — set `MERLIN_DASHBOARD_PORT=8080` in `~/.merlin/config.env` (the local bind port; put a public port in your proxy or `MERLIN_DASHBOARD_URL`). Resolution order is `--port` > `MERLIN_DASHBOARD_PORT` > 3123. `merlin restart` and in-dashboard updates keep whatever port the server is currently on.
 
-That one process is the whole system: the job scheduler starts with it, extensions load, and the skill registry your agent reads is rebuilt. The terminal, the bot, and jobs all share the notes under `~/.merlin`, which is why the longer it runs, the more your agent knows.
+That one process is the whole system: the job scheduler starts with it, extensions load, the skill registry your agent reads is rebuilt, and the attention watcher that notifies you starts sweeping the agent windows.
 
 ## Run Merlin as a service (systemd / launchd)
 
@@ -140,7 +140,7 @@ Inside `~/.merlin`:
 
 - `config.env`: the only config file (password, tokens), mode 0600
 - `versions/` and the `current` symlink: every installed release and the active one
-- `notes/`: your agent's knowledge base
+- `notes/`: your agent's knowledge base, once the notes extension is enabled
 - `jobs/`: scheduled job definitions
 - `logs/merlin.log`: the app log (rotating)
 - runtime dirs created as needed: `skills/`, `sessions/`, `data/`, `extensions/`

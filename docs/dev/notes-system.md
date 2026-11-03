@@ -101,7 +101,7 @@ A daily `kb-gardening` job (user-space, managed via `merlin job`) is the lint pa
 
 ## Layer 1: User Profile (`user.md`)
 
-Flat markdown, durable facts about the user, auto-injected into agent context (`user_memory` layer). Managed with `merlin remember add|list` (sections: identity, preferences, context, notes). Note: `remember add` appends; it does not deduplicate.
+Flat markdown, durable facts about the user, which the `merlin-notes` skill tells the agent to read first. Managed with `merlin remember add|list` (sections: identity, preferences, context, notes). Note: `remember add` appends; it does not deduplicate.
 
 ## Layer 2: Daily Logs (`logs/YYYY-MM-DD.md`)
 

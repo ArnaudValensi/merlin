@@ -14,14 +14,15 @@ there, not here: this page is the map.
 
 - `merlin` / `merlin start`: the dashboard server. Bare `merlin` runs the
   setup wizard on first start, then starts everything (dashboard, jobs,
-  extensions, the bot if configured). [Getting started](getting-started.md)
-  covers the first run.
+  extensions). [Getting started](getting-started.md) covers the first run.
 - `merlin agent`: print the agent brain doc, the operating manual
-  [your agent](agents.md) reads; flags compose the persona layers.
+  [your agent](agents.md) reads.
 - `merlin job`: manage [jobs](jobs.md) from the shell: agent or command
   runs fired by a schedule, a webhook, or by hand.
 - `merlin notes` / `merlin kb` / `merlin remember`: search and feed the
-  [knowledge base](notes.md).
+  [knowledge base](notes.md), once the notes extension is enabled.
+- `merlin review`: read and answer the code reviews you leave on the
+  [Commits](commits.md) page.
 - `merlin skills`: list every agent skill and where it comes from (core,
   an extension, or your personal skills), in precedence order; see
   [Extensions](extensions.md).

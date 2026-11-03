@@ -4,7 +4,7 @@
 supported interactive agents and explicit automation, then renders it at
 `/timeline`. Codex and Claude Code hook normalization, the generic emitter,
 bounded storage and queries, live polling, and the Clover reference integration
-are implemented. Timeline deliberately does not observe `AgentEngine`.
+are implemented. Timeline observes the agents' own hooks and explicit emitters only; a job run's window is an ordinary interactive agent to it.
 
 ## Ownership
 

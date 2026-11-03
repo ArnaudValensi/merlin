@@ -1,20 +1,19 @@
 # Skill System
 
 Reference for Merlin's skill registry: how SKILL.md skills are discovered,
-aggregated, surfaced to each engine, and listed. Skills are progressive-
+aggregated, mirrored to the user's agents, and listed. Skills are progressive-
 disclosure capabilities (a `SKILL.md` with `name` + `description` frontmatter
 and a body the agent reads on demand).
 
 > Code: `lib/skills.py` (registry + aggregation + shims), `cli.py:run_skills`
 > (`merlin skills`), `ext_commands.py` (extension source resolution),
-> `lib/engines/*` (per-engine adapters), `main.py:_rebuild_skill_registry`
-> (startup).
+> `main.py:_rebuild_skill_registry` (startup).
 
 ## Design
 
-Merlin owns **one canonical skill registry** and delegates exposure: per-engine
-adapters surface it in each engine's native format. The registry is built from
-filesystem sources alone (no manifest, no server required for the CLI).
+Merlin owns **one canonical skill registry** and mirrors it into the places
+the user's agents read skills from. The registry is built from filesystem
+sources alone (no manifest, no server required for the CLI).
 
 ## Sources and precedence
 
@@ -22,8 +21,8 @@ Sources, highest precedence first:
 
 | # | Source | Path | Active when |
 |---|--------|------|-------------|
-| 1 | **Core** | `app_dir()/skills/` (repo `skills/`) | Always — independent of the bot |
-| 2 | **Built-in extensions** | e.g. `merlin-bot/skills/` | The extension is enabled |
+| 1 | **Core** | `app_dir()/skills/` (repo `skills/`) | Always |
+| 2 | **Built-in extensions** | e.g. `notes/skills/`, `app/skills/` | The extension is enabled (and, for a flagged one, its flag is on) |
 | 3 | **Installed extensions** | `~/.merlin/extensions/<ext>/skills/` | The extension is enabled |
 | 4 | **User home** | `~/.merlin/skills-user/` | Always (per-environment, unsynced) |
 
@@ -35,11 +34,11 @@ with a core skill's name is dropped and logged as a security event —
 nothing may silently override them. Core may shadow an extension; extensions
 take precedence over the user home.
 
-Why core is its own source: managed environments run with the bot off, and the
-bot used to be the only built-in skill source — so its skills never aggregated
-and `~/.claude/skills` came up empty. The always-active core `skills/` source
-fixes that. `discord` stays under `merlin-bot/skills/` because it is genuinely
-bot-gated.
+Why core is its own source: the operational skills (`merlin`, `merlin-jobs`,
+`merlin-dashboard`, `merlin-review`) must aggregate whatever extensions are
+on, so they ship in the always-active core `skills/`. A skill that belongs to
+an extension ships with it and follows its enabled state: `merlin-notes`
+lives under `notes/skills/` and exists only when notes is enabled.
 
 The user home is `~/.merlin/skills-user/` (not the notes dir): personal skills
 are agent behavior, not notes data. It is per-environment and not synced;
@@ -58,27 +57,14 @@ managed; a real directory a user placed there is left alone with a warning.
 processes — job runner subprocesses never see the server's in-memory
 registry).
 
-## Engine adapters
-
-The canonical dir is surfaced in each engine's native format:
-
-| Engine | Mechanism |
-|--------|-----------|
-| Claude Code | Generated plugin at `~/.merlin/skills-plugin/` (`.claude-plugin/plugin.json` + a `skills/` symlink to the canonical dir), passed via `--plugin-dir` on every invocation (`lib/engines/claude_code.py:ensure_skills_plugin`) |
-| OpenCode | Per-skill symlinks `~/.agents/skills/<name>` -> canonical (`lib/engines/opencode.py`) |
-| Other / unknown | Base-class fallback: a table of skill names + descriptions injected into the system prompt, pointing at each `SKILL.md` path |
-
-Engine surfaces regenerate at invocation time (idempotent cheap checks) in
-addition to the startup rebuild.
-
-## Interactive shims (the user's own agents)
+## The shims (the user's own agents)
 
 At startup and `merlin setup`, the canonical skills are also symlinked into the
 user's personal scopes so their own terminal agents get Merlin skills from any
 cwd:
 
 - `~/.claude/skills/<name>` (Claude Code)
-- `~/.agents/skills/<name>` (engines that read it natively)
+- `~/.agents/skills/<name>` (agents that read it natively)
 - `$CODEX_HOME/skills/<name>` (Codex, default `~/.codex/skills`; written unconditionally, harmless if Codex isn't installed)
 
 Shims never overwrite a path Merlin does not own: only symlinks pointing into
@@ -87,13 +73,14 @@ the Merlin home are managed; foreign entries are skipped with a warning.
 ## Interactive hooks (agent-state pills)
 
 `sync_interactive_hooks()` is the shims' sibling for the tmux agent-state pills
-(the `terminal/` window pills). The interactive `claude` command line is the
-user's, not Merlin's, so the state hook cannot be injected per-invocation the
-way headless jobs use `--plugin-dir`; it has to live in the `hooks` key of
-`~/.claude/settings.json`, which Claude Code reads on every launch. The
-reconciler owns exactly three entries there (`UserPromptSubmit` -> busy,
-`Stop` -> done, `SessionStart` -> idle), marked by a sentinel + version baked
-into the command string (a harmless trailing shell comment).
+(the `terminal/` window pills), and for the job runs, whose finish is known
+through the same hooks. The agent's command line is the user's, not Merlin's
+(a job run launches the agent's real interface too), so the state hook has to
+live in the `hooks` key of `~/.claude/settings.json` and `~/.codex/hooks.json`,
+which the agents read on every launch. The reconcilers own their marked groups
+there (`UserPromptSubmit` -> busy, `Stop` -> done, `SessionStart` -> idle, the
+permission prompts -> ask, the voice context), marked by a sentinel + version
+baked into the command string (a harmless trailing shell comment).
 
 Like the shims it is idempotent and drift-only, so an update re-writes the hook
 without the user re-running setup. Unlike the shims it is **consent-gated** (it
@@ -148,6 +135,4 @@ audit.
 | `lib/skills.py` | `build_registry`, `audit_sources`, canonical aggregation (`rebuild`), interactive shims (`sync_interactive_shims`), agent-state hook reconciler (`sync_interactive_hooks`, `agent_state_hooks_mode`), source paths (`core_skills_dir`, `user_skills_dir`, `canonical_dir`) |
 | `cli.py` | `run_skills` (`merlin skills`), `skills-user-dir` config key |
 | `ext_commands.py` | `all_extension_states` / `enabled_extension_source_dirs` (which extensions contribute, and their enabled flag) |
-| `lib/engines/claude_code.py` | Claude Code plugin adapter (`--plugin-dir`) |
-| `lib/engines/opencode.py` | OpenCode `~/.agents/skills` adapter |
 | `main.py` | `_skill_source_dirs`, `_rebuild_skill_registry` at server startup |
