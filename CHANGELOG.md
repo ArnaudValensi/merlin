@@ -4,6 +4,24 @@ All notable user-facing changes to Merlin are documented in this file.
 
 ## Unreleased
 
+### Changed
+- **Every job runs in a tmux window**: Agent and command jobs alike run in their own window of the `merlin-jobs` session, so you can watch a run, step in, answer it or talk to it by voice. An agent job runs the agent's real interface with every permission check bypassed, and the job form and `merlin job add` warn you about it.
+- **Job notifications go through Merlin's own notifications**: A job's finish arrives like any window's done or ask, through browser and push notifications, following the job's report mode.
+- **Notes are off by default**: Notes are a built-in extension you enable yourself on the Extensions page.
+- **The Timeline goes behind a feature flag**: It exists only with `MERLIN_FEATURES=timeline`, like app streaming. With the flag off, Merlin removes the hooks a previous version installed in your agents at startup. Your activity history is kept.
+- **The event log is now `logs/events.jsonl`**: Startup moves the old `logs/engine-log.jsonl` there and removes the logs nothing reads any more (`logs/raw-sessions/`, `logs/claude/`, `logs/cron_runner.log`, `sessions/`).
+- **A Codex job in a directory Codex does not trust fails at once**: Codex runs no hook there, so the run used to wait for its deadline. The run log now says how to fix it.
+
+### Removed
+- **The Discord bot and `merlin chat`**: Its page, the discord skill and the job Discord fields are gone. Old settings are dropped from `config.env` when Merlin next rewrites it.
+- **The agent engine and persistent job sessions**: Merlin no longer wraps an agent. You run your own Claude Code or Codex, and so does a job.
+- **The session viewer, and cost and performance tracking**: The agent keeps its own conversations.
+
+### Fixed
+- **Passwords and tokens no longer reach your terminals**: A tmux server started by Merlin inherited its dashboard password and Merlin Cloud token, and handed them to every shell, agent and job. New windows no longer get them, and Merlin cleans a running server at startup. A shell already open keeps its copy until you close it.
+- **`merlin restart` applies `config.env`**: Restarted from a tmux window, Merlin used to read that window's old copy of a setting instead of the file. A changed `MERLIN_FEATURES` could be ignored, and the Timeline lose its hooks.
+- **A succeeded command job's window closes after an hour**: A slow first shell prompt used to read as someone stepping in, which kept the window a day.
+
 ### Added
 - **Get your workspace back after a reboot or a power cut**: Merlin now keeps a snapshot of your tmux sessions, saved every 15 seconds when something changed. After the machine restarts, the first page you open offers to restore them: every session and window comes back with its layout and directories, and every Claude Code and Codex conversation resumes where it was, with its launch options. Other programs come back as a shell in their directory; Merlin never reruns them.
 

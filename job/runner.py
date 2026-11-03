@@ -765,7 +765,7 @@ How it works:
   6. Updates per-job state (.state/{job_id}) and history (.history.json)
   7. Finalizes runs whose supervisor died and closes finished windows past
      their retention
-  8. Logs everything to logs/merlin.log and logs/engine-log.jsonl
+  8. Logs everything to logs/merlin.log and logs/events.jsonl
 
 Manual execution:
   # Run a specific job immediately (bypasses schedule check)
@@ -796,7 +796,7 @@ Related commands:
 
 Logs:
   logs/merlin.log                 # Unified app log (shared with main process)
-  logs/engine-log.jsonl           # Lifecycle events
+  logs/events.jsonl           # Lifecycle events
   job-runs/<run_id>/              # A run's script, prompt, exit code, output
   jobs/.state/               # Per-job last run timestamps
   jobs/.history.json         # Run history

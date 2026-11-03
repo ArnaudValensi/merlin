@@ -41,7 +41,7 @@ def test_jobs_tab_order_is_jobs_logs(client):
 
 
 def test_job_logs_rows_are_expandable(client):
-    """The Logs tab wires click-to-expand detail rows (parity with the bot logs)."""
+    """The Logs tab wires click-to-expand detail rows ."""
     html = client.get("/jobs").text
     assert "toggleLogRow" in html
     assert "job-logdetail-" in html
@@ -292,9 +292,9 @@ def test_webhook_events_endpoint_filters_job_source(client, tmp_path, monkeypatc
             "outcome": "coalesced",
         },
     ]
-    path = tmp_path / "engine-log.jsonl"
+    path = tmp_path / "events.jsonl"
     path.write_text("".join(json_mod.dumps(e) + "\n" for e in lines))
-    monkeypatch.setattr(event_log, "ENGINE_LOG_PATH", path)
+    monkeypatch.setattr(event_log, "EVENT_LOG_PATH", path)
 
     resp = client.get("/api/jobs/webhook-events")
     assert resp.status_code == 200

@@ -280,12 +280,12 @@ activity tracking and no rate limit: a window bounces between busy and ask only 
 someone's hands, where the rule already silences it.
 
 Every decision is recorded: the watcher listener writes an `attention_routed` event to
-the engine log (`log_event`) with the event's target and window, `pushed` (devices
+the event log (`log_event`) with the event's target and window, `pushed` (devices
 reached) or `skipped` (the reason), and `looking`, the pages that were visible and
 focused at that moment (`terminal.routes.looking_clients`: browser label from the user
 agent and the displayed window). `GET /api/notifications/status` returns the same
 `looking` list for the present moment. A notification that did not arrive is explained
-there: grep the engine log for `attention_routed`.
+there: grep the event log for `attention_routed`.
 What only a person can verify, on real devices, is in
 [`notifications-acceptance.md`](notifications-acceptance.md).
 

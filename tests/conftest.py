@@ -18,10 +18,10 @@ sys.path.insert(0, str(Path(_project_root) / "lib"))
 # ---------------------------------------------------------------------------
 # Test isolation: redirect MERLIN_HOME BEFORE any test modules are imported.
 #
-# Many modules cache paths at import time (e.g. structured_log.ENGINE_LOG_PATH).
+# Many modules cache paths at import time (e.g. structured_log.EVENT_LOG_PATH).
 # Setting the env var here — at conftest load time — ensures those module-level
 # constants resolve to a temp dir instead of ~/.merlin/. Without this, tests
-# write fake crash events to the production engine-log.jsonl.
+# write fake crash events to the production events.jsonl.
 # ---------------------------------------------------------------------------
 _session_merlin_home = tempfile.mkdtemp(prefix="merlin-test-")
 os.environ["MERLIN_HOME"] = _session_merlin_home

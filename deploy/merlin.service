@@ -13,7 +13,7 @@
 #   journalctl --user -u merlin -f
 
 [Unit]
-Description=Merlin — personal dev dashboard, bot, and job scheduler
+Description=Merlin — personal dev dashboard and job scheduler
 After=network-online.target
 Wants=network-online.target
 

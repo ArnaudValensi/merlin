@@ -1,6 +1,6 @@
 ---
 name: merlin
-description: How Merlin works under the hood. Its architecture, source code, configuration, skills, jobs and logs. Use when the user asks how Merlin works, wants its logs or source inspected, debugs a job, a channel or a dashboard behavior, or asks what Merlin can do.
+description: How Merlin works under the hood. Its architecture, source code, configuration, skills, jobs and logs. Use when the user asks how Merlin works, wants its logs or source inspected, debugs a job or a dashboard behavior, or asks what Merlin can do.
 user-invocable: false
 allowed-tools: Bash, Read, Glob, Grep
 ---
@@ -42,13 +42,13 @@ Merlin's source code spans several directories from the project root:
 
 All logs live under `~/.merlin/logs/`.
 
-### Engine log (`~/.merlin/logs/engine-log.jsonl`)
+### Event log (`~/.merlin/logs/events.jsonl`)
 
 Single JSONL file, one event per line. Event types: `app_started`, `app_stopped`, `job_runner_crash`, `webhook_request`, `attention_routed`. The jobs page reads the crashes and the webhook requests from it.
 
 ```bash
-tail -20 ~/.merlin/logs/engine-log.jsonl | python3 -m json.tool --no-ensure-ascii
-grep '"error"' ~/.merlin/logs/engine-log.jsonl | tail -10
+tail -20 ~/.merlin/logs/events.jsonl | python3 -m json.tool --no-ensure-ascii
+grep '"error"' ~/.merlin/logs/events.jsonl | tail -10
 ```
 
 ### App log (`~/.merlin/logs/merlin.log`)

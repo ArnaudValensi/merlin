@@ -1,4 +1,4 @@
-"""Tests for lib/event_log.py — the typed, resilient engine-log reader."""
+"""Tests for lib/event_log.py — the typed, resilient event-log reader."""
 
 import json
 import logging
@@ -12,9 +12,9 @@ from lib.event_log import BaseEvent, WebhookRequestEvent
 
 @pytest.fixture(autouse=True)
 def _isolated_log(tmp_path, monkeypatch):
-    """Point event_log.ENGINE_LOG_PATH at a temp file for every test."""
-    log_path = tmp_path / "engine-log.jsonl"
-    monkeypatch.setattr(el, "ENGINE_LOG_PATH", log_path)
+    """Point event_log.EVENT_LOG_PATH at a temp file for every test."""
+    log_path = tmp_path / "events.jsonl"
+    monkeypatch.setattr(el, "EVENT_LOG_PATH", log_path)
     return log_path
 
 
@@ -241,7 +241,7 @@ def test_read_events_logs_malformed_summary(_isolated_log, caplog):
     assert len(events) == 2
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
-    assert "skipped 3 malformed lines in engine-log.jsonl" in caplog.text
+    assert "skipped 3 malformed lines in events.jsonl" in caplog.text
 
 
 def test_read_events_naive_since_coerced(_isolated_log):

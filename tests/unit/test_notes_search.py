@@ -88,7 +88,7 @@ def logs_with_entries(notes_dir):
         ## 10:00 — Pre-compaction memories
 
         - User prefers flat directory structures
-        - Working on Discord bot project
+        - Working on the dashboard project
     """)
     )
 

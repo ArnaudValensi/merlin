@@ -13,7 +13,7 @@ seconds and use the time to set the situation up. Read each outcome on the devic
 the routing record, which says what the instance decided and which pages it saw looking:
 
 ```bash
-grep attention_routed ~/.merlin/logs/engine-log.jsonl | tail -3
+grep attention_routed ~/.merlin/logs/events.jsonl | tail -3
 ```
 
 ## With the phone app and a desktop browser, both on

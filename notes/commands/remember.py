@@ -190,7 +190,7 @@ Examples:
   # Add to a specific section
   merlin remember add "Name: Alex" --section identity
   merlin remember add "Likes concise responses" --section preferences
-  merlin remember add "Working on Merlin bot project" --section context
+  merlin remember add "Working on the Merlin dashboard" --section context
 
   # List all stored facts
   merlin remember list

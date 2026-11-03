@@ -13,8 +13,8 @@ import structured_log as sl
 @pytest.fixture(autouse=True)
 def _isolated_log(tmp_path, monkeypatch):
     """Redirect structured log to a temp file for every test."""
-    log_path = tmp_path / "engine-log.jsonl"
-    monkeypatch.setattr(sl, "ENGINE_LOG_PATH", log_path)
+    log_path = tmp_path / "events.jsonl"
+    monkeypatch.setattr(sl, "EVENT_LOG_PATH", log_path)
     yield log_path
 
 
@@ -104,8 +104,8 @@ class TestLogEvent:
         assert len(events) == 100  # 5 threads * 20 events
 
     def test_creates_parent_directories(self, tmp_path, monkeypatch):
-        deep_path = tmp_path / "a" / "b" / "c" / "engine-log.jsonl"
-        monkeypatch.setattr(sl, "ENGINE_LOG_PATH", deep_path)
+        deep_path = tmp_path / "a" / "b" / "c" / "events.jsonl"
+        monkeypatch.setattr(sl, "EVENT_LOG_PATH", deep_path)
         sl.log_event("test", foo="bar")
         assert deep_path.exists()
 
@@ -114,3 +114,58 @@ class TestLogEvent:
         sl.log_event("test", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
         events = _read_events(_isolated_log)
         assert "2026-01-01" in events[0]["when"]
+
+
+class TestRetireOldLogs:
+    def _logs(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        monkeypatch.setattr(sl, "EVENT_LOG_PATH", logs / "events.jsonl")
+        return logs
+
+    def test_moves_the_event_log_without_the_bot_events(self, monkeypatch, tmp_path):
+        logs = self._logs(monkeypatch, tmp_path)
+        (logs / "engine-log.jsonl").write_text(
+            '{"type": "bot_event", "event": "error"}\n'
+            '{"type": "app_started"}\n'
+            "not json\n"
+        )
+        sl.retire_old_logs()
+        assert not (logs / "engine-log.jsonl").exists()
+        assert (logs / "events.jsonl").read_text() == (
+            '{"type": "app_started"}\nnot json\n'
+        )
+
+    def test_appends_to_an_event_log_already_there(self, monkeypatch, tmp_path):
+        logs = self._logs(monkeypatch, tmp_path)
+        (logs / "events.jsonl").write_text('{"type": "app_stopped"}\n')
+        (logs / "engine-log.jsonl").write_text('{"type": "app_started"}\n')
+        sl.retire_old_logs()
+        assert (logs / "events.jsonl").read_text().splitlines() == [
+            '{"type": "app_stopped"}',
+            '{"type": "app_started"}',
+        ]
+
+    def test_removes_only_what_the_old_model_wrote(self, monkeypatch, tmp_path):
+        logs = self._logs(monkeypatch, tmp_path)
+        for name in ("raw-sessions", "claude", "activity"):
+            (logs / name).mkdir()
+            (logs / name / "x.jsonl").write_text("x")
+        (logs / "cron_runner.log").write_text("x")
+        (logs / "merlin.log").write_text("x")
+        (tmp_path / "sessions").mkdir()
+        (tmp_path / "user.md").write_text("mine")
+        sl.retire_old_logs()
+        assert not (logs / "raw-sessions").exists()
+        assert not (logs / "claude").exists()
+        assert not (logs / "cron_runner.log").exists()
+        assert not (tmp_path / "sessions").exists()
+        assert (logs / "activity" / "x.jsonl").exists()
+        assert (logs / "merlin.log").exists()
+        assert (tmp_path / "user.md").read_text() == "mine"
+
+    def test_is_quiet_when_nothing_is_left(self, monkeypatch, tmp_path):
+        logs = self._logs(monkeypatch, tmp_path)
+        sl.retire_old_logs()
+        assert list(logs.iterdir()) == []

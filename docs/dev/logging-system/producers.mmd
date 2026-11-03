@@ -18,7 +18,7 @@ flowchart TB
         ML_MAIN["merlin\n(extensions, startup)"]
     end
 
-    subgraph Structured["Engine Log Writers"]
+    subgraph Structured["Event Log Writers"]
         SE_JOB["job/runner.py\nlog_event(job_dispatch:\nstarted/completed/failed)"]
         SE_WH["webhooks/\nlog_event(webhook_request)"]
         SE_CRASH["job/__init__.py\nlog_event(job_runner_crash)"]
@@ -34,7 +34,7 @@ flowchart TB
 
     subgraph Storage["Disk"]
         F_ML["logs/merlin.log\n🔄 10 MB × 5 backups"]
-        F_EL["logs/engine-log.jsonl\n🔄 180-day retention"]
+        F_EL["logs/events.jsonl\n🔄 180-day retention"]
         F_RUNS["job-runs/<run>/\n(removed with the window)"]
         F_JLG["job-logs/{job}/*.json\n🔄 50 per job"]
         F_TMUX["merlin-jobs tmux session\n(the window, until retention)"]

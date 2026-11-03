@@ -13,7 +13,7 @@ Three distinct concepts, each with its own storage:
 ~/.merlin/
 ├── logs/
 │   ├── merlin.log              # App log (unified, rotating)
-│   ├── engine-log.jsonl        # Lifecycle events (JSONL)
+│   ├── events.jsonl        # Lifecycle events (JSONL)
 │   └── activity/               # Sanitized Timeline metadata, daily JSONL (flag on)
 ├── job-logs/                   # Job run logs, one file per run
 └── job-runs/                   # A run's private directory while its window lives
@@ -23,7 +23,7 @@ Three distinct concepts, each with its own storage:
 - **`job-logs/`** — job-specific execution records with the run's output.
 - **`job-runs/`** — the live state of a run (its prompt, pid, outcome); removed with its window by retention, after the run is recorded.
 
-A `logs/raw-sessions/` or `sessions/` directory left by an older release (the removed agent engine wrote them) is never touched.
+Startup removes what older releases left: `logs/raw-sessions/`, `logs/claude/`, `logs/cron_runner.log` and `sessions/`, and moves `logs/engine-log.jsonl` here as `events.jsonl`, without its `bot_event` lines.
 
 ## Who Writes Where
 
@@ -77,7 +77,7 @@ The job runner (`job/runner.py`) runs as a separate subprocess. When running sta
 2026-11-02 10:31:12 INFO     [merlin.job] [7f861aa7] Job digest finished (exit=0, 26.1s)
 ```
 
-**engine-log.jsonl** (JSONL):
+**events.jsonl** (JSONL):
 ```json
 {"type": "job_dispatch", "timestamp": "2026-11-02T10:30:46+00:00", "job_id": "digest", "event": "started", "trigger": "webhook", "request_id": "7f861aa7-...", "duration": 0, "exit_code": 0}
 {"type": "webhook_request", "timestamp": "2026-11-02T10:30:50+00:00", "source": "job", "target": "digest", "ip": "203.0.113.4", "outcome": "launched", "run_id": "7f861aa7-...", "request_id": "a1b2c3d4-..."}
@@ -95,7 +95,7 @@ A run writes to three places, in this order:
 
 | File | Format | Contains output? | Contains metadata? | Rotation |
 |---|---|---|---|---|
-| `logs/engine-log.jsonl` | JSONL | **No** | Yes (type, timestamp, outcome, ids) | 180-day retention |
+| `logs/events.jsonl` | JSONL | **No** | Yes (type, timestamp, outcome, ids) | 180-day retention |
 | `logs/merlin.log` | Text | No | No (free-text lifecycle events) | 10 MB × 5 backups |
 | `logs/activity/*.jsonl` | JSONL | No (metadata only) | Yes (lifecycle, provider, window) | 90 days |
 | `job-logs/{job}/*.json` | JSON | Yes (the pane's output, bounded) | Yes (exit_code, duration, run_id, agent, trigger) | 50 per job |
@@ -118,7 +118,7 @@ fields such as prompts, commands, inputs, outputs, responses, and secrets. Its
 complete contract is
 [`agent-activity-timeline.md`](agent-activity-timeline.md).
 
-### What `engine-log.jsonl` contains
+### What `events.jsonl` contains
 
 | Event type | When | Key fields |
 |---|---|---|
@@ -145,7 +145,7 @@ log and its window. Each typed event has a model in `lib/event_log.py`
 ![Log consumers — what reads which file](logging-system/consumers.svg)
 ([mermaid source](logging-system/consumers.mmd))
 
-1. **Jobs dashboard** (`/jobs`) → reads `engine-log.jsonl` via `lib/event_log.py` for the **crash banner** (`job_runner_crash` events) and the **Webhooks tab** (`webhook_request` events). Reads `job-logs/` for the run history and each run's log.
+1. **Jobs dashboard** (`/jobs`) → reads `events.jsonl` via `lib/event_log.py` for the **crash banner** (`job_runner_crash` events) and the **Webhooks tab** (`webhook_request` events). Reads `job-logs/` for the run history and each run's log.
 2. **Timeline page** (`/timeline`, flag on) → reads `logs/activity/`.
 3. **`merlin.log`** → manual debugging only (SSH into server and read).
 
@@ -158,12 +158,12 @@ All log types have bounded growth:
 | Log | Strategy | Retention | Max disk |
 |---|---|---|---|
 | `logs/merlin.log` | `RotatingFileHandler` | 10 MB × 5 backups | 50 MB |
-| `logs/engine-log.jsonl` | Age-based cleanup at startup | 180 days | Varies |
+| `logs/events.jsonl` | Age-based cleanup at startup | 180 days | Varies |
 | `logs/activity/` | Daily partitions; once-daily cleanup on append | 90 days | 64 MB/day |
 | `job-logs/` | Count-based per job | 50 per job | Varies |
 | `job-runs/` | Removed with the run's window, once recorded | An hour to a day | Varies |
 
-Cleanup runs at server startup via `structured_log.cleanup_old_logs()`, called from `main.py start_server()`. The retention constant is `ENGINE_LOG_RETENTION_DAYS = 180` in `lib/structured_log.py`; the window retention rules are in `job/retention.py`.
+Cleanup runs at server startup via `structured_log.cleanup_old_logs()`, called from `main.py start_server()`. The retention constant is `EVENT_LOG_RETENTION_DAYS = 180` in `lib/structured_log.py`; the window retention rules are in `job/retention.py`.
 
 ## What is NOT logged
 
@@ -180,15 +180,15 @@ These parts of the app produce no structured events (though app-level errors go 
 
 | File | Purpose |
 |---|---|
-| `lib/structured_log.py` | `log_event()`, `cleanup_old_logs()` — engine log writer + rotation |
-| `lib/event_log.py` | Canonical **reader** for `engine-log.jsonl` — typed Pydantic event models, malformed-line resilience. Used by the jobs page (crash banner, webhook requests). |
+| `lib/structured_log.py` | `log_event()`, `cleanup_old_logs()` — event log writer + rotation |
+| `lib/event_log.py` | Canonical **reader** for `events.jsonl` — typed Pydantic event models, malformed-line resilience. Used by the jobs page (crash banner, webhook requests). |
 | `timeline/schema.py`, `timeline/writer.py`, `timeline/store.py` | Timeline's independent typed record, locked writer, bounded reader, and retention. |
 | `main.py` | `_setup_logging()` — configures `merlin.*` RotatingFileHandler, calls cleanup at startup |
-| `job/runner.py` | Job dispatcher — writes `job_dispatch` started/completed/failed to the engine log, and the record of a run (`.history.json`, the run log, `result.json`) |
+| `job/runner.py` | Job dispatcher — writes `job_dispatch` started/completed/failed to the event log, and the record of a run (`.history.json`, the run log, `result.json`) |
 | `job/runs.py`, `job/supervisor.py`, `job/retention.py` | The run directory, the finish, the removal with the window |
-| `job/__init__.py` | Job scheduler — writes to engine log on crash (job_runner_crash) |
+| `job/__init__.py` | Job scheduler — writes to event log on crash (job_runner_crash) |
 | `job/logs.py` | Job run log CRUD — reads/writes `job-logs/`, has `cleanup_logs()` |
-| `job/routes.py` | Jobs dashboard API — reads `engine-log.jsonl` via `lib/event_log.py` (crash banner, webhook events), `job-logs/` for history |
+| `job/routes.py` | Jobs dashboard API — reads `events.jsonl` via `lib/event_log.py` (crash banner, webhook events), `job-logs/` for history |
 | `webhooks/` | The front desk — writes `webhook_request` for every outcome |
 | `notifications/routes.py` | Writes `attention_routed` for every routed notification event |
 | `notifications/push.py` | Writes `push_failed` and `push_removed` on delivery failures |

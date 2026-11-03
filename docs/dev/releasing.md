@@ -77,7 +77,7 @@ Old versions are kept in `~/.merlin/versions/` and are never auto-deleted.
 
 ## Pre-release Checklist
 
-1. All tests pass (core + bot)
+1. All tests pass
 2. `uv run main.py` starts cleanly
 3. `uv run cli.py version` shows expected version
 4. `bash install.sh --dry-run` output looks correct

@@ -1,4 +1,4 @@
-"""Canonical reader for the engine event log (``logs/engine-log.jsonl``).
+"""Canonical reader for the event log (``logs/events.jsonl``).
 
 This is the read-side counterpart to ``lib/structured_log.py`` (the writer).
 Writers stay free-form (``log_event(**fields)``); readers parse each JSONL line
@@ -25,18 +25,18 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 import paths
 
-ENGINE_LOG_PATH = paths.logs_dir() / "engine-log.jsonl"
+EVENT_LOG_PATH = paths.logs_dir() / "events.jsonl"
 
 _logger = logging.getLogger("merlin.event_log")
 
 
 # ---------------------------------------------------------------------------
-# Event models — consumer-side schema for engine-log.jsonl
+# Event models — consumer-side schema for events.jsonl
 # ---------------------------------------------------------------------------
 
 
 class BaseEvent(BaseModel):
-    """Common shape for every engine-log event.
+    """Common shape for every event-log event.
 
     ``extra="allow"`` keeps unknown / future fields accessible instead of
     dropping them, so adding a field to a writer never breaks a reader.
@@ -114,7 +114,7 @@ def read_events(
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> list[BaseEvent]:
-    """Read typed events from ``engine-log.jsonl``, optionally filtered.
+    """Read typed events from ``events.jsonl``, optionally filtered.
 
     Args:
         event_type: If given, only events whose ``type`` matches are returned.
@@ -135,7 +135,7 @@ def read_events(
         skipped, a single ``WARNING`` summary is logged. Naive ``since`` /
         ``until`` bounds are treated as UTC for comparison.
     """
-    if not ENGINE_LOG_PATH.exists():
+    if not EVENT_LOG_PATH.exists():
         return []
 
     # Engine timestamps are timezone-aware; coerce naive bounds to UTC so a
@@ -149,7 +149,7 @@ def read_events(
         # errors="replace" keeps a corrupt / non-UTF-8 byte run from raising:
         # affected lines then fail JSON decode and are counted as malformed
         # rather than crashing the read.
-        text = ENGINE_LOG_PATH.read_text(encoding="utf-8", errors="replace")
+        text = EVENT_LOG_PATH.read_text(encoding="utf-8", errors="replace")
     except OSError:
         # File removed between the exists() check and the read, or a transient
         # I/O error: degrade to empty, matching the missing-file contract.
@@ -199,6 +199,6 @@ def read_events(
         events.append(event)
 
     if malformed:
-        _logger.warning("skipped %d malformed lines in engine-log.jsonl", malformed)
+        _logger.warning("skipped %d malformed lines in events.jsonl", malformed)
 
     return events

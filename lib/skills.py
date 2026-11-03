@@ -1,12 +1,12 @@
 """
-Skill registry — engine-agnostic discovery and aggregation of SKILL.md skills.
+Skill registry — agent-agnostic discovery and aggregation of SKILL.md skills.
 
-Merlin owns one canonical skill registry; per-engine adapters surface it in
-each engine's native format (Claude Code plugin, ~/.agents/skills symlinks,
+Merlin owns one canonical skill registry; per-agent adapters surface it in
+each agent's native format (Claude Code plugin, ~/.agents/skills symlinks,
 system-prompt fallback). Sources, in precedence order:
 
 1. The core repo ``skills/`` directory (shipped operational skills, always
-   active regardless of the bot)
+   active)
 2. Built-in extensions' ``skills/`` directories (e.g. ``app/skills/``),
    gated by the extension's enabled state
 3. Installed extensions' ``~/.merlin/extensions/<ext>/skills/``
@@ -298,18 +298,18 @@ def list_canonical_skills() -> list[SkillSpec]:
     """Read skills back from the canonical dir (works across processes).
 
     The in-memory registry only exists in the process that built it; job
-    runner subprocesses and the engine fallback read the aggregation instead.
+    runner subprocesses read the aggregation instead.
     """
     return list_source_skills("canonical", canonical_dir())
 
 
 # ---------------------------------------------------------------------------
-# Interactive shims and per-skill engine link farms
+# Interactive shims and per-skill agent link farms
 # ---------------------------------------------------------------------------
 
 
 def agents_skills_dir() -> Path:
-    """The cross-engine user skill location (~/.agents/skills).
+    """The cross-agent user skill location (~/.agents/skills).
 
     Read natively by OpenCode and Pi. Skills must sit directly at
     ``~/.agents/skills/<name>/SKILL.md`` (no nesting), hence per-skill links.

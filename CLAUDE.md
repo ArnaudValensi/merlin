@@ -69,7 +69,7 @@ New to the codebase? Read `architecture.md` first, then `extension-system.md` an
 | [`docs/dev/agent-activity-timeline.md`](docs/dev/agent-activity-timeline.md) | Timeline schema, consent, hooks, emitter, store, query API, and live UI |
 | [`docs/dev/extension-system.md`](docs/dev/extension-system.md) | Extension tiers, interface, feature flags, state, registry, Extensions/Settings pages |
 | [`docs/dev/app-streaming.md`](docs/dev/app-streaming.md) | Flagged Apps built-in: Xvfb sessions, `merlin app` CLI, WebRTC streamer, terminal panel, player, Apps page |
-| [`docs/dev/skill-system.md`](docs/dev/skill-system.md) | Skill registry: sources, precedence (core > extension > user), canonical aggregation, engine adapters, shims, `merlin skills` |
+| [`docs/dev/skill-system.md`](docs/dev/skill-system.md) | Skill registry: sources, precedence (core > extension > user), canonical aggregation, agent adapters, shims, `merlin skills` |
 | [`docs/dev/dashboard-architecture.md`](docs/dev/dashboard-architecture.md) | Dashboard theme, CSS variables, JS patterns, API endpoints |
 | [`docs/dev/commit-review.md`](docs/dev/commit-review.md) | Commits page comparisons (`base..head`, ref safety, routes, the sticky header), saved reviews, comments, `merlin review` |
 | [`docs/dev/notifications.md`](docs/dev/notifications.md) | Attention watcher, event cursor, poll transport, in-tab rule, manifest and worker, Web Push, suppression, the seams kept for the hub |
@@ -79,13 +79,13 @@ New to the codebase? Read `architecture.md` first, then `extension-system.md` an
 | [`docs/dev/claude-code-reference.md`](docs/dev/claude-code-reference.md) | Claude Code CLI flags and options |
 | [`docs/dev/releasing.md`](docs/dev/releasing.md) | Tagging, GitHub Releases, install/update flow, rollback |
 | [`docs/dev/standalone-cli.md`](docs/dev/standalone-cli.md) | Standalone CLI design: paths, install, update, dev mode |
-| [`docs/dev/logging-system.md`](docs/dev/logging-system.md) | Logging architecture, log files, rotation, engine log events |
+| [`docs/dev/logging-system.md`](docs/dev/logging-system.md) | Logging architecture, log files, rotation, event log events |
 | [`docs/dev/openclaw-architecture.md`](docs/dev/openclaw-architecture.md) | Design-reference analysis of OpenClaw (not Merlin internals) |
 
 ### Doc Audiences
 
 1. **`merlin/CLAUDE.md`** (this file) — For **developing** Merlin. No operational agent guidance lives here.
-2. **`agent/MERLIN.md`** — The agent brain doc: what Merlin is and how to operate it, channel-neutral. Printed by `merlin agent`.
+2. **`agent/MERLIN.md`** — The agent brain doc: what Merlin is and how to operate it. Printed by `merlin agent`.
 
 ## Script Documentation Convention
 
@@ -166,7 +166,7 @@ The CWD is determined by where you launch `main.py`:
 - **Language**: Python
 - **Runner**: `uv run` (`pyproject.toml` + `uv.lock` for reproducible builds)
 - **Web**: FastAPI + Jinja2 (server-side rendered)
-- **Agents**: the user's own Claude Code or Codex, run as they are in tmux windows (no wrapper, no engine)
+- **Agents**: the user's own Claude Code or Codex, run as they are in tmux windows (no wrapper)
 - **Scheduling**: Built-in asyncio scheduler (no cron dependency)
 
 ## Jobs
@@ -193,7 +193,7 @@ Reference dev environment (the maintainer's setup, not a requirement). Merlin it
 ## Development Commands
 
 ```bash
-uv run main.py                # start everything (dashboard + bot + jobs, dev mode)
+uv run main.py                # start everything (dashboard + jobs, dev mode)
 uv run cli.py restart         # restart the running server (stop + fresh start)
 uv run cli.py stop            # stop it without restarting
 uv run scripts.py validate    # full validation: lint + format + typecheck + tests
@@ -216,7 +216,7 @@ restart/update then stop-and-exit instead of self-relaunching. See
 [`docs/getting-started.md`](docs/getting-started.md) → "Run Merlin as a service".
 `restart.sh` is a deprecated one-release shim that forwards to `merlin restart`.
 
-Full setup, test variants, bot-from-checkout, and E2E first-time setup:
+Full setup, test variants, and E2E first-time setup:
 [`docs/dev/development-setup.md`](docs/dev/development-setup.md).
 
 ## Logging
@@ -226,9 +226,9 @@ Full setup, test variants, bot-from-checkout, and E2E first-time setup:
 Two log types under `~/.merlin/`:
 
 - **`logs/merlin.log`** — unified app log (`RotatingFileHandler`, 10 MB × 5). All modules use the `merlin.*` logger hierarchy.
-- **`logs/engine-log.jsonl`** — lifecycle events (app start/stop, job runner crashes, webhook requests, routed notifications). The jobs page reads the crashes and the webhook requests from it.
+- **`logs/events.jsonl`** — lifecycle events (app start/stop, job runner crashes, webhook requests, routed notifications). The jobs page reads the crashes and the webhook requests from it.
 
-Rotation: `merlin.log` rotates by size, `engine-log.jsonl` keeps 180 days. Cleanup runs at startup; a `logs/raw-sessions/` left by an older release is never touched.
+Rotation: `merlin.log` rotates by size, `events.jsonl` keeps 180 days. Cleanup runs at startup, and removes the logs an older release left (`logs/raw-sessions/`, `logs/claude/`, `sessions/`, the old event log name).
 
 Extension loggers: use `from merlin_ext import get_logger` — see [`docs/dev/extension-system.md`](docs/dev/extension-system.md#logging).
 

@@ -11,7 +11,7 @@ Reference for maintaining and extending the Merlin monitoring dashboard.
 | Charts | Chart.js 4 + chartjs-adapter-date-fns + chartjs-plugin-zoom | CDN |
 | Syntax highlighting | highlight.js 11 | CDN, `github-dark-dimmed` theme |
 | Auth | Cookie-based (HMAC-signed) | See [`auth-and-tunnel.md`](auth-and-tunnel.md) |
-| Data | JSONL flat file | `logs/engine-log.jsonl`, append-only |
+| Data | JSONL flat file | `logs/events.jsonl`, append-only |
 
 ## File Layout
 
@@ -50,7 +50,7 @@ Pages are Jinja2 templates served by FastAPI. Data is fetched client-side via JS
 
 ### Single JSONL event file
 
-Lifecycle events go to one file (`logs/engine-log.jsonl`). Each line is a JSON object with a `type` field (`job_dispatch` started/completed/failed, `job_runner_crash`, `webhook_request`, `attention_routed`, `push_failed`, `push_removed`, `app_started`, `app_stopped`); the jobs page reads the crashes and the webhook requests from it through `lib/event_log.py`. See [`logging-system.md`](logging-system.md).
+Lifecycle events go to one file (`logs/events.jsonl`). Each line is a JSON object with a `type` field (`job_dispatch` started/completed/failed, `job_runner_crash`, `webhook_request`, `attention_routed`, `push_failed`, `push_removed`, `app_started`, `app_stopped`); the jobs page reads the crashes and the webhook requests from it through `lib/event_log.py`. See [`logging-system.md`](logging-system.md).
 
 ### Live data
 
@@ -533,7 +533,7 @@ job/
   advanced disclosure is hidden entirely for command jobs. **Save & run now** saves,
   triggers `POST /api/jobs/jobs/{id}/run`, and deep-links to the Logs tab via a
   `#logs=<id>` hash handler. Job cards show a type badge (`🤖 agent` purple /
-  `>_ command` green-mono), command jobs render the command preview and omit cost.
+  `>_ command` green-mono), command jobs render the command preview.
 
 **Dependency:** `cron-descriptor` (in `pyproject.toml`) powers `cron_to_human()`.
 

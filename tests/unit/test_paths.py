@@ -295,9 +295,9 @@ class TestModuleIntegration:
     def test_structured_log_uses_paths(self):
         import structured_log as sl
 
-        assert not str(sl.ENGINE_LOG_PATH).startswith(self._default_home)
-        assert sl.ENGINE_LOG_PATH.name == "engine-log.jsonl"
-        assert sl.ENGINE_LOG_PATH.parent.name == "logs"
+        assert not str(sl.EVENT_LOG_PATH).startswith(self._default_home)
+        assert sl.EVENT_LOG_PATH.name == "events.jsonl"
+        assert sl.EVENT_LOG_PATH.parent.name == "logs"
 
     def test_job_state_uses_paths(self):
         from job.state import JOBS_DIR, STATE_DIR, LOCKS_DIR, HISTORY_FILE

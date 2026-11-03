@@ -70,7 +70,7 @@ Four planes, one process:
 
 ## The Agent
 
-Merlin has no agent engine. In the terminal you launch `claude` or `codex`
+Merlin does not wrap the agent. In the terminal you launch `claude` or `codex`
 yourself; a job run does the same in a window of its own (`job/agents.py`
 holds the launch lines, `claude --dangerously-skip-permissions` and
 `codex --dangerously-bypass-approvals-and-sandbox`, and the warning the UI
@@ -158,7 +158,7 @@ cli.py (merlin start)
   │
   └── main.start_server(port, host)
         │
-        ├── structured_log.cleanup_old_logs()  (engine-log retention)
+        ├── structured_log.cleanup_old_logs()  (event-log retention)
         ├── _validate_config()
         │     ├── Check DASHBOARD_PASS (warn if empty)
         │     └── _check_optional_deps()
@@ -185,7 +185,7 @@ cli.py (merlin start)
 | `cli.py` | CLI entry point and subcommands (`start`, `version`, `setup`, `update`, `config`, `skills`, `agent`, `job`, `review`, `dashboard-url`) |
 | `paths.py` | Path resolution (dev mode vs installed) |
 | `lib/skills.py` | Skill registry, canonical aggregation, shims, the agent-state hook reconcilers (see [`skill-system.md`](skill-system.md)) |
-| `lib/structured_log.py`, `lib/event_log.py` | The engine log writer and its typed reader (see [`logging-system.md`](logging-system.md)) |
+| `lib/structured_log.py`, `lib/event_log.py` | The event log writer and its typed reader (see [`logging-system.md`](logging-system.md)) |
 | `terminal/` | The web terminal: PTY bridge, tmux, the agent hooks (`terminal/hooks/`), dictation (`terminal/transcribe.py`) |
 | `board/` | The tmux sweep (`board/sweep.py`) and the Sessions board |
 | `notifications/` | The attention watcher, the event content, Web Push |

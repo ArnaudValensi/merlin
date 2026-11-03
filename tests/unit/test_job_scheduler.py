@@ -33,7 +33,7 @@ def test_start_creates_task():
 
 
 def test_run_job_runner_logs_crash():
-    """_run_job_runner logs to engine-log.jsonl on crash."""
+    """_run_job_runner logs to events.jsonl on crash."""
     import job
 
     async def _test():

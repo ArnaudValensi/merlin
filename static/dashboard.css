@@ -24,7 +24,7 @@
 /* Respect declared font sizes on mobile. Without this, Safari/Chrome "font
    boosting" (text auto-inflation) enlarges text once a block relayouts. It
    showed up as expanded log-row <pre> blocks ballooning when a second row was
-   opened in the /bot and /jobs Logs tabs. */
+   opened in the /jobs Logs tab. */
 html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;

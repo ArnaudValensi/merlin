@@ -128,7 +128,7 @@ class TestBuildRegistry:
         assert skills.user_skills_dir() == paths.merlin_home() / "skills-user"
 
     def test_core_source_always_active(self, tmp_path, monkeypatch):
-        # No extensions, no bot: the always-active core source still
+        # No extensions: the always-active core source still
         # contributes. Mode-agnostic — point core at a controlled dir rather
         # than depending on app_dir() resolving to the repo (see the
         # installed-mode wiring test for the production path).

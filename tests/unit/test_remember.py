@@ -46,7 +46,7 @@ USER_MD_WITH_FACTS = textwrap.dedent("""\
 
     ## Context
 
-    - Working on Merlin bot
+    - Working on Merlin
 
     ## Notes
 
@@ -133,9 +133,9 @@ class TestAddFact:
     def test_add_to_context(self, user_md):
         from notes.commands.remember import add_fact
 
-        add_fact("Working on Merlin bot", section="context")
+        add_fact("Working on Merlin", section="context")
         text = user_md.read_text()
-        assert "- Working on Merlin bot" in text
+        assert "- Working on Merlin" in text
 
     def test_removes_placeholders(self, user_md):
         from notes.commands.remember import add_fact
@@ -213,7 +213,7 @@ class TestListFacts:
         assert "Name: Alex" in output
         assert "Timezone: Europe/Paris" in output
         assert "Likes concise responses" in output
-        assert "Working on Merlin bot" in output
+        assert "Working on Merlin" in output
         assert "flat directory" in output
 
     def test_file_not_found(self, tmp_path, monkeypatch):
