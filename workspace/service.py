@@ -40,7 +40,7 @@ def freeze_pending() -> bool:
     latest = store.read_snapshot(store.latest_path())
     if latest is None or not latest["sessions"]:
         return False
-    if not rs.missing_sessions(latest, rs.live_sessions()):
+    if not rs.missing_sessions(latest, rs.live_sessions(), rs.live_job_runs()):
         return False
     store.write_snapshot(store.pending_path(), latest)
     logger.info("Workspace restore offer frozen (%d sessions)", len(latest["sessions"]))
@@ -67,7 +67,7 @@ def pending_info() -> dict:
     pending = store.read_snapshot(store.pending_path())
     if pending is None:
         return {"pending": False}
-    missing = rs.missing_sessions(pending, rs.live_sessions())
+    missing = rs.missing_sessions(pending, rs.live_sessions(), rs.live_job_runs())
     if not missing:
         store.delete_pending()
         return {"pending": False}

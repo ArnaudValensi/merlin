@@ -256,11 +256,12 @@ class TestKeptJobWindows:
             "window_id": wid,
             "window_index": str(index),
             "window_name": wid.strip("@"),
+            "window_active": "1",
             **options,
         }
 
     def _job_pane(self, wid):
-        return {**pane(), "session_name": "merlin-jobs", "window_id": wid}
+        return pane(wid=wid)
 
     def test_a_run_stays_out_and_a_kept_window_comes_back_on_its_own(self):
         s = self._build(
@@ -277,6 +278,48 @@ class TestKeptJobWindows:
         assert [w["name"] for w in kept["windows"]] == ["2", "3"]
         assert [w["index"] for w in kept["windows"]] == [1, 2]
         assert kept["active_window"] is None
+
+    def test_a_kept_window_records_its_run(self):
+        s = self._build(
+            [{"session_name": "merlin-jobs"}],
+            [self._job_window("@2", 2, **{"@job_keep_window": "1", "@job_run": "r9"})],
+            [self._job_pane("@2")],
+        )
+        assert s["sessions"][0]["windows"][0]["job_run"] == "r9"
+
+    def test_a_codex_job_stamped_at_launch_resumes_its_conversation(self):
+        """A hook in Codex's daemon never stamps the provider: the launch does."""
+        proc = FakeProc(
+            {
+                100: (1, ["bash", "run.sh"], "/work"),
+                101: (
+                    100,
+                    ["codex", "--dangerously-bypass-approvals-and-sandbox", "[Job: x]"],
+                    "/work",
+                ),
+            }
+        )
+        s = snap.build_snapshot(
+            [{"session_name": "merlin-jobs"}],
+            [
+                self._job_window(
+                    "@2",
+                    2,
+                    **{
+                        "@job_keep_window": "1",
+                        "@agent_provider": "codex",
+                        "@agent_conv": "conv-1",
+                    },
+                )
+            ],
+            [self._job_pane("@2")],
+            proc,
+            {},
+            now=1.0,
+        )
+        agent = s["sessions"][0]["windows"][0]["panes"][0]["agent"]
+        assert agent["provider"] == "codex" and agent["conv"] == "conv-1"
+        assert "--dangerously-bypass-approvals-and-sandbox" in agent["options"]
 
     def test_no_kept_window_no_session(self):
         s = self._build(

@@ -37,7 +37,7 @@ fi
 # A job run's first prompt names its job: "[Job: id]" or
 # "[Triggered by webhook: id]" (the prompt Merlin wrote, see job/runs.py).
 job=""
-re='"prompt"[[:space:]]*:[[:space:]]*"\[(Job|Triggered by webhook): ([a-z0-9-]+)\]'
+re='"prompt"[[:space:]]*:[[:space:]]*"\[(Job|Triggered by webhook): ([^]"\\]+)\]'
 if [[ $payload =~ $re ]]; then
   job="${BASH_REMATCH[2]}"
 fi
@@ -58,15 +58,19 @@ win=$(agent_window "$conv" "$cwd" "$event" "$job")
 if [ -n "$conv" ] && [ -z "$(tmux show-option -wqv -t "$win" @agent_conv 2>/dev/null)" ]; then
   tmux set-option -w -t "$win" @agent_conv "$conv" 2>/dev/null
 fi
-tmux set-option -w -t "$win" @agent_state "$state" 2>/dev/null
-# In a job's window, someone stepped in when its agent works again after the
-# run finished, or gets a prompt that is not the job's: the window is theirs
-# now, and retention leaves it alone (job/retention.py).
-if [ "$state" = busy ] && [ -n "$(tmux show-option -wqv -t "$win" @job_run 2>/dev/null)" ]; then
-  if [ -n "$(tmux show-option -wqv -t "$win" @job_finished 2>/dev/null)" ] ||
-    { [ "$event" = UserPromptSubmit ] && [ -z "$job" ]; }; then
+# In a job's window, a prompt that is not the job's means someone stepped in:
+# the window is theirs now, and retention leaves it alone (job/retention.py).
+# Only a prompt counts: a tool hook can fire late with nobody there, and a
+# window stamped by mistake would keep an idle agent for good. The very first
+# prompt (state still idle, run not finished) is the run's own, even when its
+# header was not recognized.
+if [ "$event" = UserPromptSubmit ] && [ -z "$job" ] &&
+  [ -n "$(tmux show-option -wqv -t "$win" @job_run 2>/dev/null)" ]; then
+  if [ "$(tmux show-option -wqv -t "$win" @agent_state 2>/dev/null)" != idle ] ||
+    [ -n "$(tmux show-option -wqv -t "$win" @job_finished 2>/dev/null)" ]; then
     tmux set-option -w -t "$win" @job_stepped_in 1 2>/dev/null
   fi
 fi
+tmux set-option -w -t "$win" @agent_state "$state" 2>/dev/null
 tmux refresh-client -S 2>/dev/null
 exit 0

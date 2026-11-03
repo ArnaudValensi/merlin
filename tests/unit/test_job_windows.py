@@ -1462,3 +1462,22 @@ def test_a_job_script_leaves_config_settings_to_the_file(monkeypatch, tmp_path):
     lines = runs._exports(run)
     assert not any("MERLIN_FEATURES" in line for line in lines)
     assert any("MERLIN_SAAS_API" in line for line in lines)
+
+
+@pytest.mark.parametrize("value", ["false", "off", 1, "1", None])
+def test_only_a_true_keep_window_keeps_it(iso, value):
+    """A hand-written file: a string that says false must not keep every run."""
+    run = _launch_unsupervised(
+        "maybe", {"type": "command", "command": "exit 0", "keep_window": value}
+    )
+    out = sweep.window_options_checked(run.target, ("@job_keep_window",))[1]
+    assert not out.get("@job_keep_window")
+
+
+def test_an_agent_window_knows_its_provider_from_the_launch(iso, monkeypatch):
+    """A hook in Codex's daemon cannot stamp it, and without it the workspace
+    snapshot could not resume a kept window's conversation."""
+    monkeypatch.setattr(job_agents, "codex_distrusts", lambda cwd: False)
+    run = _launch_unsupervised("cx", agent_job("done", agent="codex"))
+    out = sweep.window_options_checked(run.target, ("@agent_provider",))[1]
+    assert out["@agent_provider"] == "codex"

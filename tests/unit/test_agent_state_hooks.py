@@ -169,36 +169,55 @@ class TestStateSetter:
     def _stepped(self, s, w):
         return s.tmux("show-option", "-wqv", "-t", w["a"], "@job_stepped_in").strip()
 
-    def test_a_follow_up_after_a_job_finished_is_stepping_in(self, srv):
-        """busy once the run has finished: someone gave the agent a follow-up.
-        Before the finish, or any other state, it is only the run."""
-        s, w = srv
-        pane = s.pane_of(w["a"])
+    PROMPT = '{"hook_event_name": "UserPromptSubmit", "prompt": "and also"}'
+
+    def _in_a_job(self, s, w):
         s.tmux("set-option", "-w", "-t", w["a"], "@job_run", "r1")
-        s.run_state("busy", pane=pane)
-        assert self._stepped(s, w) == ""
+        s.tmux("set-option", "-w", "-t", w["a"], "@agent_state", "idle")
+        return s.pane_of(w["a"])
+
+    def test_a_follow_up_after_a_job_finished_is_stepping_in(self, srv):
+        s, w = srv
+        pane = self._in_a_job(s, w)
         s.tmux("set-option", "-w", "-t", w["a"], "@job_finished", "1000")
-        s.run_state("done", pane=pane)
-        assert self._stepped(s, w) == ""
-        s.run_state("busy", pane=pane)
+        s.tmux("set-option", "-w", "-t", w["a"], "@agent_state", "done")
+        s.run_state("busy", pane=pane, stdin=self.PROMPT)
         assert self._stepped(s, w) == "1"
 
-    def test_a_prompt_that_is_not_the_jobs_is_stepping_in(self, srv):
+    def test_a_late_tool_hook_after_the_finish_is_not(self, srv):
+        """A background task can wake a hook with nobody there: stamped, its
+        idle agent would stay in memory for good."""
         s, w = srv
-        pane = s.pane_of(w["a"])
-        s.tmux("set-option", "-w", "-t", w["a"], "@job_run", "r1")
+        pane = self._in_a_job(s, w)
+        s.tmux("set-option", "-w", "-t", w["a"], "@job_finished", "1000")
+        s.run_state("busy", pane=pane, stdin='{"hook_event_name": "PostToolUse"}')
+        assert self._stepped(s, w) == ""
+
+    def test_a_prompt_during_the_run_is_stepping_in(self, srv):
+        s, w = srv
+        pane = self._in_a_job(s, w)
         own = (
             '{"hook_event_name": "UserPromptSubmit", '
             '"prompt": "[Job: nightly]\\ndo it"}'
         )
         s.run_state("busy", pane=pane, stdin=own)
         assert self._stepped(s, w) == ""
-        s.run_state(
-            "busy",
-            pane=pane,
-            stdin='{"hook_event_name": "UserPromptSubmit", "prompt": "and also"}',
-        )
+        s.run_state("busy", pane=pane, stdin=self.PROMPT)
         assert self._stepped(s, w) == "1"
+
+    @pytest.mark.parametrize(
+        "first",
+        ["[Job: nightly_backup]", "[Triggered by webhook: Odd.Name 1]", "no header"],
+    )
+    def test_the_runs_own_first_prompt_never_is(self, srv, first):
+        """Any job id a file name can carry, and even a header not recognized:
+        a window the run stamped itself would stay for good."""
+        s, w = srv
+        pane = self._in_a_job(s, w)
+        payload = f'{{"hook_event_name": "UserPromptSubmit", "prompt": "{first}"}}'
+        s.run_state("busy", pane=pane, stdin=payload)
+        assert self._stepped(s, w) == ""
+        assert s.state(w["a"]) == "busy"
 
     def test_outside_a_job_nothing_is_stamped(self, srv):
         s, w = srv

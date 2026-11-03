@@ -331,6 +331,7 @@ _WINDOW_FIELDS = (
     "automatic-rename",
     "@agent_provider",
     "@agent_conv",
+    "@job_run",
     "@job_stepped_in",
     "@job_keep_window",
     *WINDOW_OPTIONS,
@@ -510,6 +511,7 @@ def build_snapshot(
                     "layout": w["window_layout"],
                     "options": {k: w[k] for k in WINDOW_OPTIONS if w.get(k)},
                     "panes": out_panes,
+                    **({"job_run": w["@job_run"]} if w.get("@job_run") else {}),
                 }
             )
         if not out_windows:

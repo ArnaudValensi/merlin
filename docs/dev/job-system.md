@@ -321,13 +321,15 @@ removes their run directories (`should_close` is the pure rule):
 - a window a tmux client is showing right now (`sweep.displayed_windows`,
   from `list-clients`) is never closed, and when the client list could not
   be read no window is closed at all;
-- `@job_stepped_in` (stamped by Enter at the closing prompt, by a `busy` after
-  the finish, by a prompt that is not the job's, and by Esc on the agent) or
+- `@job_stepped_in` (stamped by Enter at the closing prompt, by a prompt that
+  is not the job's and is not the first of the run, and by Esc on the agent) or
   `@job_keep_window` (stamped at launch from the job's `keep_window`): never
   closed. The window is someone's now, and the workspace snapshot brings it
   back in the `merlin-jobs-kept` session, where no `@job_run` ties it to
-  retention. Only these explicit signs count: activity alone can be a late
-  repaint, and would leave an idle agent in memory for good;
+  retention. A live run's window is not offered back: the snapshot records its
+  run, and the restore skips a run still alive in tmux. Only these explicit
+  signs count: activity can be a late repaint and a tool hook can fire late,
+  and either would leave an idle agent in memory for good;
 - finished with exit 0 and no pane activity since (`window_activity` within
   `ACTIVITY_SLACK`, 5 s, of `@job_finished`: the finish's own output): closed
   at the next run of the same job (a newer `@job_started` or run directory of

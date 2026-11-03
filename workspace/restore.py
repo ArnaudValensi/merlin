@@ -17,6 +17,7 @@ window is killed (see ``docs/dev/workspace-restore.md``).
 
 from __future__ import annotations
 
+from collections.abc import Collection
 import logging
 import os
 import re
@@ -102,15 +103,44 @@ def _is_bare(sess: dict) -> bool:
     return len(panes) <= 1 and not any(p.get("agent") for p in panes)
 
 
-def missing_sessions(snapshot: dict, live: dict[str, bool] | None) -> list[dict]:
+def live_job_runs() -> set[str]:
+    """The runs whose window is alive in tmux right now."""
+    rows = snap.read_tmux()
+    if rows is None:
+        return set()
+    return {w["@job_run"] for w in rows[1] if w.get("@job_run")}
+
+
+def _without_live_kept(sessions: list[dict], job_runs: set[str]) -> list[dict]:
+    """A kept job window is saved under ``merlin-jobs-kept``, but while tmux
+    lives it is still in ``merlin-jobs``: only one whose run has no window left
+    is lost. Without this, a mere Merlin restart would offer to bring back, and
+    duplicate, windows that never went away."""
+    out = []
+    for sess in sessions:
+        if sess["name"] == snap.KEPT_JOBS_SESSION:
+            windows = [
+                w for w in sess.get("windows", []) if w.get("job_run") not in job_runs
+            ]
+            if not windows:
+                continue
+            sess = {**sess, "windows": windows}
+        out.append(sess)
+    return out
+
+
+def missing_sessions(
+    snapshot: dict, live: dict[str, bool] | None, job_runs: Collection[str] = ()
+) -> list[dict]:
     """Snapshot sessions a restore would bring back: absent from tmux, or
     present only as the terminal's fresh placeholder while the snapshot holds
     more than one bare shell. The placeholder check is by shape, not by name,
     because the web terminal can create ``merlin-dev`` before the freeze runs.
+    ``job_runs`` are the runs still alive (``live_job_runs``).
     """
     live = live or {}
     out = []
-    for s in snapshot["sessions"]:
+    for s in _without_live_kept(snapshot["sessions"], set(job_runs)):
         if s["name"] == JOBS_SESSION_NAME:
             continue  # a job run is not part of the workspace (older snapshots)
         if s["name"] not in live:
@@ -313,7 +343,7 @@ def restore(snapshot: dict) -> dict:
     live = live or {}
     live_claude = _live_claude_convs()
     result: dict = {"restored": [], "skipped": [], "failed": [], "agents": 0}
-    for sess in snapshot["sessions"]:
+    for sess in _without_live_kept(snapshot["sessions"], live_job_runs()):
         name = sess["name"]
         if not sess.get("windows") or name == JOBS_SESSION_NAME:
             continue

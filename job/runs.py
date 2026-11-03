@@ -547,7 +547,11 @@ def launch(run: Run) -> str:
         "@agent_state": "idle" if run.is_agent else "busy",
         "@job_started": str(int(run.started)),
     }
-    if run.job.get("keep_window"):
+    if run.agent:
+        # Known here, and a hook running in Codex's daemon cannot tell: the
+        # workspace snapshot needs it to resume a kept window's conversation.
+        options["@agent_provider"] = run.agent
+    if run.job.get("keep_window") is True:
         options["@job_keep_window"] = "1"
     stamped = sweep.set_window_options(target, options)
     if not stamped:

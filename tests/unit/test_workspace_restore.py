@@ -444,3 +444,49 @@ def test_restore_creating_the_server_uses_the_prefix(iso, monkeypatch):
     two = dict(one, name="s2")
     rs.restore(snapshot_of(one, two))
     assert seen == [False, True]
+
+
+class TestKeptJobWindows:
+    """Saved under merlin-jobs-kept, but alive in merlin-jobs while tmux lives."""
+
+    def _snapshot(self):
+        return {
+            "sessions": [
+                {
+                    "name": snap.KEPT_JOBS_SESSION,
+                    "active_window": None,
+                    "windows": [
+                        {"index": 1, "name": "a", "job_run": "r1", "panes": []},
+                        {"index": 2, "name": "b", "job_run": "r2", "panes": []},
+                    ],
+                }
+            ]
+        }
+
+    def test_a_merlin_restart_offers_nothing(self):
+        """tmux lived on: nothing went away, and restoring would duplicate."""
+        live = {"merlin-jobs": False}
+        assert rs.missing_sessions(self._snapshot(), live, {"r1", "r2"}) == []
+
+    def test_a_reboot_offers_them_all(self):
+        missing = rs.missing_sessions(self._snapshot(), {})
+        assert [w["name"] for w in missing[0]["windows"]] == ["a", "b"]
+
+    def test_only_the_windows_really_gone_come_back(self):
+        missing = rs.missing_sessions(self._snapshot(), {"merlin-jobs": False}, {"r1"})
+        assert [w["name"] for w in missing[0]["windows"]] == ["b"]
+
+    def test_the_restore_itself_skips_a_live_run(self, monkeypatch):
+        restored = []
+        monkeypatch.setattr(rs, "live_sessions", lambda: {})
+        monkeypatch.setattr(rs, "_live_claude_convs", lambda: {})
+        monkeypatch.setattr(rs, "live_job_runs", lambda: {"r1"})
+        monkeypatch.setattr(
+            rs,
+            "_restore_new",
+            lambda sess, *_: restored.extend(w["name"] for w in sess["windows"]) or 0,
+        )
+        monkeypatch.setattr(rs, "_select_active", lambda sess: None)
+        result = rs.restore(self._snapshot())
+        assert restored == ["b"]
+        assert result["restored"] == [snap.KEPT_JOBS_SESSION]
