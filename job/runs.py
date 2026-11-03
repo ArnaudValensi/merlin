@@ -540,16 +540,16 @@ def launch(run: Run) -> str:
         raise LaunchError(1, "could not stamp the run's tmux window.")
     run.target = target
     write_meta(run)
-    stamped = sweep.set_window_options(
-        target,
-        {
-            "@job_report": run.report_mode,
-            "@agent_sid": run.sid,
-            "@agent_cwd": run.cwd,
-            "@agent_state": "idle" if run.is_agent else "busy",
-            "@job_started": str(int(run.started)),
-        },
-    )
+    options = {
+        "@job_report": run.report_mode,
+        "@agent_sid": run.sid,
+        "@agent_cwd": run.cwd,
+        "@agent_state": "idle" if run.is_agent else "busy",
+        "@job_started": str(int(run.started)),
+    }
+    if run.job.get("keep_window"):
+        options["@job_keep_window"] = "1"
+    stamped = sweep.set_window_options(target, options)
     if not stamped:
         sweep.kill_window(JOBS_SESSION, wid)
         run.target = ""

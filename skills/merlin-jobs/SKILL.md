@@ -67,6 +67,7 @@ let run unattended.
 - `--schedule` — Cron expression (optional; omit for a webhook- or manual-only job)
 - `--prompt` — The prompt the agent runs, or `--command` — a shell command instead (one of the two is required)
 - `--working-dir` — Where the run starts. A Codex job needs a directory Codex trusts
+- `--keep-window` — Leave each run's window open until the user closes it (each run adds one)
 - `--agent` — `claude` (default) or `codex`
 - `--webhook` — Also enable the webhook trigger (generates a secret)
 

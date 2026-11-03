@@ -94,6 +94,8 @@ pane title matched against `~/.codex/state_*.sqlite`), which are not ported.
 Sessions board keeps identities and family links. `@agent_state` is
 transient, and provider/conv are restamped by the resumed agent's hook.
 
+Runs in `merlin-jobs` are not part of the workspace, with one exception: a job window someone stepped into (`@job_stepped_in`), or that its job keeps (`@job_keep_window`), is recorded under a session of its own, `merlin-jobs-kept`. It comes back there like any window, with no `@job_run`, so job retention never touches it and a new run never competes with it.
+
 ## Storage
 
 `paths.workspace_dir()` = `~/.merlin/data/workspace/`, under Merlin's home

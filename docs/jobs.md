@@ -183,10 +183,16 @@ land in files (the notes, the knowledge base, a report in the repo).
   again and the job's next trigger joins it instead of starting a second
   one.
 - **Windows are tidied up.** A run that succeeded, untouched since, closes
-  after an hour or when the job runs again, whichever comes first. A run
-  that failed, or a window you stepped into, stays a day after the last
-  activity. A window someone is looking at is never closed. With the window
-  goes its private run directory; the run log stays.
+  when the job runs again or after a day, whichever comes first, so a night's
+  run is still there in the morning. A run that failed stays a day after its
+  last activity. A window someone is looking at is never closed. With the
+  window goes its private run directory; the run log stays.
+- **A window you step into is yours.** Press Enter at a finished command's
+  prompt, or give the agent a prompt or Esc: Merlin never closes that window, and
+  it comes back after a reboot, in the `merlin-jobs-kept` session. Close it
+  when you are done. A job can do the same for all its runs with **Keep each
+  run's window until I close it** in the form (`--keep-window`): every run
+  then leaves one more window, and its agent stays in memory.
 - **A stuck start is reported.** An agent that is still not working two
   minutes after its launch is waiting on something Merlin cannot see (a
   trust or bypass dialog on a fresh machine): the window is marked as

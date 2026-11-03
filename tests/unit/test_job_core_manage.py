@@ -164,6 +164,17 @@ class TestCmdAdd:
         assert "--command" in result["error"]
         assert load_job("cli-job") is None
 
+    def test_add_with_keep_window(self, temp_jobs_dir):
+        from job.manage import cmd_add, load_job, main
+
+        assert cmd_add(self._add_args(prompt="x"))["ok"] is True
+        assert "keep_window" not in load_job("cli-job")
+        try:
+            main(["add", "--id", "kept", "--prompt", "x", "--keep-window"])
+        except SystemExit as stop:
+            assert stop.code == 0
+        assert load_job("kept")["keep_window"] is True
+
     def test_add_with_a_working_dir(self, temp_jobs_dir, tmp_path):
         from job.manage import cmd_add, load_job
 

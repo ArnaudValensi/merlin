@@ -63,6 +63,7 @@ class JobCreate(BaseModel):
     working_dir: str | None = None
     enabled: bool = True
     report_mode: str = "always"
+    keep_window: bool = False
     grace_minutes: int = 15
     webhook: WebhookConfig | None = None
 
@@ -130,6 +131,7 @@ class JobUpdate(BaseModel):
     working_dir: str | None = None
     enabled: bool | None = None
     report_mode: str | None = None
+    keep_window: bool | None = None
     grace_minutes: int | None = None
 
     @field_validator("agent")

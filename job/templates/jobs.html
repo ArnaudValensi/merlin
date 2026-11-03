@@ -1152,6 +1152,14 @@
                 </select>
                 <div class="form-help">A Merlin notification from the run's window: when it finishes, fails or needs an answer. Once a run is over, a turn you start in that window notifies as usual.</div>
             </div>
+            <div class="form-group">
+                <label class="form-label">Run window</label>
+                <label class="webhook-enable">
+                    <input type="checkbox" id="field-keep-window">
+                    <span>Keep each run's window until I close it</span>
+                </label>
+                <div class="form-help">By default a run's window closes at the job's next run, or after a day. A window you step into is yours and always stays. With this on, every run leaves one more window, and its agent stays in memory.</div>
+            </div>
         </div><!-- /.job-modal-body -->
             <div class="modal-actions">
                 <button type="button" class="modal-cancel-btn" onclick="Jobs.closeModal()">Cancel</button>
@@ -1324,6 +1332,7 @@ const Jobs = {
         document.getElementById('field-daily-time').value = '09:00';
         this.cronToBuilder('0 9 * * *');
         document.getElementById('field-report-mode').value = 'always';
+        document.getElementById('field-keep-window').checked = false;
         document.getElementById('field-agent').value = {{ default_agent|tojson }};
         this.onAgentChange();
         const preview = document.getElementById('schedule-preview');
@@ -1361,6 +1370,7 @@ const Jobs = {
         // Round-trip the stored cron into the builder (falls back to Custom).
         this.cronToBuilder(job.schedule || '');
         document.getElementById('field-report-mode').value = job.report_mode || 'always';
+        document.getElementById('field-keep-window').checked = !!job.keep_window;
         const preview = document.getElementById('schedule-preview');
         if (preview) preview.style.display = 'none';
         const errorId = document.getElementById('error-id');
@@ -1463,6 +1473,7 @@ const Jobs = {
             timezone: this._timezone() || null,
             type: type,
             report_mode: document.getElementById('field-report-mode').value,
+            keep_window: document.getElementById('field-keep-window').checked,
         };
         // Send "" (not null) when cleared so the server can distinguish
         // "clear this field" from "field omitted / unchanged" (null is dropped

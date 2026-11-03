@@ -166,21 +166,48 @@ class TestStateSetter:
         assert r.returncode == 0
         assert s.state(w["a"]) == "busy"
 
+    def _stepped(self, s, w):
+        return s.tmux("show-option", "-wqv", "-t", w["a"], "@job_stepped_in").strip()
+
     def test_a_follow_up_after_a_job_finished_is_stepping_in(self, srv):
         """busy once the run has finished: someone gave the agent a follow-up.
         Before the finish, or any other state, it is only the run."""
         s, w = srv
         pane = s.pane_of(w["a"])
-        stepped = lambda: s.tmux(  # noqa: E731
-            "show-option", "-wqv", "-t", w["a"], "@job_stepped_in"
-        ).strip()
+        s.tmux("set-option", "-w", "-t", w["a"], "@job_run", "r1")
         s.run_state("busy", pane=pane)
-        assert stepped() == ""
+        assert self._stepped(s, w) == ""
         s.tmux("set-option", "-w", "-t", w["a"], "@job_finished", "1000")
         s.run_state("done", pane=pane)
-        assert stepped() == ""
+        assert self._stepped(s, w) == ""
         s.run_state("busy", pane=pane)
-        assert stepped() == "1"
+        assert self._stepped(s, w) == "1"
+
+    def test_a_prompt_that_is_not_the_jobs_is_stepping_in(self, srv):
+        s, w = srv
+        pane = s.pane_of(w["a"])
+        s.tmux("set-option", "-w", "-t", w["a"], "@job_run", "r1")
+        own = (
+            '{"hook_event_name": "UserPromptSubmit", '
+            '"prompt": "[Job: nightly]\\ndo it"}'
+        )
+        s.run_state("busy", pane=pane, stdin=own)
+        assert self._stepped(s, w) == ""
+        s.run_state(
+            "busy",
+            pane=pane,
+            stdin='{"hook_event_name": "UserPromptSubmit", "prompt": "and also"}',
+        )
+        assert self._stepped(s, w) == "1"
+
+    def test_outside_a_job_nothing_is_stamped(self, srv):
+        s, w = srv
+        s.run_state(
+            "busy",
+            pane=s.pane_of(w["a"]),
+            stdin='{"hook_event_name": "UserPromptSubmit", "prompt": "hello"}',
+        )
+        assert self._stepped(s, w) == ""
 
     def test_sets_done(self, srv):
         s, w = srv
@@ -801,6 +828,16 @@ class TestEscapeBinding:
         press(b"\x1b")
         assert state() == "idle"
         assert pane_bytes().endswith("^["), "Esc must still reach the pane"
+
+    def test_esc_on_a_jobs_agent_is_stepping_in(self, attached):
+        t, press, _pane_bytes, _state = attached
+        t("set-option", "-w", "-t", "t", "@agent_state", "busy")
+        press(b"\x1b")
+        assert t("show-option", "-wv", "-t", "t", "@job_stepped_in") == ""
+        t("set-option", "-w", "-t", "t", "@job_run", "r1")
+        t("set-option", "-w", "-t", "t", "@agent_state", "busy")
+        press(b"\x1b")
+        assert t("show-option", "-wv", "-t", "t", "@job_stepped_in") == "1"
 
     @pytest.mark.parametrize("initial", ["done", "idle"])
     def test_esc_leaves_other_states_alone(self, attached, initial):

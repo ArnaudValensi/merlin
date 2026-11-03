@@ -242,3 +242,72 @@ class TestReadTmux:
         results = iter([[{"session_name": "main"}], None])
         monkeypatch.setattr(snap, "_tmux_rows", lambda args, fields: next(results))
         assert snap.read_tmux() is None
+
+
+class TestKeptJobWindows:
+    def _build(self, sessions, windows, panes):
+        proc = FakeProc({100: (1, ["zsh"], "/work")})
+        return snap.build_snapshot(sessions, windows, panes, proc, {}, now=1.0)
+
+    def _job_window(self, wid, index, **options):
+        return {
+            **window(),
+            "session_name": "merlin-jobs",
+            "window_id": wid,
+            "window_index": str(index),
+            "window_name": wid.strip("@"),
+            **options,
+        }
+
+    def _job_pane(self, wid):
+        return {**pane(), "session_name": "merlin-jobs", "window_id": wid}
+
+    def test_a_run_stays_out_and_a_kept_window_comes_back_on_its_own(self):
+        s = self._build(
+            [{"session_name": "merlin-jobs"}],
+            [
+                self._job_window("@1", 1),
+                self._job_window("@2", 2, **{"@job_stepped_in": "1"}),
+                self._job_window("@3", 3, **{"@job_keep_window": "1"}),
+            ],
+            [self._job_pane("@1"), self._job_pane("@2"), self._job_pane("@3")],
+        )
+        assert [x["name"] for x in s["sessions"]] == ["merlin-jobs-kept"]
+        kept = s["sessions"][0]
+        assert [w["name"] for w in kept["windows"]] == ["2", "3"]
+        assert [w["index"] for w in kept["windows"]] == [1, 2]
+        assert kept["active_window"] is None
+
+    def test_no_kept_window_no_session(self):
+        s = self._build(
+            [{"session_name": "merlin-jobs"}],
+            [self._job_window("@1", 1)],
+            [self._job_pane("@1")],
+        )
+        assert s["sessions"] == []
+
+    def test_they_join_a_kept_session_already_there(self):
+        """Restored earlier, still open, and one more stepped into since."""
+        s = self._build(
+            [{"session_name": "merlin-jobs-kept"}, {"session_name": "merlin-jobs"}],
+            [
+                {**window(), "session_name": "merlin-jobs-kept", "window_index": "1"},
+                self._job_window("@2", 5, **{"@job_stepped_in": "1"}),
+            ],
+            [pane(), self._job_pane("@2")],
+        )
+        assert [x["name"] for x in s["sessions"]] == ["merlin-jobs-kept"]
+        assert [w["index"] for w in s["sessions"][0]["windows"]] == [1, 2]
+
+    def test_a_claude_job_resumes_without_its_prompt(self):
+        options = snap.claude_resume_args(
+            ["claude", "--dangerously-skip-permissions", "[Job: x]\ndo it"]
+        )
+        assert options == ["--dangerously-skip-permissions"]
+
+    def test_a_codex_job_resumes_without_its_prompt(self):
+        options = snap.codex_args(
+            ["--dangerously-bypass-approvals-and-sandbox", "[Job: x]\ndo it"]
+        )
+        assert "[Job: x]\ndo it" not in str(options)
+        assert "--dangerously-bypass-approvals-and-sandbox" in str(options)

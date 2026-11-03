@@ -42,6 +42,7 @@ _SEP = "\x1f"
 # Window options carried over so the Sessions board keeps each agent's identity
 # and family links. @agent_state is transient (the agent's hooks set it again)
 # and @agent_provider / @agent_conv are restamped by the resumed agent's hook.
+KEPT_JOBS_SESSION = "merlin-jobs-kept"
 WINDOW_OPTIONS = ("@agent_sid", "@agent_cwd", "@agent_parent", "@agent_relation")
 
 SHELLS = frozenset({"bash", "zsh", "fish", "sh", "dash", "ksh", "tcsh"})
@@ -330,6 +331,8 @@ _WINDOW_FIELDS = (
     "automatic-rename",
     "@agent_provider",
     "@agent_conv",
+    "@job_stepped_in",
+    "@job_keep_window",
     *WINDOW_OPTIONS,
 )
 _PANE_FIELDS = (
@@ -425,6 +428,31 @@ def _find_agent(
     return None
 
 
+def _with_kept_job_windows(
+    sessions: list[dict], windows_by_session: dict[str, list[dict]]
+) -> list[dict]:
+    """A job window someone stepped into, or that its job keeps, is part of the
+    workspace, unlike a run: it comes back in a session of its own, so it takes
+    no place among the runs of ``merlin-jobs`` and retention never sees it."""
+    kept = sorted(
+        (
+            w
+            for w in windows_by_session.get(JOBS_SESSION_NAME, [])
+            if w.get("@job_stepped_in") or w.get("@job_keep_window")
+        ),
+        key=lambda w: int(w["window_index"]),
+    )
+    if not kept:
+        return sessions
+    existing = windows_by_session.setdefault(KEPT_JOBS_SESSION, [])
+    top = max((int(w["window_index"]) for w in existing), default=0)
+    for offset, window in enumerate(kept, top + 1):
+        existing.append({**window, "window_index": str(offset), "window_active": "0"})
+    if any(s["session_name"] == KEPT_JOBS_SESSION for s in sessions):
+        return sessions
+    return [*sessions, {"session_name": KEPT_JOBS_SESSION}]
+
+
 def build_snapshot(
     sessions: list[dict],
     windows: list[dict],
@@ -446,6 +474,7 @@ def build_snapshot(
     for w in windows:
         windows_by_session.setdefault(w["session_name"], []).append(w)
 
+    sessions = _with_kept_job_windows(sessions, windows_by_session)
     out_sessions = []
     for s in sessions:
         name = s["session_name"]

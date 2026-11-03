@@ -59,10 +59,14 @@ if [ -n "$conv" ] && [ -z "$(tmux show-option -wqv -t "$win" @agent_conv 2>/dev/
   tmux set-option -w -t "$win" @agent_conv "$conv" 2>/dev/null
 fi
 tmux set-option -w -t "$win" @agent_state "$state" 2>/dev/null
-# A job's window whose run has finished, and whose agent works again: someone
-# gave it a follow-up, and retention must keep the window (job/retention.py).
-if [ "$state" = busy ] && [ -n "$(tmux show-option -wqv -t "$win" @job_finished 2>/dev/null)" ]; then
-  tmux set-option -w -t "$win" @job_stepped_in 1 2>/dev/null
+# In a job's window, someone stepped in when its agent works again after the
+# run finished, or gets a prompt that is not the job's: the window is theirs
+# now, and retention leaves it alone (job/retention.py).
+if [ "$state" = busy ] && [ -n "$(tmux show-option -wqv -t "$win" @job_run 2>/dev/null)" ]; then
+  if [ -n "$(tmux show-option -wqv -t "$win" @job_finished 2>/dev/null)" ] ||
+    { [ "$event" = UserPromptSubmit ] && [ -z "$job" ]; }; then
+    tmux set-option -w -t "$win" @job_stepped_in 1 2>/dev/null
+  fi
 fi
 tmux refresh-client -S 2>/dev/null
 exit 0

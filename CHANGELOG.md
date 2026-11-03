@@ -10,6 +10,7 @@ All notable user-facing changes to Merlin are documented in this file.
 - **Notes are off by default**: Notes are a built-in extension you enable yourself on the Extensions page.
 - **The Timeline goes behind a feature flag**: It exists only with `MERLIN_FEATURES=timeline`, like app streaming. With the flag off, Merlin removes the hooks a previous version installed in your agents at startup. Your activity history is kept.
 - **The event log is now `logs/events.jsonl`**: Startup moves the old `logs/engine-log.jsonl` there and removes the logs nothing reads any more (`logs/raw-sessions/`, `logs/claude/`, `logs/cron_runner.log`, `sessions/`).
+- **A job's window waits for you**: A run that succeeded keeps its window until the job runs again or for a day, so a night's run is still there in the morning. A window you step into is yours: Merlin never closes it, and it comes back after a reboot in the `merlin-jobs-kept` session. A job can keep all its windows with **Keep each run's window until I close it** (`--keep-window`).
 - **A Codex job in a directory Codex does not trust fails at once**: Codex runs no hook there, so the run used to wait for its deadline. The run log now says how to fix it.
 
 ### Removed
@@ -20,7 +21,7 @@ All notable user-facing changes to Merlin are documented in this file.
 ### Fixed
 - **Passwords and tokens no longer reach your terminals**: A tmux server started by Merlin inherited its dashboard password and Merlin Cloud token, and handed them to every shell, agent and job. New windows no longer get them, and Merlin cleans a running server at startup. A shell already open keeps its copy until you close it.
 - **`merlin restart` applies `config.env`**: Restarted from a tmux window, Merlin used to read that window's old copy of a setting instead of the file. A changed `MERLIN_FEATURES` could be ignored, and the Timeline lose its hooks.
-- **A succeeded command job's window closes after an hour**: A finished window now waits for Enter before it starts a shell, because that shell's slow first prompt used to read as someone stepping in, which kept the window a day.
+- **A finished command window stays silent until you ask for a shell**: It waits for Enter before starting one, because that shell's slow first prompt used to read as someone stepping in.
 
 ### Added
 - **Get your workspace back after a reboot or a power cut**: Merlin now keeps a snapshot of your tmux sessions, saved every 15 seconds when something changed. After the machine restarts, the first page you open offers to restore them: every session and window comes back with its layout and directories, and every Claude Code and Codex conversation resumes where it was, with its launch options. Other programs come back as a shell in their directory; Merlin never reruns them.

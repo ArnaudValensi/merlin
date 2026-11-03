@@ -783,6 +783,7 @@ Job file format (jobs/<job-id>.json):
     "working_dir": null,           # Both job types: cwd; default MERLIN_LAUNCH_CWD then $HOME
     "enabled": true,               # Toggle on/off
     "report_mode": "silent",       # "always", "silent" (errors only), or "off"
+    "keep_window": false,          # Optional: leave each run's window until closed
     "grace_minutes": 15            # Optional: staleness window override
   }
 

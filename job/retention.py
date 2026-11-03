@@ -25,11 +25,14 @@ removes their run directories:
 
 - a window a tmux client is showing right now is never closed, and when
   the client list could not be read no window is closed at all;
-- finished with exit 0 and no pane activity since: closed after
-  ``SUCCESS_TTL`` (1 hour), or at the next run of the same job, whichever
-  comes first;
-- failed, or someone stepped in (``@job_stepped_in``, or activity after the
-  finish): closed ``ACTIVITY_TTL`` (24 hours) after the last activity;
+- a window someone stepped into (``@job_stepped_in``: Enter at the closing
+  prompt, a prompt to the agent, Esc on it), or kept by its job's choice
+  (``@job_keep_window``), is theirs: never closed, and the workspace snapshot
+  brings it back after a reboot;
+- finished with exit 0 and no pane activity since: closed at the next run of
+  the same job, or after ``WINDOW_TTL`` (24 hours), whichever comes first;
+- failed, or activity after the finish with no marker (maybe someone, maybe
+  a late repaint): closed ``WINDOW_TTL`` after the last activity;
 - closing never touches a window without ``@job_run``, nor any other
   session, and the window is read again right before the kill: it must
   still carry the same ``@job_run`` and still be shown by nobody.
@@ -52,8 +55,9 @@ from job.state import acquire_job_lock, release_job_lock
 
 logger = logging.getLogger("merlin.job")
 
-SUCCESS_TTL = 3600.0
-ACTIVITY_TTL = 86400.0
+# Long enough to find a night's run in the morning; an idle agent holds a few
+# hundred MB, so a rare job's window does not stay for its whole period.
+WINDOW_TTL = 86400.0
 # The finish itself writes to the pane (the agent's last render, run.sh's
 # closing line): activity within this many seconds of the finish is the run's
 # own, not a human's. run.sh starts no shell until someone presses Enter, so
@@ -70,6 +74,7 @@ _WINDOW_FIELDS = (
     "@job_finished",
     "@job_started",
     "@job_stepped_in",
+    "@job_keep_window",
     "window_activity",
 )
 
@@ -227,18 +232,16 @@ def should_close(
     finished = float(finished_s)
     activity_s = row.get("window_activity", "")
     activity = float(activity_s) if activity_s.isdigit() else 0.0
-    # The marker says so outright (Enter at run.sh's prompt, a follow-up to the
-    # agent), even when all the output since came within the slack.
-    stepped_in = bool(row.get("@job_stepped_in")) or (
-        activity > finished + ACTIVITY_SLACK
-    )
+    if row.get("@job_stepped_in") or row.get("@job_keep_window"):
+        return False  # it is someone's now, whatever the output timing says
+    active_since = activity > finished + ACTIVITY_SLACK
     succeeded = row.get("@job_exit", "") == "0"
-    if succeeded and not stepped_in:
-        if now - finished >= SUCCESS_TTL:
+    if succeeded and not active_since:
+        if now - finished >= WINDOW_TTL:
             return True
         return newer_run_started is not None and newer_run_started > finished
     last = max(activity, finished)
-    return now - last >= ACTIVITY_TTL
+    return now - last >= WINDOW_TTL
 
 
 def close_windows(

@@ -178,6 +178,15 @@ class TestCreateJob:
         assert data["agent"] == "codex"
         assert "discord_channel" not in data
 
+    def test_keep_window_round_trips(self, client):
+        resp = client.post("/api/jobs/jobs", json=_sample_job(keep_window=True))
+        assert resp.status_code == 201
+        job_id = resp.json()["id"]
+        assert resp.json()["keep_window"] is True
+        resp = client.put(f"/api/jobs/jobs/{job_id}", json={"keep_window": False})
+        assert resp.status_code == 200
+        assert resp.json()["keep_window"] is False
+
     def test_create_defaults_to_claude(self, client):
         """A prompt job without an agent runs Claude Code."""
         resp = client.post("/api/jobs/jobs", json=_sample_job())

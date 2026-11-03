@@ -187,6 +187,8 @@ def cmd_add(args) -> dict:
         "report_mode": args.report_mode,
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
     }
+    if getattr(args, "keep_window", False):
+        job["keep_window"] = True
     if command is not None:
         job.update(type="command", command=command)
     else:
@@ -587,6 +589,11 @@ Output:
         "--command",
         dest="shell_command",  # "command" is the subcommand's own dest
         help="The shell command to run, instead of an agent",
+    )
+    p_add.add_argument(
+        "--keep-window",
+        action="store_true",
+        help="Leave each run's window open until you close it (each run adds one)",
     )
     p_add.add_argument(
         "--working-dir",

@@ -601,7 +601,7 @@ def test_unavailable_observations_finalize_close_and_signal_nothing(iso):
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(sweep, "_tmux_observe", lambda args: ("unavailable", ""))
-        counts, adoptable = retention.tick(now=time.time() + 3601)
+        counts, adoptable = retention.tick(now=time.time() + 86401)
         assert counts == {"finalized": 0, "closed": 0, "removed": 0}
         assert adoptable == []
         assert supervisor.observe(busy)[0] == "unavailable"
@@ -614,8 +614,8 @@ def test_unavailable_observations_finalize_close_and_signal_nothing(iso):
     # The client list alone unavailable: no window closed either.
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(sweep, "displayed_windows_checked", lambda: ("unavailable", set()))
-        assert retention.tick(now=time.time() + 3601)[0]["closed"] == 0
-    assert retention.tick(now=time.time() + 3601)[0]["closed"] == 1
+        assert retention.tick(now=time.time() + 86401)[0]["closed"] == 0
+    assert retention.tick(now=time.time() + 86401)[0]["closed"] == 1
 
 
 def test_the_exit_is_first_writer_wins(iso):
@@ -759,12 +759,12 @@ class TestShouldClose:
             row, now=10**6, displayed={f"{JOBS}:@9"}, newer_run_started=None
         )
 
-    def test_success_closes_after_an_hour(self):
+    def test_success_closes_after_a_day(self):
         assert not retention.should_close(
             _row(), now=1000 + 3599, displayed=set(), newer_run_started=None
         )
         assert retention.should_close(
-            _row(), now=1000 + 3600, displayed=set(), newer_run_started=None
+            _row(), now=1000 + 86400, displayed=set(), newer_run_started=None
         )
 
     def test_success_closes_at_the_next_run_of_the_job(self):
@@ -793,21 +793,36 @@ class TestShouldClose:
             row, now=1500 + 86400, displayed=set(), newer_run_started=None
         )
 
-    def test_a_takeover_within_the_slack_keeps_the_window(self):
-        """Enter right after the finish, a quiet long command, a switch to
-        another window, then the next run: no output says so, the marker does."""
+    def test_a_window_someone_stepped_into_is_never_closed(self):
+        """Enter right after the finish, a quiet long command, a switch away,
+        the next run, a week: no output says so, the marker does."""
         row = _row(window_activity="1003", **{"@job_stepped_in": "1"})
+        for now in (1061, 1000 + 7 * 86400):
+            assert not retention.should_close(
+                row, now=now, displayed=set(), newer_run_started=1060
+            )
+
+    def test_a_window_its_job_keeps_is_never_closed(self):
+        row = _row(**{"@job_keep_window": "1"})
         assert not retention.should_close(
-            row, now=1061, displayed=set(), newer_run_started=1060
+            row, now=1000 + 7 * 86400, displayed=set(), newer_run_started=1060
         )
-        assert retention.should_close(
-            row, now=1003 + 86400, displayed=set(), newer_run_started=1060
-        )
+
+    def test_a_nights_run_is_still_there_in_the_morning(self):
+        """An untouched success waits for the next run, a day at most."""
+        row = _row()
+        for now, closed in ((1000 + 6 * 3600, False), (1000 + 86400, True)):
+            assert (
+                retention.should_close(
+                    row, now=now, displayed=set(), newer_run_started=None
+                )
+                is closed
+            )
 
     def test_the_finish_own_output_is_not_stepping_in(self):
         row = _row(window_activity="1004")  # within the slack
         assert retention.should_close(
-            row, now=1000 + 3600, displayed=set(), newer_run_started=None
+            row, now=1000 + 86400, displayed=set(), newer_run_started=None
         )
 
     def test_unfinished_window_is_kept(self):
@@ -818,8 +833,8 @@ class TestShouldClose:
 
 
 def test_tick_closes_windows_past_retention_and_spares_the_rest(iso):
-    """A success closes an hour after its finish, a failure a day after its
-    last activity; a plain window and another session are never touched."""
+    """A success and a failure both close a day on; a plain window and another
+    session are never touched."""
     ok = _launch_unsupervised("ok", {"type": "command", "command": "exit 0"})
     failed = _launch_unsupervised("failed", {"type": "command", "command": "exit 3"})
     for run in (ok, failed):
@@ -833,17 +848,24 @@ def test_tick_closes_windows_past_retention_and_spares_the_rest(iso):
     tmux("new-window", "-d", "-t", f"{JOBS}:", "-n", "plain")
     tmux("new-session", "-d", "-s", "mine")
 
-    assert retention.tick()[0]["closed"] == 0  # nothing is an hour old yet
-    counts, _ = retention.tick(now=time.time() + 3601)
-    assert counts["closed"] == 1 and counts["removed"] == 1
-    assert {r["window_name"] for r in windows()} == {"failed", "plain"}
-    assert not ok.dir.exists() and failed.dir.exists()
+    assert retention.tick()[0]["closed"] == 0  # nothing is a day old yet
+    counts, _ = retention.tick(now=time.time() + 86401)
+    assert counts["closed"] == 2 and counts["removed"] == 2
+    assert {r["window_name"] for r in windows()} == {"plain"}
+    assert not ok.dir.exists() and not failed.dir.exists()
     assert "mine" in {s.name for s in sweep.run_session_sweep()}
 
-    counts, _ = retention.tick(now=time.time() + 86401)
-    assert counts["closed"] == 1 and counts["removed"] == 1
-    assert {r["window_name"] for r in windows()} == {"plain"}
-    assert not failed.dir.exists()
+
+def test_a_job_can_keep_its_windows(iso):
+    """Its choice reaches the window at launch: finished, no one around, a
+    week on, and another run since, it is still there."""
+    run = _launch_unsupervised(
+        "kept", {"type": "command", "command": "exit 0", "keep_window": True}
+    )
+    assert wait_until(lambda: runs.read_exit(run.dir) is not None, timeout=10)
+    assert retention.tick()[0]["finalized"] == 1
+    assert retention.tick(now=time.time() + 7 * 86400)[0]["closed"] == 0
+    assert {r["window_name"] for r in windows()} == {"kept"}
 
 
 def test_success_closes_at_the_next_run_of_the_job(iso):
@@ -877,7 +899,7 @@ def test_a_window_a_client_is_showing_is_never_closed(iso):
         wait_until(lambda: runs.read_exit(old.dir) is not None, timeout=10) is not None
     )
     assert retention.tick()[0]["finalized"] == 1
-    later = time.time() + 3601
+    later = time.time() + 86401
 
     # A client on that window: tmux attach under a pty.
     master, slave = pty.openpty()
@@ -1105,7 +1127,7 @@ def test_an_unrecorded_outcome_survives_the_windows_retention(iso, monkeypatch):
     )
     assert retention.tick()[0]["finalized"] == 1
     assert runs.read_outcome(run.dir) is not None and not runs.is_recorded(run.dir)
-    counts, _ = retention.tick(now=time.time() + 3601)
+    counts, _ = retention.tick(now=time.time() + 86401)
     assert counts["closed"] == 1 and counts["removed"] == 0
     assert run.dir.exists() and windows() == []
     broken["on"] = False
@@ -1207,7 +1229,7 @@ def test_activity_after_the_sweep_keeps_the_window(iso):
     assert sweep.set_window_option(
         run.target, "@job_finished", str(int(time.time()) - 60)
     )
-    later = time.time() + 3601
+    later = time.time() + 86401
     real = sweep.displayed_windows_checked
     calls = {"n": 0}
 
@@ -1231,7 +1253,8 @@ def test_activity_after_the_sweep_keeps_the_window(iso):
         counts, _ = retention.tick(now=later)
     assert counts["closed"] == 0
     assert len(windows()) == 1
-    assert retention.tick(now=time.time() + 86401 + 10)[0]["closed"] == 1
+    # Enter at the closing prompt: the window is that person's now.
+    assert retention.tick(now=time.time() + 7 * 86400)[0]["closed"] == 0
 
 
 class TestCodexTrust:

@@ -118,6 +118,7 @@ def create_job(body: JobCreate):
         "working_dir": body.working_dir or None,
         "enabled": body.enabled,
         "report_mode": body.report_mode,
+        "keep_window": body.keep_window,
         "grace_minutes": body.grace_minutes,
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
     }
