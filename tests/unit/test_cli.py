@@ -598,6 +598,27 @@ class TestDashboardUrl:
         cli_main(["dashboard-url"])
         assert capsys.readouterr().out.strip() == "http://box.example.org:3123"
 
+    def test_a_clean_pane_finds_the_login_the_server_saved(
+        self, monkeypatch, capsys, tmp_path
+    ):
+        """A login only the server's environment holds never reaches a pane:
+        the link still carries it, and nothing else in the process gets it."""
+        import os
+
+        import paths
+
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        monkeypatch.setenv("DASHBOARD_USER", "me")
+        monkeypatch.setenv("DASHBOARD_PASS", "p@ss word")
+        paths.save_server_secrets()
+        monkeypatch.delenv("DASHBOARD_USER")
+        monkeypatch.delenv("DASHBOARD_PASS")
+        cli_main(["dashboard-url"])
+        assert capsys.readouterr().out.strip() == (
+            "http://me:p%40ss%20word@localhost:3123"
+        )
+        assert "DASHBOARD_PASS" not in os.environ
+
     def test_saas_resolves_public_host_not_localhost(self, monkeypatch, capsys):
         """On a SaaS box, dashboard-url uses the whoami public host — agreeing
         with webhook URLs — instead of printing localhost (bug #10)."""

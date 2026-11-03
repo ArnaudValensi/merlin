@@ -686,8 +686,9 @@ def run_dashboard_url() -> None:
     The base URL is resolved exactly like webhook URLs, via
     job.webhook.resolve_public_base: MERLIN_DASHBOARD_URL override > portal
     whoami (SaaS) > managed slug > detected IP:port. So `merlin dashboard-url`
-    and the Settings page always agree. Credentials are embedded when
-    DASHBOARD_PASS is set.
+    and the Settings page always agree. Credentials are embedded when a
+    dashboard password is set (the environment, config.env, or what the running
+    server saved).
     """
     from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -703,8 +704,11 @@ def run_dashboard_url() -> None:
         # two intentionally differ.)
         base = f"http://localhost:{_server_port()}"
 
-    user = os.getenv("DASHBOARD_USER", "admin")
-    password = os.getenv("DASHBOARD_PASS", "")
+    # The login of a server that got it from its environment alone is not in a
+    # terminal's: read here, for this link, not exported to anything.
+    saved = paths.read_server_secrets()
+    user = os.getenv("DASHBOARD_USER") or saved.get("DASHBOARD_USER", "admin")
+    password = os.getenv("DASHBOARD_PASS") or saved.get("DASHBOARD_PASS", "")
 
     parts = urlsplit(base)
     if password and "@" not in parts.netloc:

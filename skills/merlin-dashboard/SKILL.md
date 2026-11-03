@@ -14,6 +14,6 @@ directory) and send the output to the user:
 merlin dashboard-url
 ```
 
-It resolves the URL from the Merlin config (explicit `MERLIN_DASHBOARD_URL`
-override, then the named tunnel hostname, then localhost) and embeds the
-login credentials when a dashboard password is set.
+It resolves the URL like the Settings page does (explicit `MERLIN_DASHBOARD_URL`
+override, then the Merlin Cloud address, then localhost) and embeds the login
+credentials when a dashboard password is set.

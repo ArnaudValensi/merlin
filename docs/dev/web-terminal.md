@@ -343,6 +343,6 @@ open keeps its copy until it closes, which is why `merlin restart`
 
 A credential only the server's environment has (Merlin Cloud gives a container
 its token that way) is kept, mode 0600, in `data/server-secrets.json`, rewritten
-at every start. A restart reads it there, and so does `merlin job url` for the
-public host: only the operation that needs one reads it, so a program launched
+at every start. A restart reads it there, `merlin job url` for the public host,
+and `merlin dashboard-url` for its login: only the operation that needs one reads it, so a program launched
 from a pane (`merlin app run`, say) gets none.
