@@ -179,8 +179,23 @@ class TestStateSetter:
     def test_a_follow_up_after_a_job_finished_is_stepping_in(self, srv):
         s, w = srv
         pane = self._in_a_job(s, w)
+        own = '{"hook_event_name": "UserPromptSubmit", "prompt": "[Job: x] do"}'
+        s.run_state("busy", pane=pane, stdin=own)
+        s.run_state("done", pane=pane)
         s.tmux("set-option", "-w", "-t", w["a"], "@job_finished", "1000")
-        s.tmux("set-option", "-w", "-t", w["a"], "@agent_state", "done")
+        assert self._stepped(s, w) == ""
+        s.run_state("busy", pane=pane, stdin=self.PROMPT)
+        assert self._stepped(s, w) == "1"
+
+    def test_a_follow_up_right_after_a_window_switch_is_stepping_in(self, srv):
+        """Stop writes done, selecting the window resets it to idle, and the
+        supervisor has not polled yet: the pill says nothing about the prompts."""
+        s, w = srv
+        pane = self._in_a_job(s, w)
+        own = '{"hook_event_name": "UserPromptSubmit", "prompt": "[Job: x] do"}'
+        s.run_state("busy", pane=pane, stdin=own)
+        s.run_state("done", pane=pane)
+        s.tmux("set-option", "-w", "-t", w["a"], "@agent_state", "idle")
         s.run_state("busy", pane=pane, stdin=self.PROMPT)
         assert self._stepped(s, w) == "1"
 

@@ -43,6 +43,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import secrets
 import shlex
 import shutil
@@ -70,6 +71,8 @@ FORWARDED_ENV = (
     "MERLIN_SAAS_API",
     "MERLIN_TERMINAL_HOOKS",
 )
+
+_UNREADABLE_ID = re.compile(r'["\]\\\n]')
 
 # How long run.sh waits for the window options before giving up (seconds).
 STAMP_WAIT_SECONDS = 30
@@ -368,6 +371,12 @@ def new_run(
     binary missing, its state hooks not installed): nothing is written then."""
     if shutil.which("tmux") is None:
         raise LaunchError(1, "tmux is not installed: a job run needs a tmux window.")
+    if _UNREADABLE_ID.search(job_id):
+        # A job file can be named anything; the prompt header names the job,
+        # and a hook must read it back to find the window (agent-state.sh).
+        raise LaunchError(
+            1, f'Job id {job_id!r} cannot hold a quote, "]" or a backslash: rename it.'
+        )
     job_type = job.get("type", "prompt")
     agent_id: str | None = None
     if job_type != "command":

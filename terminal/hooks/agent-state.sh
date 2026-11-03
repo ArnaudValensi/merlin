@@ -58,17 +58,18 @@ win=$(agent_window "$conv" "$cwd" "$event" "$job")
 if [ -n "$conv" ] && [ -z "$(tmux show-option -wqv -t "$win" @agent_conv 2>/dev/null)" ]; then
   tmux set-option -w -t "$win" @agent_conv "$conv" 2>/dev/null
 fi
-# In a job's window, a prompt that is not the job's means someone stepped in:
+# In a job's window, a prompt after the run's first means someone stepped in:
 # the window is theirs now, and retention leaves it alone (job/retention.py).
 # Only a prompt counts: a tool hook can fire late with nobody there, and a
-# window stamped by mistake would keep an idle agent for good. The very first
-# prompt (state still idle, run not finished) is the run's own, even when its
-# header was not recognized.
-if [ "$event" = UserPromptSubmit ] && [ -z "$job" ] &&
+# window stamped by mistake would keep an idle agent for good. The first is
+# the run's own, recorded rather than read from the pill, which a window
+# switch can reset.
+if [ "$event" = UserPromptSubmit ] &&
   [ -n "$(tmux show-option -wqv -t "$win" @job_run 2>/dev/null)" ]; then
-  if [ "$(tmux show-option -wqv -t "$win" @agent_state 2>/dev/null)" != idle ] ||
-    [ -n "$(tmux show-option -wqv -t "$win" @job_finished 2>/dev/null)" ]; then
+  if [ -n "$(tmux show-option -wqv -t "$win" @job_prompted 2>/dev/null)" ]; then
     tmux set-option -w -t "$win" @job_stepped_in 1 2>/dev/null
+  else
+    tmux set-option -w -t "$win" @job_prompted 1 2>/dev/null
   fi
 fi
 tmux set-option -w -t "$win" @agent_state "$state" 2>/dev/null

@@ -322,7 +322,7 @@ removes their run directories (`should_close` is the pure rule):
   from `list-clients`) is never closed, and when the client list could not
   be read no window is closed at all;
 - `@job_stepped_in` (stamped by Enter at the closing prompt, by a prompt that
-  is not the job's and is not the first of the run, and by Esc on the agent) or
+  comes after the run's first (`@job_prompted`), and by Esc on the agent) or
   `@job_keep_window` (stamped at launch from the job's `keep_window`): never
   closed. The window is someone's now, and the workspace snapshot brings it
   back in the `merlin-jobs-kept` session, where no `@job_run` ties it to

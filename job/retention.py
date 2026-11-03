@@ -26,7 +26,7 @@ removes their run directories:
 - a window a tmux client is showing right now is never closed, and when
   the client list could not be read no window is closed at all;
 - a window someone stepped into (``@job_stepped_in``: Enter at the closing
-  prompt, a prompt to the agent that is not the job's, Esc on it), or kept by its job's choice
+  prompt, a prompt after the run's first, Esc on it), or kept by its job's choice
   (``@job_keep_window``), is theirs: never closed, and the workspace snapshot
   brings it back after a reboot;
 - finished with exit 0 and no pane activity since: closed at the next run of

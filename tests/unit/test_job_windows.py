@@ -1481,3 +1481,18 @@ def test_an_agent_window_knows_its_provider_from_the_launch(iso, monkeypatch):
     run = _launch_unsupervised("cx", agent_job("done", agent="codex"))
     out = sweep.window_options_checked(run.target, ("@agent_provider",))[1]
     assert out["@agent_provider"] == "codex"
+
+
+@pytest.mark.parametrize("job_id", ['a"b', "a]b", "a\\b"])
+def test_a_job_id_a_hook_could_not_read_is_refused(iso, job_id):
+    with pytest.raises(runs.LaunchError) as refused:
+        runs.new_run(
+            job_id,
+            {"type": "command", "command": "exit 0"},
+            trigger="manual",
+            run_id="r",
+            cwd=str(Path.home()),
+            deadline=60,
+        )
+    assert "rename" in str(refused.value)
+    assert not runs.run_dirs()
