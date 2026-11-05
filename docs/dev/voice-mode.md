@@ -270,6 +270,37 @@ An open mic puts iOS in call mode, which turns the answer down (WebKit bug
 Safari (`navigator.audioSession` present) the output goes through a gain of
 2.5 into a limiter (`DynamicsCompressorNode`, threshold -3 dB, ratio 20).
 
+**What iOS allows, measured on 2026-11-05** (an iPhone on iOS 26.6.1, the
+home-screen app, older AirPods without Conversation Awareness). Don't try these
+again without a new reason. With the mic open, the answer drops whenever the user
+speaks or there is noise, which makes a conversation in wind or music unusable.
+In a quiet room its level is about the same as with no mic. Nothing below gives
+hands-free without that drop:
+
+| While the answer plays | Does it drop? | What stops it |
+|---|---|---|
+| Mic open, with or without voice processing | Yes (founder's report, with no per-step recheck of voice processing) | |
+| Track `enabled = false` | Yes | |
+| Mic open, session `playback` | Yes | |
+| `mediaSession.setMicrophoneActive(false)` | No | `setMicrophoneActive(true)` throws `InvalidStateError: Activating capture must be called from a user gesture handler` |
+| Mic closed, session `playback` | No | Reopening takes 3 to 4 s, and the permission comes back now and then |
+
+A few quick reopens did not prompt, which proves nothing about the prompts of
+October: WebKit grants a reopen without a gesture only while the capture has not
+been inactive beyond a reprompt interval in minutes, and never on a muted page
+(`hasGrantedRequest` in `UserMediaPermissionRequestManagerProxy.cpp`; the interval's
+value on iOS was not checked). A longer closure was never measured.
+
+With the screen locked in the home-screen app, iOS mutes the mic track on lock and
+ends it after repeated locks, while the page's timers and network keep running. Web
+Audio clips did not finish, and stayed stuck after unlocking until a reload. An
+`<audio>` clip already playing carried on, and one started while locked seemed to
+wait for the unlock. The AirPods stem did reach `mediaSession` handlers while
+locked. These runs were not locked from end to end, and a Safari tab was not tried.
+
+A native app is what would remain, for the lock and the permission. That is
+untested, and it may not shorten the reopen. The founder's call: not now.
+
 The silent switch: Safari plays Web Audio as "ambient", which the switch
 mutes. The console sets `navigator.audioSession.type` (Safari 17+) to
 `"play-and-record"` before `getUserMedia`, which ignores the switch, and back
