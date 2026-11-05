@@ -346,6 +346,9 @@ class TestRelaunchEnv:
         self, monkeypatch, tmp_path
     ):
         monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        # Another test's import may have left a credential in the environment.
+        for key in paths.SECRET_ENV:
+            monkeypatch.delenv(key, raising=False)
         monkeypatch.setenv("MERLIN_SAAS_TOKEN", "old")
         paths.save_server_secrets()
         monkeypatch.delenv("MERLIN_SAAS_TOKEN")
