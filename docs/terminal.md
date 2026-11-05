@@ -252,9 +252,10 @@ download, works offline). `merlin setup` prompts for the OpenAI key, or append
 ## Talk with the agent (voice mode)
 
 Voice mode turns the window you are on into a hands-free conversation with the
-Claude Code agent running in it, for the car (phone on a mount, screen on) or a
-walk. Tap the **Voice** button in the status bar: a full-screen radio console
-covers the terminal. Talk, and when you are done say **"terminé"** (or
+Claude Code agent running in it, for the car (phone on a mount, screen on), a
+walk, or your desk. Tap the **Voice** button in the status bar: on a phone a
+full-screen console covers the terminal, and on a computer a bar opens over the
+status bar and the terminal stays in view. Talk, and when you are done say **"terminé"** (or
 **"over"**), on its own after what you said: only then is your message sent to
 the agent, so you can pause to think as long as you like. The agent answers in a style
 written for the ear, Merlin reads the answer aloud, then listens again. Code and
@@ -263,14 +264,20 @@ long output stay in the terminal: the voice says so instead of reading them.
 - If you forget the end word, a soft double tone reminds you after a few
   seconds. "C'est terminé" inside a sentence does not send.
 - **Tap anywhere** while you talk to send now, without the end word; while the answer plays, to skip
-  the rest of it; on an error, to try again.
+  the rest of it; on an error, to try again. In the bar, a button does the same:
+  **Send**, **Skip** or **Retry**.
+- **Show terminal** and **Full screen** switch between the two, and Merlin
+  remembers your choice. With the terminal in view, the agent writes as usual
+  (lists, tables, code) and only its prose is read aloud; full screen, it writes
+  for the ear. While the bar is open, the status bar's dictation button steps
+  aside.
 - **Stop agent** sends Escape to the agent. **Exit** leaves voice mode, and the
   next prompt you type is back to normal.
 - When the agent needs a permission, the console plays an alert, says so, and
   shows **Yes** (Enter) and **No** (Escape).
-- The console shows no text of the conversation, neither what you said nor the
-  answer: it reads as a voice call, not as something to read while driving. The
-  terminal under it keeps everything.
+- The full-screen console shows no text of the conversation, neither what you
+  said nor the answer: it reads as a voice call, not as something to read while
+  driving. The terminal under it keeps everything.
 - **EN / FR** picks the language you speak and the voice that answers. It
   follows the dictation language.
 - The browser asks for the microphone once, when voice mode opens. The

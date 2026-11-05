@@ -1,8 +1,7 @@
 /*
  * The voice console's pure parts, shared by the page (voice-console.js) and
  * node's test runner (tests/js/voice-core.test.js): the WAV encoder for an
- * utterance, the call sign and frequency of a window, and the console model,
- * which folds the server's voice frames and the page's own playback into the
+ * utterance and the console model, which folds the server's voice frames and the page's own playback into the
  * one mode the console shows.
  *
  * The server says what the agent is doing (state frames, the clips to speak);
@@ -90,32 +89,6 @@ const MerlinVoiceCore = (function () {
             rest = rest.slice(0, match.index).replace(/[\s,;:—–]+$/, "").trim();
         }
         return { text: rest, end: end };
-    }
-
-    // -- identity -------------------------------------------------------------
-
-    function hash(text) {
-        let h = 2166136261;
-        for (let i = 0; i < text.length; i++) {
-            h ^= text.charCodeAt(i);
-            h = Math.imul(h, 16777619);
-        }
-        return h >>> 0;
-    }
-
-    /** "MAIN-7" for session "main", window "@7": the radio name of a window. */
-    function callSign(target) {
-        const parts = String(target || "").split(":");
-        const session = (parts[0] || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 6) || "MRLN";
-        const win = (parts[1] || "").replace(/[^0-9]/g, "");
-        return win ? session + "-" + win : session;
-    }
-
-    /** A stable "frequency" in the 2 m band, on a 5 kHz raster: "146.355". */
-    function frequency(target) {
-        const steps = hash(String(target || "")) % 800;   // 144.000 .. 147.995
-        const khz = 144000 + steps * 5;
-        return (khz / 1000).toFixed(3);
     }
 
     // -- the console model -------------------------------------------------------
@@ -403,8 +376,6 @@ const MerlinVoiceCore = (function () {
     return {
         encodeWav: encodeWav,
         endWord: endWord,
-        callSign: callSign,
-        frequency: frequency,
         createModel: createModel,
         applyFrame: applyFrame,
         beginSync: beginSync,

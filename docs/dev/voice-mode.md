@@ -4,8 +4,8 @@ Voice mode turns one terminal window into a hands-free voice conversation with
 the Claude Code agent running in it. The user talks, the words are transcribed
 and submitted to the agent, the agent answers in a style written for the ear,
 and Merlin reads the prose of the answer aloud, then listens again. While it is
-on, a full-screen voice console covers the terminal (the terminal keeps running
-under it). User side: [`../terminal.md`](../terminal.md#talk-with-the-agent-voice-mode).
+on, a voice console either covers the terminal (full screen, for the ear only)
+or sits as a bar under a terminal that stays in view and in use. User side: [`../terminal.md`](../terminal.md#talk-with-the-agent-voice-mode).
 
 ## Architecture
 
@@ -103,16 +103,20 @@ Claude Code's settings (same marker, same `AGENT_STATE_HOOKS` consent, version
   `@agent_sid`, `@agent_conv`, `@agent_provider`. Whatever the file held at
   the mark is history (a resumed conversation); what comes after is new.
 - **`agent-voice-context.sh`** (UserPromptSubmit) prints the voice instructions
-  on stdout only when its window has `@voice on`; Claude Code adds that stdout
-  to the agent's context. Nothing is prefixed to what the user said, and the
-  next prompt after voice mode ends is back to normal. It drains stdin, makes
-  one tmux read and always exits 0, so it never blocks or fails a prompt.
+  on stdout only when its window has `@voice` set to `on` (the console covers
+  the terminal: write for the ear, no markdown) or `screen` (the terminal is in
+  view: write for the screen, keep the prose short enough to listen to); Claude
+  Code adds that stdout to the agent's context. Nothing is prefixed to what the
+  user said, and the next prompt after voice mode ends is back to normal. It
+  drains stdin, makes one tmux read and always exits 0, so it never blocks or
+  fails a prompt.
 - `skills.voice_hooks_installed()` checks both are present and current; start
   refuses otherwise, with the fix in the reason. An agent started before the
   hooks were refreshed still runs the old set: restart the agent once.
 
-Window options: `@voice` (`on` while a session runs, set by start, cleared by
-stop and at server startup for windows a previous process left marked),
+Window options: `@voice` (`on` or `screen` while a session runs, following the
+console's view, set by start and `/api/voice/view`, cleared by stop and at
+server startup for windows a previous process left marked),
 `@agent_state` (`busy`, `ask`, `idle`, `done`, from the state hooks),
 `@agent_transcript`, `@agent_transcript_mark`, `@agent_conv`,
 `@agent_provider` (all from session-init).
@@ -215,7 +219,8 @@ outbox, so a stalled page never blocks the others); the page filters by
 |---|---|
 | `GET /api/voice/status` | Whether a TTS URL is configured (never the URL) |
 | `GET /api/voice/check?target=` | Whether this window can start, and why not |
-| `POST /api/voice/start` `{target, lang}` | Start, or return the running session's snapshot |
+| `POST /api/voice/start` `{target, lang, view}` | Start, or return the running session's snapshot |
+| `POST /api/voice/view` `{target, view}` | What the page shows (`full`, `dock`): the agent's next prompt follows |
 | `POST /api/voice/stop` `{target}` | Stop, clear `@voice` |
 | `GET /api/voice/session?target=` | The snapshot for a reconnecting page |
 | `POST /api/voice/lang` `{target, lang}` | Switch the voice language |
@@ -231,6 +236,26 @@ The Voice button sits in the terminal status bar. It is always shown, dimmed
 with the reason when TTS or transcription is missing or the window cannot start
 (`/api/voice/check`). Tapping it is the user gesture that creates and resumes
 the one `AudioContext` and asks for the mic permission.
+
+### The two views
+
+One session, two ways to show it, chosen per page. **Full screen** (`full`, the
+default on a phone) covers the terminal and shows no conversation text: a phone
+on a mount or a walk. **The bar** (`dock`, the default with a fine pointer on a
+screen at least 900 px wide) moves `#voice-console` into the terminal's column,
+over the status bar, so xterm refits around it and the terminal keeps its keys;
+what the answer says is on screen in the terminal itself. A button switches the
+view at any time, and the choice is kept in `localStorage` (`voice-view`).
+
+The page tells the session its view at start, on a switch and on a resume from
+hold, and the session sets `@voice` so the agent writes for the ear or for the
+screen. With two pages on one session, the last one to say wins. Both views have
+a button named after what a tap does (Send, Skip, Retry, Resume). Full screen is a
+dialog: a tap anywhere does the same, the keys come into the console, and what it
+covers is inert until it leaves. In the bar a click belongs to the terminal,
+dictation's controls are hidden (they would hear what the session hears), and each
+of the bar's buttons hands the keys back to the terminal. The session stays on its window if the page moves to
+another one; the bar names that window.
 
 One mic stream for the whole session: `getUserMedia` once, when the console
 opens (or after a hold, on the tap), closed on Exit. The VAD's `pauseStream`
@@ -276,11 +301,13 @@ transcription fails is tried twice more, then shown as an error a tap retries.
 The e2e test `test_a_message_waits_for_its_end_word` holds two pieces, checks
 nothing reached the window, then releases the end word.
 
-Modes (radio names): `SYNC` (starting), `MON` (listening), `TX` (speech
-detected), `PROC` (the agent works, also while resyncing), `RX` (the answer
-plays), `ASK` (Yes / No / Exit), `ERR` (tap to retry), `HOLD` (after a reload,
-a tap unlocks audio). The VAD runs only in `MON` and `TX` with nothing playing:
-no listening while the agent is busy or the answer plays (no voice barge-in).
+Modes (`MerlinVoice.mode()`, shown name): `tune` (Connecting), `listen`
+(Listening), `tx` (Hearing you, speech detected or a message held), `proc`
+(Working, also while resyncing; Sending while the message goes), `rx` (Speaking,
+the answer plays), `ask` (Your answer: Yes / No / Exit), `error` (Error, tap to
+retry), `resume` (Paused, after a reload a tap unlocks audio). The VAD runs only
+in `listen` and `tx` with nothing playing: no listening while the agent is busy
+or the answer plays (no voice barge-in).
 Clips are fetched two ahead of playback, ordered by revision, retried twice;
 a clip that still fails stalls the line with "Part of the answer could not be
 downloaded" (tap retries, Skip answer drops that answer). Earcons are Nova's,
@@ -288,21 +315,43 @@ synthesized with WebAudio, plus an alert for `ASK`. Wake lock while open;
 `prefers-reduced-motion` draws a still trace.
 
 **The look is Merlin's.** `voice-console.css` uses the dashboard's variables
-(`dashboard.css`: Geist and Geist Mono, the `#0f1117` palette, bordered cards,
-tinted states) and keeps the radio only in what it shows: the mode code, the
-call sign, the meter and the scope. Each mode's signal colour (`--vc-sig`) is
-the accent the Sessions board gives that agent state: green while it waits on
-the user (`MON`, `TX` filled), yellow while it works (`PROC`), blue on a
-question (`ASK`, filled), purple for the answer (`RX`), red on `ERR`. The scope
-fades each frame into its card's own background, read from the CSS.
+(`dashboard.css`: Geist and Geist Mono, the `#0f1117` palette, bordered cards). It
+names the window and says what it is doing in plain words; the first version's
+radio dress (mode codes, a call sign, a made-up frequency, the level meter and the
+framed oscilloscope) is gone, the founder's call of 2026-11-05. The chrome stays
+neutral, and the state's word is the screen, anchored from the top so it stays put,
+with what it needs to say (the question, the error, the instruction) right under it
+and the buttons at the thumb. A clock shows only how long the agent has been working.
+One signal colour (`--vc-sig`) says whose turn it is, in the Sessions board's
+accents: green the user's (`listen`, `tx`), yellow the agent's (`proc`, `rx`), blue a
+question (`ask`), red an error. It goes on the light and on a thin trace, the quiet
+sign of life, which fades each frame into its own background, read from the CSS. A
+tint is kept for what needs the user: the question and the error, and Yes is the one
+action that wears its colour at rest. There is no trace on a question or an error.
+Nothing is filled.
 
-**No conversation text on screen.** The console shows no captions (neither what
-the user said nor the answer), no tool label and no pane excerpt on `ASK`, only
-the radio mode, the scope, a short hint and the buttons. It reads as a voice
-call, not something to read while driving (the founder's call, 2026-10-28). The
-`heard`, `say` and `activity` frames still feed the model (`m.captions`,
-`m.activity`), which is bounded and tested, so captions can come back as an
-option without touching the server.
+**The bar keeps its height.** It is laid out on its own width (a container query,
+since the sidebar and the side panels decide how much of the screen it gets), on one
+row at every width, an iPhone's included: the light and the state's word, the trace
+in the room left over, the actions, the switch to full screen. From 640 px it also
+names the window and shows the hint and how long the agent has been working. The
+language is the status bar's picker, right under the bar, which also tells the
+session. The state changes what is in the row, not the row, and the terminal does
+not refit through a turn. A question keeps one line next to its answers and, when it
+does not fit, offers the rest behind a tap (the session may be on a window the page
+has left). An error has to be read: it shows in full on a line of its own, the one
+thing that grows the bar unasked, along with a passing notice that does not fit. On a
+touch screen the controls are 36 px tall, with 44 px targets drawn in the gaps and
+never over a neighbour.
+
+**No conversation text in the console.** It shows no captions (neither what
+the user said nor the answer), no tool label and no pane excerpt on `ask`, only
+the mode, the scope, a short hint and the buttons. Full screen reads as a voice
+call, not something to read while driving (the founder's call, 2026-10-28); the
+bar leaves the terminal in view, which already shows everything. The `heard`,
+`say` and `activity` frames still feed the model (`m.captions`, `m.activity`),
+which is bounded and tested, so captions can come back as an option without
+touching the server.
 
 ## The reference server
 

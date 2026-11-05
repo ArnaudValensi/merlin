@@ -1,6 +1,7 @@
 /*
- * The voice console: a full-screen, hands-free conversation with the agent of
- * one terminal window. See docs/dev/voice-mode.md.
+ * The voice console: a hands-free conversation with the agent of one terminal
+ * window, shown full screen (a voice call, nothing to read) or as a bar under a
+ * terminal that stays visible. See docs/dev/voice-mode.md.
  *
  * The Voice button starts a session on the window the page shows (its target
  * is captured then, like dictation's). From there the console loops on its
@@ -57,19 +58,27 @@ function initVoiceConsole() {
         : { matches: false };
 
     const MODES = {
-        tune:   { badge: "SYNC", name: "Tuning in",     hint: "Opening the channel" },
-        resume: { badge: "HOLD", name: "On hold",    hint: "Tap anywhere to resume" },
-        listen: { badge: "MON",  name: "Listening",  hint: "" },
-        tx:     { badge: "TX",   name: "Transmitting",   hint: "" },
-        proc:   { badge: "PROC", name: "Processing", hint: "The agent is working" },
-        rx:     { badge: "RX",   name: "Receiving",  hint: "Tap anywhere to skip this answer" },
-        ask:    { badge: "ASK",  name: "Your answer",    hint: "Yes sends Enter, No sends Escape" },
-        error:  { badge: "ERR",  name: "Fault",      hint: "Tap anywhere to retry" },
+        tune:   { name: "Connecting",  hint: "" },
+        resume: { name: "Paused",      hint: "Tap anywhere to resume" },
+        listen: { name: "Listening",   hint: "" },
+        tx:     { name: "Hearing you", hint: "" },
+        proc:   { name: "Working",     hint: "" },
+        rx:     { name: "Speaking",    hint: "Tap anywhere to skip this answer" },
+        ask:    { name: "Your answer", hint: "" },
+        error:  { name: "Error",       hint: "Tap anywhere to retry" },
     };
+    // The bar has no "anywhere" to tap (a click belongs to the terminal): what a
+    // tap does in that mode gets a button.
+    const TAP_LABELS = { resume: "Resume", tx: "Send", rx: "Skip", error: "Retry" };
+    const VIEW_KEY = "voice-view";
+    const wide = window.matchMedia ? window.matchMedia("(min-width: 900px) and (pointer: fine)") : { matches: false };
+    const finePointer = window.matchMedia ? window.matchMedia("(pointer: fine)") : { matches: false };
+    const fullParent = root.parentNode;
+    const barSlot = document.getElementById("terminal-status");
     // The text area before anything was said.
     const BUTTONS = {
-        tune: ["exit"], resume: ["exit"], listen: ["exit"], tx: ["exit"],
-        proc: ["stop", "exit"], rx: ["stop", "exit"], ask: ["yes", "no", "exit"], error: ["exit"],
+        tune: ["exit"], resume: ["tap", "exit"], listen: ["exit"], tx: ["tap", "exit"],
+        proc: ["stop", "exit"], rx: ["tap", "stop", "exit"], ask: ["yes", "no", "exit"], error: ["tap", "exit"],
     };
 
     // -- state ----------------------------------------------------------------
@@ -77,6 +86,8 @@ function initVoiceConsole() {
     let m = null;              // the console model while open
     let target = "";
     let phase = "off";         // off | tune | resume | live
+    let view = savedView();    // full | dock: what this page shows
+    let windowName = "";       // the name of the window the page is on
     let lastMode = "";
     let modeSince = 0;
     let retry = null;          // what a tap does in a local error: start | vad | upload
@@ -96,6 +107,9 @@ function initVoiceConsole() {
     let syncReq = 0;           // the latest resync request
     let askToken = 0;          // the approval playback allowed to start
     let askFor = null;         // the ask audio id that playback was for
+    let askOpen = false;       // the bar shows the whole question
+    let paintStale = true;     // the scope's colours are to be read again
+    let covered = [];          // what full screen made inert
 
     const audio = { ctx: null, out: null, outAnalyser: null, mic: null, micSource: null, micAnalyser: null, wave: null };
     let vad = null;
@@ -105,43 +119,46 @@ function initVoiceConsole() {
 
     // -- markup ---------------------------------------------------------------
 
+    root.tabIndex = -1;
     root.innerHTML = [
         '<div class="vc-plate">',
         '  <header class="vc-head">',
-        '    <div class="vc-brand"><span class="vc-led"></span>Merlin<span class="vc-slash">/</span>Voice</div>',
-        '    <div class="vc-lang" role="group" aria-label="Voice language">',
-        '      <button type="button" data-lang="en">EN</button><button type="button" data-lang="fr">FR</button>',
+        '    <div class="vc-brand"><span class="vc-window" data-el="window"></span></div>',
+        '    <div class="vc-tools">',
+        '      <div class="vc-lang" role="group" aria-label="Voice language">',
+        '        <button type="button" data-lang="en">EN</button><button type="button" data-lang="fr">FR</button>',
+        '      </div>',
+        '      <button type="button" class="vc-view" data-el="viewToggle" data-view-toggle>',
+        '        <span class="vc-view-label" data-el="viewLabel"></span>',
+        '        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>',
+        '      </button>',
         '    </div>',
         '  </header>',
-        '  <div class="vc-id">',
-        '    <span>Call <b data-el="call"></b></span>',
-        '    <span><b data-el="freq"></b> MHz</span>',
-        '    <span class="vc-clock" data-el="clock">00:00</span>',
-        '  </div>',
-        '  <section class="vc-main">',
+        '  <section class="vc-main" data-el="main">',
         '    <div class="vc-mode">',
-        '      <div class="vc-badge" data-el="badge"></div>',
-        '      <div class="vc-mode-text">',
-        '        <div class="vc-mode-name" data-el="name"></div>',
-        '        <div class="vc-meter" data-el="meter" aria-hidden="true">' + "<i></i>".repeat(16) + '</div>',
+        '      <span class="vc-led"></span>',
+        '      <div class="vc-mode-name" data-el="name"></div>',
+        '      <span class="vc-clock" data-el="clock">00:00</span>',
+        '    </div>',
+        '    <div class="vc-scope" data-el="scopeBox"><canvas data-el="scope" aria-hidden="true"></canvas></div>',
+        '  </section>',
+        '  <footer class="vc-foot" data-el="foot">',
+        '    <section class="vc-text" data-el="text">',
+        '      <div class="vc-ask" data-el="ask" hidden>',
+        '        <div class="vc-ask-text" id="vc-ask-text" data-el="askText"></div>',
+        '        <button type="button" class="vc-ask-more" data-el="askMore" aria-controls="vc-ask-text" hidden>',
+        '          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',
+        '        </button>',
         '      </div>',
-        '    </div>',
-        '    <div class="vc-scope"><canvas data-el="scope" aria-hidden="true"></canvas>',
-        '      <div class="vc-readout" data-el="readout"></div></div>',
-        '  </section>',
-        '  <section class="vc-text">',
-        '    <div class="vc-ask" data-el="ask" hidden>',
-        '      <div class="vc-ask-title" data-el="askTitle"></div>',
-        '    </div>',
-        '    <div class="vc-error" data-el="error" hidden></div>',
-        '    <div class="vc-notice" data-el="notice" role="status"></div>',
-        '  </section>',
-        '  <footer class="vc-foot">',
+        '      <div class="vc-error" data-el="error" hidden></div>',
+        '      <div class="vc-notice" data-el="notice" role="status"></div>',
+        '    </section>',
         '    <div class="vc-hint" data-el="hint"></div>',
-        '    <div class="vc-buttons">',
+        '    <div class="vc-buttons" data-el="buttons">',
+        '      <button type="button" class="vc-btn vc-tap" data-act="tap"></button>',
         '      <button type="button" class="vc-btn vc-yes" data-act="yes">Yes</button>',
         '      <button type="button" class="vc-btn vc-no" data-act="no">No</button>',
-        '      <button type="button" class="vc-btn vc-stop" data-act="stop">Stop agent</button>',
+        '      <button type="button" class="vc-btn vc-stop" data-act="stop" aria-label="Stop agent">Stop<span class="vc-more-words"> agent</span></button>',
         '      <button type="button" class="vc-btn vc-skip" data-act="skip">Skip answer</button>',
         '      <button type="button" class="vc-btn vc-exit" data-act="exit">Exit</button>',
         '    </div>',
@@ -152,7 +169,70 @@ function initVoiceConsole() {
     root.querySelectorAll("[data-el]").forEach(function (n) { el[n.dataset.el] = n; });
     const actionButtons = {};
     root.querySelectorAll("[data-act]").forEach(function (n) { actionButtons[n.dataset.act] = n; });
-    const meterCells = Array.prototype.slice.call(el.meter.children);
+
+    // -- the view -------------------------------------------------------------
+    //
+    // One session, two ways to show it. Full screen is for the ear only (a phone
+    // on a mount, a walk). The bar leaves the terminal in view and in use, with
+    // what the answer says on screen. The view is the page's, and the session
+    // hears of it: the voice context hook tells the agent what to write for.
+
+    function savedView() {
+        let saved = null;
+        try { saved = localStorage.getItem(VIEW_KEY); } catch (_) { /* no storage */ }
+        return saved === "full" || saved === "dock" ? saved : (wide.matches && barSlot ? "dock" : "full");
+    }
+
+    function isolate(modal) {
+        covered.forEach(function (n) { n.inert = false; });
+        covered = [];
+        if (!modal) return;
+        for (let n = root; n !== document.body; n = n.parentNode) {
+            Array.prototype.forEach.call(n.parentNode.children, function (s) {
+                if (s !== n && !s.inert) { s.inert = true; covered.push(s); }
+            });
+        }
+    }
+
+    function applyView() {
+        const dock = view === "dock" && !!barSlot;
+        root.dataset.view = dock ? "dock" : "full";
+        // In the flow of the terminal's column, so xterm refits around it.
+        if (dock) barSlot.parentNode.insertBefore(root, barSlot);
+        else if (root.parentNode !== fullParent) fullParent.appendChild(root);
+        root.setAttribute("role", dock ? "region" : "dialog");
+        if (dock) root.removeAttribute("aria-modal"); else root.setAttribute("aria-modal", "true");
+        // What the state says sits with the state; in the bar, next to its buttons.
+        const before = dock ? el.buttons : el.scopeBox;
+        before.parentNode.insertBefore(el.text, before);
+        before.parentNode.insertBefore(el.hint, before);
+        // Full screen is a dialog: what it covers takes neither keys nor clicks.
+        const modal = !root.hidden && !dock;
+        isolate(modal);
+        if (modal && !root.classList.contains("vc-modal")) root.focus({ preventScroll: true });
+        else if (!modal && root.classList.contains("vc-modal") && finePointer.matches && T.focus) setTimeout(T.focus, 0);
+        root.classList.toggle("vc-modal", modal);
+        paintStale = true;
+        document.body.classList.toggle("voice-console-open", !root.hidden && !dock);
+        document.body.classList.toggle("voice-console-docked", !root.hidden && dock);
+        const toggle = dock ? "Full screen" : "Show terminal";
+        el.viewLabel.textContent = toggle;
+        el.viewToggle.setAttribute("aria-label", toggle);
+        el.viewToggle.title = toggle;
+        el.viewToggle.hidden = !barSlot;
+    }
+
+    function setView(value) {
+        view = value;
+        try { localStorage.setItem(VIEW_KEY, value); } catch (_) { /* no storage */ }
+        applyView();
+        render();
+        if (m && phase !== "off") api("POST", "view", { target: target, view: view });
+    }
+
+    function renderWindow() {
+        el.window.textContent = windowName || target.split(":")[0] || "Voice";
+    }
 
     // -- requests -------------------------------------------------------------
 
@@ -182,9 +262,13 @@ function initVoiceConsole() {
             micLang.value = value;
             micLang.dispatchEvent(new Event("change"));   // saves it, like a pick
         }
+    }
+
+    // A pick here or in the status bar, whose picker is the bar's too.
+    function onLang() {
         renderLang();
         render();   // the hint names the end word of the language
-        if (m && phase !== "off") api("POST", "lang", { target: target, lang: value });
+        if (m && phase !== "off") api("POST", "lang", { target: target, lang: lang() });
     }
 
     function renderLang() {
@@ -647,9 +731,9 @@ function initVoiceConsole() {
 
     function show() {
         root.hidden = false;
-        document.body.classList.add("voice-console-open");
-        el.call.textContent = Core.callSign(target);
-        el.freq.textContent = Core.frequency(target);
+        view = savedView();
+        applyView();
+        renderWindow();
         renderLang();
         startDrawing();
     }
@@ -699,7 +783,7 @@ function initVoiceConsole() {
             const ready = (async function () { await ensureMic(g); await ensureVad(g); })();
             ready.catch(function () {});   // reported below
             if (starting) {
-                const res = await api("POST", "start", { target: t, lang: lang() });
+                const res = await api("POST", "start", { target: t, lang: lang(), view: view });
                 if (!current()) {
                     // Exit came first: a session this start made is nobody's,
                     // unless the console reopened on that same window.
@@ -756,8 +840,11 @@ function initVoiceConsole() {
         inflight = 0;
         pieces = Promise.resolve();
         clearTimeout(remindTimer);
+        // The keys were on the console: they do not fall to the page.
+        const hadKeys = root.contains(document.activeElement) && root.dataset.view === "dock";
         root.hidden = true;
-        document.body.classList.remove("voice-console-open");
+        applyView();
+        if (hadKeys && finePointer.matches && T.focus) setTimeout(T.focus, 0);
         if (reason) T.notice("Voice mode: " + reason);
     }
 
@@ -809,6 +896,7 @@ function initVoiceConsole() {
         acquireWakeLock();
         phase = "tune";
         render();
+        api("POST", "view", { target: target, view: view });
         await connectSession(false);
         resync();
     }
@@ -857,10 +945,20 @@ function initVoiceConsole() {
 
     root.addEventListener("click", function (e) {
         const b = e.target.closest("button");
-        if (!b) { tapAnywhere(); return; }
+        const docked = root.dataset.view === "dock";
+        if (!b) {
+            if (!docked) tapAnywhere();
+            return;
+        }
+        if (b === el.askMore) { askOpen = !askOpen; render(); return; }
+        // A button of the bar clicked with the mouse hands the keys back to the
+        // terminal. From the keyboard (no click count), they stay on the bar.
+        if (docked && e.detail > 0 && finePointer.matches && T.focus && !("viewToggle" in b.dataset)) setTimeout(T.focus, 0);
         if (b.dataset.lang) { setLang(b.dataset.lang); return; }
+        if ("viewToggle" in b.dataset) { setView(docked ? "full" : "dock"); return; }
         const act = b.dataset.act;
-        if (act === "exit") close("", true);
+        if (act === "tap") tapAnywhere();
+        else if (act === "exit") close("", true);
         else if (act === "skip" && m) {
             // The answer whose clip could not be downloaded: drop it here
             // and on the server, and carry on.
@@ -942,6 +1040,11 @@ function initVoiceConsole() {
         const d = e.detail || {};
         const t = d.session && d.windowId ? d.session + ":" + d.windowId : "";
         checkWindow(t);
+        // The session stays on its window when the page moves to another one.
+        if (phase === "off" || t === target) {
+            windowName = d.window || "";
+            if (phase !== "off") renderWindow();
+        }
         if (!adopted && t && phase === "off" && !unavailableReason()) {
             adopted = true;
             adopt(t);
@@ -955,7 +1058,7 @@ function initVoiceConsole() {
         acquireWakeLock();
         if (phase === "live") resync();
     });
-    if (micLang) micLang.addEventListener("change", renderLang);
+    if (micLang) micLang.addEventListener("change", onLang);
 
     window.MerlinVoice = {
         onFrame: function (f) {
@@ -972,6 +1075,11 @@ function initVoiceConsole() {
         target: function () { return target; },
     };
     renderButton();
+    if (window.ResizeObserver) {
+        new ResizeObserver(function () {
+            if (m && phase !== "off") renderAsk(currentMode(), root.dataset.view === "dock");
+        }).observe(root);
+    }
 
     // -- rendering ------------------------------------------------------------
 
@@ -1008,38 +1116,65 @@ function initVoiceConsole() {
         }, NOTICE_MS);
     }
 
+    function hintFor(mode, docked) {
+        const endWord = lang() === "fr" ? "terminé" : "over";
+        if (mode === "listen") return "Speak, then say \u201c" + endWord + "\u201d";
+        if (mode === "tx") return "Say \u201c" + endWord + "\u201d to send" + (docked ? "" : ", or tap");
+        if (mode === "proc" && m.syncing) return "Reconnecting";
+        if (mode === "tune") return "Loading voice detection";
+        // An error from the server has nothing to retry, here or anywhere.
+        if (mode === "error" && m.local !== "error") return "Exit to start again";
+        if (docked) return "";   // the bar's buttons say it
+        if (mode === "error" && !retry) return "Tap anywhere to dismiss";
+        return MODES[mode].hint;
+    }
+
+    // The bar keeps one line for the question, and offers the rest when it does
+    // not fit: a tap shows it all, and the bar makes room.
+    function renderAsk(mode, docked) {
+        if (mode !== "ask") askOpen = false;
+        root.toggleAttribute("data-ask-open", docked && askOpen);
+        if (mode !== "ask") return;
+        el.askMore.hidden = true;   // measured without it: it must not be what cuts the text
+        const cut = el.askText.scrollWidth > el.askText.clientWidth + 1;
+        const offered = docked && (askOpen || cut);
+        el.askMore.hidden = !offered;
+        el.askMore.setAttribute("aria-expanded", askOpen ? "true" : "false");
+        el.askMore.setAttribute("aria-label", askOpen ? "Show less of the question" : "Show the whole question");
+    }
+
     function render() {
         if (!m) return;
         if (m.offReason && phase !== "off") { close(m.offReason, false); return; }
         const mode = currentMode();
         const spec = MODES[mode];
         root.dataset.mode = mode;
-        el.badge.textContent = spec.badge;
-        el.name.textContent = mode === "proc" && m.local === "sending" ? "Uplink" : spec.name;
-        const endWord = lang() === "fr" ? "terminé" : "over";
-        el.hint.textContent = mode === "listen" ? "Speak, then say \u201c" + endWord + "\u201d"
-            : mode === "tx" ? "Say \u201c" + endWord + "\u201d to send, or tap" : spec.hint;
-        let readout = "";
-        if (mode === "proc" && m.syncing) readout = "reconnecting";
-        else if (mode === "proc") readout = m.local === "sending" ? "sending" : "thinking";
-        else if (mode === "rx") readout = "voice";
-        else if (mode === "listen") readout = "mic open";
-        else if (mode === "tx") readout = "voice detected";
-        else if (mode === "tune") readout = "loading voice detection";
-        else if (mode === "resume") readout = "audio paused";
-        el.readout.textContent = readout ? "▸ " + readout : "";
+        const docked = root.dataset.view === "dock";
+        el.name.textContent = mode === "proc" && m.local === "sending" ? "Sending" : spec.name;
+        el.hint.textContent = hintFor(mode, docked);
 
-        // No conversation text on screen: the console reads as a voice call, not
-        // something to read while driving. Captions stay in the model only.
+        // No conversation text in the console: full screen reads as a voice
+        // call, not something to read while driving, and the bar leaves the
+        // terminal in view. Captions stay in the model only.
 
         el.ask.hidden = mode !== "ask";
         if (mode === "ask" && m.ask) {
-            el.askTitle.textContent = m.ask.text || "The agent needs your answer.";
+            el.askText.textContent = m.ask.text || "The agent needs your answer.";
         }
         el.error.hidden = mode !== "error";
         if (mode === "error") el.error.textContent = m.error || m.notice || "The voice server failed";
-        const shown = mode === "error" && retry === "clip" ? ["skip", "exit"] : BUTTONS[mode] || ["exit"];
+        let shown = mode === "error" && retry === "clip" ? ["skip", "exit"] : BUTTONS[mode] || ["exit"];
+        // An error the server raised has nothing to retry.
+        if (mode === "error" && m.local !== "error") shown = shown.filter(function (k) { return k !== "tap"; });
+        actionButtons.tap.textContent = mode === "error" && !retry ? "Dismiss" : TAP_LABELS[mode] || "";
+        const focused = document.activeElement;
         Object.keys(actionButtons).forEach(function (k) { actionButtons[k].hidden = shown.indexOf(k) < 0; });
+        // The button that had the keys is gone: they go to one that stays.
+        if (focused && focused.hidden && focused.classList.contains("vc-btn")) {
+            actionButtons[shown[0]].focus();
+        }
+        // Once the rest of the row is settled: it decides whether the question fits.
+        renderAsk(mode, docked);
 
         showNotice();
         if (mode !== lastMode) {
@@ -1057,7 +1192,6 @@ function initVoiceConsole() {
 
     let rafId = 0;
     let samples = null;
-    let level = 0;
     let gain = 3;   // display gain, follows the signal's peak
     let lastClock = "";
     const canvas = el.scope;
@@ -1095,44 +1229,48 @@ function initVoiceConsole() {
         const mode = currentMode();
         const dpr = fit();
         const w = canvas.width, h = canvas.height, mid = h / 2;
-        if (sigMode !== mode) { sigColor = signal(); sigMode = mode; }
-        if (!scopeBg) scopeBg = getComputedStyle(canvas.parentNode).backgroundColor || "#222633";
+        if (sigMode !== mode || paintStale) {
+            sigColor = signal();
+            sigMode = mode;
+            scopeBg = getComputedStyle(canvas.parentNode).backgroundColor || "#0f1117";
+            paintStale = false;
+        }
 
         const analyser = still ? null
             : (mode === "rx" || mode === "ask") ? audio.outAnalyser
             : (mode === "listen" || mode === "tx") ? audio.micAnalyser : null;
         let points = null;
-        let rms = 0;
         if (analyser) {
             if (!samples || samples.length !== analyser.fftSize) samples = new Float32Array(analyser.fftSize);
             analyser.getFloatTimeDomainData(samples);
             let peak = 0;
             for (let i = 0; i < samples.length; i++) {
-                rms += samples[i] * samples[i];
                 peak = Math.max(peak, Math.abs(samples[i]));
             }
-            rms = Math.sqrt(rms / samples.length);
             points = samples;
             // A quiet voice still draws a trace, a loud one stays on screen.
             const want = 0.8 / Math.max(peak, 0.15);
             gain += (want - gain) * (want < gain ? 0.5 : 0.05);
         }
-        level = level * 0.7 + Math.min(1, rms * 4) * 0.3;
-
         // Persistence: fade the last frame instead of clearing it.
         g.globalCompositeOperation = "source-over";
         g.fillStyle = scopeBg;
-        g.globalAlpha = still ? 1 : 0.32;
+        g.globalAlpha = still ? 1 : 0.5;
         g.fillRect(0, 0, w, h);
 
         g.beginPath();
         const now = performance.now() / 1000;
-        const n = 160;
+        const n = 96;
         for (let i = 0; i <= n; i++) {
             const x = (i / n) * w;
             let y;
             if (points) {
-                const v = points[Math.floor((i / n) * (points.length - 1))];
+                // Averaged over its stretch: a voice's shape, not its every edge.
+                const from = Math.floor((i / n) * (points.length - 1));
+                const span = Math.max(1, Math.floor(points.length / n));
+                let v = 0;
+                for (let k = from; k < Math.min(from + span, points.length); k++) v += points[k];
+                v /= span;
                 y = Math.max(2, Math.min(h - 2, mid - v * gain * mid * 0.5));
             } else if (still) {
                 y = mid;
@@ -1140,22 +1278,17 @@ function initVoiceConsole() {
                 // A pulse sweeping across: the agent is working.
                 const p = ((now * 0.45) % 1.2) - 0.1;
                 const d = i / n - p;
-                y = mid - Math.exp(-d * d * 900) * h * 0.28 * Math.sin(i * 0.9);
+                y = mid - Math.exp(-d * d * 260) * h * 0.2;
             } else {
                 y = mid + Math.sin(i * 0.12 + now * 2) * h * 0.012;
             }
             if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
         }
         g.strokeStyle = sigColor;
-        g.globalAlpha = 0.16;
-        g.lineWidth = 5 * dpr;
-        g.stroke();
+        g.lineJoin = "round";
         g.globalAlpha = 1;
-        g.lineWidth = 1.6 * dpr;
+        g.lineWidth = 1.5 * dpr;
         g.stroke();
-
-        const lit = Math.round(level * meterCells.length);
-        meterCells.forEach(function (c, i) { c.classList.toggle("on", i < lit); });
 
         const s = Math.floor((Date.now() - modeSince) / 1000);
         const clock = String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");

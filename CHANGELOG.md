@@ -5,6 +5,8 @@ All notable user-facing changes to Merlin are documented in this file.
 ## Unreleased
 
 ### Changed
+- **Voice mode next to your terminal**: On a computer, voice mode opens as a bar over the status bar: the terminal stays in view and usable, and the agent writes as usual while its prose is read aloud. **Show terminal** and **Full screen** switch at any time, on a phone too, and Merlin remembers your choice.
+- **Voice mode speaks plainly and calmly**: The console names your window and says what it is doing (Listening, Working, Speaking) instead of the radio codes, call sign and made-up frequency. Colour now only says whose turn it is, without the filled blocks. The bar keeps its height while you talk, so your terminal stays still; only an error makes room, to show in full.
 - **Every job runs in a tmux window**: Agent and command jobs alike run in their own window of the `merlin-jobs` session, so you can watch a run, step in, answer it or talk to it by voice. An agent job runs the agent's real interface with every permission check bypassed, and the job form and `merlin job add` warn you about it.
 - **Job notifications go through Merlin's own notifications**: A job's finish arrives like any window's done or ask, through browser and push notifications, following the job's report mode.
 - **Notes are off by default**: Notes are a built-in extension you enable yourself on the Extensions page.

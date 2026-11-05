@@ -25,6 +25,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 api_router = APIRouter()
 
 LANGS = ("en", "fr")
+VIEWS = tuple(session.VIEW_MARKS)
 
 
 def capability() -> dict:
@@ -48,6 +49,11 @@ class Target(BaseModel):
 
 class StartBody(Target):
     lang: str = "en"
+    view: str = "full"
+
+
+class ViewBody(Target):
+    view: str
 
 
 class AnswerBody(Target):
@@ -61,6 +67,10 @@ class SkipBody(Target):
 def _lang(value: str) -> str:
     value = (value or "").strip().lower()[:2]
     return value if value in LANGS else "en"
+
+
+def _view(value: str) -> str:
+    return value if value in VIEWS else "full"
 
 
 def _bad_target() -> JSONResponse:
@@ -91,7 +101,9 @@ async def api_check(target: str):
 @api_router.post("/start")
 async def api_start(body: StartBody):
     try:
-        running = await session.start_session(body.target, _lang(body.lang))
+        running = await session.start_session(
+            body.target, _lang(body.lang), view=_view(body.view)
+        )
     except session.StartRefused as e:
         return JSONResponse({"error": str(e)}, status_code=409)
     return running.snapshot()
@@ -123,6 +135,15 @@ async def api_lang(body: StartBody):
         return _no_session()
     running.set_lang(_lang(body.lang))
     return {"ok": True, "lang": running.lang}
+
+
+@api_router.post("/view")
+async def api_view(body: ViewBody):
+    """What the console shows: the agent's next prompt follows (see the voice
+    context hook)."""
+    if not await session.set_view(body.target, _view(body.view)):
+        return _no_session()
+    return {"ok": True, "view": _view(body.view)}
 
 
 @api_router.post("/skip")

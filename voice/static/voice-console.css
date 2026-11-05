@@ -1,9 +1,12 @@
 /*
- * The voice console: a two-way radio over the terminal, in Merlin's own
- * dress (dashboard.css vars: Geist, the #0f1117 palette, bordered cards,
- * 6px radius). One signal colour per mode (--vc-sig), taken from the accents
- * the Sessions board gives agent states. Big thumb targets. Mobile first; a
- * car mount in landscape gets two columns; a desktop gets a centred panel.
+ * The voice console, in Merlin's own dress (dashboard.css vars: Geist, the
+ * #0f1117 palette, bordered cards). The chrome stays neutral: a state's colour
+ * (--vc-sig) marks whose turn it is, on the light and the trace; a tint is kept
+ * for what needs the user: a question, an error.
+ * Full screen: big thumb targets, mobile first; a car mount in landscape gets
+ * two columns, a desktop a centred panel. The bar (data-view="dock") sits in
+ * the terminal's column, over the status bar, and leaves the terminal in use:
+ * its height never moves with the state, only to show what would not fit.
  */
 
 /* The Voice button in the status bar, a sibling of the mic button. */
@@ -20,11 +23,16 @@
     height: 24px;
 }
 #voice-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
-#voice-btn:not(.voice-mode-unavailable) { color: var(--accent-green); border-color: rgba(74, 222, 128, 0.35); }
+#voice-btn:not(.voice-mode-unavailable) { color: var(--accent-green); border-color: color-mix(in srgb, var(--accent-green) 35%, transparent); }
 #voice-btn.voice-mode-unavailable { opacity: 0.45; }
 
 #voice-console {
-    --vc-sig: var(--accent-green);
+    --vc-sig: var(--text-secondary);
+    --vc-tint: color-mix(in srgb, var(--vc-sig) 12%, var(--bg-card));
+    --vc-edge: color-mix(in srgb, var(--vc-sig) 45%, var(--border));
+    --vc-r: 8px;
+    --vc-surface: var(--bg-primary);
+    --vc-sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     --vc-mono: 'Geist Mono', 'GeistMono Nerd Font', ui-monospace, monospace;
 
     position: fixed;
@@ -34,7 +42,7 @@
     justify-content: center;
     background: var(--bg-primary);
     color: var(--text-primary);
-    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-family: var(--vc-sans);
     -webkit-user-select: none;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
@@ -42,23 +50,27 @@
     cursor: pointer;
 }
 #voice-console[hidden] { display: none; }
+#voice-console:focus { outline: none; }
 body.voice-console-open { overflow: hidden; }
 
-/* Listening and speaking share the green of an agent waiting on you, working
-   the yellow, a question the blue, as on the Sessions board. */
+/* Whose turn it is, in the Sessions board's accents: green the user's, yellow
+   the agent's (working, then speaking), blue a question, red an error. */
 #voice-console[data-mode="listen"],
 #voice-console[data-mode="tx"]     { --vc-sig: var(--accent-green); }
-#voice-console[data-mode="proc"]   { --vc-sig: var(--accent-yellow); }
-#voice-console[data-mode="tune"]   { --vc-sig: var(--text-secondary); }
-#voice-console[data-mode="rx"]     { --vc-sig: var(--accent-purple); }
+#voice-console[data-mode="proc"],
+#voice-console[data-mode="rx"]     { --vc-sig: var(--accent-yellow); }
 #voice-console[data-mode="ask"]    { --vc-sig: var(--accent-blue); }
 #voice-console[data-mode="error"]  { --vc-sig: var(--accent-red); }
-#voice-console[data-mode="resume"] { --vc-sig: var(--text-muted); }
+
+#voice-console button:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 1px;
+}
 
 .vc-plate {
     position: relative;
     display: grid;
-    grid-template-rows: auto auto 1fr auto auto;
+    grid-template-rows: auto 1fr auto;
     gap: 16px;
     width: 100%;
     max-width: 880px;
@@ -71,25 +83,26 @@ body.voice-console-open { overflow: hidden; }
 /* -- header ----------------------------------------------------------------- */
 
 .vc-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.vc-brand {
+.vc-brand { min-width: 0; font-size: 16px; font-weight: 600; color: var(--text-primary); }
+.vc-window { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.vc-tools { display: flex; align-items: center; gap: 8px; flex: none; }
+.vc-view {
     display: flex;
     align-items: center;
-    gap: 10px;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-primary);
+    justify-content: center;
+    font: 500 13px var(--vc-sans);
+    color: var(--text-secondary);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--vc-r);
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
-.vc-slash { color: var(--text-muted); font-weight: 400; }
-.vc-led {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: var(--vc-sig);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--vc-sig) 18%, transparent);
-    transition: background 0.2s;
-}
-#voice-console[data-mode="tx"] .vc-led,
-#voice-console[data-mode="ask"] .vc-led { animation: vc-pulse 1s ease-in-out infinite; }
+.vc-view:hover { color: var(--text-primary); background: var(--bg-hover); border-color: var(--text-muted); }
+.vc-view[hidden] { display: none; }
+.vc-view svg { display: none; }
 
 .vc-lang {
     display: flex;
@@ -97,130 +110,103 @@ body.voice-console-open { overflow: hidden; }
     padding: 2px;
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--vc-r);
 }
 .vc-lang button {
-    font: 600 13px var(--vc-mono);
-    color: var(--text-muted);
+    font: 500 13px var(--vc-mono);
+    color: var(--text-secondary);
     background: transparent;
     border: 0;
     border-radius: 6px;
     padding: 8px 12px;
     min-width: 46px;
     cursor: pointer;
+    transition: color 0.15s, background 0.15s;
 }
+.vc-lang button:hover { color: var(--text-primary); }
 .vc-lang button.active { color: var(--text-primary); background: var(--bg-hover); }
 
-.vc-id {
-    display: flex;
-    gap: 16px;
-    flex-wrap: wrap;
-    font: 12px var(--vc-mono);
-    color: var(--text-muted);
-    padding-bottom: 14px;
-    border-bottom: 1px solid var(--border);
+/* A thumb on a mount or a walk. */
+@media (pointer: coarse) {
+    .vc-view { min-height: 44px; }
+    .vc-lang button { position: relative; min-height: 38px; }
+    .vc-lang button::after { content: ""; position: absolute; inset: -3px 0; }
 }
-.vc-id b { color: var(--text-secondary); font-weight: 500; }
-.vc-clock { margin-left: auto; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 
-/* -- mode, meter, scope ------------------------------------------------------ */
+/* -- state, trace ------------------------------------------------------------- */
 
-.vc-main { display: flex; flex-direction: column; gap: 16px; min-height: 0; }
-.vc-mode { display: flex; align-items: center; gap: 16px; }
-.vc-badge {
-    min-width: 3.1em;
-    padding: 9px 12px 8px;
-    border: 1px solid color-mix(in srgb, var(--vc-sig) 40%, transparent);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--vc-sig) 12%, transparent);
-    font: 700 32px/1 var(--vc-mono);
-    text-align: center;
-    letter-spacing: 0.02em;
-    color: var(--vc-sig);
-    transition: background 0.2s, color 0.2s, border-color 0.2s;
-}
-#voice-console[data-mode="tx"] .vc-badge,
-#voice-console[data-mode="ask"] .vc-badge {
+/* The state is the screen: read at a glance from a mount, with the trace as its
+   quiet sign of life. Anchored from the top, so it stays put whatever the footer
+   holds. */
+.vc-main { display: flex; flex-direction: column; gap: 16px; min-height: 0; overflow-y: auto; padding-top: clamp(16px, 12vh, 112px); }
+.vc-mode { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 14px; }
+.vc-led {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
     background: var(--vc-sig);
-    border-color: var(--vc-sig);
-    color: var(--bg-primary);
+    transition: background 0.2s;
 }
-.vc-mode-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
-.vc-mode-name { font-size: 22px; font-weight: 600; line-height: 1.1; color: var(--text-primary); }
-
-/* A level meter: sixteen segments, the last four in the yellow. */
-.vc-meter { display: grid; grid-template-columns: repeat(16, 1fr); gap: 3px; height: 10px; }
-.vc-meter i { background: var(--bg-hover); border-radius: 2px; }
-.vc-meter i.on { background: var(--vc-sig); }
-.vc-meter i:nth-child(n+13).on { background: var(--accent-yellow); }
+#voice-console[data-mode="tx"] .vc-led,
+#voice-console[data-mode="ask"] .vc-led { animation: vc-pulse 1.4s ease-in-out infinite; }
+.vc-mode-name { font-size: 44px; font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; color: var(--text-primary); }
+/* On a question, the question outweighs the word. */
+#voice-console[data-mode="ask"] .vc-mode-name { font-size: 28px; }
+/* How long the agent has been at it: the one wait worth a number. It takes the
+   line of the instruction it has no need of, so the trace stays put. */
+.vc-clock { display: none; flex: 0 0 100%; margin-top: 8px; line-height: 1.35; text-align: center; font: 17px/1.35 var(--vc-mono); font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+#voice-console[data-mode="proc"] .vc-clock { display: block; }
+#voice-console[data-mode="proc"] .vc-hint:empty { display: none; }
 
 .vc-scope {
     position: relative;
-    flex: 1;
-    min-height: 110px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    flex: none;
+    margin-top: 8px;
+    height: clamp(64px, 14vh, 120px);
     overflow: hidden;
-    background: var(--bg-card);
-}
-/* The graticule, drawn once in CSS rather than on every frame. */
-.vc-scope::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background:
-        linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px) 0 0 / 10% 100%,
-        linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px) 0 0 / 100% 25%,
-        linear-gradient(to bottom, transparent calc(50% - 1px), var(--border) 50%, transparent calc(50% + 1px));
+    background: var(--vc-surface);
 }
 /* Out of the flow: the canvas buffer follows its displayed size times the
    pixel ratio, so a canvas in the flow would grow the scope every frame. */
 .vc-scope canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
-.vc-readout {
-    position: absolute;
-    left: 12px;
-    bottom: 9px;
-    z-index: 1;
-    font: 12px var(--vc-mono);
-    color: var(--text-secondary);
-}
+/* A failure has no sign of life, and a question has the attention to itself. */
+#voice-console[data-mode="error"] .vc-scope,
+#voice-console[data-mode="ask"] .vc-scope { display: none; }
 
-/* -- ask, error ------------------------------------------------------- */
+/* -- ask, error, notice -------------------------------------------------------- */
 
-.vc-text {
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
-    gap: 12px;
-    overflow: hidden;
-}
+.vc-text { display: contents; }
 
 .vc-ask {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    border: 1px solid rgba(74, 158, 255, 0.35);
-    border-radius: 8px;
+    border: 1px solid var(--vc-edge);
+    border-radius: var(--vc-r);
     padding: 14px 16px;
-    background: rgba(74, 158, 255, 0.08);
+    background: var(--vc-tint);
 }
-.vc-ask-title { font-size: 17px; font-weight: 600; color: var(--text-primary); margin-bottom: 10px; }
+.vc-ask-text { min-width: 0; font-size: 20px; font-weight: 600; line-height: 1.35; color: var(--text-primary); }
+.vc-ask-more[hidden] { display: none; }
 .vc-error {
-    font-size: 17px;
+    font-size: 16px;
     line-height: 1.45;
-    color: var(--accent-red);
-    background: rgba(248, 113, 113, 0.1);
-    border: 1px solid rgba(248, 113, 113, 0.3);
-    border-radius: 8px;
+    color: var(--text-primary);
+    background: var(--vc-tint);
+    border: 1px solid var(--vc-edge);
+    border-radius: var(--vc-r);
     padding: 12px 14px;
+    -webkit-user-select: text;
+    user-select: text;
+    cursor: auto;
 }
 .vc-error[hidden], .vc-ask[hidden] { display: none; }
 .vc-notice {
-    min-height: 1.4em;
-    font-size: 14px;
-    color: var(--accent-yellow);
+    text-align: center;
+    font-size: 17px;
+    line-height: 1.35;
+    color: var(--text-primary);
     opacity: 0;
     transition: opacity 0.3s;
 }
@@ -230,31 +216,40 @@ body.voice-console-open { overflow: hidden; }
 /* -- footer ------------------------------------------------------------------------ */
 
 .vc-foot { display: flex; flex-direction: column; gap: 12px; }
-.vc-hint { text-align: center; font-size: 14px; color: var(--text-secondary); }
+/* The line is kept when empty, so the trace does not move from state to state. */
+.vc-hint { min-height: 1.35em; line-height: 1.35; text-align: center; font-size: 17px; color: var(--text-secondary); }
 .vc-buttons { display: flex; gap: 10px; justify-content: center; }
 .vc-btn {
     flex: 1;
     min-height: 60px;
-    border-radius: 10px;
-    font: 600 16px 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    border-radius: var(--vc-r);
+    font: 600 16px var(--vc-sans);
     cursor: pointer;
     background: var(--bg-card);
     color: var(--text-primary);
     border: 1px solid var(--border);
-    transition: background 0.15s, border-color 0.15s;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
 .vc-btn:hover { background: var(--bg-hover); border-color: var(--text-muted); }
 .vc-btn[hidden] { display: none; }
 .vc-btn:active { transform: translateY(1px); }
 .vc-btn:disabled { opacity: 0.5; }
 .vc-exit { flex: 0 1 34%; color: var(--text-secondary); }
-.vc-stop { color: var(--accent-red); background: rgba(248, 113, 113, 0.08); border-color: rgba(248, 113, 113, 0.35); }
-.vc-skip { color: var(--accent-yellow); background: rgba(251, 191, 36, 0.08); border-color: rgba(251, 191, 36, 0.35); }
-.vc-yes, .vc-no { min-height: 76px; font-size: 22px; font-weight: 700; color: var(--bg-primary); }
-.vc-yes { background: var(--accent-green); border-color: var(--accent-green); }
-.vc-no { background: var(--accent-red); border-color: var(--accent-red); }
-.vc-yes:hover { background: var(--accent-green); border-color: var(--accent-green); filter: brightness(1.08); }
-.vc-no:hover { background: var(--accent-red); border-color: var(--accent-red); filter: brightness(1.08); }
+/* An action with a colour of its own. Yes is the one that wears it at rest: a
+   question is enough colour for one screen. */
+.vc-stop, .vc-no { --vc-act: var(--accent-red); }
+.vc-yes { --vc-act: var(--accent-green); }
+.vc-stop { color: var(--vc-act); }
+.vc-yes, .vc-no { min-height: 76px; font-size: 20px; }
+.vc-yes {
+    color: var(--vc-act);
+    background: color-mix(in srgb, var(--vc-act) 12%, var(--bg-card));
+    border-color: color-mix(in srgb, var(--vc-act) 45%, var(--border));
+}
+.vc-stop:hover, .vc-yes:hover, .vc-no:hover {
+    background: color-mix(in srgb, var(--vc-act) 22%, var(--bg-card));
+    border-color: var(--vc-act);
+}
 #voice-console[data-mode="ask"] .vc-buttons { flex-wrap: wrap; }
 #voice-console[data-mode="ask"] .vc-exit { flex-basis: 100%; min-height: 48px; }
 
@@ -265,45 +260,221 @@ body.voice-console-open { overflow: hidden; }
 @media (orientation: landscape) and (max-height: 560px) {
     .vc-plate {
         grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-        grid-template-rows: auto auto 1fr auto;
+        grid-template-rows: auto 1fr auto;
         column-gap: 22px;
         row-gap: 10px;
         max-width: none;
     }
-    .vc-head, .vc-id { grid-column: 1 / -1; }
-    .vc-id { padding-bottom: 8px; }
-    .vc-main { grid-column: 1; grid-row: 3 / 5; }
-    .vc-text { grid-column: 2; grid-row: 3; }
-    .vc-foot { grid-column: 2; grid-row: 4; }
-    .vc-scope { height: auto; flex: 1; min-height: 80px; }
-    .vc-badge { font-size: 28px; }
+    .vc-head { grid-column: 1 / -1; }
+    .vc-foot { grid-column: 2; grid-row: 2 / 4; justify-content: flex-end; }
+    .vc-main { grid-column: 1; grid-row: 2 / 4; justify-content: center; gap: 10px; padding-top: 0; }
+    .vc-scope { margin-top: 0; height: 56px; }
+    .vc-mode-name { font-size: 34px; }
     .vc-btn { min-height: 54px; }
     .vc-yes, .vc-no { min-height: 60px; }
-    .vc-ask { flex: 1 1 auto; }
-    .vc-ask-title { margin-bottom: 6px; }
     #voice-console[data-mode="ask"] .vc-buttons { flex-wrap: nowrap; }
     #voice-console[data-mode="ask"] .vc-exit { flex: 0 1 26%; min-height: 60px; }
-    #voice-console[data-mode="ask"] .vc-hint { display: none; }
 }
 
 /* -- desktop: a panel, like the Sessions board's ------------------------------------- */
 
 @media (min-width: 900px) and (min-height: 600px) {
-    #voice-console { align-items: center; }
+    #voice-console { --vc-surface: var(--bg-secondary); align-items: center; }
+    .vc-main { padding-top: 48px; }
     .vc-plate {
-        height: min(860px, calc(100% - 48px));
+        max-width: 560px;
+        height: min(640px, calc(100% - 48px));
         padding: 24px 28px;
         border: 1px solid var(--border);
         border-radius: 12px;
         background: var(--bg-secondary);
         box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
     }
-    .vc-badge { font-size: 40px; }
-    .vc-mode-name { font-size: 26px; }
 }
+
+/* -- the bar: the terminal stays in view and in use ----------------------------- */
+
+/* Sized on the bar's own width, not the screen's: the sidebar and the side
+   panels decide how much of the screen it gets. One row at every width: the
+   state changes what is in it, not it. What must be read makes a second one. */
+#voice-console[data-view="dock"] {
+    --vc-r: 6px;
+    --vc-ctl: 28px;
+    --vc-surface: var(--bg-secondary);
+    container: vc-bar / inline-size;
+    position: relative;
+    inset: auto;
+    z-index: 200;
+    flex: 0 0 auto;
+    display: block;
+    border-top: 1px solid var(--border);
+    background: var(--bg-secondary);
+    cursor: default;
+}
+@media (pointer: coarse) {
+    #voice-console[data-view="dock"] { --vc-ctl: 36px; }
+}
+#voice-console[data-view="dock"][hidden] { display: none; }
+#voice-console[data-view="dock"] .vc-plate {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-rows: none;
+    grid-template-areas: "status scope foot tools";
+    grid-auto-rows: minmax(var(--vc-ctl), auto);
+    align-items: center;
+    gap: 8px 12px;
+    max-width: none;
+    width: 100%;
+    height: auto;
+    padding: 6px max(12px, env(safe-area-inset-right)) 6px max(12px, env(safe-area-inset-left));
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+}
+/* What must be read takes a row of its own, with its buttons. */
+#voice-console[data-view="dock"][data-mode="error"] .vc-plate,
+#voice-console[data-view="dock"][data-ask-open] .vc-plate,
+#voice-console[data-view="dock"]:has(.vc-notice:not(:empty)) .vc-plate {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+        "status scope tools"
+        "foot foot foot";
+}
+#voice-console[data-view="dock"] .vc-head,
+#voice-console[data-view="dock"] .vc-main { display: contents; }
+
+/* A phone's row keeps what the turn needs: the window's name comes with the width. */
+#voice-console[data-view="dock"] .vc-brand { display: none; grid-area: name; font-size: 13px; font-weight: 400; color: var(--text-secondary); }
+#voice-console[data-view="dock"] .vc-mode { grid-area: status; flex-wrap: nowrap; justify-content: flex-start; gap: 8px; }
+#voice-console[data-view="dock"] .vc-led { width: 8px; height: 8px; }
+#voice-console[data-view="dock"] .vc-mode-name { font-size: 13px; font-weight: 500; line-height: 1.3; letter-spacing: normal; white-space: nowrap; }
+#voice-console[data-view="dock"] .vc-clock { display: none; flex: none; margin-top: 0; font-size: 12px; }
+/* It takes the room the row has left, so the controls stay where they are. */
+#voice-console[data-view="dock"] .vc-scope { grid-area: scope; min-width: 0; height: var(--vc-ctl); margin-top: 0; }
+
+#voice-console[data-view="dock"] .vc-foot { grid-area: foot; min-width: 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+#voice-console[data-view="dock"] .vc-hint { flex: 1 1 0; min-width: 0; min-height: 0; text-align: left; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The state's word says enough on a phone's row, unless there is an error to get out of. */
+#voice-console[data-view="dock"] .vc-hint { display: none; }
+#voice-console[data-view="dock"][data-mode="error"] .vc-hint:not(:empty) { display: block; }
+/* The question keeps one line, and offers the rest when it does not fit: its
+   button spreads over the whole of it. */
+#voice-console[data-view="dock"] .vc-ask { position: relative; flex: 1 1 0; flex-direction: row; align-items: center; gap: 4px; min-width: 0; min-height: var(--vc-ctl); padding: 0; border: 0; background: none; }
+#voice-console[data-view="dock"] .vc-ask-text { flex: 0 1 auto; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#voice-console[data-view="dock"] .vc-ask-more:not([hidden]) { flex: none; display: flex; padding: 0; border: 0; background: none; color: var(--text-secondary); cursor: pointer; }
+#voice-console[data-view="dock"] .vc-ask-more::after { content: ""; position: absolute; inset: 0; }
+#voice-console[data-view="dock"] .vc-ask:has(.vc-ask-more:hover) .vc-ask-text { text-decoration: underline; text-underline-offset: 2px; }
+#voice-console[data-view="dock"][data-ask-open] .vc-ask { order: -1; flex: 0 0 100%; }
+#voice-console[data-view="dock"][data-ask-open] .vc-ask-text { white-space: normal; }
+#voice-console[data-view="dock"][data-ask-open] .vc-ask-more svg { transform: rotate(180deg); }
+/* A passing message wraps rather than lose its end. It replaces the hint, never a
+   question: its buttons are still there to answer it. */
+#voice-console[data-view="dock"] .vc-notice { flex: 1 1 0; min-width: 0; text-align: left; font-size: 13px; }
+#voice-console[data-view="dock"]:has(.vc-notice:not(:empty)) .vc-hint { display: none; }
+#voice-console[data-view="dock"][data-mode="ask"] .vc-notice { order: -1; flex: 0 0 100%; }
+/* An error has to be read, in full: its own line. */
+#voice-console[data-view="dock"] .vc-error { order: -1; flex: 0 0 100%; box-sizing: border-box; padding: 6px 10px; font-size: 13px; line-height: 1.35; max-height: 30vh; overflow-y: auto; }
+
+#voice-console[data-view="dock"] .vc-buttons { flex: none; margin-left: auto; flex-wrap: nowrap; gap: 6px; }
+#voice-console[data-view="dock"] .vc-btn { flex: none; min-height: 0; height: var(--vc-ctl); padding: 0 10px; font-size: 13px; font-weight: 500; }
+#voice-console[data-view="dock"] .vc-more-words { display: none; }
+#voice-console[data-view="dock"] .vc-tap { background: var(--bg-hover); }
+#voice-console[data-view="dock"] .vc-tap:hover { border-color: var(--text-secondary); }
+
+#voice-console[data-view="dock"] .vc-tools { grid-area: tools; gap: 6px; }
+/* The language is the status bar's own picker, right under the bar. */
+#voice-console[data-view="dock"] .vc-lang { display: none; }
+/* Narrow, the switch is an icon. */
+#voice-console[data-view="dock"] .vc-view { width: var(--vc-ctl); height: var(--vc-ctl); min-height: 0; box-sizing: border-box; padding: 0; font-size: 13px; }
+#voice-console[data-view="dock"] .vc-view svg { display: block; }
+#voice-console[data-view="dock"] .vc-view-label { display: none; }
+
+/* A finger's 44 px, in the gaps around each control and never into its neighbour. */
+@media (pointer: coarse) {
+    #voice-console[data-view="dock"] .vc-buttons,
+    #voice-console[data-view="dock"] .vc-tools { gap: 8px; }
+    #voice-console[data-view="dock"] .vc-btn,
+    #voice-console[data-view="dock"] .vc-view { position: relative; }
+    #voice-console[data-view="dock"] .vc-btn::after,
+    #voice-console[data-view="dock"] .vc-view::after { content: ""; position: absolute; inset: -4px; }
+    #voice-console[data-view="dock"] .vc-ask-more::after { inset: -4px 0; }
+}
+
+/* A question on a phone's row: the light, the question, its answers. The word and
+   the switch step aside until it is answered. */
+@container vc-bar (max-width: 639px) {
+    #voice-console[data-view="dock"][data-mode="ask"]:not([data-ask-open]):not(:has(.vc-notice:not(:empty))) .vc-plate {
+        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-areas: "status foot";
+    }
+    #voice-console[data-view="dock"][data-mode="ask"]:not([data-ask-open]):not(:has(.vc-notice:not(:empty))) .vc-tools { display: none; }
+    #voice-console[data-view="dock"] .vc-buttons { gap: 6px; }
+    #voice-console[data-view="dock"] .vc-btn { padding: 0 8px; }
+}
+
+@container vc-bar (min-width: 640px) {
+    #voice-console[data-view="dock"] .vc-plate {
+        grid-template-columns: minmax(0, auto) auto auto minmax(0, 1fr) auto;
+        grid-template-areas: "name status scope foot tools";
+    }
+    #voice-console[data-view="dock"][data-mode="error"] .vc-plate,
+    #voice-console[data-view="dock"][data-ask-open] .vc-plate,
+    #voice-console[data-view="dock"][data-mode="ask"]:has(.vc-notice:not(:empty)) .vc-plate {
+        grid-template-columns: minmax(0, auto) auto auto minmax(0, 1fr) auto;
+        grid-template-areas:
+            "name status scope . tools"
+            "foot foot foot foot foot";
+    }
+    /* Beside the trace and the hint, a passing message stays in the row. */
+    #voice-console[data-view="dock"]:not([data-mode="ask"]):has(.vc-notice:not(:empty)) .vc-plate {
+        grid-template-columns: minmax(0, auto) auto auto minmax(0, 1fr) auto;
+        grid-template-areas: "name status scope foot tools";
+    }
+    #voice-console[data-view="dock"] .vc-brand { display: block; }
+    /* Their slots fit the longest word and the running time, so what follows does
+       not slide from state to state. */
+    #voice-console[data-view="dock"] .vc-mode-name { min-width: 6.2em; }
+    #voice-console[data-view="dock"] .vc-clock { display: block; visibility: hidden; }
+    #voice-console[data-view="dock"][data-mode="proc"] .vc-clock { visibility: visible; }
+    #voice-console[data-view="dock"][data-mode="ask"] .vc-clock { display: none; }
+    #voice-console[data-view="dock"] .vc-scope { width: 96px; }
+    #voice-console[data-view="dock"] .vc-hint:not(:empty) { display: block; }
+    #voice-console[data-view="dock"]:has(.vc-notice:not(:empty)) .vc-hint { display: none; }
+    #voice-console[data-view="dock"] .vc-more-words { display: inline; }
+    #voice-console[data-view="dock"] .vc-foot { flex-wrap: nowrap; }
+    #voice-console[data-view="dock"][data-mode="ask"]:has(.vc-notice:not(:empty)) .vc-foot { flex-wrap: wrap; }
+    /* Beside an error, the hint takes only its words: the width is the error's. */
+    #voice-console[data-view="dock"][data-mode="error"] .vc-hint { flex: none; }
+    #voice-console[data-view="dock"] .vc-error,
+    #voice-console[data-view="dock"][data-ask-open] .vc-ask { order: 0; flex: 1 1 0; min-width: 0; }
+    #voice-console[data-view="dock"] .vc-view { width: auto; padding: 0 10px; }
+    #voice-console[data-view="dock"] .vc-view svg { display: none; }
+    #voice-console[data-view="dock"] .vc-view-label { display: inline; }
+}
+/* Short of width, the question and the window it is for say more than the state's
+   word, which the light and the buttons already say. Still read out. */
+@container vc-bar (max-width: 799px) {
+    #voice-console[data-view="dock"][data-mode="ask"]:not([data-ask-open]):not(:has(.vc-notice:not(:empty))) .vc-mode-name {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+    }
+}
+
+/* The status bar's dictation would hear what the session hears. Its language
+   picker stays: it is the session's too. */
+body.voice-console-docked #mic-btn,
+body.voice-console-docked #auto-enter-btn { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
     #voice-console .vc-led,
-    #voice-console .vc-badge { animation: none !important; transition: none; }
+    #voice-console .vc-mode,
+    #voice-console .vc-mode-name,
+    #voice-console .vc-btn,
+    #voice-console .vc-view,
+    #voice-console .vc-lang button { animation: none !important; transition: none; }
     .vc-notice { transition: none; }
 }

@@ -56,6 +56,19 @@ class TestVoiceContext:
         assert "language of the question" in r.stdout
         assert "—" not in r.stdout  # no em-dash in prose
 
+    def test_says_the_terminal_is_in_view_when_voice_is_on_screen(self, srv):
+        s, w = srv
+        s.set_wopt(w["a"], "@voice", "screen")
+        r = s.run(VOICE_SH, pane=s.pane_of(w["a"]), stdin=PROMPT)
+        assert r.returncode == 0
+        assert r.stdout.startswith("Voice mode is on")
+        assert "can see this terminal" in r.stdout
+        assert "read aloud" in r.stdout
+        assert "tables and code blocks are all fine" in r.stdout
+        # The car's rules are not for a screen.
+        assert "no markdown" not in r.stdout and "driving" not in r.stdout
+        assert "—" not in r.stdout  # no em-dash in prose
+
     def test_only_its_own_window_counts(self, srv):
         s, w = srv
         s.set_wopt(w["a"], "@voice", "on")

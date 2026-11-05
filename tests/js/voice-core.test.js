@@ -1,7 +1,7 @@
 /*
  * Tests for voice/static/voice-core.js, the voice console's pure parts: the
- * WAV encoder, the call sign and frequency, and the model that folds the
- * server's frames and the page's playback into the mode on screen.
+ * WAV encoder and the model that folds the server's frames and the page's
+ * playback into the mode on screen.
  *
  * Run: node --test tests/js/   (also part of `uv run scripts.py validate`)
  */
@@ -43,17 +43,6 @@ test("encodeWav writes a 16-bit mono PCM header and clamps samples", () => {
     const s = (i) => v.getInt16(44 + i * 2, true);
     assert.deepEqual([0, 1, 2, 3, 4].map(s), [0, 32767, -32768, 32767, -32768]);
     assert.equal(s(5), 16383);
-});
-
-test("callSign and frequency are stable per window", () => {
-    assert.equal(Core.callSign("main:@3"), "MAIN-3");
-    assert.equal(Core.callSign("my-project_2:@17"), "MYPROJ-17");
-    assert.equal(Core.callSign(""), "MRLN");
-    assert.equal(Core.frequency("main:@3"), Core.frequency("main:@3"));
-    assert.notEqual(Core.frequency("main:@3"), Core.frequency("main:@4"));
-    const f = parseFloat(Core.frequency("main:@3"));
-    assert.ok(f >= 144 && f < 148, f);
-    assert.match(Core.frequency("x:@1"), /^14[4-7]\.\d\d[05]$/);
 });
 
 test("a fresh model listens; another window's frames are ignored", () => {

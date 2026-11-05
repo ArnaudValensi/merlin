@@ -59,6 +59,14 @@ class TestCheck:
         assert r.status_code == 200
         return r.json()
 
+    def test_a_view_without_a_session_is_refused_and_writes_nothing(
+        self, client, window
+    ):
+        _, writes = window
+        r = client.post("/api/voice/view", json={"target": "s:@1", "view": "dock"})
+        assert r.status_code == 404
+        assert writes == []
+
     def test_a_claude_window_can_start(self, client, window):
         _, writes = window
         assert self.check(client) == {

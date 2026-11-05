@@ -1,9 +1,10 @@
 #!/bin/bash
 # UserPromptSubmit companion for voice mode (see voice/). When the tmux window of
-# the current pane has @voice = on, print the voice instructions on stdout:
-# Claude Code adds a UserPromptSubmit hook's stdout to the agent's context, so
-# the agent answers for the ear without anything prefixed to what the user said.
-# Prints nothing otherwise. Always exits 0 and never waits on anything but one
+# the current pane has @voice set, print the voice instructions on stdout: Claude
+# Code adds a UserPromptSubmit hook's stdout to the agent's context, so the agent
+# answers for the ear without anything prefixed to what the user said. @voice = on:
+# the console covers the terminal, the user only hears. @voice = screen: the user
+# sees the terminal too. Prints nothing otherwise. Always exits 0 and never waits on anything but one
 # tmux read, so it can never block or fail a prompt.
 
 # Drain stdin (the hook JSON is not needed) so the writer never blocks.
@@ -17,7 +18,20 @@ command -v tmux >/dev/null 2>&1 || exit 0
 win=$(agent_window)
 [ -n "$win" ] || exit 0
 
-[ "$(tmux show-option -wqv -t "$win" @voice 2>/dev/null)" = "on" ] || exit 0
+voice=$(tmux show-option -wqv -t "$win" @voice 2>/dev/null)
+
+if [ "$voice" = "screen" ]; then
+cat <<'EOF'
+Voice mode is on, and the user can see this terminal: they are talking to you by voice, their message was transcribed from speech, and the prose of your answer will be read aloud by a speech synthesizer while the terminal shows all of it.
+- Answer in the language of the question.
+- Write for the screen as you normally would: markdown, lists, tables and code blocks are all fine. Code blocks and tables are not read aloud, so put the detail there and keep the prose short enough to listen to.
+- The transcription may get words wrong: guess what was meant rather than pointing it out.
+- Before a long tool run, say in one short sentence what you are about to do.
+EOF
+exit 0
+fi
+
+[ "$voice" = "on" ] || exit 0
 
 cat <<'EOF'
 Voice mode is on: the user is talking to you by voice, from a phone, often driving or walking. Their message was transcribed from speech, and the prose of your answer will be read aloud by a speech synthesizer.

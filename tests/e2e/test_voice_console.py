@@ -200,13 +200,16 @@ def quiet_browser(playwright):
     b.close()
 
 
-def _open(browser, server, viewport=None, scale=1):
+def _open(browser, server, viewport=None, scale=1, view="full"):
     ctx = browser.new_context(
         viewport=viewport or {"width": 1100, "height": 760},
         device_scale_factor=scale,
         permissions=["microphone"],
     )
     page = ctx.new_page()
+    # Most scenarios tap the full-screen console; a wide screen opens the bar.
+    if view:
+        page.add_init_script(f"localStorage.setItem('voice-view', '{view}')")
     # Track every mic stream: one per session, since a reopen asks Safari's
     # permission again. Stub Safari's navigator.audioSession too: the answer
     # must play under "play-and-record" (the open mic), which the iPhone
@@ -357,7 +360,7 @@ def test_a_spoken_turn_goes_round_and_the_console_listens_again(
         page.wait_for_selector("#voice-console:not([hidden])", timeout=20000)
         assert _mode(page) == "resume"
         assert _option(tmux_env, target, "@voice") == "on"
-        page.click("#voice-console .vc-scope")
+        page.click("#voice-console .vc-mode")
         _wait_mode(page, ["listen", "tx", "proc", "rx"], timeout=30000)
 
         # Exit clears the mark, hides the console, closes the mic and gives
@@ -460,6 +463,292 @@ def test_the_console_fits_the_screen_at_a_high_pixel_ratio(
             5,
             "@voice was not cleared",
         )
+        _tmux(tmux_env, "kill-window", "-t", target)
+    finally:
+        ctx.close()
+
+
+def test_a_wide_screen_opens_the_bar_and_the_terminal_stays_in_use(
+    browser, server, tmux_env, tts, tmp_path
+):
+    ctx, page, _ = _open(browser, server, view=None)
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        height = "() => document.getElementById('terminal-container').getBoundingClientRect().height"
+        before = page.evaluate(height)
+        _start_voice(page, target)
+
+        # The bar sits in the terminal's column: xterm keeps the rest of it.
+        assert page.get_attribute("#voice-console", "data-view") == "dock"
+        assert _option(tmux_env, target, "@voice") == "screen"
+        bar = page.locator("#voice-console").bounding_box()
+        status = page.locator("#terminal-status").bounding_box()
+        assert bar and status and bar["height"] < 80
+        assert bar["y"] + bar["height"] <= status["y"] + 0.5
+        page.wait_for_function(f"() => ({height})() < {before}", timeout=5000)
+        assert page.evaluate(height) > before - 100
+        assert page.is_visible(".xterm-screen")
+        # No two ears on the one mic.
+        assert page.is_hidden("#mic-btn")
+        assert not page.is_visible("#voice-console [data-act=tap]")
+
+        # A click on the bar is not a tap: the buttons do that here.
+        page.evaluate(
+            """() => window.MerlinVoice.onFrame({
+                type: "voice", event: "state", state: "thinking",
+                target: window.MerlinVoice.target(),
+                session: window.MerlinVoice.model().session,
+                rev: window.MerlinVoice.model().rev + 1,
+            })"""
+        )
+        _wait_mode(page, ["proc"], timeout=5000)
+        page.click("#voice-console .vc-mode")
+        assert _mode(page) == "proc"
+        assert page.is_visible("#voice-console [data-act=stop]")
+
+        # Full screen covers the terminal, and the agent writes for the ear.
+        page.click("#voice-console [data-view-toggle]")
+        assert page.get_attribute("#voice-console", "data-view") == "full"
+        _wait(lambda: _option(tmux_env, target, "@voice") == "on", 5, "@voice not on")
+        box = page.locator("#voice-console").bounding_box()
+        assert box and box["height"] >= 700
+        # The choice stays for the next session.
+        page.click("#voice-console [data-view-toggle]")
+        _wait(lambda: _option(tmux_env, target, "@voice") == "screen", 5, "not screen")
+        assert page.evaluate("() => localStorage.getItem('voice-view')") == "dock"
+
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+        assert page.is_visible("#mic-btn")
+        _wait(
+            lambda: _option(tmux_env, target, "@voice") == "", 5, "@voice not cleared"
+        )
+        _tmux(tmux_env, "kill-window", "-t", target)
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize(
+    "width,height",
+    [(390, 844), (768, 1024), (1280, 800), (1600, 900)],
+    ids=["phone", "tablet", "desk", "wide"],
+)
+def test_the_bar_keeps_its_height_through_a_turn_and_grows_only_for_an_error(
+    quiet_browser, server, tmux_env, tts, tmp_path, width, height
+):
+    ctx, page, _ = _open(
+        quiet_browser,
+        server,
+        viewport={"width": width, "height": height},
+        view="dock",
+    )
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        _start_voice(page, target)
+
+        # What a turn goes through, the longest question included, forced
+        # straight onto the model: the layout is what is under test.
+        force = """([state, text]) => {
+            const v = window.MerlinVoice, m = v.model();
+            m.local = state === "tx" ? "hearing" : "idle";
+            m.ask = state === "ask" ? {excerpt: "", text, audio: null} : null;
+            m.playing = state === "rx" ? {id: "x", status: "playing", answer: "x"} : null;
+            m.queue = []; m.held = false;
+            m.error = state === "error" ? text : "";
+            const server = {proc: "thinking", ask: "ask", error: "error"}[state] || "listening";
+            v.onFrame({type: "voice", event: "state", state: server, target: m.target,
+                       session: m.session, rev: m.rev + 1});
+            return v.mode();
+        }"""
+        bar = "() => document.getElementById('voice-console').getBoundingClientRect().height"
+        terminal = "() => document.getElementById('terminal-container').getBoundingClientRect().height"
+        question = "Allow the agent to run the deployment script? " * 4
+        heights, rows = {}, {}
+        for state, text in (
+            ("listen", ""),
+            ("tx", ""),
+            ("proc", ""),
+            ("rx", ""),
+            ("ask", question),
+            ("listen", ""),
+        ):
+            assert page.evaluate(force, [state, text]) == state
+            heights[state] = page.evaluate(bar)
+            rows[state] = page.evaluate(terminal)
+        assert len(set(heights.values())) == 1, heights
+        # One row, on a phone too.
+        assert heights["listen"] < 50, heights
+        assert len(set(rows.values())) == 1, rows
+        assert page.evaluate(
+            "() => { const p = document.querySelector('#voice-console .vc-plate');"
+            " return p.scrollWidth <= p.clientWidth; }"
+        )
+
+        # A question that fits has nothing more to offer.
+        assert page.evaluate(force, ["ask", "Allow it?"]) == "ask"
+        assert not page.is_visible("#voice-console .vc-ask-more")
+        page.evaluate(force, ["listen", ""])
+
+        # An answer that failed says so, and the question stays with its buttons.
+        assert page.evaluate(force, ["ask", question]) == "ask"
+        page.evaluate(
+            """() => {
+                const v = window.MerlinVoice, m = v.model();
+                m.notice = "The answer did not go through";
+                v.onFrame({type: "voice", event: "state", state: "ask", target: m.target,
+                           session: m.session, rev: m.rev + 1});
+            }"""
+        )
+        assert page.is_visible("#voice-console .vc-notice")
+        assert page.is_visible("#voice-console .vc-ask-text")
+        assert page.is_visible("#voice-console [data-act=yes]")
+        page.evaluate(
+            """() => {
+                const n = document.querySelector("#voice-console .vc-notice");
+                n.classList.remove("on"); n.textContent = "";
+            }"""
+        )
+        page.evaluate(force, ["listen", ""])
+
+        # A question too long for its line offers the rest, on the user's tap.
+        assert page.evaluate(force, ["ask", question]) == "ask"
+        # The window it is for stays named once the bar has the width for it.
+        bar_width = page.evaluate(
+            "() => document.getElementById('voice-console').clientWidth"
+        )
+        assert page.is_visible("#voice-console .vc-window") == (bar_width >= 640)
+        more = page.locator("#voice-console .vc-ask-more")
+        assert more.is_visible() and more.get_attribute("aria-expanded") == "false"
+        more.click()
+        assert more.get_attribute("aria-expanded") == "true"
+        assert page.evaluate(bar) > heights["listen"]
+        assert page.evaluate(
+            "() => { const t = document.querySelector('#voice-console .vc-ask-text');"
+            " return t.scrollWidth <= t.clientWidth + 1 && t.getBoundingClientRect().height > 30; }"
+        )
+        page.evaluate(force, ["listen", ""])
+        assert page.evaluate(bar) == heights["listen"]
+
+        # An error is the exception: it is read whole, so the bar makes room.
+        message = "The voice server could not reach the speech service, " * 3
+        assert page.evaluate(force, ["error", message]) == "error"
+        assert page.evaluate(bar) > heights["listen"]
+        assert page.evaluate(
+            "() => { const e = document.querySelector('#voice-console .vc-error');"
+            " return e.scrollHeight <= e.clientHeight + 1 && e.scrollWidth <= e.clientWidth; }"
+        )
+
+        # No sign of life in a failure.
+        assert not page.is_visible("#voice-console .vc-scope")
+        # The server's error has nothing to retry: no button, no promise.
+        assert not page.is_visible("#voice-console [data-act=tap]")
+        assert page.inner_text("#voice-console .vc-hint") == "Exit to start again"
+
+        page.evaluate(force, ["listen", ""])
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+        _tmux(tmux_env, "kill-window", "-t", target)
+    finally:
+        ctx.close()
+
+
+def test_full_screen_is_a_dialog_with_a_real_button_for_the_tap(
+    quiet_browser, server, tmux_env, tts, tmp_path
+):
+    ctx, page, _ = _open(quiet_browser, server, view="dock")
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        _start_voice(page, target)
+        terminal_inert = "() => document.getElementById('terminal-container').closest('[inert]') !== null"
+        assert not page.evaluate(terminal_inert)
+
+        # From the keyboard, a button of the bar keeps the keys on the bar; the
+        # mouse hands them back to the terminal.
+        thinking = """() => {
+            const v = window.MerlinVoice, m = v.model();
+            v.onFrame({type: "voice", event: "state", state: "thinking", target: m.target,
+                       session: m.session, rev: m.rev + 1});
+        }"""
+        page.evaluate(thinking)
+        page.focus("#voice-console [data-act=stop]")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(50)
+        assert page.evaluate(
+            "() => document.getElementById('voice-console').contains(document.activeElement)"
+        )
+        page.evaluate(thinking)
+        page.click("#voice-console [data-act=stop]")
+        page.wait_for_function(
+            "() => document.activeElement.classList.contains('xterm-helper-textarea')",
+            timeout=3000,
+        )
+        # The language is the status bar's picker, and the session hears of it.
+        assert not page.is_visible("#voice-console .vc-lang")
+        with page.expect_request("**/api/voice/lang") as told:
+            page.select_option("#mic-lang", "fr")
+        assert json.loads(told.value.post_data)["lang"] == "fr"
+        page.select_option("#mic-lang", "en")
+        page.evaluate(
+            """() => {
+                const v = window.MerlinVoice, m = v.model();
+                v.onFrame({type: "voice", event: "state", state: "listening", target: m.target,
+                           session: m.session, rev: m.rev + 1});
+            }"""
+        )
+
+        page.click("#voice-console [data-view-toggle]")
+        page.wait_for_timeout(50)
+        assert page.evaluate(terminal_inert)
+        assert page.evaluate("() => document.activeElement.id") == "voice-console"
+        # Everything it covers, the sidebar outside the terminal's own column too.
+        assert (
+            page.evaluate(
+                """() => [...document.querySelectorAll("a[href], button, textarea")]
+                .filter((n) => !n.closest("#voice-console") && !n.closest("[inert]")).length"""
+            )
+            == 0
+        )
+        page.evaluate(
+            """() => {
+                const v = window.MerlinVoice, m = v.model();
+                m.playing = {id: "x", status: "playing", answer: "x"};
+                v.onFrame({type: "voice", event: "state", state: "listening", target: m.target,
+                           session: m.session, rev: m.rev + 1});
+            }"""
+        )
+        assert _mode(page) == "rx"
+        tap = page.locator("#voice-console [data-act=tap]")
+        assert tap.is_visible() and tap.inner_text() == "Skip"
+
+        page.evaluate(
+            """() => {
+                const v = window.MerlinVoice, m = v.model();
+                m.playing = null; m.queue = [];
+                v.onFrame({type: "voice", event: "state", state: "error", target: m.target,
+                           session: m.session, rev: m.rev + 1});
+            }"""
+        )
+        assert _mode(page) == "error"
+        assert "retry" not in page.inner_text("#voice-console .vc-hint").lower()
+
+        page.evaluate(
+            """() => {
+                const v = window.MerlinVoice, m = v.model();
+                v.onFrame({type: "voice", event: "state", state: "listening", target: m.target,
+                           session: m.session, rev: m.rev + 1});
+            }"""
+        )
+        page.click("#voice-console [data-view-toggle]")
+        assert not page.evaluate(terminal_inert)
+        page.wait_for_function(
+            "() => document.activeElement && document.activeElement.classList.contains('xterm-helper-textarea')",
+            timeout=3000,
+        )
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
         _tmux(tmux_env, "kill-window", "-t", target)
     finally:
         ctx.close()
@@ -715,7 +1004,7 @@ def test_skipping_one_stalled_answer_keeps_the_other_recoverable(
         assert queue == [["clipY", "stalled"]]
         # The network is back for Y: a tap retries it and it is heard once.
         plan["clipY"] = "short"
-        page.click("#voice-console .vc-scope")
+        page.click("#voice-console .vc-mode")
         page.wait_for_function(
             "() => window.MerlinVoice.model().played.includes('clipY')", timeout=10000
         )

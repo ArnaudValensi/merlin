@@ -215,11 +215,11 @@ def append(path, *chunks):
         f.write("".join(chunks))
 
 
-async def _start(target, pages, lang="en"):
+async def _start(target, pages, lang="en", view="full"):
     # pcm (readable bytes in tests) is not a playable format: allow it here.
     session.PLAYABLE_FORMATS.setdefault("pcm", "audio/pcm")
     try:
-        return await session.start_session(target, lang, broadcast=pages)
+        return await session.start_session(target, lang, broadcast=pages, view=view)
     finally:
         session.PLAYABLE_FORMATS.pop("pcm", None)
 
@@ -279,6 +279,27 @@ class TestStart:
             await session.stop_session(target)
 
         asyncio.run(go())
+
+    def test_the_view_decides_the_mark_the_agent_reads(
+        self, tmux, window, tts_server, fast
+    ):
+        target, win, _ = window
+        pages = Pages()
+
+        async def go():
+            running = await _start(target, pages, view="dock")
+            assert tmux.wopt(win, "@voice") == "screen"
+            assert await session.set_view(target, "full")
+            assert running.view == "full" and tmux.wopt(win, "@voice") == "on"
+            # A page opening on the running session brings its own view.
+            await _start(target, pages, view="dock")
+            assert tmux.wopt(win, "@voice") == "screen"
+            await session.stop_session(target, "bye")
+            # Too late: a stopped session must not mark the window again.
+            assert not await session.set_view(target, "full")
+
+        asyncio.run(go())
+        assert tmux.wopt(win, "@voice") == ""
 
     def test_start_marks_the_window_and_stop_clears_it(
         self, tmux, window, tts_server, fast

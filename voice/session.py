@@ -82,6 +82,11 @@ PLAYABLE_FORMATS = {
     "flac": "audio/flac",
 }
 
+# What the console shows, and so what the agent writes for: the value of
+# @voice, which the voice context hook reads. "full" covers the terminal (a
+# voice call, for the ear only); "dock" is a bar under a visible terminal.
+VIEW_MARKS = {"full": "on", "dock": "screen"}
+
 ASK_SENTENCE = {
     "en": "The agent needs your answer.",
     "fr": "L'agent a besoin de ta réponse.",
@@ -289,6 +294,7 @@ class VoiceSession:
         provider: str,
         broadcast: Broadcast = _broadcast_to_pages,
         audio: AudioStore | None = None,
+        view: str = "full",
     ) -> None:
         self.target = target
         # Every frame carries the session id and a revision that only grows,
@@ -298,6 +304,7 @@ class VoiceSession:
         self.id = secrets.token_urlsafe(9)
         self.rev = 0
         self.lang = lang
+        self.view = view
         self.config = config
         self.provider = provider
         self.broadcast = broadcast
@@ -339,7 +346,12 @@ class VoiceSession:
         failing or cancelled on the way rolls all of it back."""
         try:
             self._marking = asyncio.ensure_future(
-                asyncio.to_thread(sweep.set_window_option, self.target, "@voice", "on")
+                asyncio.to_thread(
+                    sweep.set_window_option,
+                    self.target,
+                    "@voice",
+                    VIEW_MARKS[self.view],
+                )
             )
             if not await asyncio.shield(self._marking):
                 raise StartRefused("Could not mark the window for voice mode")
@@ -484,6 +496,17 @@ class VoiceSession:
 
     def set_lang(self, lang: str) -> None:
         self.lang = lang
+
+    async def set_view(self, view: str) -> bool:
+        """Say what the console shows now: the agent's next prompt follows."""
+        if view == self.view:
+            return True
+        ok = await asyncio.to_thread(
+            sweep.set_window_option, self.target, "@voice", VIEW_MARKS[view]
+        )
+        if ok:
+            self.view = view
+        return ok
 
     # -- the watch loop -----------------------------------------------------
 
@@ -828,18 +851,24 @@ def get(target: str) -> VoiceSession | None:
 
 
 async def start_session(
-    target: str, lang: str, *, broadcast: Broadcast = _broadcast_to_pages
+    target: str,
+    lang: str,
+    *,
+    broadcast: Broadcast = _broadcast_to_pages,
+    view: str = "full",
 ) -> VoiceSession:
     """Start voice mode on a window, or return its running session (with the
-    language updated). Raises StartRefused with the reason it cannot run."""
+    language and the view updated). Raises StartRefused with the reason it
+    cannot run."""
     if not valid_target(target):
         raise StartRefused("Not a terminal window")
     async with _lock(target):
         existing = _sessions.get(target)
         if existing is not None and not existing.stopped:
             existing.set_lang(lang)
+            await existing.set_view(view)
             return existing
-        session = await _new_session(target, lang, broadcast)
+        session = await _new_session(target, lang, broadcast, view)
         await session.start()  # rolls itself back on failure
         _sessions[target] = session
         return session
@@ -878,11 +907,24 @@ async def preflight(target: str) -> tuple[tts.TtsConfig, str]:
     return config, provider
 
 
-async def _new_session(target: str, lang: str, broadcast: Broadcast) -> VoiceSession:
+async def _new_session(
+    target: str, lang: str, broadcast: Broadcast, view: str = "full"
+) -> VoiceSession:
     config, provider = await preflight(target)
     return VoiceSession(
-        target, lang, config=config, provider=provider, broadcast=broadcast
+        target, lang, config=config, provider=provider, broadcast=broadcast, view=view
     )
+
+
+async def set_view(target: str, view: str) -> bool:
+    """Set the view of the window's running session. False when none runs or
+    the window did not take it. Under the window's lock: a write landing after
+    a stop's clear would leave the window marked."""
+    async with _lock(target):
+        session = _sessions.get(target)
+        if session is None or session.stopped:
+            return False
+        return await session.set_view(view)
 
 
 async def stop_session(

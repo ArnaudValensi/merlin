@@ -65,7 +65,8 @@
         <span id="mic-warn-badge">!</span>
     </button>
     <!-- Voice mode: a hands-free conversation with this window's agent, in a
-         full-screen console (voice/static/voice-console.js). -->
+         full-screen console or a bar over this status bar
+         (voice/static/voice-console.js). -->
     <button id="voice-btn" title="Voice mode" aria-label="Voice mode"
             data-mode="{{ voice_mode | tojson | forceescape }}"
             data-dictation="{{ 'true' if voice_available else 'false' }}">
@@ -105,7 +106,8 @@
 <!-- Notifications popover: opened by the bell in the status bar. -->
 <div id="notif-popover" class="notif-popover" role="dialog" aria-label="Notifications" hidden></div>
 
-<!-- Voice console: covers the terminal while voice mode is on. -->
+<!-- Voice console: covers the terminal while voice mode is on, or moves over
+     the status bar as a bar when the terminal stays visible. -->
 <div id="voice-console" role="dialog" aria-modal="true" aria-label="Voice mode" hidden></div>
 
 <!-- Folder picker modal (shared component) — used here to cd the terminal -->
@@ -1930,6 +1932,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     window.MerlinTerminal.notice = showVoiceRefused;
+    window.MerlinTerminal.focus = function () { term.focus(); };
     window.MerlinTerminal.currentTarget = function () {
         return (currentSession && currentWindowId) ? currentSession + ':' + currentWindowId : '';
     };
