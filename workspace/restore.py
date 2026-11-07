@@ -121,6 +121,13 @@ def live_sessions() -> dict[str, bool] | None:
     rows = snap.read_tmux()
     if rows is None:
         return None
+    return live_sessions_of(rows)
+
+
+def live_sessions_of(
+    rows: tuple[list[dict], list[dict], list[dict]],
+) -> dict[str, bool]:
+    """``live_sessions`` from rows already read (the sweep reads once)."""
     sessions, windows, panes = rows
     windows_of: dict[str, list[dict]] = {}
     for w in windows:
@@ -154,6 +161,11 @@ def live_job_runs() -> set[str]:
     rows = snap.read_tmux()
     if rows is None:
         return set()
+    return job_runs_of(rows)
+
+
+def job_runs_of(rows: tuple[list[dict], list[dict], list[dict]]) -> set[str]:
+    """``live_job_runs`` from rows already read."""
     return {w["@job_run"] for w in rows[1] if w.get("@job_run")}
 
 

@@ -302,8 +302,20 @@ def live_claude_sessions(proc: Proc, sessions_dir: Path | None = None) -> dict:
 # --- tmux -------------------------------------------------------------------
 
 
-def _tmux_rows(args: list[str], fields: tuple[str, ...]) -> list[dict] | None:
-    """Rows of a tmux list command, or None when there is no tmux server."""
+NO_SERVER = "no-server"
+FAILED = "failed"
+OK = "ok"
+
+# What tmux says when nothing listens on the socket: no socket at all, a
+# socket nobody answers on, or a server that left while the client connected.
+_NO_SERVER_MARKS = ("no server running", "error connecting to", "server exited")
+
+
+def _list(args: list[str], fields: tuple[str, ...]) -> tuple[list[dict] | None, str]:
+    """Rows of a tmux list command, or None with why: ``NO_SERVER`` when no
+    server answers on the socket, ``FAILED`` for any other failure (a
+    timeout, a refused call, an unexpected error). The two are told apart
+    because a dead server is a finding and a flaky read is not."""
     fmt = _SEP.join("#{" + f + "}" for f in fields)
     try:
         r = subprocess.run(
@@ -314,15 +326,23 @@ def _tmux_rows(args: list[str], fields: tuple[str, ...]) -> list[dict] | None:
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return None
+        return None, FAILED
     if r.returncode != 0:
-        return None
+        stderr = r.stderr.strip()
+        if any(mark in stderr for mark in _NO_SERVER_MARKS):
+            return None, NO_SERVER
+        return None, FAILED
     rows = []
     for line in r.stdout.splitlines():
         parts = line.split(_SEP)
         if len(parts) == len(fields):
             rows.append(dict(zip(fields, parts)))
-    return rows
+    return rows, OK
+
+
+def _tmux_rows(args: list[str], fields: tuple[str, ...]) -> list[dict] | None:
+    """Rows of a tmux list command, or None when there is no tmux server."""
+    return _list(args, fields)[0]
 
 
 _WINDOW_FIELDS = (
@@ -361,21 +381,29 @@ def live_session_names() -> list[str] | None:
     return None if rows is None else [r["session_name"] for r in rows]
 
 
+def read_tmux_status() -> tuple[tuple[list[dict], list[dict], list[dict]] | None, str]:
+    """((sessions, windows, panes), ``OK``), or (None, why) when there is no
+    server (``NO_SERVER``) or any of the three reads failed (``FAILED``). A
+    server that answered ``list-sessions`` and not a later read is present:
+    that is a failed read, never "no server"."""
+    sessions, why = _list(["list-sessions"], _SESSION_FIELDS)
+    if sessions is None:
+        return None, why
+    # A failed read is not an empty one: the sweep must skip the write rather
+    # than persist a workspace with its windows or panes missing.
+    windows, _ = _list(["list-windows", "-a"], _WINDOW_FIELDS)
+    if windows is None:
+        return None, FAILED
+    panes, _ = _list(["list-panes", "-a"], _PANE_FIELDS)
+    if panes is None:
+        return None, FAILED
+    return (sessions, windows, panes), OK
+
+
 def read_tmux() -> tuple[list[dict], list[dict], list[dict]] | None:
     """(sessions, windows, panes) rows of the whole server, or None when there
     is no server or any of the three reads failed."""
-    sessions = _tmux_rows(["list-sessions"], _SESSION_FIELDS)
-    if sessions is None:
-        return None
-    # A failed read is not an empty one: the sweep must skip the write rather
-    # than persist a workspace with its windows or panes missing.
-    windows = _tmux_rows(["list-windows", "-a"], _WINDOW_FIELDS)
-    if windows is None:
-        return None
-    panes = _tmux_rows(["list-panes", "-a"], _PANE_FIELDS)
-    if panes is None:
-        return None
-    return sessions, windows, panes
+    return read_tmux_status()[0]
 
 
 def server_identity(sessions: list[dict]) -> dict | None:

@@ -123,6 +123,28 @@ def server_of(snapshot: dict) -> tuple[int, int] | None:
     return pid, start
 
 
+def identity_of(snapshot: dict) -> tuple:
+    """What a crash point is keyed on, so a dead server is frozen once: its
+    server identity, or, for a snapshot written before the field existed,
+    its save time (the sweep never rewrites ``latest.json`` while the server
+    is dead, so the same snapshot keeps the same key)."""
+    server = server_of(snapshot)
+    if server is not None:
+        return ("server", *server)
+    return ("saved_at", snapshot["saved_at"])
+
+
+def frozen_identities() -> set[tuple]:
+    """The identities of every crash point on disk. Read only when a rule
+    fires, never on an ordinary sweep."""
+    out = set()
+    for path in _entries(crashes_dir()):
+        data = read_snapshot(path)
+        if data is not None:
+            out.add(identity_of(data))
+    return out
+
+
 def crash_of(snapshot: dict) -> dict | None:
     """The ``crash`` object of a crash point or an offer, or None when the
     snapshot has none or it is malformed (a reason that is not a string, a

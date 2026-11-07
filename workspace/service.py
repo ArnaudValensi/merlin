@@ -1,4 +1,4 @@
-"""The background sweep and the pending-restore offer.
+"""The background sweep, the death detection and the pending-restore offer.
 
 At server start, ``start()`` first freezes the restore offer (see ``store``),
 then runs the sweep: every ``SWEEP_INTERVAL`` seconds it snapshots tmux and
@@ -10,6 +10,23 @@ good snapshot. A power cut loses at most one interval of changes.
 An offer is always a crash point first: the snapshot is written to
 ``crashes/`` with its ``crash`` object (reason ``startup`` for the freeze at
 startup), then copied to ``pending-restore.json`` with its ``id``.
+
+**Death detection** runs in the sweep, before it writes, from the one set of
+tmux reads it already makes. ``disk`` is the snapshot ``latest.json`` holds
+and ``now`` the sweep's read:
+
+- ``server-changed``: ``now`` read fine, both snapshots know their server
+  (pid and start time) and they differ. The server ``disk`` was taken from is
+  dead; the web terminal has typically recreated one already.
+- ``server-gone``: ``NO_SERVER_SWEEPS`` consecutive sweeps found no server at
+  all. One is not enough. A read that *failed* (a server answered, a list
+  call errored) is not "gone" and counts toward nothing, neither way.
+
+On either rule, if ``disk`` holds sessions missing from live tmux, it is
+frozen as a crash point and becomes the offer (replacing a pending one: this
+is a newer loss), and only then may the sweep write the new ``latest.json``.
+A dead server is frozen once, keyed on its identity, which the crash points
+on disk remember across a Merlin restart. Nothing is ever restored on its own.
 """
 
 from __future__ import annotations
@@ -19,6 +36,7 @@ import contextlib
 import logging
 import threading
 import time
+from dataclasses import dataclass, field
 
 from . import restore as rs
 from . import snapshot as snap
@@ -27,6 +45,8 @@ from . import store
 logger = logging.getLogger("merlin.workspace")
 
 SWEEP_INTERVAL = 15.0
+# Consecutive sweeps without a server before the server counts as gone.
+NO_SERVER_SWEEPS = 2
 
 # Restore and Dismiss race the sweep and each other only through the pending
 # file; one lock keeps a double click from restoring twice.
@@ -82,16 +102,102 @@ def record_history(snapshot: dict) -> None:
         logger.warning("Workspace history: write or thinning failed", exc_info=True)
 
 
-def sweep_once(last: dict | None) -> dict | None:
-    """One sweep. Returns the snapshot now on disk (``last`` if unchanged)."""
-    current = snap.take_snapshot()
-    if current is None or not current["sessions"]:
-        return last
-    if snap.same_content(current, last):
-        return last
+@dataclass
+class Observation:
+    """One read of tmux: its status (``snap.OK``, ``snap.NO_SERVER`` or
+    ``snap.FAILED``) and, when ok, the snapshot and what ``missing_sessions``
+    needs, all from the same rows."""
+
+    status: str
+    snapshot: dict | None = None
+    live: dict[str, bool] | None = None
+    job_runs: set[str] = field(default_factory=set)
+
+
+def observe() -> Observation:
+    rows, status = snap.read_tmux_status()
+    if rows is None:
+        return Observation(status)
+    return Observation(
+        snap.OK,
+        snap.build_snapshot(*rows),
+        rs.live_sessions_of(rows),
+        rs.job_runs_of(rows),
+    )
+
+
+@dataclass
+class SweepState:
+    """What one Merlin process carries from sweep to sweep."""
+
+    last: dict | None = None  # the snapshot latest.json holds
+    no_server: int = 0  # consecutive sweeps that found no server
+    # Identities (store.identity_of) already dealt with: frozen, found frozen
+    # on disk, or found with nothing missing. Never looked at again.
+    handled: set[tuple] = field(default_factory=set)
+
+
+def detect(
+    state: SweepState,
+    reason: str,
+    live: dict[str, bool] | None,
+    job_runs: set[str],
+    now: float | None = None,
+) -> dict | None:
+    """A rule fired for the server ``state.last`` was taken from: freeze it as
+    a crash point and make it the offer, once per server. Returns the offer,
+    or None when there was nothing to freeze."""
+    disk = state.last
+    if disk is None or not disk["sessions"]:
+        return None
+    identity = store.identity_of(disk)
+    if identity in state.handled:
+        return None
+    if identity in store.frozen_identities():
+        state.handled.add(identity)  # frozen before this process started
+        return None
+    missing = rs.missing_sessions(disk, live, job_runs)
+    if not missing:
+        state.handled.add(identity)  # rebuilt already, or nothing was lost
+        return None
+    offer = freeze(disk, reason, now)
+    state.handled.add(identity)
+    windows, agents = snap.counts(missing)
+    logger.warning(
+        "tmux server died (%s): %d sessions, %d windows, %d agents lost, offer %s",
+        reason,
+        len(missing),
+        windows,
+        agents,
+        offer["id"],
+    )
+    return offer
+
+
+def sweep_once(state: SweepState, now: float | None = None) -> SweepState:
+    """One sweep: read tmux, detect a dead server, then write when the
+    workspace changed. Returns ``state``, updated in place."""
+    seen = observe()
+    if seen.status == snap.FAILED:
+        return state  # a flaky read: not a dead server, not a live one either
+    if seen.status == snap.NO_SERVER:
+        state.no_server += 1
+        if state.no_server >= NO_SERVER_SWEEPS:
+            detect(state, "server-gone", None, set(), now)
+        return state
+    state.no_server = 0
+    current = seen.snapshot
+    assert current is not None
+    if state.last is not None:
+        before, after = store.server_of(state.last), store.server_of(current)
+        if before is not None and after is not None and before != after:
+            detect(state, "server-changed", seen.live, seen.job_runs, now)
+    if not current["sessions"] or snap.same_content(current, state.last):
+        return state
     store.write_snapshot(store.latest_path(), current)
     record_history(current)
-    return current
+    state.last = current
+    return state
 
 
 def pending_info() -> dict:
@@ -151,21 +257,21 @@ async def run(stop: asyncio.Event, interval: float = SWEEP_INTERVAL) -> None:
     the restore point until then, is left alone.
     """
     frozen = False
-    last = None
+    state = SweepState()
     logger.info("Workspace snapshot sweep started (every %.0fs)", interval)
     while not stop.is_set():
         if not frozen:
             try:
                 await asyncio.to_thread(freeze_pending)
                 frozen = True
-                last = store.read_snapshot(store.latest_path())
+                state.last = store.read_snapshot(store.latest_path())
             except Exception:
                 logger.warning(
                     "Workspace restore: freezing the offer failed", exc_info=True
                 )
         if frozen:
             try:
-                last = await asyncio.to_thread(sweep_once, last)
+                await asyncio.to_thread(sweep_once, state)
             except Exception:
                 logger.warning("Workspace snapshot sweep failed", exc_info=True)
         with contextlib.suppress(TimeoutError):

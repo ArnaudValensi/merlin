@@ -50,6 +50,40 @@ def offer():
     return store.read_snapshot(store.pending_path())
 
 
+def seen(snapshot, status=None, fillable=()):
+    """An Observation: a snapshot read fine (live = its own sessions), or a
+    status alone (``snap.NO_SERVER`` / ``snap.FAILED``)."""
+    if status is not None:
+        return service.Observation(status)
+    live = {s["name"]: s["name"] in fillable for s in snapshot["sessions"]}
+    return service.Observation(snap.OK, snapshot, live)
+
+
+def observe(monkeypatch, *items):
+    """Make the sweep see ``items`` in turn: snapshots, or status strings."""
+    seq = iter(items)
+
+    def next_seen():
+        item = next(seq)
+        return seen(None, item) if isinstance(item, str) else seen(item)
+
+    monkeypatch.setattr(service, "observe", next_seen)
+
+
+def sweeps(monkeypatch, state, *items, now=None):
+    observe(monkeypatch, *items)
+    for _ in items:
+        service.sweep_once(state, now)
+    return state
+
+
+T = time.time() - 600  # a recent base time for the detection tests
+
+
+def served(snapshot, pid, start=100):
+    return {**snapshot, "server": {"pid": pid, "start_time": start}}
+
+
 def without_crash(snapshot):
     return {k: v for k, v in snapshot.items() if k not in ("crash", "id")}
 
@@ -165,21 +199,21 @@ class TestSweep:
         shots = iter(
             [make("a", saved_at=1), make("a", saved_at=2), make("a", "b", saved_at=3)]
         )
-        monkeypatch.setattr(snap, "take_snapshot", lambda: next(shots))
-        last = service.sweep_once(None)
-        assert last["saved_at"] == 1
-        last = service.sweep_once(last)
+        observe(monkeypatch, *shots)
+        state = service.sweep_once(service.SweepState())
+        assert state.last["saved_at"] == 1
+        service.sweep_once(state)
         assert store.read_snapshot(store.latest_path())["saved_at"] == 1  # unchanged
-        last = service.sweep_once(last)
+        service.sweep_once(state)
         assert store.read_snapshot(store.latest_path())["saved_at"] == 3
 
     @pytest.mark.parametrize(
-        "shot", [None, {"version": 1, "saved_at": 5, "sessions": []}]
+        "shot",
+        [snap.NO_SERVER, snap.FAILED, {"version": 1, "saved_at": 5, "sessions": []}],
     )
     def test_never_overwrites_with_no_server_or_empty(self, monkeypatch, shot):
         store.write_snapshot(store.latest_path(), make("a"))
-        monkeypatch.setattr(snap, "take_snapshot", lambda: shot)
-        service.sweep_once(make("a"))
+        sweeps(monkeypatch, service.SweepState(last=make("a")), shot)
         assert store.read_snapshot(store.latest_path()) == make("a")
 
     @pytest.mark.asyncio
@@ -191,7 +225,7 @@ class TestSweep:
         store.write_snapshot(store.latest_path(), make("main", "portal"))
         live(monkeypatch, ["merlin-dev"])
         monkeypatch.setattr(
-            snap, "take_snapshot", lambda: make("merlin-dev", saved_at=9)
+            service, "observe", lambda: seen(make("merlin-dev", saved_at=9))
         )
         stop = asyncio.Event()
         task = asyncio.create_task(service.run(stop, interval=0.01))
@@ -221,7 +255,7 @@ class TestSweep:
         monkeypatch.setattr(service, "freeze_pending", flaky_freeze)
         live(monkeypatch, None)
         monkeypatch.setattr(
-            snap, "take_snapshot", lambda: make("merlin-dev", saved_at=9)
+            service, "observe", lambda: seen(make("merlin-dev", saved_at=9))
         )
         stop = asyncio.Event()
         task = asyncio.create_task(service.run(stop, interval=0.01))
@@ -250,7 +284,7 @@ class TestSweep:
         path.write_text(json.dumps({**make("main"), "saved_at": "yesterday"}))
         live(monkeypatch, None)
         monkeypatch.setattr(
-            snap, "take_snapshot", lambda: make("merlin-dev", saved_at=9)
+            service, "observe", lambda: seen(make("merlin-dev", saved_at=9))
         )
         stop = asyncio.Event()
         task = asyncio.create_task(service.run(stop, interval=0.01))
@@ -270,10 +304,7 @@ class TestSweep:
                 make("a", "b", saved_at=t + 2),
             ]
         )
-        monkeypatch.setattr(snap, "take_snapshot", lambda: next(shots))
-        last = service.sweep_once(None)
-        last = service.sweep_once(last)  # unchanged: no write, no copy
-        service.sweep_once(last)
+        sweeps(monkeypatch, service.SweepState(), *shots)  # 2nd unchanged: no copy
         ids = [n[: -len(".json")] for n in history_files()]
         assert len(ids) == 2
         assert [store.read_snapshot(store.entry_path(i))["saved_at"] for i in ids] == [
@@ -282,13 +313,138 @@ class TestSweep:
         ]
 
     def test_history_failure_never_blocks_the_sweep(self, monkeypatch):
-        monkeypatch.setattr(snap, "take_snapshot", lambda: make("a", saved_at=1))
         monkeypatch.setattr(
             store, "write_history", lambda s: (_ for _ in ()).throw(OSError("full"))
         )
-        last = service.sweep_once(None)
-        assert last["saved_at"] == 1  # the snapshot advanced all the same
+        state = sweeps(monkeypatch, service.SweepState(), make("a", saved_at=1))
+        assert state.last["saved_at"] == 1  # the snapshot advanced all the same
         assert store.read_snapshot(store.latest_path()) == make("a", saved_at=1)
+
+
+class TestDetection:
+    """The sweep's death detection, with tmux replaced by observations. Times
+    are recent: the thinning after each write would remove 1970 entries."""
+
+    def _disk(self, snapshot):
+        store.write_snapshot(store.latest_path(), snapshot)
+        return service.SweepState(last=snapshot)
+
+    def test_server_changed_freezes_before_the_write(self, monkeypatch):
+        old = served(make("a", "b", saved_at=T + 10), pid=1)
+        new = served(make("merlin-dev", saved_at=T + 20), pid=2)
+        state = sweeps(monkeypatch, self._disk(old), new, now=T + 25.0)
+        pending = offer()
+        assert without_crash(pending) == old
+        assert pending["crash"] == {"reason": "server-changed", "detected_at": T + 25.0}
+        assert (
+            store.read_snapshot(store.entry_path(pending["id"]))["crash"]
+            == (pending["crash"])
+        )
+        assert store.read_snapshot(store.latest_path()) == new  # written after
+        assert state.last == new
+
+    def test_server_gone_needs_two_sweeps_and_a_failed_read_counts_for_nothing(
+        self, monkeypatch
+    ):
+        old = served(make("a", saved_at=T + 10), pid=1)
+        state = sweeps(monkeypatch, self._disk(old), snap.NO_SERVER)
+        assert offer() is None and crash_files() == []
+        sweeps(monkeypatch, state, snap.FAILED)  # neither a second miss nor a reset
+        assert offer() is None and state.no_server == 1
+        sweeps(monkeypatch, state, snap.NO_SERVER, now=T + 30.0)
+        assert offer()["crash"] == {"reason": "server-gone", "detected_at": T + 30.0}
+        assert store.read_snapshot(store.latest_path()) == old  # untouched
+
+    def test_a_server_seen_again_resets_the_count(self, monkeypatch):
+        old = served(make("a", saved_at=T + 10), pid=1)
+        state = sweeps(
+            monkeypatch, self._disk(old), snap.NO_SERVER, old, snap.NO_SERVER
+        )
+        assert state.no_server == 1 and offer() is None
+
+    def test_old_snapshot_without_server_never_changes_server(self, monkeypatch):
+        old = make("a", saved_at=T + 10)  # written before the field existed
+        new = served(make("merlin-dev", saved_at=T + 20), pid=2)
+        sweeps(monkeypatch, self._disk(old), new)
+        assert offer() is None and crash_files() == []
+        assert store.read_snapshot(store.latest_path()) == new
+        # The other way round too: a new server whose identity is unknown.
+        sweeps(monkeypatch, self._disk(served(old, pid=1)), make("x", saved_at=T + 30))
+        assert offer() is None
+
+    def test_a_dead_server_is_frozen_once(self, monkeypatch):
+        old = served(make("a", saved_at=T + 10), pid=1)
+        # The new server only holds the jobs session: nothing is written, the
+        # same rule fires again on every sweep, and freezes nothing more.
+        empty = served({**make(), "saved_at": T + 20}, pid=2)
+        state = sweeps(monkeypatch, self._disk(old), empty, empty, empty)
+        assert len(crash_files()) == 1
+        # A fresh process (Merlin restarted) finds it frozen on disk.
+        sweeps(
+            monkeypatch, service.SweepState(last=old), snap.NO_SERVER, snap.NO_SERVER
+        )
+        assert len(crash_files()) == 1
+        assert state.handled == {("server", 1, 100)}
+
+    def test_startup_freeze_then_the_sweep_does_not_freeze_again(self, monkeypatch):
+        # After a reboot: the startup freeze made the offer; the sweeps then
+        # find no server twice, and must not freeze a second crash point.
+        old = served(make("a", saved_at=T + 10), pid=1)
+        store.write_snapshot(store.latest_path(), old)
+        live(monkeypatch, None)
+        assert service.freeze_pending(now=T + 11.0) is True
+        state = service.SweepState(last=store.read_snapshot(store.latest_path()))
+        sweeps(monkeypatch, state, snap.NO_SERVER, snap.NO_SERVER, snap.NO_SERVER)
+        assert len(crash_files()) == 1
+        assert offer()["crash"]["reason"] == "startup"
+
+    def test_nothing_missing_freezes_nothing(self, monkeypatch):
+        # The user rebuilt everything by hand before the sweep noticed.
+        old = served(make("a", "b", saved_at=T + 10), pid=1)
+        new = served(make("a", "b", saved_at=T + 20), pid=2)
+        state = sweeps(monkeypatch, self._disk(old), new)
+        assert offer() is None and crash_files() == []
+        assert store.read_snapshot(store.latest_path()) == new
+        assert ("server", 1, 100) in state.handled
+
+    def test_a_second_crash_replaces_the_offer_and_keeps_both_points(self, monkeypatch):
+        first = served(make("a", saved_at=T + 10), pid=1)
+        second = served(make("b", saved_at=T + 20), pid=2)
+        third = served(make("merlin-dev", saved_at=T + 30), pid=3)
+        state = sweeps(monkeypatch, self._disk(first), second, now=T + 21.0)
+        assert without_crash(offer()) == first
+        sweeps(monkeypatch, state, third, now=T + 31.0)
+        pending = offer()
+        assert without_crash(pending) == second
+        assert pending["crash"]["detected_at"] == T + 31.0
+        assert len(crash_files()) == 2
+        ids = sorted(p.stem for p in store.crashes_dir().glob("*.json"))
+        assert [
+            store.read_snapshot(store.entry_path(i))["sessions"][0]["name"] for i in ids
+        ] == ["a", "b"]
+
+    def test_a_failed_freeze_is_retried_next_sweep(self, monkeypatch):
+        old = served(make("a", saved_at=T + 10), pid=1)
+        new = served(make("merlin-dev", saved_at=T + 20), pid=2)
+        state = self._disk(old)
+        calls = []
+
+        def flaky(snapshot, reason, now=None):
+            calls.append(reason)
+            if len(calls) == 1:
+                raise OSError("no space left on device")
+            return service.__dict__["_real_freeze_fn"](snapshot, reason, now)
+
+        service.__dict__["_real_freeze_fn"] = service.freeze
+        monkeypatch.setattr(service, "freeze", flaky)
+        observe(monkeypatch, new, new)
+        with pytest.raises(OSError):
+            service.sweep_once(state)
+        assert store.read_snapshot(store.latest_path()) == old  # not written over
+        service.sweep_once(state)
+        assert without_crash(offer()) == old
+        assert store.read_snapshot(store.latest_path()) == new
+        del service.__dict__["_real_freeze_fn"]
 
 
 class TestPendingInfo:

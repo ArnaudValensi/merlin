@@ -252,24 +252,52 @@ class TestServerIdentity:
 
         def rows(args, fields):
             asked.append((tuple(args), fields))
-            return []
+            return [], snap.OK
 
-        monkeypatch.setattr(snap, "_tmux_rows", rows)
+        monkeypatch.setattr(snap, "_list", rows)
         snap.read_tmux()
         assert asked[0] == (("list-sessions",), ("session_name", "pid", "start_time"))
 
 
 class TestReadTmux:
     def test_a_failed_read_is_no_snapshot(self, monkeypatch):
-        # A failed list-panes must not become a snapshot without panes.
-        results = iter([[{"session_name": "main"}], [window()], None])
-        monkeypatch.setattr(snap, "_tmux_rows", lambda args, fields: next(results))
-        assert snap.read_tmux() is None
+        # A failed list-panes must not become a snapshot without panes, and
+        # a server that answered list-sessions is present: a failed read,
+        # never "no server".
+        results = iter(
+            [([{"session_name": "main"}], snap.OK), ([window()], snap.OK), (None, "x")]
+        )
+        monkeypatch.setattr(snap, "_list", lambda args, fields: next(results))
+        assert snap.read_tmux_status() == (None, snap.FAILED)
 
     def test_failed_window_read_is_no_snapshot(self, monkeypatch):
-        results = iter([[{"session_name": "main"}], None])
-        monkeypatch.setattr(snap, "_tmux_rows", lambda args, fields: next(results))
+        results = iter([([{"session_name": "main"}], snap.OK), (None, "x")])
+        monkeypatch.setattr(snap, "_list", lambda args, fields: next(results))
         assert snap.read_tmux() is None
+
+    def test_no_server_is_told_from_a_failed_read(self, monkeypatch):
+        import subprocess
+
+        class R:
+            def __init__(self, rc, err):
+                self.returncode, self.stdout, self.stderr = rc, "", err
+
+        answers = {
+            "no server running on /tmp/tmux-1000/default": snap.NO_SERVER,
+            "error connecting to /tmp/x (No such file or directory)": snap.NO_SERVER,
+            "server exited unexpectedly": snap.NO_SERVER,
+            "merlin tests: tmux refused (list-sessions)": snap.FAILED,
+            "lost server": snap.FAILED,
+        }
+        for err, status in answers.items():
+            monkeypatch.setattr(snap.subprocess, "run", lambda *a, **k: R(1, err))
+            assert snap.read_tmux_status() == (None, status), err
+
+        def timeout(*a, **k):
+            raise subprocess.TimeoutExpired("tmux", 5)
+
+        monkeypatch.setattr(snap.subprocess, "run", timeout)
+        assert snap.read_tmux_status() == (None, snap.FAILED)
 
 
 class TestKeptJobWindows:
