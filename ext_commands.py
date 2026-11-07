@@ -48,6 +48,7 @@ CORE_COMMANDS: tuple[str, ...] = (
     "agent",
     "job",
     "review",
+    "workspace",
     "dashboard-url",
 )
 

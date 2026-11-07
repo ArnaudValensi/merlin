@@ -339,6 +339,17 @@ def new_id(saved_at: float) -> str:
     return f"{base}-{n}"
 
 
+def list_entries() -> list[dict]:
+    """Every crash point and history entry on disk, newest first, as
+    ``{"id", "kind", "path"}`` with ``kind`` ``crash`` or ``history``. The
+    files are not read."""
+    found: list[tuple[str, str, Path]] = []
+    for kind, directory in (("crash", crashes_dir()), ("history", history_dir())):
+        found.extend((p.stem, kind, p) for p in _entries(directory))
+    found.sort(key=lambda e: _id_key(e[0]), reverse=True)
+    return [{"id": i, "kind": k, "path": p} for i, k, p in found]
+
+
 def entry_path(entry_id: str) -> Path | None:
     """The file behind an id, a crash point or a history entry, or None."""
     if not ID_RE.match(entry_id):

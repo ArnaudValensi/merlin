@@ -458,6 +458,12 @@ def _delegate_review(argv: list[str]) -> None:
     sys.exit(review_main(argv, prog="merlin review"))
 
 
+def _delegate_workspace(argv: list[str]) -> None:
+    from workspace.cli import main as workspace_main
+
+    sys.exit(workspace_main(argv, prog="merlin workspace"))
+
+
 # Delegated core commands: cli_main routes them before argparse so every arg
 # (including --help) reaches the command's own parser, and build_parser
 # registers a help stub from the same entry. Adding a command here is the
@@ -471,6 +477,10 @@ DELEGATED_COMMANDS: dict[str, tuple] = {
     "review": (
         _delegate_review,
         "Read and answer the user's code reviews (list/show/diff/comment/reply/resolve)",
+    ),
+    "workspace": (
+        _delegate_workspace,
+        "Restore points of the tmux workspace (list/show/restore), Merlin running or not",
     ),
 }
 
