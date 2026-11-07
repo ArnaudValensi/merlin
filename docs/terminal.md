@@ -39,14 +39,17 @@ After the machine restarts, the first page you open shows a banner: *Your
 last workspace didn't come back*, with the sessions it would bring back and
 when they were saved. **Restore** rebuilds them; **Dismiss** drops the offer.
 
-When tmux dies while Merlin keeps running, the banner appears on its own
-within half a minute on every open page, titled *tmux stopped at HH:MM*, and
-your phone gets a push ("tmux stopped: N sessions, M agents lost at HH:MM")
-if you subscribed to [notifications](notifications.md). It waits for you:
-nothing is restored until you click Restore, and the offer keeps until the
-morning if the crash happened at night. A crash is never mistaken for a
-single flaky read of tmux, and Merlin keeps the last good snapshot aside
-before anything can overwrite it.
+When tmux dies while Merlin keeps running, Merlin notices on one of its
+next sweeps (it checks every 15 seconds, and waits for a second miss before
+calling a server gone, so a single flaky read never raises an alarm) and
+keeps the last good snapshot aside before anything can overwrite it. A page
+you are looking at then shows the banner on its own at its next poll,
+titled *tmux stopped at HH:MM*; a page in a background tab checks again
+when you come back to it. Your phone gets a push ("tmux stopped: N
+sessions, M agents lost at HH:MM") if you subscribed to
+[notifications](notifications.md). It all waits for you: nothing is
+restored until you click Restore, and the offer keeps until the morning if
+the crash happened at night.
 
 What comes back:
 
