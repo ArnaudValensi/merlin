@@ -117,7 +117,15 @@ window.MerlinNotifications = (function () {
   // waiting is closed: the same state that clears the green pill when the
   // window is visited or left, or answered, clears the notification here,
   // and the worker's pushed ones too. So a window handled on one device
-  // disappears from the others the next time they poll.
+  // disappears from the others the next time they poll. Only window
+  // notifications are concerned: a pushed one carries its window's sid in
+  // its data (the worker copies the payload's). The test push and the
+  // workspace crash push ("tmux stopped", no window) are not about a
+  // window and stay until the user acts on them.
+  function isWindowNotification(n) {
+    return !!(n && n.data && n.data.sid);
+  }
+
   function syncWaiting(sids) {
     var keep = {};
     (sids || []).forEach(function (s) { keep[s] = true; });
@@ -131,7 +139,7 @@ window.MerlinNotifications = (function () {
       if (!reg || !reg.getNotifications) return;
       return reg.getNotifications().then(function (list) {
         list.forEach(function (n) {
-          if (n.tag && n.tag !== 'test' && !keep[n.tag]) n.close();
+          if (isWindowNotification(n) && !keep[n.tag]) n.close();
         });
       });
     }).catch(function () { /* no worker, nothing pushed to close */ });
