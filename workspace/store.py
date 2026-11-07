@@ -92,13 +92,70 @@ def crashes_dir() -> Path:
     return paths.workspace_dir() / "crashes"
 
 
+def _is_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _optional(value: object, kind: type | tuple[type, ...]) -> bool:
+    return value is None or isinstance(value, kind)
+
+
+def _valid_agent(agent: object) -> bool:
+    return (
+        isinstance(agent, dict)
+        and agent.get("provider") in ("claude", "codex")
+        and isinstance(agent.get("conv"), str)
+        and _optional(agent.get("cwd"), str)
+        and _optional(agent.get("options"), list)
+        and all(isinstance(o, str) for o in agent.get("options") or [])
+    )
+
+
+def _valid_pane(pane: object) -> bool:
+    return (
+        isinstance(pane, dict)
+        and _is_int(pane.get("index"))
+        and isinstance(pane.get("cwd"), str)
+        and _optional(pane.get("active"), bool)
+        and (pane.get("agent") is None or _valid_agent(pane["agent"]))
+    )
+
+
+def _valid_window(window: object) -> bool:
+    return (
+        isinstance(window, dict)
+        and _is_int(window.get("index"))
+        and isinstance(window.get("name"), str)
+        and isinstance(window.get("panes"), list)
+        and all(_valid_pane(p) for p in window["panes"])
+        and _optional(window.get("layout"), str)
+        and _optional(window.get("options"), dict)
+        and _optional(window.get("automatic_rename"), bool)
+        and _optional(window.get("job_run"), str)
+    )
+
+
+def _valid_session(session: object) -> bool:
+    return (
+        isinstance(session, dict)
+        and isinstance(session.get("name"), str)
+        and isinstance(session.get("windows"), list)
+        and all(_valid_window(w) for w in session["windows"])
+        and (session.get("active_window") is None or _is_int(session["active_window"]))
+    )
+
+
 def read_snapshot(path: Path) -> dict | None:
     """A valid snapshot from ``path``, or None (absent, torn, unknown shape).
 
     ``saved_at`` must be a valid time: every snapshot Merlin ever wrote has
     one (``build_snapshot`` always sets it), so a file without it, or with
     one that is not a finite number in range, is foreign and reads as absent
-    rather than making a later ``localtime`` of it raise.
+    rather than making a later ``localtime`` of it raise. The sessions,
+    windows, panes and agents are checked down to the fields the engine and
+    the CLI read, so a foreign file never crashes a listing or a restore;
+    the fields the engine reads as optional (a layout, the options, the
+    active flags, a job run) stay optional.
     """
     try:
         data = json.loads(path.read_text())
@@ -109,15 +166,8 @@ def read_snapshot(path: Path) -> dict | None:
     if valid_time(data.get("saved_at")) is None:
         return None
     sessions = data.get("sessions")
-    if not isinstance(sessions, list):
+    if not isinstance(sessions, list) or not all(_valid_session(s) for s in sessions):
         return None
-    for s in sessions:
-        if not (
-            isinstance(s, dict)
-            and isinstance(s.get("name"), str)
-            and isinstance(s.get("windows"), list)
-        ):
-            return None
     return data
 
 

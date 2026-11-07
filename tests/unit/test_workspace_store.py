@@ -113,6 +113,89 @@ class TestFiles:
         assert store.read_snapshot(path) is None
 
     @pytest.mark.parametrize(
+        "bad",
+        [
+            {"name": "s", "windows": [{}]},  # a window without index, name, panes
+            {"name": "s", "windows": [{"index": "1", "name": "w", "panes": []}]},
+            {"name": "s", "windows": [{"index": 1, "name": "w", "panes": [{}]}]},
+            {
+                "name": "s",
+                "windows": [{"index": 1, "name": "w", "panes": [{"index": 0}]}],
+            },
+            {
+                "name": "s",
+                "windows": [
+                    {
+                        "index": 1,
+                        "name": "w",
+                        "panes": [{"index": 0, "cwd": "/", "agent": {"provider": "x"}}],
+                    }
+                ],
+            },
+            {
+                "name": "s",
+                "windows": [
+                    {
+                        "index": 1,
+                        "name": "w",
+                        "panes": [
+                            {
+                                "index": 0,
+                                "cwd": "/",
+                                "agent": {
+                                    "provider": "codex",
+                                    "conv": "t",
+                                    "options": "x",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "name": "s",
+                "windows": [{"index": 1, "name": "w", "panes": [], "layout": 5}],
+            },
+            {"name": "s", "windows": [], "active_window": "0"},
+        ],
+    )
+    def test_a_malformed_session_reads_as_absent(self, bad):
+        path = store.latest_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"version": 1, "saved_at": 5.0, "sessions": [bad]}))
+        assert store.read_snapshot(path) is None
+
+    def test_optional_fields_stay_optional(self):
+        # What the engine reads with .get: a bare window and pane still read.
+        path = store.latest_path()
+        path.parent.mkdir(parents=True)
+        lean = {
+            "version": 1,
+            "saved_at": 5.0,
+            "sessions": [
+                {
+                    "name": "s",
+                    "windows": [
+                        {
+                            "index": 1,
+                            "name": "w",
+                            "panes": [
+                                {"index": 0, "cwd": "/"},
+                                {
+                                    "index": 1,
+                                    "cwd": "/",
+                                    "agent": {"provider": "claude", "conv": "c"},
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+        path.write_text(json.dumps(lean))
+        assert store.read_snapshot(path) == lean
+
+    @pytest.mark.parametrize(
         "saved_at",
         [
             "invalid",

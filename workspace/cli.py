@@ -97,13 +97,34 @@ def _select(snapshot: dict, names: list[str] | None) -> dict:
     }
 
 
+class Live:
+    """One status-aware read of tmux: the live map, the live job runs and
+    the live conversations, or ``unknown`` when tmux answered but could not
+    be read whole (the engine would refuse to restore then)."""
+
+    def __init__(self) -> None:
+        self.rows, status = snap.read_tmux_status()
+        self.unknown = status == snap.FAILED
+        self.no_server = status == snap.NO_SERVER
+        rows = self.rows
+        self.sessions = rs.live_sessions_of(rows) if rows is not None else {}
+        self.job_runs = rs.job_runs_of(rows) if rows is not None else set()
+
+    def missing(self, snapshot: dict) -> list[dict]:
+        return rs.missing_sessions(snapshot, self.sessions, self.job_runs)
+
+
 def _plan(snapshot: dict) -> list[str]:
     """What a restore of ``snapshot`` would do right now, one line each, and
     the exact command it would type in each agent pane. Reads tmux, touches
-    nothing."""
-    rows = snap.read_tmux()
-    live = rs.live_sessions_of(rows) if rows is not None else {}
-    job_runs = rs.job_runs_of(rows) if rows is not None else set()
+    nothing. A tmux that could not be read is an error, as the engine would
+    refuse the restore itself."""
+    live_now = Live()
+    if live_now.unknown:
+        raise CliError("tmux could not be read, no plan: try again")
+    rows = live_now.rows
+    live = live_now.sessions
+    job_runs = live_now.job_runs
     running = rs.live_conversations(rows)
     lines = []
     if rows is None:
@@ -194,12 +215,13 @@ def cmd_list(args) -> int:
 
 def cmd_show(args) -> int:
     snapshot = _load(args.id)
-    missing = {
-        s["name"]
-        for s in rs.missing_sessions(snapshot, rs.live_sessions(), rs.live_job_runs())
-    }
+    live_now = Live()
+    missing = (
+        None if live_now.unknown else {s["name"] for s in live_now.missing(snapshot)}
+    )
     if args.json:
-        print(json.dumps({**snapshot, "missing": sorted(missing)}, indent=2))
+        record = {**snapshot, "missing": None if missing is None else sorted(missing)}
+        print(json.dumps(record, indent=2))
         return 0
     crash = store.crash_of(snapshot)
     print(f"{snapshot['id']}  saved {_when(snapshot['saved_at'])}  {_kind(snapshot)}")
@@ -208,8 +230,15 @@ def cmd_show(args) -> int:
     pending = _pending()
     if pending and pending.get("id") == snapshot["id"]:
         print("this is the pending restore offer")
+    if missing is None:
+        print("live state unknown: tmux could not be read, try again")
     for sess in snapshot["sessions"]:
-        state = "missing from tmux now" if sess["name"] in missing else "live in tmux"
+        if missing is None:
+            state = "unknown"
+        else:
+            state = (
+                "missing from tmux now" if sess["name"] in missing else "live in tmux"
+            )
         print(f"\nsession {sess['name']}  ({state})")
         for win in sorted(sess["windows"], key=lambda w: w["index"]):
             print(f"  window {win['index']} {win['name']}")
@@ -251,9 +280,13 @@ def cmd_restore(args) -> int:
         result = rs.restore(selected)
     except rs.RestoreError as exc:  # busy, unreadable
         raise CliError(str(exc)) from exc
-    complete = set(_session_names(selected)) >= set(_session_names(snapshot))
-    if is_offer and complete and not result["failed"]:
-        store.delete_pending(snapshot.get("id"))
+    if is_offer and not result["failed"]:
+        # The offer is done once nothing of it is missing any more, whether
+        # this command restored all of it, the last part of it, or the rest
+        # was live already. Unknown live state keeps it.
+        live_now = Live()
+        if not live_now.unknown and not live_now.missing(snapshot):
+            store.delete_pending(snapshot.get("id"))
     print(
         f"restored {len(result['restored'])} session(s), "
         f"{result['agents']} agent(s) resumed"

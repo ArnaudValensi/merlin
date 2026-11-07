@@ -167,6 +167,28 @@ class TestList:
     def test_empty_home(self):
         assert run("list") == (0, "no restore points yet\n", "")
 
+    def test_a_foreign_entry_never_breaks_the_listing(self, canned, iso):
+        # A version-1 file with a window missing its panes: not a restore
+        # point. The others still list; show and restore refuse it cleanly.
+        bad = store.history_dir() / "20261105-000000.json"
+        bad.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "saved_at": T + 5,
+                    "sessions": [{"name": "broken", "windows": [{}]}],
+                }
+            )
+        )
+        code, out, err = run("list")
+        assert code == 0 and err == ""
+        assert "20261105-000000" not in out and canned["c2"] in out
+        code, out, err = run("show", "20261105-000000")
+        assert code == 1 and "no restore point 20261105-000000" in err
+        code, out, err = run("restore", "20261105-000000")
+        assert code == 1 and "no restore point 20261105-000000" in err
+        assert tmux("list-sessions") == ""
+
 
 class TestShow:
     def test_text(self, canned, iso):
@@ -182,6 +204,17 @@ class TestShow:
         assert "  window 1 dev-win" in out
         assert f"    pane 0  {canned['dir']}  [codex thread-1 --yolo]" in out
         assert f"    pane 1  {canned['dir']}" in out
+
+    def test_an_unreadable_tmux_shows_an_unknown_state(self, canned, iso, monkeypatch):
+        from workspace import snapshot as snap
+
+        monkeypatch.setattr(snap, "read_tmux_status", lambda: (None, snap.FAILED))
+        code, out, _ = run("show", canned["c2"])
+        assert code == 0
+        assert "live state unknown: tmux could not be read, try again" in out
+        assert "session dev  (unknown)" in out and "missing" not in out
+        code, out, _ = run("show", canned["c2"], "--json")
+        assert json.loads(out)["missing"] is None
 
     def test_json_and_unknown(self, canned, iso):
         code, out, _ = run("show", canned["c1"], "--json")
@@ -220,6 +253,21 @@ class TestRestore:
         assert "already running elsewhere: plain shell" in out
         assert "resume thread" not in out
 
+    def test_dry_run_refuses_an_unreadable_tmux(self, canned, iso):
+        # The engine would refuse this restore: the plan must not promise it.
+        from workspace import snapshot as snap
+
+        tmux("new-session", "-d", "-s", "other")
+        tmux("set-option", "-w", "-t", "=other:0", "@agent_provider", "codex")
+        tmux("set-option", "-w", "-t", "=other:0", "@agent_conv", "thread-123456789")
+        with pytest.MonkeyPatch.context() as once:
+            once.setattr(snap, "read_tmux_status", lambda: (None, snap.FAILED))
+            code, out, err = run("restore", "--dry-run")
+        assert code == 1 and "tmux could not be read, no plan: try again" in err
+        assert "create session" not in out and "resume thread" not in out
+        assert tmux("list-sessions", "-F", "#{session_name}") == "other"
+        assert store.read_pending() is not None
+
     def test_unknown_session_restores_nothing(self, canned, iso):
         code, out, err = run("restore", "--session", "dev", "--session", "nope")
         assert code == 1
@@ -249,6 +297,42 @@ class TestRestore:
         assert [p.name for p in log.iterdir()] == [
             f"codex.{Path(canned['dir']).name}.args"
         ]
+
+    def test_the_offer_restored_in_two_steps_is_dropped_at_the_second(
+        self, canned, iso
+    ):
+        assert run("restore", "--session", "dev")[0] == 0
+        assert store.read_pending() is not None
+        assert run("restore", "--session", "oob")[0] == 0
+        assert store.read_pending() is None
+        assert sorted(tmux("list-sessions", "-F", "#{session_name}").split()) == [
+            "dev",
+            "oob",
+        ]
+
+    def test_the_offer_is_dropped_when_the_rest_was_live_already(self, canned, iso):
+        tmux("new-session", "-d", "-s", "oob")
+        tmux("new-window", "-d", "-t", "=oob:")  # live, in use: never restored
+        assert run("restore", "--session", "dev")[0] == 0
+        assert store.read_pending() is None
+
+    def test_the_offer_stays_when_the_live_state_is_unknown_after(
+        self, canned, iso, monkeypatch
+    ):
+        from workspace import snapshot as snap
+
+        real = snap.read_tmux_status
+        calls = []
+
+        def flaky():
+            calls.append(1)
+            # The engine's own read works; the read after the restore fails.
+            return real() if len(calls) == 1 else (None, snap.FAILED)
+
+        monkeypatch.setattr(snap, "read_tmux_status", flaky)
+        code, out, _ = run("restore")
+        assert code == 0 and "restored 2 session(s)" in out
+        assert store.read_pending() is not None
 
     def test_an_older_point_by_id_keeps_the_offer(self, canned, iso):
         code, out, _ = run("restore", canned["c1"])
