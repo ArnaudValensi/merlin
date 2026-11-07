@@ -157,6 +157,37 @@ class TestFiles:
                 "windows": [{"index": 1, "name": "w", "panes": [], "layout": 5}],
             },
             {"name": "s", "windows": [], "active_window": "0"},
+            # An explicit null where the engine reads a typed default.
+            {
+                "name": "s",
+                "windows": [{"index": 1, "name": "w", "panes": [], "layout": None}],
+            },
+            {
+                "name": "s",
+                "windows": [
+                    {
+                        "index": 1,
+                        "name": "w",
+                        "panes": [
+                            {
+                                "index": 0,
+                                "cwd": "/",
+                                "agent": {
+                                    "provider": "codex",
+                                    "conv": "t",
+                                    "options": None,
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "name": "s",
+                "windows": [
+                    {"index": 1, "name": "w", "panes": [], "automatic_rename": 1}
+                ],
+            },
         ],
     )
     def test_a_malformed_session_reads_as_absent(self, bad):
@@ -166,7 +197,9 @@ class TestFiles:
         assert store.read_snapshot(path) is None
 
     def test_optional_fields_stay_optional(self):
-        # What the engine reads with .get: a bare window and pane still read.
+        # What the engine reads with .get: a bare window and pane still read,
+        # and the nulls the engine None-checks (the capture writes
+        # active_window null when no window is active) still read.
         path = store.latest_path()
         path.parent.mkdir(parents=True)
         lean = {
@@ -175,16 +208,22 @@ class TestFiles:
             "sessions": [
                 {
                     "name": "s",
+                    "active_window": None,
                     "windows": [
                         {
                             "index": 1,
                             "name": "w",
+                            "job_run": None,
                             "panes": [
-                                {"index": 0, "cwd": "/"},
+                                {"index": 0, "cwd": "/", "active": None},
                                 {
                                     "index": 1,
                                     "cwd": "/",
-                                    "agent": {"provider": "claude", "conv": "c"},
+                                    "agent": {
+                                        "provider": "claude",
+                                        "conv": "c",
+                                        "cwd": None,
+                                    },
                                 },
                             ],
                         }

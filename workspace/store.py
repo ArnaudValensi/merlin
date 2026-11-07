@@ -96,8 +96,23 @@ def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _optional(value: object, kind: type | tuple[type, ...]) -> bool:
-    return value is None or isinstance(value, kind)
+def _optional(
+    obj: dict, key: str, kind: type | tuple[type, ...], *, null_ok: bool = True
+) -> bool:
+    """An optional field: absent, or of the right type. An explicit null is
+    accepted only where the engine None-checks the value (``null_ok``); a
+    field the engine reads with a typed default (``.get(key, "")``) must be
+    typed when present, since null would get past that default."""
+    if key not in obj:
+        return True
+    value = obj[key]
+    if value is None:
+        return null_ok
+    return (
+        isinstance(value, kind)
+        and not isinstance(value, bool)
+        or (kind is bool and isinstance(value, bool))
+    )
 
 
 def _valid_agent(agent: object) -> bool:
@@ -105,8 +120,8 @@ def _valid_agent(agent: object) -> bool:
         isinstance(agent, dict)
         and agent.get("provider") in ("claude", "codex")
         and isinstance(agent.get("conv"), str)
-        and _optional(agent.get("cwd"), str)
-        and _optional(agent.get("options"), list)
+        and _optional(agent, "cwd", str)
+        and _optional(agent, "options", list, null_ok=False)
         and all(isinstance(o, str) for o in agent.get("options") or [])
     )
 
@@ -116,7 +131,7 @@ def _valid_pane(pane: object) -> bool:
         isinstance(pane, dict)
         and _is_int(pane.get("index"))
         and isinstance(pane.get("cwd"), str)
-        and _optional(pane.get("active"), bool)
+        and _optional(pane, "active", bool)
         and (pane.get("agent") is None or _valid_agent(pane["agent"]))
     )
 
@@ -128,10 +143,10 @@ def _valid_window(window: object) -> bool:
         and isinstance(window.get("name"), str)
         and isinstance(window.get("panes"), list)
         and all(_valid_pane(p) for p in window["panes"])
-        and _optional(window.get("layout"), str)
-        and _optional(window.get("options"), dict)
-        and _optional(window.get("automatic_rename"), bool)
-        and _optional(window.get("job_run"), str)
+        and _optional(window, "layout", str, null_ok=False)
+        and _optional(window, "options", dict)
+        and _optional(window, "automatic_rename", bool)
+        and _optional(window, "job_run", str)
     )
 
 
@@ -141,7 +156,8 @@ def _valid_session(session: object) -> bool:
         and isinstance(session.get("name"), str)
         and isinstance(session.get("windows"), list)
         and all(_valid_window(w) for w in session["windows"])
-        and (session.get("active_window") is None or _is_int(session["active_window"]))
+        # The capture writes null when no window is active: nullable.
+        and _optional(session, "active_window", int)
     )
 
 

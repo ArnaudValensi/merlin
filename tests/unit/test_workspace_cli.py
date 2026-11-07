@@ -188,6 +188,25 @@ class TestList:
         code, out, err = run("restore", "20261105-000000")
         assert code == 1 and "no restore point 20261105-000000" in err
         assert tmux("list-sessions") == ""
+        # An explicit null where a string or list is read with a default.
+        agent = {
+            "provider": "codex",
+            "conv": "t",
+            "cwd": canned["dir"],
+            "options": None,
+        }
+        bad.write_text(
+            json.dumps(snapshot(T + 5, session("nulls", canned["dir"], agent=agent)))
+        )
+        code, out, err = run("restore", "20261105-000000", "--dry-run")
+        assert code == 1 and "no restore point 20261105-000000" in err
+        assert "Traceback" not in err and "resume" not in out
+        point = snapshot(T + 5, session("nulls", canned["dir"]))
+        point["sessions"][0]["windows"][0]["layout"] = None
+        bad.write_text(json.dumps(point))
+        code, out, err = run("restore", "20261105-000000")
+        assert code == 1 and "no restore point 20261105-000000" in err
+        assert tmux("list-sessions") == ""
 
 
 class TestShow:
