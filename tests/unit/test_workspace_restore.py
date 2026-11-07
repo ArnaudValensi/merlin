@@ -372,10 +372,10 @@ class TestRestore:
         )
         real_fill = rs._fill_window
 
-        def fill_then_fail(win, wid, live_claude):
+        def fill_then_fail(win, wid, live, launched):
             if win["name"] == "one":
                 raise rs.RestoreError("split failed")
-            return real_fill(win, wid, live_claude)
+            return real_fill(win, wid, live, launched)
 
         monkeypatch.setattr(rs, "_fill_window", fill_then_fail)
         store.write_snapshot(store.pending_path(), snapshot)
@@ -420,10 +420,10 @@ class TestRestore:
         )
         real_fill = rs._fill_window
 
-        def fill_then_fail(win, wid, live_claude):
+        def fill_then_fail(win, wid, live, launched):
             if win["name"] == "one":
                 raise rs.RestoreError("split failed")
-            return real_fill(win, wid, live_claude)
+            return real_fill(win, wid, live, launched)
 
         monkeypatch.setattr(rs, "_fill_window", fill_then_fail)
         assert rs.restore(snapshot)["failed"] == ["merlin-dev"]
@@ -477,11 +477,11 @@ class TestRestore:
         )
         real_fill = rs._fill_window
 
-        def fill_then_replace(win, wid, live_claude):
+        def fill_then_replace(win, wid, live, launched):
             if win["name"] == "one":
                 self._replace_server(("merlin-dev", 1))
                 raise rs.RestoreError("server died")
-            return real_fill(win, wid, live_claude)
+            return real_fill(win, wid, live, launched)
 
         monkeypatch.setattr(rs, "_fill_window", fill_then_replace)
         assert rs.restore(snapshot)["failed"] == ["half"]
@@ -508,13 +508,13 @@ class TestRestore:
         )
         real_fill = rs._fill_window
 
-        def fill_then_replace(win, wid, live_claude):
+        def fill_then_replace(win, wid, live, launched):
             if win["name"] == "one":
                 # The replacement reuses @0 and @1, the ids the rollback holds
                 # for the original and the added window, and index 0.
                 self._replace_server(("other", 2))
                 raise rs.RestoreError("server died")
-            return real_fill(win, wid, live_claude)
+            return real_fill(win, wid, live, launched)
 
         monkeypatch.setattr(rs, "_fill_window", fill_then_replace)
         assert rs.restore(snapshot)["failed"] == ["merlin-dev"]
@@ -622,6 +622,151 @@ class TestRestore:
         assert wait_for(log / "codex.c.args") == [c, "resume", "thread-new"]
         time.sleep(0.5)
         assert sorted(p.name for p in log.iterdir()) == ["codex.c.args"]
+
+    def test_a_failed_tmux_read_stops_the_restore_before_anything(
+        self, iso, monkeypatch
+    ):
+        # A Codex thread runs in a live window; the discovery read fails
+        # (a timeout, say) while the later tmux calls would work. Nothing is
+        # known about what is live, so nothing is created, nothing typed,
+        # and the offer stays for a retry.
+        from workspace import service, store
+
+        root, log = iso
+        a, b = dirs(root, "a", "b")
+        tmux("new-session", "-d", "-s", "elsewhere", "-c", a)
+        tmux("set-option", "-w", "-t", "=elsewhere:0", "@agent_provider", "codex")
+        tmux("set-option", "-w", "-t", "=elsewhere:0", "@agent_conv", "thread-live")
+        snapshot = snapshot_of(
+            {
+                "name": "recovered",
+                "active_window": 0,
+                "windows": [
+                    win(
+                        0,
+                        "cx",
+                        [
+                            {
+                                "index": 0,
+                                "cwd": b,
+                                "agent": {
+                                    "provider": "codex",
+                                    "conv": "thread-live",
+                                    "cwd": b,
+                                    "options": [],
+                                },
+                            }
+                        ],
+                    )
+                ],
+            }
+        )
+        store.write_pending(
+            {**store.frozen(snapshot, "server-gone", 5.0), "id": "20200101-000001"}
+        )
+        with pytest.MonkeyPatch.context() as once:
+            once.setattr(snap, "read_tmux_status", lambda: (None, snap.FAILED))
+            with pytest.raises(rs.RestoreUnreadable, match="try again"):
+                service.restore_pending()
+        assert tmux("list-sessions", "-F", "#{session_name}") == "elsewhere"
+        time.sleep(0.3)
+        assert list(log.iterdir()) == []
+        assert store.read_pending() is not None
+        # The read works again: the thread is seen live and not launched.
+        result = service.restore_pending()
+        assert result["restored"] == ["recovered"] and result["agents"] == 0
+
+    def test_a_conversation_named_twice_in_the_snapshot_is_typed_once(self, iso):
+        # Codex is attributed per window, so a capture can name one thread
+        # in several panes; the same for a Claude conversation seen through
+        # the window option. One launch each, in the first pane, the others
+        # plain shells; an unrelated conversation still launches.
+        root, log = iso
+        d = dirs(root, "p1", "p2", "p3", "p4", "p5", "p6")
+
+        def agent(provider, conv, cwd):
+            return {"provider": provider, "conv": conv, "cwd": cwd, "options": []}
+
+        pane = lambda i, cwd, a=None: {
+            "index": i,
+            "cwd": cwd,
+            **({"agent": a} if a else {}),
+        }  # noqa: E731
+        snapshot = snapshot_of(
+            {
+                "name": "one",
+                "active_window": 0,
+                "windows": [
+                    win(
+                        0,
+                        "twice",
+                        [
+                            pane(0, d[0], agent("codex", "t-1", d[0])),
+                            pane(1, d[1], agent("codex", "t-1", d[1])),
+                        ],
+                    ),
+                    win(1, "again", [pane(0, d[2], agent("codex", "t-1", d[2]))]),
+                    win(2, "cl", [pane(0, d[3], agent("claude", "c-1", d[3]))]),
+                ],
+            },
+            {
+                "name": "two",
+                "active_window": 0,
+                "windows": [
+                    win(0, "cl2", [pane(0, d[4], agent("claude", "c-1", d[4]))]),
+                    win(1, "new", [pane(0, d[5], agent("codex", "t-2", d[5]))]),
+                ],
+            },
+        )
+        result = rs.restore(snapshot)
+        assert result["restored"] == ["one", "two"] and result["agents"] == 3
+        assert wait_for(log / "codex.p1.args") == [d[0], "resume", "t-1"]
+        assert wait_for(log / "claude.p4.args") == [d[3], "--resume", "c-1"]
+        assert wait_for(log / "codex.p6.args") == [d[5], "resume", "t-2"]
+        time.sleep(0.5)
+        assert sorted(p.name for p in log.iterdir()) == [
+            "claude.p4.args",
+            "codex.p1.args",
+            "codex.p6.args",
+        ]
+
+    def test_a_rolled_back_session_releases_what_it_typed(self, iso, monkeypatch):
+        # Session "first" types thread X then fails and is rolled back (the
+        # thread died with it); session "second" names X too and must get it.
+        root, log = iso
+        f, g, s = dirs(root, "f", "g", "s")
+        real_fill = rs._fill_window
+
+        def fill_then_fail(win, wid, live, launched):
+            if win["name"] == "boom":
+                raise rs.RestoreError("split failed")
+            return real_fill(win, wid, live, launched)
+
+        monkeypatch.setattr(rs, "_fill_window", fill_then_fail)
+        agent = {"provider": "codex", "conv": "x", "cwd": "", "options": []}
+        snapshot = snapshot_of(
+            {
+                "name": "first",
+                "active_window": 0,
+                "windows": [
+                    win(
+                        0, "ok", [{"index": 0, "cwd": f, "agent": {**agent, "cwd": f}}]
+                    ),
+                    win(1, "boom", [{"index": 0, "cwd": g}]),
+                ],
+            },
+            {
+                "name": "second",
+                "active_window": 0,
+                "windows": [
+                    win(0, "ok", [{"index": 0, "cwd": s, "agent": {**agent, "cwd": s}}])
+                ],
+            },
+        )
+        result = rs.restore(snapshot)
+        assert result["failed"] == ["first"] and result["restored"] == ["second"]
+        assert result["agents"] == 1
+        assert wait_for(log / "codex.s.args") == [s, "resume", "x"]
 
     def test_a_second_restore_fails_at_once_while_one_runs(self, iso, monkeypatch):
         import fcntl
@@ -790,7 +935,7 @@ class TestKeptJobWindows:
 
     def test_the_restore_itself_skips_a_live_run(self, monkeypatch):
         restored = []
-        monkeypatch.setattr(snap, "read_tmux", lambda: ([], [], []))
+        monkeypatch.setattr(snap, "read_tmux_status", lambda: (([], [], []), snap.OK))
         monkeypatch.setattr(rs, "live_sessions_of", lambda rows: {})
         monkeypatch.setattr(rs, "live_conversations", lambda rows: set())
         monkeypatch.setattr(rs, "job_runs_of", lambda rows: {"r1"})

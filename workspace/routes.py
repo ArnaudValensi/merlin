@@ -32,6 +32,8 @@ async def api_restore():
         return await asyncio.to_thread(service.restore_pending)
     except rs.RestoreBusy as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except rs.RestoreUnreadable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @api_router.post("/dismiss")

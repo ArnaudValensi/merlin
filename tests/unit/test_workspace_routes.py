@@ -33,6 +33,18 @@ def test_restore_answers_409_while_another_restore_runs(client, monkeypatch):
     assert r.json()["detail"] == "a restore is already running"
 
 
+def test_restore_answers_503_when_tmux_could_not_be_read(client, monkeypatch):
+    def unreadable():
+        raise rs.RestoreUnreadable(
+            "tmux could not be read, nothing restored: try again"
+        )
+
+    monkeypatch.setattr(service, "restore_pending", unreadable)
+    r = client.post("/api/workspace/restore")
+    assert r.status_code == 503
+    assert "try again" in r.json()["detail"]
+
+
 def test_restore_returns_the_engine_result(client, monkeypatch):
     result = {"restored": ["a"], "skipped": [], "failed": [], "agents": 2}
     monkeypatch.setattr(service, "restore_pending", lambda: result)

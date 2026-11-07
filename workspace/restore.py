@@ -16,9 +16,15 @@ workspace restore``) gets them:
   workspace directory, an advisory ``flock`` taken without waiting; a second
   restore fails at once with ``RestoreBusy``;
 - no conversation launched twice, whatever the provider: a conversation is
-  live when a Claude session file names it, or when a live window's
+  live when a Claude session file names it, when a live window's
   ``@agent_provider`` / ``@agent_conv`` (stamped by the agents' SessionStart
-  hook, Codex included) names it. Its pane comes back as a plain shell.
+  hook, Codex included) names it, or when this very restore has just typed
+  it into an earlier pane (a snapshot can name one conversation in several
+  panes, since Codex is attributed per window). Its pane comes back as a
+  plain shell. A rolled-back session releases what it launched. When tmux
+  could not be read at the start, nothing is known about what is live, so
+  the restore stops before any mutation (``RestoreError``, retryable); only
+  a confirmed absence of server means an empty workspace.
 
 A session whose name is live is skipped, except a *fillable* one: the single
 plain shell the web terminal auto-creates (``merlin-dev``) when it is opened
@@ -73,6 +79,11 @@ class RestoreError(RuntimeError):
 
 class RestoreBusy(RestoreError):
     """Another restore holds ``restore.lock``, in this process or another."""
+
+
+class RestoreUnreadable(RestoreError):
+    """tmux answered but could not be read whole: what is live is unknown,
+    so nothing was touched. Try again."""
 
 
 def lock_path():
@@ -284,9 +295,13 @@ def live_conversations(
     return out
 
 
-def _fill_window(win: dict, wid: str, live: set[tuple[str, str]]) -> int:
+def _fill_window(
+    win: dict, wid: str, live: set[tuple[str, str]], launched: list[tuple[str, str]]
+) -> None:
     """Split the panes of a freshly created window, restamp its options and
-    type the agents. Returns the number of agents launched."""
+    type the agents. A conversation typed is added to ``live`` (never twice
+    in one restore) and appended to ``launched``, which the caller releases
+    from ``live`` if the session is rolled back."""
     panes = sorted(win["panes"], key=lambda p: p["index"])
     pane_ids = [_tmux("display-message", "-p", "-t", wid, "#{pane_id}")]
     for pane in panes[1:]:
@@ -321,15 +336,15 @@ def _fill_window(win: dict, wid: str, live: set[tuple[str, str]]) -> int:
     for key, value in (win.get("options") or {}).items():
         if key in snap.WINDOW_OPTIONS:
             _tmux("set-option", "-w", "-t", wid, key, str(value), check=False)
-    launched = 0
     for pane_id, pane in zip(pane_ids, panes):
         if pane.get("active"):
             _tmux("select-pane", "-t", pane_id, check=False)
         agent = pane.get("agent")
         if not agent or not agent.get("conv"):
             continue
-        if (agent["provider"], agent["conv"]) in live:
-            continue  # already running elsewhere: never launched twice
+        key = (agent["provider"], agent["conv"])
+        if key in live:
+            continue  # running elsewhere, or typed already: never twice
         _tmux(
             "send-keys",
             "-t",
@@ -338,17 +353,15 @@ def _fill_window(win: dict, wid: str, live: set[tuple[str, str]]) -> int:
             snap.shell_quote(snap.resume_command(agent)),
         )
         _tmux("send-keys", "-t", pane_id, "Enter")
-        launched += 1
+        live.add(key)
+        launched.append(key)
         time.sleep(_LAUNCH_PAUSE)
-    return launched
 
 
-def _restore_new(
-    sess: dict, server_running: bool, live_claude: set[tuple[str, str]]
-) -> int:
+def _restore_new(sess: dict, server_running: bool, live: set[tuple[str, str]]) -> int:
     name = sess["name"]
     windows = sorted(sess["windows"], key=lambda w: w["index"])
-    launched = 0
+    launched: list[tuple[str, str]] = []
     session_id = ""
     server: tuple[int, int] | None = None
     try:
@@ -397,19 +410,20 @@ def _restore_new(
                     "#{window_id}",
                 )
             if panes:
-                launched += _fill_window(win, wid, live_claude)
+                _fill_window(win, wid, live, launched)
     except RestoreError:
         if session_id:
             # Only the session this restore just created, on the server that
             # created it: a retry must find it missing, not half built and
-            # counted as present.
+            # counted as present. What it typed died with it.
             _owned(server, "kill-session", "-t", session_id)
+            live.difference_update(launched)
             logger.info("Workspace restore: rolled back the half-built %s", name)
         raise
-    return launched
+    return len(launched)
 
 
-def _restore_into(sess: dict, live_claude: set[tuple[str, str]]) -> int:
+def _restore_into(sess: dict, live: set[tuple[str, str]]) -> int:
     """Fill the auto-created single-shell session with the snapshot's windows,
     then drop its original window."""
     name = sess["name"]
@@ -425,7 +439,7 @@ def _restore_into(sess: dict, live_claude: set[tuple[str, str]]) -> int:
     # Park the original window above every snapshot index so none collides.
     park = max([w["index"] for w in windows] + [0]) + 1
     _tmux("move-window", "-s", original, "-t", f"={name}:{park}", check=False)
-    launched = 0
+    launched: list[tuple[str, str]] = []
     added: list[str] = []
     try:
         for win in windows:
@@ -446,7 +460,7 @@ def _restore_into(sess: dict, live_claude: set[tuple[str, str]]) -> int:
             )
             added.append(wid)
             if panes:
-                launched += _fill_window(win, wid, live_claude)
+                _fill_window(win, wid, live, launched)
     except RestoreError:
         # Back to the placeholder it was: the windows this restore added go,
         # the original window returns to its index, so the session is
@@ -454,6 +468,7 @@ def _restore_into(sess: dict, live_claude: set[tuple[str, str]]) -> int:
         for wid in added:
             _owned(server, "kill-window", "-t", wid)
         _owned(server, "move-window", "-s", original, "-t", f"={name}:{original_index}")
+        live.difference_update(launched)
         logger.info("Workspace restore: rolled back the half-filled %s", name)
         raise
     _select_active(sess)
@@ -466,7 +481,7 @@ def _restore_into(sess: dict, live_claude: set[tuple[str, str]]) -> int:
         _tmux("kill-window", "-t", original, check=False)
     else:
         logger.info("Workspace restore: kept %s's original window, now in use", name)
-    return launched
+    return len(launched)
 
 
 def _select_active(sess: dict) -> None:
@@ -480,14 +495,18 @@ def restore(snapshot: dict) -> dict:
 
     Returns ``{"restored": [names], "skipped": [names], "agents": n,
     "failed": [names]}``. One session failing does not stop the others.
-    Raises ``RestoreBusy`` at once when another restore is running.
+    Raises ``RestoreBusy`` at once when another restore is running, and
+    ``RestoreUnreadable`` before touching anything when tmux answered but
+    could not be read whole (what is live is then unknown).
     """
     with restore_lock():
         return _restore(snapshot)
 
 
 def _restore(snapshot: dict) -> dict:
-    rows = snap.read_tmux()
+    rows, status = snap.read_tmux_status()
+    if status == snap.FAILED:
+        raise RestoreUnreadable("tmux could not be read, nothing restored: try again")
     server_running = rows is not None
     live = live_sessions_of(rows) if rows is not None else {}
     job_runs = job_runs_of(rows) if rows is not None else set()
