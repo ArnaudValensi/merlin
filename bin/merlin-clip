@@ -4,26 +4,45 @@
 # Copy:  echo "text" | merlin-clip copy
 # Paste: merlin-clip paste
 #
-# Works by sending/reading OSC 52 escape sequences through tmux to the
-# browser's clipboard via xterm.js. Requires tmux allow-passthrough on.
+# Copy works by writing an OSC 52 escape sequence to the classic terminal's
+# tmux client tty (xterm.js turns it into a clipboard write), and, inside
+# tmux, storing the text in the "merlin-clip" paste buffer, which the native
+# terminal's bridge hands to its page.
 
 CLIP_FILE="/tmp/merlin-clipboard/current.txt"
 
 _copy() {
-    # Read stdin, base64-encode, emit OSC 52 write sequence.
-    # Inside tmux: write directly to the client TTY to bypass tmux
-    # (tmux does not reliably forward OSC 52 to the outer terminal).
-    data=$(base64 | tr -d '\n')
+    # Read stdin once, exactly (trailing newlines included).
+    tmp=$(mktemp "${TMPDIR:-/tmp}/merlin-clip.XXXXXX") || exit 1
+    cat > "$tmp"
+    data=$(base64 < "$tmp" | tr -d '\n')
     if [ -n "$TMUX" ]; then
+        # The classic terminal: OSC 52 straight to its tmux client's tty
+        # (tmux's own forwarding mangles it, see docs/merlin-cli/clipboard.md).
+        # tmux names the client it considers current; a native terminal's
+        # control client has no tty, so then take the most recently active
+        # client of this pane's session that has one.
         tty=$(tmux display-message -p '#{client_tty}' 2>/dev/null)
+        if [ -z "$tty" ] && [ -n "$TMUX_PANE" ]; then
+            tty=$(tmux list-clients -t "$TMUX_PANE" \
+                -F '#{client_activity} #{client_control_mode} #{client_tty}' 2>/dev/null \
+                | awk '$2 == 0 && $3 != ""' | sort -rn | head -n 1 | cut -d' ' -f3)
+        fi
+        delivered=
         if [ -n "$tty" ] && [ -w "$tty" ]; then
-            printf '\033]52;c;%s\033\\' "$data" > "$tty"
-        else
+            printf '\033]52;c;%s\033\\' "$data" > "$tty" && delivered=1
+        fi
+        # The native terminal: its bridge watches this paste buffer
+        # (terminal/native.py) and hands the text to the page.
+        tmux load-buffer -b merlin-clip "$tmp" 2>/dev/null && delivered=1
+        # tmux unreachable (a stale $TMUX): the sequence goes to stdout.
+        if [ -z "$delivered" ]; then
             printf '\033]52;c;%s\033\\' "$data"
         fi
     else
         printf '\033]52;c;%s\033\\' "$data"
     fi
+    rm -f "$tmp"
 }
 
 _paste() {

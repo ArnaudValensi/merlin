@@ -13,7 +13,6 @@ import base64
 import contextlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -24,7 +23,7 @@ import pytest
 
 from terminal import native
 from terminal import routes as classic
-from terminal.control import quote
+from terminal.control import ControlClient, quote
 from terminal.native import (
     FRAME_HISTORY,
     FRAME_OUTPUT,
@@ -41,6 +40,9 @@ from terminal.tmux import TMUX_CONF
 
 HAS_TMUX = shutil.which("tmux") is not None
 needs_tmux = pytest.mark.skipif(not HAS_TMUX, reason="tmux not installed")
+needs_node = pytest.mark.skipif(
+    shutil.which("node") is None, reason="node not installed"
+)
 MERLIN_CLIP = Path(__file__).resolve().parents[2] / "bin" / "merlin-clip"
 
 
@@ -109,64 +111,12 @@ class FakeWS:
         return header, data
 
 
-class MiniScreen:
-    """Just enough of a terminal to read text back: printable characters,
-    CR, LF (scrolling into history), CUP; other sequences are skipped."""
-
-    _CSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
-
-    def __init__(self, cols: int, rows: int) -> None:
-        self.cols, self.rows = cols, rows
-        self.lines: list[list[str]] = [[] for _ in range(rows)]
-        self.top = self.cy = self.cx = 0
-
-    def feed(self, text: str) -> MiniScreen:
-        i = 0
-        while i < len(text):
-            ch = text[i]
-            if ch == "\x1b":
-                m = self._CSI.match(text, i)
-                if m:
-                    seq = m.group(0)
-                    if seq.endswith("H") and "?" not in seq:
-                        parts = (seq[2:-1].split(";") + ["", ""])[:2]
-                        self.cy = max(int(parts[0] or 1), 1) - 1
-                        self.cx = max(int(parts[1] or 1), 1) - 1
-                    i = m.end()
-                    continue
-                i += 2
-                continue
-            if ch == "\r":
-                self.cx = 0
-            elif ch == "\n":
-                self._down()
-            elif ch >= " ":
-                if self.cx >= self.cols:
-                    self.cx = 0
-                    self._down()
-                row = self.lines[self.top + self.cy]
-                row.extend(" " * (self.cx + 1 - len(row)))
-                row[self.cx] = ch
-                self.cx += 1
-            i += 1
-        return self
-
-    def _down(self) -> None:
-        self.cy += 1
-        if self.cy == self.rows:
-            self.lines.append([])
-            self.top += 1
-            self.cy = self.rows - 1
-
-    def text(self) -> list[str]:
-        return ["".join(line).rstrip() for line in self.lines]
-
-
 # -- pure ---------------------------------------------------------------------------
 
 
 def test_parse_tmux_version():
     assert parse_tmux_version("tmux 3.8") == (3, 8)
+    assert parse_tmux_version("3.8") == (3, 8)  # the #{version} format
     assert parse_tmux_version("tmux 3.7c\n") == (3, 7)
     assert parse_tmux_version("tmux next-3.9") == (3, 9)
     assert parse_tmux_version("tmux master") == (99, 0)
@@ -223,7 +173,19 @@ def test_mode_sequences_restore_every_mode_and_place_the_cursor_last():
         b"\x1b[?25l",
     ):
         assert part in seq
-    assert seq.endswith(b"\x1b[8;5H")
+    # Region and origin first (they home the cursor), the cursor next, the
+    # insert mode only after it.
+    assert seq.index(b"\x1b[3;21r") < seq.index(b"\x1b[8;5H") < seq.index(b"\x1b[4h")
+
+
+def test_pending_wrap_rewrites_the_cursor_row():
+    seq = mode_sequences(_modes(pane_width="5", cursor_x="5", cursor_y="2"), b"ABCDE")
+    assert seq == b"\x1b[3;1HABCDE"
+    # Without the row, the cursor is clamped to the last column.
+    assert (
+        mode_sequences(_modes(pane_width="5", cursor_x="5", cursor_y="2"))
+        == b"\x1b[3;5H"
+    )
 
 
 def test_mode_sequences_default_pane_is_just_the_cursor():
@@ -239,14 +201,13 @@ def test_origin_mode_cursor_is_relative_to_the_region():
             cursor_y="7",
         )
     )
-    assert seq.endswith(b"\x1b[3;1H")
+    assert b"\x1b[3;1H" in seq
 
 
-def test_build_replay_keeps_rows_whole_and_appends_pending_bytes():
-    replay = build_replay(
-        _modes(cursor_x="0", cursor_y="1"), [b"one", b"two"], None, b"\x1b[3"
-    )
-    assert replay == b"one\x1b[0m\r\ntwo\x1b[0m\x1b[2;1H\x1b[3"
+def test_build_replay_keeps_rows_whole():
+    replay = build_replay(_modes(cursor_x="0", cursor_y="1"), [b"one", b"two"])
+    # G1 is DEC graphics for the SO/SI around captured line-drawing cells.
+    assert replay == b"\x1b)0one\x1b[0m\r\ntwo\x1b[0m\x1b[2;1H"
 
 
 def test_build_replay_alternate_screen_draws_main_then_enters_alternate():
@@ -257,7 +218,7 @@ def test_build_replay_alternate_screen_draws_main_then_enters_alternate():
         [b"main"],
         [b"vim", b"~"],
     )
-    assert replay.startswith(b"main\x1b[0m\x1b[2;4H\x1b[?1049h\x1b[H\x1b[2J")
+    assert replay.startswith(b"\x1b)0main\x1b[0m\x1b[2;4H\x1b[?1049h\x1b[H\x1b[2J")
     assert b"\x1b[1;1Hvim\x1b[0m\x1b[2;1H~\x1b[0m" in replay
 
 
@@ -411,6 +372,7 @@ async def test_attach_reports_session_windows_and_a_snapshot(server):
 
 
 @needs_tmux
+@needs_node
 @pytest.mark.asyncio
 async def test_snapshot_mid_flood_then_live_stream_is_exact(server):
     """The Reply.seq boundary with a real consumer: snapshot replay plus the
@@ -424,8 +386,10 @@ async def test_snapshot_mid_flood_then_live_stream_is_exact(server):
         await bridge.snapshot(bridge.pane)
         assert await _until(lambda: b"DONE-42" in ws.stream_after_last_snapshot()[1])
         header, data = ws.stream_after_last_snapshot()
-        screen = MiniScreen(header["cols"], header["rows"]).feed(data.decode())
-        numbers = [line for line in screen.text() if line.isdigit()]
+        lines = _xterm_states(header["cols"], header["rows"], {"page": [data]})["page"][
+            "text"
+        ]
+        numbers = [line for line in lines if line.isdigit()]
         # The snapshot carries the last INITIAL_HISTORY rows of history, so
         # the run starts there and must be gapless and single to the end.
         first = int(numbers[0])
@@ -565,6 +529,7 @@ async def test_resize_switch_and_window_events_reach_the_page(server):
 
 
 @needs_tmux
+@needs_node
 @pytest.mark.asyncio
 async def test_a_page_that_falls_behind_is_dropped_then_resynchronised(server):
     socket, _, _ = server
@@ -587,24 +552,113 @@ async def test_a_page_that_falls_behind_is_dropped_then_resynchronised(server):
         )
         assert await _until(lambda: b"DONE-43" in ws.stream_after_last_snapshot()[1])
         header, data = ws.stream_after_last_snapshot()
-        screen = MiniScreen(header["cols"], header["rows"]).feed(data.decode())
-        assert "DONE-43" in screen.text()
+        lines = _xterm_states(header["cols"], header["rows"], {"page": [data]})["page"][
+            "text"
+        ]
+        assert "DONE-43" in lines
     finally:
+        await _stop(bridge, task)
+
+
+class ClassicClient:
+    """A normal tmux client on a PTY, as the classic terminal runs one; what
+    reaches its tty is read from the PTY master."""
+
+    def __init__(self, socket: str, session: str) -> None:
+        import pty
+
+        env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
+        env["TERM"] = "xterm-256color"
+        self.pid, self.fd = pty.fork()
+        if self.pid == 0:  # pragma: no cover - the child only execs
+            try:
+                os.execvpe("tmux", ["tmux", "-S", socket, "attach", "-t", session], env)
+            finally:
+                os._exit(1)
+        os.set_blocking(self.fd, False)
+        self.received = bytearray()
+
+    def read(self) -> bytes:
+        with contextlib.suppress(BlockingIOError, OSError):
+            while True:
+                chunk = os.read(self.fd, 65536)
+                if not chunk:
+                    break
+                self.received += chunk
+        return bytes(self.received)
+
+    def close(self) -> None:
+        import signal
+
+        with contextlib.suppress(OSError):
+            os.kill(self.pid, signal.SIGHUP)
+        with contextlib.suppress(OSError):
+            os.close(self.fd)
+        with contextlib.suppress(ChildProcessError):
+            os.waitpid(self.pid, 0)
+
+
+def _osc52(text: str) -> bytes:
+    return b"\x1b]52;c;" + base64.b64encode(text.encode())
+
+
+@needs_tmux
+@pytest.mark.asyncio
+@pytest.mark.parametrize("classic_first", [True, False])
+async def test_merlin_clip_reaches_both_terminals_when_they_coexist(
+    server, classic_first
+):
+    """With a classic client and a native page on one session, whichever
+    client tmux calls current: the classic tty gets its OSC 52, the native page
+    a clipboard frame, and nothing is written into the pane (or a control
+    stream). Both the shell path and a provider path (stdout not the pane, as
+    when NeoVim runs merlin-clip) behave the same."""
+    socket, tmux, tmp = server
+    classic_client = None
+    if classic_first:
+        classic_client = ClassicClient(socket, "t")
+        assert await _until(lambda: tmux("list-clients").strip() != "")
+    bridge, ws, task = await _bridge(socket)
+    try:
+        if classic_client is None:
+            classic_client = ClassicClient(socket, "t")
+            assert await _until(lambda: len(tmux("list-clients").split("\n")) >= 3)
+        clip = quote(str(MERLIN_CLIP))
+        await _run(bridge, f"printf shell-copy | sh {clip} copy")
+        assert await _until(lambda: _osc52("shell-copy") in classic_client.read())
+        assert await _until(
+            lambda: any(c.get("text") == "shell-copy" for c in ws.controls("clipboard"))
+        )
+        out = tmp / "provider-stdout"
+        await _run(bridge, f"printf provider-copy | sh {clip} copy > {out}")
+        assert await _until(lambda: _osc52("provider-copy") in classic_client.read())
+        assert await _until(
+            lambda: any(
+                c.get("text") == "provider-copy" for c in ws.controls("clipboard")
+            )
+        )
+        assert out.read_bytes() == b""
+        assert b"\x1b]52" not in _output(ws)
+    finally:
+        classic_client.close()
         await _stop(bridge, task)
 
 
 @needs_tmux
 @pytest.mark.asyncio
-async def test_osc52_from_merlin_clip_rides_the_pane_output(server):
-    """A control client has no tty, so merlin-clip writes its OSC 52 into the
-    pane, where the page's parser takes it: nothing is written into the
-    control stream itself."""
+async def test_merlin_clip_with_only_a_native_page(server):
     socket, _, _ = server
     bridge, ws, task = await _bridge(socket)
     try:
-        await _run(bridge, f"printf copied | sh {quote(str(MERLIN_CLIP))} copy")
-        encoded = base64.b64encode(b"copied")
-        assert await _until(lambda: b"\x1b]52;c;" + encoded in _output(ws))
+        await _run(
+            bridge, f"printf 'two\\nlines\\n' | sh {quote(str(MERLIN_CLIP))} copy"
+        )
+        assert await _until(
+            lambda: any(
+                c.get("text") == "two\nlines\n" for c in ws.controls("clipboard")
+            )
+        )
+        assert b"\x1b]52" not in _output(ws)
     finally:
         await _stop(bridge, task)
 
@@ -637,17 +691,6 @@ async def test_history_rows_by_absolute_number(server):
         assert [int(x) for x in lines] == list(range(int(lines[0]), int(lines[0]) + 50))
     finally:
         await _stop(bridge, task)
-
-
-@pytest.mark.asyncio
-async def test_endpoint_refuses_an_old_tmux_with_a_notice(monkeypatch):
-    monkeypatch.setattr(native, "verify_ws_cookie", lambda ws: True)
-    monkeypatch.setattr(native, "tmux_version", lambda: ("tmux 3.4", (3, 4)))
-    ws = FakeWS()
-    await native.native_ws(ws)  # type: ignore[arg-type]
-    notice = ws.controls("unsupported")
-    assert notice == [{"type": "unsupported", "version": "tmux 3.4", "minimum": "3.8"}]
-    assert ws.closed is not None and ws.closed[0] == native.CLOSE_UNSUPPORTED
 
 
 @pytest.mark.asyncio
@@ -716,3 +759,386 @@ async def test_the_control_client_gets_the_terminal_environment(monkeypatch):
     assert "MERLIN_SAAS_TOKEN" not in env and "TMUX" not in env
     assert env["TERM"] == "xterm-256color" and env["MERLIN_TERMINAL_HOOKS"]
     assert seen["cwd"] == "/somewhere"
+
+
+# -- differential: snapshot + live stream against the uninterrupted stream -----------
+
+XTERM_STATE = Path(__file__).with_name("xterm_state.js")
+needs_node = pytest.mark.skipif(
+    shutil.which("node") is None, reason="node not installed"
+)
+
+
+def _xterm_states(cols: int, rows: int, streams: dict[str, list[bytes]]) -> dict:
+    """The page's own parser (vendored xterm.js, never opened) after each
+    stream, run by node."""
+    request = {
+        "cols": cols,
+        "rows": rows,
+        "streams": {
+            name: [base64.b64encode(c).decode() for c in chunks]
+            for name, chunks in streams.items()
+        },
+    }
+    done = subprocess.run(
+        ["node", str(XTERM_STATE)],
+        input=json.dumps(request),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    return json.loads(done.stdout)
+
+
+def _state_diff(got: dict, want: dict) -> list[str]:
+    """Readable differences between two parser states."""
+    out = []
+    for key in ("type", "cursor", "modes", "cursorHidden", "recentHistory"):
+        if got[key] != want[key]:
+            out.append(f"{key}: {got[key]!r} != {want[key]!r}")
+    for screen in ("active", "normal"):
+        for y, (g, w) in enumerate(zip(got[screen], want[screen], strict=True)):
+            if g != w:
+                text = lambda row: "".join(c[0] or " " for c in row["cells"])  # noqa: E731
+                attrs = [
+                    x
+                    for x, (a, b) in enumerate(zip(g["cells"], w["cells"], strict=True))
+                    if a != b
+                ]
+                out.append(
+                    f"{screen}[{y}]: {text(g)!r} != {text(w)!r} wrapped {g['wrapped']}/{w['wrapped']} cells {attrs[:5]}"
+                )
+    return out
+
+
+# Each case: what the program writes before the snapshot, then after it.
+DIFFERENTIAL = {
+    "rendition": (r"\033[31;1;4mA", r"B\033[0mC"),
+    "rendition-256-and-rgb": (r"\033[38;5;208;48;2;1;2;3mA", r"B"),
+    "pending-wrap": (r"%020d", r"F"),
+    "partial-escape": (r"x\033[3", r"1mR"),
+    "split-utf8": (r"a\303", r"\251b"),
+    "alternate-enter": (r"main\r\n\033[?1049h\033[Halt", r"\033[?1049lback"),
+    "alternate-leave": (r"one\r\n\033[?1049h\033[Hfull", r"!\033[?1049ltwo"),
+    "charset": (r"\033(0lqk", r"x\033(Bq"),
+    "shift-out": (r"\033)0\016lq", r"k\017q"),
+    "modes": (
+        r"\033[?1h\033=\033[?2004h\033[?1002h\033[?1006h\033[?25l\033[4h\033[2;5r",
+        r"Z",
+    ),
+    "origin": (r"\033[2;4r\033[?6h\033[2;3Hin", r"\033[1;1Hz"),
+    "no-wrap": (r"\033[?7l%025d", r"Q"),
+}
+
+
+@needs_tmux
+@needs_node
+@pytest.mark.asyncio
+async def test_snapshot_then_live_equals_the_uninterrupted_stream(server):
+    """A snapshot taken while the program pauses, followed by the live bytes,
+    leaves the page's parser exactly where the whole stream does: cells,
+    attributes, wraps, cursor (pending wrap included), modes, both screens.
+    Every case runs at once, each in its own session with its own bridge and
+    a recorder that sees the pane from its first byte."""
+    socket, tmux, tmp = server
+    cols, rows = 20, 6
+    env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
+
+    async def one(index: int, case: str) -> tuple[str, list[str]]:
+        before, after = DIFFERENTIAL[case]
+        session = f"d{index}"
+        script = tmp / f"{session}.sh"
+        script.write_text(
+            f"sleep 0.8; printf '{before}'; sleep 1.4; printf '{after}'; sleep 30\n"
+        )
+        tmux(
+            "new-session",
+            "-d",
+            "-s",
+            session,
+            "-x",
+            str(cols),
+            "-y",
+            str(rows),
+            f"sh {script}",
+        )
+        recorded: dict[str, bytearray] = {}
+        recorder = ControlClient(
+            lambda pane, data: recorded.setdefault(pane, bytearray()).extend(data),
+            lambda name, rest: None,
+        )
+        await recorder.start(["tmux", "-S", socket, "-C", "attach", "-t", session], env)
+        bridge, ws, task = await _bridge(socket, session)
+        try:
+            pane = bridge.pane
+            await asyncio.sleep(1.4)  # inside the program's pause
+            await bridge.snapshot(pane)
+            await asyncio.sleep(1.6)  # the second write has happened
+            _, got = ws.stream_after_last_snapshot()
+            reference = bytes(recorded.get(pane, b""))
+            if not reference:
+                return case, ["the recorder saw nothing"]
+            states = _xterm_states(
+                cols, rows, {"reference": [reference], "replayed": [got]}
+            )
+            return case, _state_diff(states["replayed"], states["reference"])
+        finally:
+            await _stop(bridge, task)
+            await recorder.close()
+
+    results = await asyncio.gather(
+        *(one(i, case) for i, case in enumerate(sorted(DIFFERENTIAL)))
+    )
+    assert {case: diff for case, diff in results if diff} == {}
+
+
+# -- flow control and delivery, in memory --------------------------------------------
+
+
+class FakeControl:
+    """Stands in for the control client: answers the snapshot's commands with a
+    one-row pane, numbers output like the real one."""
+
+    def __init__(self) -> None:
+        self.seq = 0
+        self.calls: list[tuple[str, ...]] = []
+        self.gate: asyncio.Event | None = None
+        self.closed = False
+        self.exited = asyncio.Event()
+        self.pid = None
+
+    async def command(self, *commands: str, timeout: float = 15.0):
+        from terminal.control import Reply
+
+        self.calls.append(commands)
+        if self.gate is not None:
+            await self.gate.wait()
+        replies = []
+        for c in commands:
+            if (
+                c.startswith("display -p -t")
+                and "pane_width" not in c
+                and "#{pane_id}" not in c
+            ):
+                replies.append(Reply(True, [b"100\t0"], self.seq))
+            elif "pane_id" in c and "pane_width" in c:
+                values = dict.fromkeys(native._PANE_FIELDS, "0")
+                values.update(
+                    pane_id="%1",
+                    pane_width="10",
+                    pane_height="2",
+                    cursor_flag="1",
+                    wrap_flag="1",
+                    scroll_region_lower="1",
+                    cursor_shape="default",
+                    bracket_paste_flag="0",
+                    history_added="0",
+                    history_collected="0",
+                )
+                replies.append(
+                    Reply(
+                        True,
+                        ["\t".join(values[f] for f in native._PANE_FIELDS).encode()],
+                        self.seq,
+                    )
+                )
+            elif c.startswith("capture-pane") and "-P" in c.split():
+                replies.append(Reply(True, [b""], self.seq))
+            elif c.startswith("capture-pane"):
+                replies.append(Reply(True, [b"row one", b"row two"], self.seq))
+            else:
+                replies.append(Reply(True, [], self.seq))
+        return replies
+
+    async def close(self) -> None:
+        self.closed = True
+
+    def output(self, bridge: NativeBridge, pane: str, data: bytes) -> None:
+        self.seq += 1
+        bridge._on_output(pane, data)
+
+
+def _fake_bridge() -> tuple[NativeBridge, FakeWS, FakeControl]:
+    ws = FakeWS()
+    bridge = NativeBridge(ws)  # type: ignore[arg-type]
+    fake = FakeControl()
+    bridge.client = fake  # type: ignore[assignment]
+    return bridge, ws, fake
+
+
+def _snapshots(bridge: NativeBridge) -> int:
+    return sum(1 for f in bridge.out.frames if f.data[:1] == bytes([FRAME_SNAPSHOT]))
+
+
+@pytest.mark.asyncio
+async def test_overflow_with_nothing_outstanding_recovers_without_an_ack():
+    bridge, _, fake = _fake_bridge()
+    await bridge.snapshot("%1")
+    bridge.out.frames.clear()
+    bridge.out.sent = bridge.out.queued = bridge.out.acked = 0
+    for _ in range(17):  # 17 x 64 KiB queued before the sender ran
+        fake.output(bridge, "%1", b"y" * 65536)
+    assert bridge._resync is not None  # scheduled by the drop itself
+    await bridge._resync
+    assert not bridge.overflow
+    assert _snapshots(bridge) == 1
+    assert bridge.out.unacked() <= HIGH_WATER
+
+
+@pytest.mark.asyncio
+async def test_output_held_during_a_capture_is_bounded_and_the_snapshot_retried():
+    bridge, _, fake = _fake_bridge()
+    bridge.pane = "%1"
+    fake.gate = asyncio.Event()
+    capture = asyncio.create_task(bridge.snapshot("%1"))
+    await asyncio.sleep(0.01)
+    assert bridge.snapshotting
+    for _ in range(40):  # 2.5 MiB while the capture is in flight
+        fake.output(bridge, "%1", b"z" * 65536)
+    assert bridge.held_bytes <= native.HELD_MAX
+    fake.gate.set()
+    await capture
+    # The spoiled capture was not sent; a fresh one was.
+    assert bridge._resync is not None
+    await bridge._resync
+    assert _snapshots(bridge) == 1 and not bridge.overflow
+
+
+@pytest.mark.asyncio
+async def test_a_snapshot_waits_for_room_then_goes_out():
+    bridge, _, _ = _fake_bridge()
+    bridge.pane = "%1"
+    bridge.out.sent = HIGH_WATER  # nothing acknowledged
+    await bridge.snapshot("%1")
+    assert _snapshots(bridge) == 0 and bridge.resync_wanted
+    bridge.ack(HIGH_WATER)
+    assert bridge._resync is not None
+    await bridge._resync
+    assert _snapshots(bridge) == 1
+
+
+@pytest.mark.asyncio
+async def test_history_waits_for_room_and_control_frames_cannot_pile_up():
+    bridge, ws, _ = _fake_bridge()
+    bridge.pane = "%1"
+    bridge.out.sent = HIGH_WATER
+    await bridge.history("%1", 100, 50)
+    frame = bridge.out.frames[-1].data
+    assert frame[0] == FRAME_HISTORY and b'"busy":true' in bytes(frame)
+    # A page that reads nothing at all is closed rather than queued for.
+    bridge.out.sent = native.HARD_LIMIT
+    assert not bridge.push_control({"type": "pong"})
+    await asyncio.sleep(0.05)
+    assert ws.closed == (native.CLOSE_STALLED, "page stopped reading")
+
+
+@pytest.mark.asyncio
+async def test_session_frames_and_broadcasts_share_the_one_timed_sender(monkeypatch):
+    """No second writer: the session frame and a broadcast go through the
+    outbox, so a stalled socket ends the connection through the sender's
+    timeout, and the client is closed."""
+    monkeypatch.setattr(native, "SEND_TIMEOUT", 0.1)
+    bridge, ws, fake = _fake_bridge()
+    stalled = asyncio.Event()
+
+    async def never(_data) -> None:
+        stalled.set()
+        await asyncio.Event().wait()
+
+    ws.send_text = never  # type: ignore[method-assign]
+    ws.send_bytes = never  # type: ignore[method-assign]
+    from board.sweep import ClientSession
+
+    bridge._report_session(ClientSession("t", "$1", 1, "@1", 0, "sh"))
+    run = asyncio.create_task(bridge.run())
+    await asyncio.wait_for(stalled.wait(), 2)
+    await classic.broadcast_control({"type": "voice_error", "message": "x"})
+    await asyncio.wait_for(run, 3)
+    assert fake.closed
+    assert bridge.report not in classic._client_views
+    # Never confirmed as displayed: the frame was not delivered.
+    assert bridge.report.last_reported is None
+
+
+@pytest.mark.asyncio
+async def test_start_refuses_a_running_server_that_is_too_old_or_incomplete():
+    for version, history_added in (("3.4", "0"), ("3.8", "")):
+        bridge, _, fake = _fake_bridge()
+        original = fake.command
+
+        async def command(*commands, timeout=15.0, _v=version, _h=history_added):
+            from terminal.control import Reply
+
+            if commands[0] == "display -p '#{version}'":
+                values = dict.fromkeys(native._PANE_FIELDS, "1")
+                values["history_added"] = _h
+                row = "\t".join(values[f] for f in native._PANE_FIELDS).encode()
+                return [Reply(True, [_v.encode()]), Reply(True, [row])]
+            return await original(*commands, timeout=timeout)
+
+        fake.command = command  # type: ignore[method-assign]
+
+        async def started(argv, env, cwd=None):
+            return None
+
+        fake.start = started  # type: ignore[attr-defined]
+        with pytest.raises(native.Unsupported):
+            await bridge.start(["tmux", "-C", "attach"], "/")
+        assert fake.closed
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_tmux_probe_is_bounded_and_does_not_block_the_loop(
+    tmp_path, monkeypatch
+):
+    fake_tmux = tmp_path / "bin" / "tmux"
+    fake_tmux.parent.mkdir()
+    fake_tmux.write_text("#!/bin/sh\nsleep 30\n")
+    fake_tmux.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_tmux.parent}:{os.environ['PATH']}")
+    ticks = 0
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0.01)
+
+    t = asyncio.create_task(ticker())
+    started = time.monotonic()
+    assert await native.run_tmux(["-V"], timeout=0.3) is None
+    t.cancel()
+    assert time.monotonic() - started < 2
+    assert ticks > 10  # the loop kept running meanwhile
+
+
+@pytest.mark.asyncio
+async def test_endpoint_refuses_an_old_binary_when_no_server_runs(monkeypatch):
+    monkeypatch.setattr(native, "verify_ws_cookie", lambda ws: True)
+    monkeypatch.setattr(native.board_sweep, "run_session_sweep_checked", lambda: [])
+
+    async def old() -> str:
+        return "tmux 3.4"
+
+    monkeypatch.setattr(native, "binary_version", old)
+    ws = FakeWS()
+    await native.native_ws(ws)  # type: ignore[arg-type]
+    assert ws.controls("unsupported") == [
+        {"type": "unsupported", "version": "tmux 3.4", "minimum": "3.8"}
+    ]
+    assert ws.closed is not None and ws.closed[0] == native.CLOSE_UNSUPPORTED
+
+
+@pytest.mark.asyncio
+async def test_endpoint_closes_1013_when_the_sweep_stalls(monkeypatch):
+    monkeypatch.setattr(native, "verify_ws_cookie", lambda ws: True)
+    monkeypatch.setattr(native, "PROBE_TIMEOUT", 0.1)
+    monkeypatch.setattr(
+        native.board_sweep, "run_session_sweep_checked", lambda: time.sleep(1)
+    )
+    ws = FakeWS()
+    started = time.monotonic()
+    await native.native_ws(ws)  # type: ignore[arg-type]
+    assert ws.closed == (1013, "tmux temporarily unavailable")
+    assert time.monotonic() - started < 1.0
