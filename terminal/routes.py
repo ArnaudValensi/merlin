@@ -883,3 +883,8 @@ def register_routes(app) -> None:
     (browsers send cookies on the WS upgrade) before accepting the socket.
     """
     app.add_api_websocket_route("/ws/terminal", terminal_ws)
+    # The native terminal's control-mode bridge (terminal/native.py),
+    # imported here because it builds on this module.
+    from terminal.native import native_ws
+
+    app.add_api_websocket_route("/ws/terminal2", native_ws)
