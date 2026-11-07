@@ -17,6 +17,14 @@ Under ``paths.workspace_dir()``:
   sweep can publish a newer offer at any moment, so a removal names the
   offer it examined (``delete_pending``) and leaves a newer one alone.
 
+An offer is published before its crash point is kept, so a crash point can
+be missing for a moment (the second write failed). ``archive_pending`` is the
+completion: it writes the missing crash point from the offer's own id,
+reason and detection time, and runs at startup, at the top of every sweep,
+and before an offer is removed or replaced. So the one recovery record is
+never consumed while its archive is incomplete, and a death is never
+redetected as another event.
+
 Ids are the snapshot's ``saved_at`` in local time, ``YYYYMMDD-HHMMSS``,
 suffixed ``-2``, ``-3`` on a collision. History and crash ids share one
 namespace, so ``show`` and ``restore`` take either without a prefix.
@@ -208,9 +216,57 @@ def read_pending() -> dict | None:
     return read_snapshot(pending_path())
 
 
-def write_pending(offer: dict) -> None:
-    """Publish an offer, under the lock."""
+def crash_path(entry_id: str) -> Path:
+    return crashes_dir() / f"{entry_id}.json"
+
+
+def _offer_point(offer: dict) -> dict:
+    """The crash point an offer is a copy of (everything but the ``id``)."""
+    return {k: v for k, v in offer.items() if k != "id"}
+
+
+def archive_pending_locked() -> dict | None:
+    """Under the lock: make sure the offer on disk has its crash point, and
+    return the offer (None when there is none). A missing crash point is
+    written from the offer's own id, reason and detection time. An offer
+    from before ids existed is given one, with reason ``startup`` (the only
+    freeze there was) and the file's modification time as detection."""
+    offer = read_pending()
+    if offer is None:
+        return None
+    entry_id = offer.get("id")
+    if (
+        crash_of(offer) is None
+        or not isinstance(entry_id, str)
+        or not ID_RE.match(entry_id)
+    ):
+        try:
+            detected_at = pending_path().stat().st_mtime
+        except OSError:
+            detected_at = time.time()
+        point = frozen(
+            {k: v for k, v in offer.items() if k not in ("id", "crash")},
+            "startup",
+            detected_at,
+        )
+        entry_id = new_id(point["saved_at"])
+        offer = {**point, "id": entry_id}
+        write_snapshot(pending_path(), offer)
+    if not crash_path(entry_id).exists():
+        write_snapshot(crash_path(entry_id), _offer_point(offer))
+    return offer
+
+
+def archive_pending() -> dict | None:
     with pending_lock():
+        return archive_pending_locked()
+
+
+def write_pending(offer: dict) -> None:
+    """Publish an offer, under the lock. An offer it replaces is archived
+    first: a newer loss never discards the older record."""
+    with pending_lock():
+        archive_pending_locked()
         write_snapshot(pending_path(), offer)
 
 
@@ -223,10 +279,12 @@ def delete_pending(examined: object = ANY_OFFER) -> bool:
     have published a newer crash since. ``ANY_OFFER`` drops whatever is
     there. Returns True when a file was removed."""
     with pending_lock():
-        if examined is not ANY_OFFER:
-            current = read_pending()
-            if current is None or current.get("id") != examined:
-                return False
+        current = read_pending()
+        if current is None:
+            return False
+        if examined is not ANY_OFFER and current.get("id") != examined:
+            return False
+        archive_pending_locked()  # never consume the only recovery record
         try:
             pending_path().unlink()
         except FileNotFoundError:
@@ -312,7 +370,7 @@ def frozen(snapshot: dict, reason: str, detected_at: float) -> dict:
 
 def write_crash(entry_id: str, point: dict) -> None:
     """Keep a crash point (``frozen``) under ``entry_id``."""
-    write_snapshot(crashes_dir() / f"{entry_id}.json", point)
+    write_snapshot(crash_path(entry_id), point)
 
 
 def _detected_at(path: Path) -> float | None:

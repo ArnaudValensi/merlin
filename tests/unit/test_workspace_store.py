@@ -182,12 +182,15 @@ class TestFreeze:
         assert service.freeze_pending() is False
 
     def test_existing_offer_is_kept(self, monkeypatch):
-        store.write_snapshot(store.pending_path(), make("old"))
-        store.write_snapshot(store.latest_path(), make("new"))
+        old = {**make("old", saved_at=T + 1), "id": "20260101-000000"}
+        old = {**store.frozen(old, "startup", T + 2), "id": old["id"]}
+        store.write_pending(old)
+        store.write_crash(old["id"], {k: v for k, v in old.items() if k != "id"})
+        store.write_snapshot(store.latest_path(), make("new", saved_at=T + 5))
         live(monkeypatch, None)
         assert service.freeze_pending() is True
-        assert offer() == make("old")
-        assert crash_files() == []  # nothing new was frozen
+        assert offer() == old
+        assert crash_files() == [old["id"] + ".json"]  # nothing new was frozen
 
     def test_no_snapshot_no_offer(self, monkeypatch):
         live(monkeypatch, None)
@@ -468,13 +471,7 @@ class TestDetection:
         assert len(crash_files()) == (2 if older else 1)
         assert store.read_snapshot(store.latest_path()) == second
 
-    def test_a_failed_crash_write_is_redone_by_a_fresh_process(self, monkeypatch):
-        # The offer is published, the crash point's write fails: the offer
-        # stands (a full copy), latest.json is untouched, the next sweep
-        # publishes again and keeps the crash point. One crash point in all.
-        first = served(make("a", saved_at=T + 10), pid=1)
-        second = served(make("merlin-dev", saved_at=T + 20), pid=2)
-        state = self._disk(first)
+    def _crash_write_fails_once(self, monkeypatch):
         real = store.write_crash
         tripped = []
 
@@ -485,17 +482,114 @@ class TestDetection:
             real(entry_id, point)
 
         monkeypatch.setattr(store, "write_crash", flaky)
+
+    def test_a_failed_crash_write_is_completed_by_a_fresh_process(self, monkeypatch):
+        # The offer is published, the crash point's write fails: the offer
+        # stands (a full copy), latest.json is untouched, and the next sweep
+        # completes the crash point from the offer itself, same id and same
+        # detection, before it writes anything. One crash point in all.
+        first = served(make("a", saved_at=T + 10), pid=1)
+        second = served(make("merlin-dev", saved_at=T + 20), pid=2)
+        state = self._disk(first)
+        self._crash_write_fails_once(monkeypatch)
         observe(monkeypatch, second, second)
         with pytest.raises(OSError):
             service.sweep_once(state, now=T + 21.0)
-        assert without_crash(offer()) == first
+        published = offer()
+        assert without_crash(published) == first
         assert crash_files() == []
         assert store.read_snapshot(store.latest_path()) == first
         service.sweep_once(service.SweepState(last=first), now=T + 36.0)
-        pending = offer()
-        assert pending["crash"]["detected_at"] == T + 36.0
-        assert crash_files() == [pending["id"] + ".json"]
+        assert offer() == published  # not redetected as another event
+        assert crash_files() == [published["id"] + ".json"]
+        assert store.read_snapshot(store.entry_path(published["id"])) == {
+            k: v for k, v in published.items() if k != "id"
+        }
         assert store.read_snapshot(store.latest_path()) == second
+
+    @pytest.mark.asyncio
+    async def test_startup_completes_a_legacy_offer_s_archive_before_any_write(
+        self, monkeypatch
+    ):
+        # A pre-epic latest.json (no server identity), frozen at startup; the
+        # crash write fails; the loop's next turn must archive it, with the
+        # original startup detection, before the replacement server (which
+        # the server-changed rule cannot see without identities) is written.
+        import asyncio
+
+        legacy = make("main", "portal", saved_at=T + 10)
+        store.write_snapshot(store.latest_path(), legacy)
+        live(monkeypatch, None)
+        self._crash_write_fails_once(monkeypatch)
+        monkeypatch.setattr(
+            service,
+            "observe",
+            lambda: seen(served(make("merlin-dev", saved_at=T + 20), pid=2)),
+        )
+        stop = asyncio.Event()
+        task = asyncio.create_task(service.run(stop, interval=0.01))
+        await asyncio.sleep(0.08)
+        stop.set()
+        await task
+        published = offer()
+        assert without_crash(published) == legacy
+        assert published["crash"]["reason"] == "startup"
+        assert crash_files() == [published["id"] + ".json"]
+        point = store.read_snapshot(store.entry_path(published["id"]))
+        assert point["crash"] == published["crash"]
+        assert store.read_snapshot(store.latest_path())["sessions"][0]["name"] == (
+            "merlin-dev"
+        )
+
+    def test_consuming_or_replacing_an_offer_archives_it_first(self, monkeypatch):
+        from workspace import restore as rs
+
+        first = served(make("a", saved_at=T + 10), pid=1)
+        state = self._disk(first)
+        self._crash_write_fails_once(monkeypatch)
+        observe(monkeypatch, snap.NO_SERVER, snap.NO_SERVER)
+        service.sweep_once(state)
+        with pytest.raises(OSError):
+            service.sweep_once(state, now=T + 21.0)
+        published = offer()
+        assert crash_files() == []
+        # The user restores before the next sweep: the archive is written
+        # before the offer goes.
+        monkeypatch.setattr(
+            rs,
+            "restore",
+            lambda s: {"restored": ["a"], "skipped": [], "failed": [], "agents": 0},
+        )
+        assert service.restore_pending()["restored"] == ["a"]
+        assert offer() is None
+        assert crash_files() == [published["id"] + ".json"]
+        assert (
+            store.read_snapshot(store.entry_path(published["id"]))["crash"]
+            == (published["crash"])
+        )
+        # Replaced by a newer loss: the older record is archived first.
+        second = served(make("b", saved_at=T + 30), pid=2)
+        x, y = "20200101-000001", "20200101-000002"
+        store.write_pending({**store.frozen(first, "server-gone", T + 22), "id": x})
+        service.freeze(second, "server-changed", T + 31)
+        assert sorted(crash_files()) == sorted(
+            [published["id"] + ".json", f"{x}.json", offer()["id"] + ".json"]
+        )
+        # Dismissed: archived too.
+        store.write_pending({**store.frozen(second, "server-gone", T + 40), "id": y})
+        service.dismiss_pending(y)
+        assert f"{y}.json" in crash_files() and offer() is None
+
+    def test_a_legacy_offer_is_given_an_id_and_a_startup_crash_point(self):
+        # pending-restore.json written before this epic: no id, no crash.
+        store.write_snapshot(store.pending_path(), make("old", saved_at=T + 10))
+        mtime = store.pending_path().stat().st_mtime
+        assert service.freeze_pending() is True
+        upgraded = offer()
+        assert without_crash(upgraded) == make("old", saved_at=T + 10)
+        assert upgraded["crash"] == {"reason": "startup", "detected_at": mtime}
+        assert crash_files() == [upgraded["id"] + ".json"]
+        assert store.delete_pending(upgraded["id"]) is True
 
     def test_a_failed_freeze_is_retried_next_sweep(self, monkeypatch):
         old = served(make("a", saved_at=T + 10), pid=1)

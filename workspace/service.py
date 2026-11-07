@@ -10,11 +10,12 @@ good snapshot. A power cut loses at most one interval of changes.
 An offer is a snapshot with its ``crash`` object (reason ``startup`` for the
 freeze at startup) and the ``id`` of its crash point. The freeze publishes
 the offer first (``pending-restore.json``, a full copy, under the offer
-lock), then keeps the crash point under ``crashes/``: a crash point exists
-only for a published offer, so the "frozen once" rule, which reads the crash
-points on disk, can never hide an offer whose write failed. Either write
-failing raises before ``latest.json`` is touched, and the next sweep redoes
-the whole freeze.
+lock), then keeps the crash point under ``crashes/``. A failed offer write
+leaves nothing, and the next sweep redoes the freeze. A failed crash write
+leaves the published offer, and ``store.archive_pending`` completes its
+crash point from the offer itself (same id, reason and detection time) at
+startup, at the top of every sweep, and before the offer is consumed or
+replaced, always before ``latest.json`` is written over.
 
 **Death detection** runs in the sweep, before it writes, from the one set of
 tmux reads it already makes. ``disk`` is the snapshot ``latest.json`` holds
@@ -87,7 +88,7 @@ def freeze_pending(now: float | None = None) -> bool:
     ``merlin-dev`` placeholder as missing (``restore.missing_sessions``).
     Returns True when an offer is pending.
     """
-    if store.read_pending() is not None:
+    if store.archive_pending() is not None:  # kept, and its archive completed
         return True
     latest = store.read_snapshot(store.latest_path())
     if latest is None or not latest["sessions"]:
@@ -183,8 +184,10 @@ def detect(
 
 
 def sweep_once(state: SweepState, now: float | None = None) -> SweepState:
-    """One sweep: read tmux, detect a dead server, then write when the
-    workspace changed. Returns ``state``, updated in place."""
+    """One sweep: finish an interrupted freeze, read tmux, detect a dead
+    server, then write when the workspace changed. Returns ``state``,
+    updated in place."""
+    store.archive_pending()  # raises before any write when it cannot
     seen = observe()
     if seen.status == snap.FAILED:
         return state  # a flaky read: not a dead server, not a live one either
