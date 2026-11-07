@@ -350,6 +350,96 @@ class TestRestore:
         )
         assert wait_for(log / "claude.b.args") == [b, "--resume", "c-2"]
 
+    def test_a_session_failing_halfway_is_rolled_back_and_retried(
+        self, iso, monkeypatch
+    ):
+        # The second window fails: the session this restore created is killed
+        # (by its id), so it is still missing, the offer stays, and a retry
+        # rebuilds it whole.
+        from workspace import service, store
+
+        root, _ = iso
+        a, b = dirs(root, "a", "b")
+        snapshot = snapshot_of(
+            {
+                "name": "half",
+                "active_window": 0,
+                "windows": [
+                    win(0, "zero", [{"index": 0, "cwd": a}]),
+                    win(1, "one", [{"index": 0, "cwd": b}]),
+                ],
+            }
+        )
+        real_fill = rs._fill_window
+
+        def fill_then_fail(win, wid, live_claude):
+            if win["name"] == "one":
+                raise rs.RestoreError("split failed")
+            return real_fill(win, wid, live_claude)
+
+        monkeypatch.setattr(rs, "_fill_window", fill_then_fail)
+        store.write_snapshot(store.pending_path(), snapshot)
+        result = service.restore_pending()
+        assert result["failed"] == ["half"] and result["restored"] == []
+        assert rs.live_sessions() in (None, {})  # nothing half built is left
+        assert store.pending_path().exists()
+        info = service.pending_info()
+        assert [s["name"] for s in info["sessions"]] == ["half"]
+
+        monkeypatch.setattr(rs, "_fill_window", real_fill)
+        result = service.restore_pending()
+        assert result == {
+            "restored": ["half"],
+            "skipped": [],
+            "failed": [],
+            "agents": 0,
+        }
+        assert windows_of("half") == [("0", "zero"), ("1", "one")]
+        assert not store.pending_path().exists()
+
+    def test_a_placeholder_failing_halfway_is_a_placeholder_again(
+        self, iso, monkeypatch
+    ):
+        # The web terminal's bare merlin-dev, half filled then failing: the
+        # windows added go, the original window comes back to its index, the
+        # session is fillable again and still offered.
+        root, _ = iso
+        a, b = dirs(root, "a", "b")
+        tmux("new-session", "-d", "-s", "merlin-dev", "-c", a)
+        time.sleep(0.3)
+        original = tmux("display-message", "-p", "-t", "=merlin-dev:", "#{window_id}")
+        snapshot = snapshot_of(
+            {
+                "name": "merlin-dev",
+                "active_window": 1,
+                "windows": [
+                    win(0, "zero", [{"index": 0, "cwd": a}]),
+                    win(1, "one", [{"index": 0, "cwd": b}]),
+                ],
+            }
+        )
+        real_fill = rs._fill_window
+
+        def fill_then_fail(win, wid, live_claude):
+            if win["name"] == "one":
+                raise rs.RestoreError("split failed")
+            return real_fill(win, wid, live_claude)
+
+        monkeypatch.setattr(rs, "_fill_window", fill_then_fail)
+        assert rs.restore(snapshot)["failed"] == ["merlin-dev"]
+        assert tmux("list-windows", "-t", "=merlin-dev:", "-F", "#{window_id}") == (
+            original
+        )
+        assert tmux("display-message", "-p", "-t", original, "#{window_index}") == "0"
+        assert rs.live_sessions() == {"merlin-dev": True}
+        assert [
+            s["name"] for s in rs.missing_sessions(snapshot, rs.live_sessions())
+        ] == ["merlin-dev"]
+
+        monkeypatch.setattr(rs, "_fill_window", real_fill)
+        assert rs.restore(snapshot)["restored"] == ["merlin-dev"]
+        assert windows_of("merlin-dev") == [("0", "zero"), ("1", "one")]
+
     def test_running_claude_conversation_is_not_launched_twice(self, iso, monkeypatch):
         root, log = iso
         (d,) = dirs(root, "d")

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -42,6 +43,20 @@ CRASH_KEEP = 30 * 86400
 
 ID_RE = re.compile(r"^(\d{8}-\d{6})(?:-(\d+))?$")
 _ID_FORMAT = "%Y%m%d-%H%M%S"
+
+# A timestamp the store accepts: a finite number from the epoch to a date
+# ``time.localtime`` can render on every platform (year 2242). Anything else
+# in ``saved_at`` makes the file read as absent, so that no id or retention
+# computation can raise on a foreign or torn file.
+_TIME_MAX = 2**33
+
+
+def valid_time(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value) or not 0 <= value <= _TIME_MAX:
+        return None
+    return float(value)
 
 
 def latest_path() -> Path:
@@ -61,12 +76,20 @@ def crashes_dir() -> Path:
 
 
 def read_snapshot(path: Path) -> dict | None:
-    """A valid snapshot from ``path``, or None (absent, torn, unknown shape)."""
+    """A valid snapshot from ``path``, or None (absent, torn, unknown shape).
+
+    ``saved_at`` must be a valid time: every snapshot Merlin ever wrote has
+    one (``build_snapshot`` always sets it), so a file without it, or with
+    one that is not a finite number in range, is foreign and reads as absent
+    rather than making a later ``localtime`` of it raise.
+    """
     try:
         data = json.loads(path.read_text())
     except (OSError, ValueError):
         return None
     if not isinstance(data, dict) or data.get("version") != SNAPSHOT_VERSION:
+        return None
+    if valid_time(data.get("saved_at")) is None:
         return None
     sessions = data.get("sessions")
     if not isinstance(sessions, list):
@@ -97,9 +120,13 @@ def server_of(snapshot: dict) -> tuple[int, int] | None:
 
 
 def crash_of(snapshot: dict) -> dict | None:
-    """The ``crash`` object of a crash point or an offer, or None."""
+    """The ``crash`` object of a crash point or an offer, or None when the
+    snapshot has none or it is malformed (a reason that is not a string, a
+    ``detected_at`` that is not a valid time)."""
     crash = snapshot.get("crash")
     if not isinstance(crash, dict) or not isinstance(crash.get("reason"), str):
+        return None
+    if valid_time(crash.get("detected_at")) is None:
         return None
     return crash
 
@@ -196,7 +223,7 @@ def entry_path(entry_id: str) -> Path | None:
 
 def write_history(snapshot: dict) -> str:
     """Keep a copy of a snapshot the sweep just wrote. Returns its id."""
-    entry_id = new_id(float(snapshot.get("saved_at") or time.time()))
+    entry_id = new_id(snapshot["saved_at"])
     write_snapshot(history_dir() / f"{entry_id}.json", snapshot)
     return entry_id
 
@@ -208,18 +235,32 @@ def write_crash(snapshot: dict, reason: str, detected_at: float) -> tuple[str, d
         **snapshot,
         "crash": {"reason": reason, "detected_at": float(detected_at)},
     }
-    entry_id = new_id(float(snapshot.get("saved_at") or detected_at))
+    entry_id = new_id(snapshot["saved_at"])
     write_snapshot(crashes_dir() / f"{entry_id}.json", frozen)
     return entry_id, frozen
 
 
-def thin(now: float | None = None) -> list[Path]:
-    """Apply the retention from a directory listing alone, no file is read.
+def _detected_at(path: Path) -> float | None:
+    """When the crash point at ``path`` was detected, from its file."""
+    data = read_snapshot(path)
+    crash = crash_of(data) if data else None
+    return float(crash["detected_at"]) if crash else None
 
-    History: every entry younger than ``HISTORY_KEEP_ALL`` stays; up to
-    ``HISTORY_KEEP_HOURLY`` the newest entry of each clock hour stays; older
-    entries go. Crash points go after ``CRASH_KEEP``. Returns what was
-    removed. The age is the id's own time, which is the snapshot's save time.
+
+def thin(now: float | None = None) -> list[Path]:
+    """Apply the retention. Returns what was removed.
+
+    History, from the listing alone: every entry younger than
+    ``HISTORY_KEEP_ALL`` stays; up to ``HISTORY_KEEP_HOURLY`` the newest entry
+    of each clock hour stays; older entries go. The age is the id's own time,
+    the snapshot's save time.
+
+    Crash points go ``CRASH_KEEP`` after their detection, not their save
+    time: a snapshot can be months old when the server it was taken from
+    dies (Merlin stopped for a while, nothing changed for days). The id is
+    only the cheap filter: a detection is never earlier than the save time,
+    so a crash point whose id is young is never read. One whose file has
+    lost its crash object falls back to the id's time.
     """
     now = time.time() if now is None else now
     doomed: list[Path] = []
@@ -245,7 +286,10 @@ def thin(now: float | None = None) -> list[Path]:
             doomed.append(path)
     for path in _entries(crashes_dir()):
         ts = id_time(path.stem)
-        if ts is not None and now - ts >= CRASH_KEEP:
+        if ts is None or now - ts < CRASH_KEEP:
+            continue
+        detected = _detected_at(path)
+        if now - (ts if detected is None else detected) >= CRASH_KEEP:
             doomed.append(path)
     removed = []
     for path in doomed:

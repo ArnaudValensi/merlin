@@ -78,6 +78,24 @@ class TestFiles:
         path.write_text(json.dumps({"version": 1, "sessions": [{"name": 3}]}))
         assert store.read_snapshot(path) is None
 
+    @pytest.mark.parametrize(
+        "saved_at",
+        ["invalid", {"t": 1}, None, True, float("nan"), float("inf"), -1, 2**40],
+    )
+    def test_a_bad_save_time_reads_as_absent(self, saved_at):
+        # The id of a crash point is computed from saved_at: a value that
+        # localtime cannot take must never reach it, nor stall the freeze.
+        path = store.latest_path()
+        path.parent.mkdir(parents=True)
+        data = make("a")
+        if saved_at is None:
+            del data["saved_at"]
+        else:
+            data["saved_at"] = saved_at
+        path.write_text(json.dumps(data))
+        assert store.read_snapshot(path) is None
+        assert store.valid_time(saved_at) is None
+
 
 class TestFreeze:
     def test_missing_sessions_freeze_an_offer(self, monkeypatch):
@@ -210,6 +228,27 @@ class TestSweep:
         await task
         assert without_crash(offer()) == make("main")
         del service.__dict__["_real_freeze"]
+
+    @pytest.mark.asyncio
+    async def test_a_foreign_latest_never_stalls_the_sweep(self, monkeypatch):
+        # A latest.json with a save time the freeze cannot turn into an id
+        # reads as absent: no offer, and the sweep writes from the first turn.
+        import asyncio
+
+        path = store.latest_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({**make("main"), "saved_at": "yesterday"}))
+        live(monkeypatch, None)
+        monkeypatch.setattr(
+            snap, "take_snapshot", lambda: make("merlin-dev", saved_at=9)
+        )
+        stop = asyncio.Event()
+        task = asyncio.create_task(service.run(stop, interval=0.01))
+        await asyncio.sleep(0.05)
+        stop.set()
+        await task
+        assert store.read_snapshot(store.latest_path())["saved_at"] == 9
+        assert not store.pending_path().exists()
 
     def test_every_write_keeps_a_history_copy(self, monkeypatch):
         # Recent save times: the thinning that follows each write keeps them.
@@ -411,9 +450,25 @@ class TestThinning:
         now = time.mktime((2026, 11, 7, 12, 0, 0, 0, 0, -1))
         d = 86400
         store.crashes_dir().mkdir(parents=True)
+        # Files without a readable crash object: the id's time decides.
         ids = self._plant(store.crashes_dir(), now, 10, 8 * d, 29 * d, 30 * d, 45 * d)
         store.thin(now)
         assert crash_files() == sorted(f"{i}.json" for i in ids[:3])
+
+    def test_a_crash_point_lives_thirty_days_from_its_detection(self):
+        # The snapshot was saved 31 days before the server died (nothing had
+        # changed, or Merlin was stopped): the crash point is kept thirty days
+        # from the detection, its old id being only the cheap filter.
+        now = time.mktime((2026, 11, 7, 12, 0, 0, 0, 0, -1))
+        d = 86400
+        entry_id, _ = store.write_crash(
+            make("a", saved_at=now - 31 * d), "startup", now
+        )
+        assert store.thin(now) == []
+        assert store.thin(now + 29 * d) == []
+        assert crash_files() == [f"{entry_id}.json"]
+        assert [p.stem for p in store.thin(now + 30 * d)] == [entry_id]
+        assert crash_files() == []
 
     def test_thinning_an_empty_home_is_fine(self):
         assert store.thin() == []

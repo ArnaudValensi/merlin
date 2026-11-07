@@ -13,6 +13,13 @@ A session whose name is live is skipped, except a *fillable* one: the single
 plain shell the web terminal auto-creates (``merlin-dev``) when it is opened
 before Restore. The snapshot's windows are created inside it, then its original
 window is killed (see ``docs/dev/workspace-restore.md``).
+
+A session that fails halfway is rolled back, so that it is missing again and
+the offer, which stays on a failure, can restore it on a retry: a session this
+restore created is killed (by its id, nothing else is ever killed), a
+placeholder being filled loses the windows this restore added and gets its
+original window back where it was. Without that, the half-built session would
+count as present and the offer for it would be dropped.
 """
 
 from __future__ import annotations
@@ -238,50 +245,60 @@ def _restore_new(sess: dict, server_running: bool, live_claude: set[str]) -> int
     name = sess["name"]
     windows = sorted(sess["windows"], key=lambda w: w["index"])
     launched = 0
-    for n, win in enumerate(windows):
-        target = f"={name}:{win['index']}"
-        panes = sorted(win["panes"], key=lambda p: p["index"])
-        first_dir = _start_dir(panes[0]) if panes else os.path.expanduser("~")
-        if n == 0:
-            cols, rows = layout_size(win.get("layout", ""))
-            wid = _tmux(
-                "new-session",
-                "-d",
-                "-s",
-                name,
-                "-n",
-                win["name"],
-                "-c",
-                first_dir,
-                "-x",
-                cols,
-                "-y",
-                rows,
-                "-P",
-                "-F",
-                "#{window_id}",
-                prefix=server_spawn_prefix(server_running),
-            )
-            server_running = True
-            index = _tmux("display-message", "-p", "-t", wid, "#{window_index}")
-            if index != str(win["index"]):
-                _tmux("move-window", "-s", wid, "-t", target)
-        else:
-            wid = _tmux(
-                "new-window",
-                "-d",
-                "-t",
-                target,
-                "-n",
-                win["name"],
-                "-c",
-                first_dir,
-                "-P",
-                "-F",
-                "#{window_id}",
-            )
-        if panes:
-            launched += _fill_window(win, wid, live_claude)
+    session_id = ""
+    try:
+        for n, win in enumerate(windows):
+            target = f"={name}:{win['index']}"
+            panes = sorted(win["panes"], key=lambda p: p["index"])
+            first_dir = _start_dir(panes[0]) if panes else os.path.expanduser("~")
+            if n == 0:
+                cols, rows = layout_size(win.get("layout", ""))
+                created = _tmux(
+                    "new-session",
+                    "-d",
+                    "-s",
+                    name,
+                    "-n",
+                    win["name"],
+                    "-c",
+                    first_dir,
+                    "-x",
+                    cols,
+                    "-y",
+                    rows,
+                    "-P",
+                    "-F",
+                    "#{session_id}\t#{window_id}",
+                    prefix=server_spawn_prefix(server_running),
+                )
+                session_id, wid = created.split("\t", 1)
+                server_running = True
+                index = _tmux("display-message", "-p", "-t", wid, "#{window_index}")
+                if index != str(win["index"]):
+                    _tmux("move-window", "-s", wid, "-t", target)
+            else:
+                wid = _tmux(
+                    "new-window",
+                    "-d",
+                    "-t",
+                    target,
+                    "-n",
+                    win["name"],
+                    "-c",
+                    first_dir,
+                    "-P",
+                    "-F",
+                    "#{window_id}",
+                )
+            if panes:
+                launched += _fill_window(win, wid, live_claude)
+    except RestoreError:
+        if session_id:
+            # Only the session this restore just created, by its id: a retry
+            # must find it missing, not half built and counted as present.
+            _tmux("kill-session", "-t", session_id, check=False)
+            logger.info("Workspace restore: rolled back the half-built %s", name)
+        raise
     return launched
 
 
@@ -290,29 +307,50 @@ def _restore_into(sess: dict, live_claude: set[str]) -> int:
     then drop its original window."""
     name = sess["name"]
     windows = sorted(sess["windows"], key=lambda w: w["index"])
-    original = _tmux("display-message", "-p", "-t", f"={name}:", "#{window_id}")
+    original, original_index = _tmux(
+        "display-message", "-p", "-t", f"={name}:", "#{window_id}\t#{window_index}"
+    ).split("\t", 1)
     # Park the original window above every snapshot index so none collides.
     park = max([w["index"] for w in windows] + [0]) + 1
     _tmux("move-window", "-s", original, "-t", f"={name}:{park}", check=False)
     launched = 0
-    for win in windows:
-        panes = sorted(win["panes"], key=lambda p: p["index"])
-        first_dir = _start_dir(panes[0]) if panes else os.path.expanduser("~")
-        wid = _tmux(
-            "new-window",
-            "-d",
+    added: list[str] = []
+    try:
+        for win in windows:
+            panes = sorted(win["panes"], key=lambda p: p["index"])
+            first_dir = _start_dir(panes[0]) if panes else os.path.expanduser("~")
+            wid = _tmux(
+                "new-window",
+                "-d",
+                "-t",
+                f"={name}:{win['index']}",
+                "-n",
+                win["name"],
+                "-c",
+                first_dir,
+                "-P",
+                "-F",
+                "#{window_id}",
+            )
+            added.append(wid)
+            if panes:
+                launched += _fill_window(win, wid, live_claude)
+    except RestoreError:
+        # Back to the placeholder it was: the windows this restore added go,
+        # the original window returns to its index, so the session is
+        # fillable again and the offer still lists it.
+        for wid in added:
+            _tmux("kill-window", "-t", wid, check=False)
+        _tmux(
+            "move-window",
+            "-s",
+            original,
             "-t",
-            f"={name}:{win['index']}",
-            "-n",
-            win["name"],
-            "-c",
-            first_dir,
-            "-P",
-            "-F",
-            "#{window_id}",
+            f"={name}:{original_index}",
+            check=False,
         )
-        if panes:
-            launched += _fill_window(win, wid, live_claude)
+        logger.info("Workspace restore: rolled back the half-filled %s", name)
+        raise
     _select_active(sess)
     # The user may have started something in the original shell while the
     # restore ran: drop the window only if it is still one bare shell.
@@ -360,6 +398,9 @@ def restore(snapshot: dict) -> dict:
         except RestoreError:
             logger.warning("Workspace restore: session %s failed", name, exc_info=True)
             result["failed"].append(name)
+            # The rollback may have killed the only session, and the server
+            # with it: the next session must spawn the server properly.
+            server_running = snap.live_session_names() is not None
             continue
         result["restored"].append(name)
     logger.info(
