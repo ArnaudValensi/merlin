@@ -1,6 +1,9 @@
 """Workspace snapshot capture (workspace/snapshot.py): argv filtering and
 building a snapshot from tmux rows and a fake process tree."""
 
+import os
+import time
+
 from workspace import snapshot as snap
 
 CONV = "11111111-2222-3333-4444-555555555555"
@@ -259,7 +262,57 @@ class TestServerIdentity:
         assert asked[0] == (("list-sessions",), ("session_name", "pid", "start_time"))
 
 
+def rows_of(pid, *sessions, start="7"):
+    """Canned session, window and pane rows all from one server, one window
+    per session."""
+    ident = {"pid": str(pid), "start_time": start}
+    sessions = sessions or ("main",)
+    return (
+        [{"session_name": name, **ident} for name in sessions],
+        [
+            {**window(session=name, wid=f"@{n}"), **ident}
+            for n, name in enumerate(sessions)
+        ],
+        [{**pane(wid=f"@{n}", pid="999999999"), **ident} for n in range(len(sessions))],
+    )
+
+
 class TestReadTmux:
+    def test_a_read_across_two_servers_is_a_failed_read(self, monkeypatch):
+        # list-sessions answered by server A, the windows and panes by the
+        # replacement B: a snapshot of neither. FAILED leaves latest alone.
+        a, b = rows_of(1), rows_of(2)
+        results = iter([(a[0], snap.OK), (b[1], snap.OK), (b[2], snap.OK)])
+        monkeypatch.setattr(snap, "_list", lambda args, fields: next(results))
+        assert snap.read_tmux_status() == (None, snap.FAILED)
+        results = iter([(b[0], snap.OK), (b[1], snap.OK), (b[2], snap.OK)])
+        assert snap.read_tmux_status()[1] == snap.OK
+
+    def test_the_old_workspace_survives_a_mixed_read(self, monkeypatch, tmp_path):
+        # The sweep: a mixed read (FAILED, nothing written), then a consistent
+        # read of the replacement: the old workspace is frozen as the offer.
+        from workspace import service, store
+
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        a, b = rows_of(1, "main", "alpha"), rows_of(2, "main")
+        rich = snap.build_snapshot(*a, FakeProc({}), {}, now=time.time() - 60)
+        assert [s["name"] for s in rich["sessions"]] == ["main", "alpha"]
+        store.write_snapshot(store.latest_path(), rich)
+        state = service.SweepState(last=rich)
+        answers = iter(
+            [(a[0], snap.OK), (b[1], snap.OK), (b[2], snap.OK)]
+            + [(b[0], snap.OK), (b[1], snap.OK), (b[2], snap.OK)]
+        )
+        monkeypatch.setattr(snap, "_list", lambda args, fields: next(answers))
+        service.sweep_once(state)
+        assert store.read_snapshot(store.latest_path()) == rich
+        service.sweep_once(state)
+        offer = store.read_pending()
+        assert offer["crash"]["reason"] == "server-changed"
+        assert [s["name"] for s in offer["sessions"]] == ["main", "alpha"]
+        assert store.server_of(offer) == (1, 7)
+        assert store.server_of(store.read_snapshot(store.latest_path())) == (2, 7)
+
     def test_a_failed_read_is_no_snapshot(self, monkeypatch):
         # A failed list-panes must not become a snapshot without panes, and
         # a server that answered list-sessions is present: a failed read,
@@ -275,23 +328,51 @@ class TestReadTmux:
         monkeypatch.setattr(snap, "_list", lambda args, fields: next(results))
         assert snap.read_tmux() is None
 
-    def test_no_server_is_told_from_a_failed_read(self, monkeypatch):
+    def test_no_server_is_told_from_a_failed_read(self, monkeypatch, tmp_path):
         import subprocess
 
         class R:
             def __init__(self, rc, err):
                 self.returncode, self.stdout, self.stderr = rc, "", err
 
+        # A connect error is judged on the socket it names, never on the
+        # errno text (localized, and EACCES says nothing about the server).
+        absent = str(tmp_path / "gone")
+        stale = str(tmp_path / "stale")
+        live = str(tmp_path / "live")
+        import socket
+
+        with socket.socket(socket.AF_UNIX) as s:
+            s.bind(stale)  # a socket file nobody accepts on any more
+        server = socket.socket(socket.AF_UNIX)
+        server.bind(live)
+        server.listen(1)
+        closed = tmp_path / "closed"  # a socket directory that cannot be read
+        closed.mkdir()
+        closed.chmod(0)
         answers = {
             "no server running on /tmp/tmux-1000/default": snap.NO_SERVER,
-            "error connecting to /tmp/x (No such file or directory)": snap.NO_SERVER,
             "server exited unexpectedly": snap.NO_SERVER,
+            f"error connecting to {absent} (No such file or directory)": snap.NO_SERVER,
+            f"error connecting to {stale} (Connection refused)": snap.NO_SERVER,
+            f"error connecting to {absent} (Aucun fichier ou dossier)": snap.NO_SERVER,
+            f"error connecting to {tmp_path}/nodir/x (No such file)": snap.NO_SERVER,
+            f"error connecting to {live} (Permission denied)": snap.FAILED,
+            f"error connecting to {live} (Connection timed out)": snap.FAILED,
             "merlin tests: tmux refused (list-sessions)": snap.FAILED,
             "lost server": snap.FAILED,
         }
-        for err, status in answers.items():
-            monkeypatch.setattr(snap.subprocess, "run", lambda *a, **k: R(1, err))
-            assert snap.read_tmux_status() == (None, status), err
+        if os.getuid() != 0:  # root reads a mode-0 directory
+            answers[f"error connecting to {closed}/default (Permission denied)"] = (
+                snap.FAILED
+            )
+        try:
+            for err, status in answers.items():
+                monkeypatch.setattr(snap.subprocess, "run", lambda *a, **k: R(1, err))
+                assert snap.read_tmux_status() == (None, status), err
+        finally:
+            server.close()
+            closed.chmod(0o700)
 
         def timeout(*a, **k):
             raise subprocess.TimeoutExpired("tmux", 5)

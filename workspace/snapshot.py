@@ -30,6 +30,7 @@ import json
 import os
 import re
 import shlex
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -306,9 +307,42 @@ NO_SERVER = "no-server"
 FAILED = "failed"
 OK = "ok"
 
-# What tmux says when nothing listens on the socket: no socket at all, a
-# socket nobody answers on, or a server that left while the client connected.
-_NO_SERVER_MARKS = ("no server running", "error connecting to", "server exited")
+# What tmux says when nothing listens on the socket: its own words for a
+# socket nobody answers on or a server that left while the client connected.
+_NO_SERVER_MARKS = ("no server running on", "server exited unexpectedly")
+# A connect error names the socket and strerror's text for the errno. The
+# text is localized and an errno such as EACCES says nothing about the
+# server, so the socket itself is asked instead (``_nobody_listens``).
+_CONNECT_ERROR = re.compile(r"error connecting to (.+) \(.*\)$")
+
+
+def _nobody_listens(path: str) -> bool:
+    """True when no server can be behind ``path``: no socket there, or
+    nothing accepting on it. A path that cannot be looked at (a permission
+    error) or a connect that fails some other way says nothing: False."""
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+            probe.settimeout(1.0)
+            probe.connect(path)
+    except (ConnectionRefusedError, FileNotFoundError):
+        return True
+    except OSError:
+        return False
+    return False  # something answers there
+
+
+def no_server_message(stderr: str) -> bool:
+    text = stderr.strip()
+    if any(mark in text for mark in _NO_SERVER_MARKS):
+        return True
+    m = _CONNECT_ERROR.search(text)
+    return bool(m) and _nobody_listens(m.group(1))
 
 
 def _list(args: list[str], fields: tuple[str, ...]) -> tuple[list[dict] | None, str]:
@@ -328,8 +362,7 @@ def _list(args: list[str], fields: tuple[str, ...]) -> tuple[list[dict] | None, 
     except (OSError, subprocess.SubprocessError):
         return None, FAILED
     if r.returncode != 0:
-        stderr = r.stderr.strip()
-        if any(mark in stderr for mark in _NO_SERVER_MARKS):
+        if no_server_message(r.stderr):
             return None, NO_SERVER
         return None, FAILED
     rows = []
@@ -345,7 +378,13 @@ def _tmux_rows(args: list[str], fields: tuple[str, ...]) -> list[dict] | None:
     return _list(args, fields)[0]
 
 
+# The server identity (``#{pid}``, ``#{start_time}``) rides every list read,
+# not only the sessions: the three calls are separate, and a server can die
+# and be replaced between two of them. A read whose parts disagree is not a
+# snapshot of any server.
+_SERVER_FIELDS = ("pid", "start_time")
 _WINDOW_FIELDS = (
+    *_SERVER_FIELDS,
     "session_name",
     "window_id",
     "window_index",
@@ -361,6 +400,7 @@ _WINDOW_FIELDS = (
     *WINDOW_OPTIONS,
 )
 _PANE_FIELDS = (
+    *_SERVER_FIELDS,
     "window_id",
     "pane_index",
     "pane_pid",
@@ -370,9 +410,8 @@ _PANE_FIELDS = (
 )
 
 
-# The server's identity rides the session rows (``#{pid}`` and
-# ``#{start_time}`` are server formats), so reading it costs no extra call.
-_SESSION_FIELDS = ("session_name", "pid", "start_time")
+# The session rows carry the identity too, so reading it costs no extra call.
+_SESSION_FIELDS = ("session_name", *_SERVER_FIELDS)
 
 
 def live_session_names() -> list[str] | None:
@@ -396,6 +435,12 @@ def read_tmux_status() -> tuple[tuple[list[dict], list[dict], list[dict]] | None
         return None, FAILED
     panes, _ = _list(["list-panes", "-a"], _PANE_FIELDS)
     if panes is None:
+        return None, FAILED
+    # Three answers from two servers (one died and was replaced between two
+    # calls) would make a snapshot of neither: the old identity over the new
+    # windows, written over the restore point with nothing frozen.
+    known = [i for i in map(server_identity, (sessions, windows, panes)) if i]
+    if any(i != known[0] for i in known):
         return None, FAILED
     return (sessions, windows, panes), OK
 

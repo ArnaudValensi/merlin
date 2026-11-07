@@ -12,6 +12,10 @@ Under ``paths.workspace_dir()``:
   days, never thinned.
 - ``pending-restore.json``: the restore offer, a full copy of the crash point
   plus its ``id``, deleted by Restore or Dismiss.
+- ``pending.lock``: the advisory lock (``pending_lock``) that serializes the
+  offer's publication with its removal, across threads and processes. The
+  sweep can publish a newer offer at any moment, so a removal names the
+  offer it examined (``delete_pending``) and leaves a newer one alone.
 
 Ids are the snapshot's ``saved_at`` in local time, ``YYYYMMDD-HHMMSS``,
 suffixed ``-2``, ``-3`` on a collision. History and crash ids share one
@@ -25,6 +29,7 @@ an unknown shape reads as absent.
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import json
 import math
 import os
@@ -181,9 +186,52 @@ def write_snapshot(path: Path, data: dict) -> None:
             os.close(dir_fd)
 
 
-def delete_pending() -> None:
-    with contextlib.suppress(FileNotFoundError):
-        pending_path().unlink()
+def pending_lock_path() -> Path:
+    return paths.workspace_dir() / "pending.lock"
+
+
+@contextlib.contextmanager
+def pending_lock():
+    """Hold the offer lock: for one read or write of the offer, never across
+    a restore. Blocking, since every holder keeps it for a file operation."""
+    path = pending_lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def read_pending() -> dict | None:
+    return read_snapshot(pending_path())
+
+
+def write_pending(offer: dict) -> None:
+    """Publish an offer, under the lock."""
+    with pending_lock():
+        write_snapshot(pending_path(), offer)
+
+
+ANY_OFFER = object()
+
+
+def delete_pending(examined: object = ANY_OFFER) -> bool:
+    """Drop the offer, unless it is no longer the one ``examined`` (its
+    ``id``; None for an offer written before ids existed): the sweep may
+    have published a newer crash since. ``ANY_OFFER`` drops whatever is
+    there. Returns True when a file was removed."""
+    with pending_lock():
+        if examined is not ANY_OFFER:
+            current = read_pending()
+            if current is None or current.get("id") != examined:
+                return False
+        try:
+            pending_path().unlink()
+        except FileNotFoundError:
+            return False
+        return True
 
 
 # --- ids --------------------------------------------------------------------
@@ -254,16 +302,17 @@ def write_history(snapshot: dict) -> str:
     return entry_id
 
 
-def write_crash(snapshot: dict, reason: str, detected_at: float) -> tuple[str, dict]:
-    """Freeze a snapshot as a crash point. Returns its id and the frozen
-    snapshot, the one with its ``crash`` object."""
-    frozen = {
+def frozen(snapshot: dict, reason: str, detected_at: float) -> dict:
+    """``snapshot`` with its ``crash`` object."""
+    return {
         **snapshot,
         "crash": {"reason": reason, "detected_at": float(detected_at)},
     }
-    entry_id = new_id(snapshot["saved_at"])
-    write_snapshot(crashes_dir() / f"{entry_id}.json", frozen)
-    return entry_id, frozen
+
+
+def write_crash(entry_id: str, point: dict) -> None:
+    """Keep a crash point (``frozen``) under ``entry_id``."""
+    write_snapshot(crashes_dir() / f"{entry_id}.json", point)
 
 
 def _detected_at(path: Path) -> float | None:

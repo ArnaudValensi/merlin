@@ -423,6 +423,80 @@ class TestDetection:
             store.read_snapshot(store.entry_path(i))["sessions"][0]["name"] for i in ids
         ] == ["a", "b"]
 
+    def _fail_once(self, monkeypatch, target):
+        """Make the first write to ``target`` (a path) fail."""
+        real = store.write_snapshot
+        tripped = []
+
+        def flaky(path, data):
+            if path == target and not tripped:
+                tripped.append(1)
+                raise OSError("no space left on device")
+            real(path, data)
+
+        monkeypatch.setattr(store, "write_snapshot", flaky)
+        return tripped
+
+    @pytest.mark.parametrize("older", [False, True])
+    def test_a_failed_offer_write_is_redone_by_a_fresh_process(
+        self, monkeypatch, older
+    ):
+        # The offer's write fails: nothing is on disk for this crash (the
+        # crash point comes after the offer), latest.json is untouched, and
+        # the next sweep, from a fresh process too, freezes it whole.
+        first = served(make("a", saved_at=T + 10), pid=1)
+        second = served(make("merlin-dev", saved_at=T + 20), pid=2)
+        state = self._disk(first)
+        if older:
+            service.freeze(served(make("z", saved_at=T + 1), pid=9), "startup", T + 2)
+        before = offer()
+        self._fail_once(monkeypatch, store.pending_path())
+        observe(monkeypatch, second, second)
+        with pytest.raises(OSError):
+            service.sweep_once(state, now=T + 21.0)
+        assert store.read_snapshot(store.latest_path()) == first
+        assert offer() == before  # the older offer, or none, untouched
+        assert len(crash_files()) == (1 if older else 0)
+        service.sweep_once(service.SweepState(last=first), now=T + 36.0)
+        pending = offer()
+        assert without_crash(pending) == first
+        assert pending["crash"]["detected_at"] == T + 36.0
+        assert (
+            store.read_snapshot(store.entry_path(pending["id"]))["crash"]
+            == (pending["crash"])
+        )
+        assert len(crash_files()) == (2 if older else 1)
+        assert store.read_snapshot(store.latest_path()) == second
+
+    def test_a_failed_crash_write_is_redone_by_a_fresh_process(self, monkeypatch):
+        # The offer is published, the crash point's write fails: the offer
+        # stands (a full copy), latest.json is untouched, the next sweep
+        # publishes again and keeps the crash point. One crash point in all.
+        first = served(make("a", saved_at=T + 10), pid=1)
+        second = served(make("merlin-dev", saved_at=T + 20), pid=2)
+        state = self._disk(first)
+        real = store.write_crash
+        tripped = []
+
+        def flaky(entry_id, point):
+            if not tripped:
+                tripped.append(1)
+                raise OSError("no space left on device")
+            real(entry_id, point)
+
+        monkeypatch.setattr(store, "write_crash", flaky)
+        observe(monkeypatch, second, second)
+        with pytest.raises(OSError):
+            service.sweep_once(state, now=T + 21.0)
+        assert without_crash(offer()) == first
+        assert crash_files() == []
+        assert store.read_snapshot(store.latest_path()) == first
+        service.sweep_once(service.SweepState(last=first), now=T + 36.0)
+        pending = offer()
+        assert pending["crash"]["detected_at"] == T + 36.0
+        assert crash_files() == [pending["id"] + ".json"]
+        assert store.read_snapshot(store.latest_path()) == second
+
     def test_a_failed_freeze_is_retried_next_sweep(self, monkeypatch):
         old = served(make("a", saved_at=T + 10), pid=1)
         new = served(make("merlin-dev", saved_at=T + 20), pid=2)
@@ -472,6 +546,62 @@ class TestPendingInfo:
         store.write_snapshot(store.pending_path(), make("a"))
         service.dismiss_pending()
         assert service.pending_info() == {"pending": False}
+
+
+class TestNewerOfferSurvives:
+    """The sweep publishes a newer offer while the banner's request works on
+    the older one: the removal names the offer it examined."""
+
+    def _publish_b(self):
+        service.freeze(
+            served(make("b", saved_at=T + 20), pid=2), "server-changed", T + 21
+        )
+
+    def test_pending_info_dropping_a_stale_offer_keeps_the_newer_one(self, monkeypatch):
+        from workspace import restore as rs
+
+        service.freeze(served(make("a", saved_at=T + 10), pid=1), "server-gone", T + 11)
+        monkeypatch.setattr(rs, "live_sessions", lambda: {"a": False})
+
+        def rebuilt_then_b(snapshot, live, job_runs=()):
+            self._publish_b()  # between the read and the removal
+            return []
+
+        monkeypatch.setattr(rs, "missing_sessions", rebuilt_then_b)
+        assert service.pending_info() == {"pending": False}
+        assert offer()["sessions"][0]["name"] == "b"
+
+    def test_a_restore_completing_keeps_the_newer_offer(self, monkeypatch):
+        from workspace import restore as rs
+
+        service.freeze(served(make("a", saved_at=T + 10), pid=1), "server-gone", T + 11)
+
+        def restore_during_which_b_dies(snapshot):
+            self._publish_b()
+            return {"restored": ["a"], "skipped": [], "failed": [], "agents": 0}
+
+        monkeypatch.setattr(rs, "restore", restore_during_which_b_dies)
+        assert service.restore_pending()["restored"] == ["a"]
+        assert offer()["sessions"][0]["name"] == "b"
+
+    def test_dismiss_names_the_offer_the_user_saw(self):
+        service.freeze(served(make("a", saved_at=T + 10), pid=1), "server-gone", T + 11)
+        a = offer()["id"]
+        self._publish_b()
+        service.dismiss_pending(a)
+        assert offer()["sessions"][0]["name"] == "b"
+        service.dismiss_pending()  # unnamed: whatever is there
+        assert offer() is None
+
+    def test_delete_pending_compares_the_id(self):
+        assert store.delete_pending("x") is False  # nothing there
+        store.write_pending(make("legacy"))  # an offer from before ids
+        assert store.delete_pending("x") is False
+        assert store.delete_pending(None) is True
+        store.write_pending({**make("a"), "id": "one"})
+        assert store.delete_pending("two") is False
+        assert store.delete_pending("one") is True
+        assert offer() is None
 
 
 class TestRestorePending:
@@ -526,7 +656,8 @@ class TestIds:
         shot = make("a", saved_at=1000.0)
         first = store.write_history(shot)
         second = store.write_history(shot)
-        third, _ = store.write_crash(shot, "server-gone", 1001.0)
+        third = store.new_id(shot["saved_at"])
+        store.write_crash(third, store.frozen(shot, "server-gone", 1001.0))
         assert second == first + "-2"
         assert third == first + "-3"
         assert store.entry_path(first) == store.history_dir() / f"{first}.json"
@@ -536,7 +667,9 @@ class TestIds:
 
     def test_a_crash_point_carries_its_crash_object(self):
         shot = make("a", saved_at=1000.0)
-        entry_id, frozen = store.write_crash(shot, "server-changed", 1234.5)
+        frozen = store.frozen(shot, "server-changed", 1234.5)
+        entry_id = store.new_id(shot["saved_at"])
+        store.write_crash(entry_id, frozen)
         assert frozen["crash"] == {"reason": "server-changed", "detected_at": 1234.5}
         assert store.read_snapshot(store.entry_path(entry_id)) == frozen
         assert store.crash_of(frozen) == frozen["crash"]
@@ -634,9 +767,9 @@ class TestThinning:
         # from the detection, its old id being only the cheap filter.
         now = time.mktime((2026, 11, 7, 12, 0, 0, 0, 0, -1))
         d = 86400
-        entry_id, _ = store.write_crash(
-            make("a", saved_at=now - 31 * d), "startup", now
-        )
+        old = make("a", saved_at=now - 31 * d)
+        entry_id = store.new_id(old["saved_at"])
+        store.write_crash(entry_id, store.frozen(old, "startup", now))
         assert store.thin(now) == []
         assert store.thin(now + 29 * d) == []
         assert crash_files() == [f"{entry_id}.json"]
