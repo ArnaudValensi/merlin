@@ -53,9 +53,19 @@ def test_restore_returns_the_engine_result(client, monkeypatch):
 
 
 def test_pending_and_dismiss(client, monkeypatch):
+    from workspace import store
+
     monkeypatch.setattr(service, "pending_info", lambda: {"pending": False})
     assert client.get("/api/workspace/pending").json() == {"pending": False}
     dismissed = []
     monkeypatch.setattr(service, "dismiss_pending", lambda *a: dismissed.append(a))
+    # An older page sends no body: whatever offer is there goes.
     assert client.post("/api/workspace/dismiss").json() == {"ok": True}
-    assert dismissed == [()]
+    assert dismissed == [(store.ANY_OFFER,)]
+    # The current page names the offer it showed.
+    assert client.post(
+        "/api/workspace/dismiss", json={"id": "20261105-185945"}
+    ).json() == {"ok": True}
+    assert dismissed[-1] == ("20261105-185945",)
+    client.post("/api/workspace/dismiss", json={"id": None})
+    assert dismissed[-1] == (None,)

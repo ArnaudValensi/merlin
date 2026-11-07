@@ -374,6 +374,27 @@ class TestSender:
         assert json.loads(call["data"])["title"] == "claude · alpha · box"
         assert store.get(SUB["endpoint"]).last_success
 
+    def test_a_prepared_payload_can_carry_its_own_ttl(self, tmp_path):
+        # The workspace crash push asks for twelve hours; a window event
+        # keeps the default.
+        rec = Recorder()
+        sender, store = make_sender(tmp_path, rec)
+        store.add(SUB, "a")
+        payload = {"title": "tmux stopped", "body": "b", "tag": "workspace-restore"}
+        result = sender.send_all_sync(payload, ttl=12 * 3600)
+        assert result.sent == 1
+        assert rec.calls[-1]["ttl"] == 12 * 3600
+        assert json.loads(rec.calls[-1]["data"])["tag"] == "workspace-restore"
+        sender.send_all_sync(payload)
+        assert rec.calls[-1]["ttl"] == 300
+
+    def test_nothing_subscribed_sends_nothing_and_makes_no_key(self, tmp_path):
+        rec = Recorder()
+        sender, _ = make_sender(tmp_path, rec)
+        assert sender.send_all_sync({"title": "x"}, ttl=5).sent == 0
+        assert rec.calls == []
+        assert not (tmp_path / "vapid.json").exists()
+
     def test_410_and_404_remove_the_subscription(self, tmp_path):
         gone = {"endpoint": "https://push.example/gone", "keys": SUB["keys"]}
         missing = {"endpoint": "https://push.example/missing", "keys": SUB["keys"]}

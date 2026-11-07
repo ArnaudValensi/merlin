@@ -11,6 +11,7 @@ Requires: chromium, tmux.
 """
 
 import json
+import re
 import shutil
 import subprocess
 
@@ -151,6 +152,76 @@ def test_dismiss_drops_the_offer(page, seeded):
     page.goto(f"{server.url}/files")
     page.wait_for_load_state("networkidle")
     expect(page.locator("#workspace-restore")).to_be_hidden()
+
+
+def test_a_crash_while_the_page_is_open_shows_the_banner_without_a_reload(
+    page, tmp_path_factory
+):
+    """tmux dies while Merlin runs: the sweep publishes an offer with a crash
+    object, and the open page picks it up on its next poll, worded as a
+    crash. (The offer is written directly, as the sweep would.)"""
+    import os
+    import time
+
+    server = start_merlin(tmp_path_factory, name="crash", ready="/files")
+    try:
+        page.goto(f"{server.url}/files")
+        page.wait_for_load_state("networkidle")
+        banner = page.locator("#workspace-restore")
+        expect(banner).to_be_hidden()
+        d = tmp_path_factory.mktemp("proj-delta")
+        detected = time.mktime((2026, 11, 5, 19, 0, 59, 0, 0, -1))
+        offer = {
+            "version": 1,
+            "saved_at": detected - 14,
+            "server": {"pid": 4242, "start_time": 1791200000},
+            "crash": {"reason": "server-changed", "detected_at": detected},
+            "id": "20261105-190045",
+            "sessions": [
+                {
+                    "name": "delta",
+                    "active_window": 1,
+                    "windows": [
+                        {
+                            "index": 1,
+                            "name": "delta-win",
+                            "automatic_rename": False,
+                            "layout": "",
+                            "options": {},
+                            "panes": [
+                                {
+                                    "index": 0,
+                                    "cwd": str(d),
+                                    "active": True,
+                                    "agent": {
+                                        "provider": "codex",
+                                        "conv": "thread-1",
+                                        "cwd": str(d),
+                                        "options": [],
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+        ws = server.home / "data" / "workspace"
+        ws.mkdir(parents=True, exist_ok=True)
+        (ws / "pending-restore.json").write_text(json.dumps(offer))
+        expect(banner).to_be_visible(timeout=25000)
+        # The hour is in the viewer's locale (19:00, or 07:00 PM in the e2e browser).
+        expect(banner).to_contain_text(re.compile(r"tmux stopped at (19:00|07:00 PM)"))
+        expect(banner).to_contain_text("1 session, 1 agent, saved")
+        expect(banner).to_contain_text("delta")
+        shot = os.environ.get("WS_CRASH_SHOT")
+        if shot:
+            page.screenshot(path=shot)
+        banner.get_by_role("button", name="Dismiss").click()
+        expect(banner).to_be_hidden()
+        assert not (ws / "pending-restore.json").exists()
+    finally:
+        stop_merlin(server)
 
 
 def test_no_offer_without_a_snapshot(page, server):

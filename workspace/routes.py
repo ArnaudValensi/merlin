@@ -9,10 +9,11 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from . import restore as rs
 from . import service
+from . import store
 
 URL_SLUG = "workspace"
 
@@ -37,6 +38,16 @@ async def api_restore():
 
 
 @api_router.post("/dismiss")
-async def api_dismiss():
-    await asyncio.to_thread(service.dismiss_pending)
+async def api_dismiss(request: Request):
+    """Drop the offer. A body ``{"id": ...}`` names the offer the page saw,
+    so a newer one published meanwhile stays; no body (an older page) drops
+    whatever is there."""
+    examined: object = store.ANY_OFFER
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if isinstance(body, dict) and "id" in body:
+        examined = body["id"]
+    await asyncio.to_thread(service.dismiss_pending, examined)
     return {"ok": True}

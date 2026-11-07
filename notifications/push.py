@@ -467,10 +467,20 @@ class PushSender:
 
     # -- sending ------------------------------------------------------------
 
-    def send_one(self, sub: Subscription, payload: dict, subject: str = "") -> str:
+    def send_one(
+        self,
+        sub: Subscription,
+        payload: dict,
+        subject: str = "",
+        ttl: int | None = None,
+    ) -> str:
         """Send one push synchronously. Returns ``sent``, ``removed`` or
         ``failed``. Never raises. ``subject`` is the VAPID subject for this
-        send, computed here when the caller did not (a batch computes it once)."""
+        send, computed here when the caller did not (a batch computes it
+        once). ``ttl`` is how long the push service keeps the message for an
+        offline device, ``TTL_SECONDS`` unless the payload is worth more (a
+        prepared payload such as a crash of the tmux workspace, which must
+        still reach a phone that was off all night)."""
         from structured_log import log_event
 
         data = encode_payload(payload)
@@ -480,7 +490,7 @@ class PushSender:
                 data=data,
                 vapid_private_key=self.keys.vapid(),
                 vapid_claims={"sub": subject or self.subject()},
-                ttl=TTL_SECONDS,
+                ttl=TTL_SECONDS if ttl is None else ttl,
                 headers={"Urgency": URGENCY},
                 timeout=10,
             )
@@ -507,8 +517,15 @@ class PushSender:
         return "sent"
 
     def send_all_sync(
-        self, payload: dict, only: Iterable[str] | None = None
+        self,
+        payload: dict,
+        only: Iterable[str] | None = None,
+        ttl: int | None = None,
     ) -> SendResult:
+        """Send a prepared payload to every subscription (or ``only`` these
+        endpoints), with ``ttl`` as ``send_one`` takes it. No suppression:
+        the caller decided. Nothing is sent, and no key is generated, when
+        nobody is subscribed."""
         result = SendResult()
         wanted = set(only) if only is not None else None
         subject = ""
@@ -517,7 +534,7 @@ class PushSender:
                 continue
             # Computed at send time, once per batch, never stored on the sender.
             subject = subject or self.subject()
-            outcome = self.send_one(sub, payload, subject)
+            outcome = self.send_one(sub, payload, subject, ttl)
             if outcome == "sent":
                 result.sent += 1
             elif outcome == "removed":

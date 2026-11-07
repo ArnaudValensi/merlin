@@ -52,6 +52,10 @@ logger = logging.getLogger("merlin.workspace")
 SWEEP_INTERVAL = 15.0
 # Consecutive sweeps without a server before the server counts as gone.
 NO_SERVER_SWEEPS = 2
+# A crash at night must still reach a phone that was off until the morning.
+CRASH_PUSH_TTL = 12 * 3600
+CRASH_PUSH_TAG = "workspace-restore"
+RUNTIME_REASONS = ("server-changed", "server-gone")
 
 
 def freeze(snapshot: dict, reason: str, now: float | None = None) -> dict:
@@ -175,7 +179,56 @@ def detect(
         agents,
         offer["id"],
     )
+    if reason in RUNTIME_REASONS:
+        notify_crash(offer, missing)
     return offer
+
+
+def crash_payload(offer: dict, missing: list[dict], icon: str = "") -> dict:
+    """The push for a runtime crash point: what was lost and when, one tag
+    for every crash (a second crash replaces the first notification), the
+    terminal as the page to open, no window target."""
+    _, agents = snap.counts(missing)
+    crash = store.crash_of(offer) or {}
+    when = time.strftime("%H:%M", time.localtime(crash.get("detected_at", time.time())))
+    return {
+        "title": "tmux stopped",
+        "body": (
+            f"{len(missing)} session{'s' if len(missing) != 1 else ''}, "
+            f"{agents} agent{'s' if agents != 1 else ''} lost at {when}. "
+            "Open Merlin to restore them."
+        ),
+        "tag": CRASH_PUSH_TAG,
+        "url": "/terminal",
+        "sid": "",
+        "state": "crash",
+        "icon": icon,
+    }
+
+
+def notify_crash(offer: dict, missing: list[dict]) -> None:
+    """Push the crash to every subscribed device, off the event loop (the
+    sweep runs in a thread). Never raises and never delays the freeze, which
+    is done by now: a push failure is logged and that is all. Nothing happens
+    when notifications are not configured (no subscription: no send, and no
+    key pair is generated)."""
+    try:
+        from notifications.push import current_icon
+        from notifications.routes import get_sender
+
+        sender = get_sender()
+        if not sender.store.all():
+            return
+        payload = crash_payload(offer, missing, current_icon())
+        result = sender.send_all_sync(payload, ttl=CRASH_PUSH_TTL)
+        logger.info(
+            "Workspace crash pushed: %d sent, %d failed, %d removed",
+            result.sent,
+            result.failed,
+            result.removed,
+        )
+    except Exception:
+        logger.warning("Workspace crash push failed", exc_info=True)
 
 
 def sweep_once(state: SweepState, now: float | None = None) -> SweepState:
@@ -220,9 +273,13 @@ def pending_info() -> dict:
         store.delete_pending(pending.get("id"))  # this offer, not a newer one
         return {"pending": False}
     windows, agents = snap.counts(missing)
+    crash = store.crash_of(pending) or {}
     return {
         "pending": True,
         "saved_at": pending.get("saved_at"),
+        "id": pending.get("id"),
+        "reason": crash.get("reason"),
+        "crashed_at": crash.get("detected_at"),
         "windows": windows,
         "agents": agents,
         "sessions": [

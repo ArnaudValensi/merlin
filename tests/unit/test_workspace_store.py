@@ -749,6 +749,18 @@ class TestPendingInfo:
         info = service.pending_info()
         assert info["pending"] is True
         assert [s["name"] for s in info["sessions"]] == ["b", "c"]  # b is fillable
+        # An offer from before this epic: the new fields are None.
+        assert (info["id"], info["reason"], info["crashed_at"]) == (None, None, None)
+
+    def test_the_offer_s_crash_and_id_are_reported(self, monkeypatch):
+        from workspace import restore as rs
+
+        snapshot = served(make("a", saved_at=T + 10), pid=1)
+        service.freeze(snapshot, "server-gone", T + 11)
+        monkeypatch.setattr(rs, "live_sessions", lambda: None)
+        info = service.pending_info()
+        assert info["reason"] == "server-gone" and info["crashed_at"] == T + 11
+        assert info["id"] == offer()["id"]
 
     def test_offer_dropped_when_nothing_missing(self, monkeypatch):
         from workspace import restore as rs
@@ -762,6 +774,111 @@ class TestPendingInfo:
         store.write_snapshot(store.pending_path(), make("a"))
         service.dismiss_pending()
         assert service.pending_info() == {"pending": False}
+
+
+class TestCrashPush:
+    """A runtime crash point is pushed to every device: twelve hours of
+    TTL, one tag, the terminal to open, no window target. Never on startup,
+    never in the way of the freeze."""
+
+    @pytest.fixture
+    def sender(self, monkeypatch):
+        from notifications import push as pushmod
+        from notifications import routes as nroutes
+        from notifications.push import PushSender, SubscriptionStore, VapidKeys
+
+        calls = []
+
+        def record(**kw):
+            calls.append(kw)
+
+        home = store.paths.merlin_home() / "notifications"
+        sender = PushSender(
+            SubscriptionStore(home / "subscriptions.json"),
+            VapidKeys(home / "vapid.json"),
+            send=record,
+            subject=lambda: "https://wiz.merlincloud.dev",
+        )
+        monkeypatch.setattr(nroutes, "get_sender", lambda: sender)
+        monkeypatch.setattr(
+            pushmod, "current_icon", lambda: "/static/icons/green/icon-192.png"
+        )
+        sender.store.add(
+            {
+                "endpoint": "https://push.example/abc",
+                "keys": {"p256dh": "P", "auth": "A"},
+            },
+            "phone",
+        )
+        return sender, calls
+
+    def _disk(self, snapshot):
+        store.write_snapshot(store.latest_path(), snapshot)
+        return service.SweepState(last=snapshot)
+
+    def test_server_changed_pushes_what_was_lost(self, monkeypatch, sender):
+        import json as js
+
+        _, calls = sender
+        agent = {"provider": "codex", "conv": "t", "cwd": "/", "options": []}
+        old = make("a", "b", saved_at=T + 10)
+        old["sessions"][0]["windows"][0]["panes"][0]["agent"] = agent
+        old = served(old, pid=1)
+        new = served(make("merlin-dev", saved_at=T + 20), pid=2)
+        detected = time.mktime((2026, 11, 5, 19, 0, 59, 0, 0, -1))
+        sweeps(monkeypatch, self._disk(old), new, now=detected)
+        (call,) = calls
+        payload = js.loads(call["data"])
+        assert payload["title"] == "tmux stopped"
+        assert payload["body"] == (
+            "2 sessions, 1 agent lost at 19:00. Open Merlin to restore them."
+        )
+        assert payload["tag"] == "workspace-restore"
+        assert payload["url"] == "/terminal" and "target" not in payload
+        assert payload["state"] == "crash" and payload["sid"] == ""
+        assert payload["icon"] == "/static/icons/green/icon-192.png"
+        assert call["ttl"] == 12 * 3600
+        assert call["headers"] == {"Urgency": "high"}
+
+    def test_server_gone_pushes_and_startup_does_not(self, monkeypatch, sender):
+        _, calls = sender
+        old = served(make("a", saved_at=T + 10), pid=1)
+        store.write_snapshot(store.latest_path(), old)
+        live(monkeypatch, None)
+        assert service.freeze_pending(now=T + 11) is True  # startup: no push
+        assert calls == []
+        store.delete_pending()
+        store.crashes_dir().mkdir(exist_ok=True)
+        for p in store.crashes_dir().glob("*.json"):
+            p.unlink()
+        sweeps(monkeypatch, self._disk(old), snap.NO_SERVER, snap.NO_SERVER, now=T + 30)
+        assert len(calls) == 1
+
+    def test_a_push_failure_leaves_the_freeze_done(self, monkeypatch, sender):
+        from notifications import routes as nroutes
+
+        def boom():
+            raise RuntimeError("push service down")
+
+        monkeypatch.setattr(nroutes, "get_sender", boom)
+        old = served(make("a", saved_at=T + 10), pid=1)
+        new = served(make("merlin-dev", saved_at=T + 20), pid=2)
+        state = sweeps(monkeypatch, self._disk(old), new, now=T + 21)
+        pending = offer()
+        assert without_crash(pending) == old
+        assert crash_files() == [pending["id"] + ".json"]
+        assert store.read_snapshot(store.latest_path()) == new
+        assert ("server", 1, 100) in state.handled
+
+    def test_no_subscription_means_no_send_and_no_key(self, monkeypatch, sender):
+        sender_obj, calls = sender
+        sender_obj.store.remove("https://push.example/abc")
+        old = served(make("a", saved_at=T + 10), pid=1)
+        new = served(make("merlin-dev", saved_at=T + 20), pid=2)
+        sweeps(monkeypatch, self._disk(old), new, now=T + 21)
+        assert calls == []
+        assert not (store.paths.merlin_home() / "notifications" / "vapid.json").exists()
+        assert offer() is not None
 
 
 class TestNewerOfferSurvives:
