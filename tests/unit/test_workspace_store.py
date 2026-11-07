@@ -80,7 +80,17 @@ class TestFiles:
 
     @pytest.mark.parametrize(
         "saved_at",
-        ["invalid", {"t": 1}, None, True, float("nan"), float("inf"), -1, 2**40],
+        [
+            "invalid",
+            {"t": 1},
+            None,
+            True,
+            float("nan"),
+            float("inf"),
+            -1,
+            2**40,
+            json.loads("1" + "0" * 400),  # a JSON int too big for a float
+        ],
     )
     def test_a_bad_save_time_reads_as_absent(self, saved_at):
         # The id of a crash point is computed from saved_at: a value that
@@ -375,6 +385,13 @@ class TestIds:
         assert store.read_snapshot(store.entry_path(entry_id)) == frozen
         assert store.crash_of(frozen) == frozen["crash"]
         assert store.crash_of(shot) is None
+        huge = json.loads("1" + "0" * 400)
+        for bad in ("soon", huge, float("nan"), None):
+            crash = {"reason": "x", "detected_at": bad}
+            assert store.crash_of({**shot, "crash": crash}) is None
+        assert (
+            store.crash_of({**shot, "crash": {"reason": 1, "detected_at": 5.0}}) is None
+        )
 
 
 class TestServerIdentity:

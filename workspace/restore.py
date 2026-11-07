@@ -16,10 +16,15 @@ window is killed (see ``docs/dev/workspace-restore.md``).
 
 A session that fails halfway is rolled back, so that it is missing again and
 the offer, which stays on a failure, can restore it on a retry: a session this
-restore created is killed (by its id, nothing else is ever killed), a
-placeholder being filled loses the windows this restore added and gets its
-original window back where it was. Without that, the half-built session would
-count as present and the offer for it would be dropped.
+restore created is killed, a placeholder being filled loses the windows this
+restore added and gets its original window back where it was. Without that,
+the half-built session would count as present and the offer for it would be
+dropped. A tmux id is unique within one server only: a replacement server on
+the same socket (the web terminal recreating one the instant the old died)
+hands out the same ids again, so every rollback command is bound to the
+server that created the object, through ``if-shell -F`` on the server's own
+pid and start time, checked and run in one round trip (``_owned``). On any
+other server it does nothing.
 """
 
 from __future__ import annotations
@@ -54,6 +59,40 @@ class RestoreError(RuntimeError):
 
 def _env() -> dict[str, str]:
     return terminal_process_env(os.environ, term="xterm-256color")
+
+
+def _tmux_quote(arg: str) -> str:
+    """Quote one argument for tmux's own command parser (single quotes are
+    literal there; a quote inside is closed, escaped and reopened)."""
+    return "'" + arg.replace("'", "'\\''") + "'"
+
+
+def _owned(server: tuple[int, int] | None, *command: str) -> None:
+    """Run a tmux command on the server ``server`` (pid, start time) only.
+
+    The identity test and the command run inside one server round trip
+    (``if-shell -F``): a replacement server listening on the same socket
+    evaluates the test false and runs nothing, so a rollback can never kill
+    or move an object it did not create. With no identity, nothing runs.
+    """
+    if server is None:
+        logger.warning(
+            "Workspace restore: rollback of %s skipped, server identity unknown",
+            command[0],
+        )
+        return
+    pid, start = server
+    test = f"#{{&&:#{{==:#{{pid}},{pid}}},#{{==:#{{start_time}},{start}}}}}"
+    _tmux(
+        "if-shell", "-F", test, " ".join(_tmux_quote(a) for a in command), check=False
+    )
+
+
+def _identity(pid: str, start: str) -> tuple[int, int] | None:
+    try:
+        return int(pid), int(start)
+    except ValueError:
+        return None
 
 
 def _tmux(*args: str, check: bool = True, prefix: list[str] | None = None) -> str:
@@ -246,6 +285,7 @@ def _restore_new(sess: dict, server_running: bool, live_claude: set[str]) -> int
     windows = sorted(sess["windows"], key=lambda w: w["index"])
     launched = 0
     session_id = ""
+    server: tuple[int, int] | None = None
     try:
         for n, win in enumerate(windows):
             target = f"={name}:{win['index']}"
@@ -268,10 +308,11 @@ def _restore_new(sess: dict, server_running: bool, live_claude: set[str]) -> int
                     rows,
                     "-P",
                     "-F",
-                    "#{session_id}\t#{window_id}",
+                    "#{session_id}\t#{window_id}\t#{pid}\t#{start_time}",
                     prefix=server_spawn_prefix(server_running),
                 )
-                session_id, wid = created.split("\t", 1)
+                session_id, wid, pid, start = created.split("\t", 3)
+                server = _identity(pid, start)
                 server_running = True
                 index = _tmux("display-message", "-p", "-t", wid, "#{window_index}")
                 if index != str(win["index"]):
@@ -294,9 +335,10 @@ def _restore_new(sess: dict, server_running: bool, live_claude: set[str]) -> int
                 launched += _fill_window(win, wid, live_claude)
     except RestoreError:
         if session_id:
-            # Only the session this restore just created, by its id: a retry
-            # must find it missing, not half built and counted as present.
-            _tmux("kill-session", "-t", session_id, check=False)
+            # Only the session this restore just created, on the server that
+            # created it: a retry must find it missing, not half built and
+            # counted as present.
+            _owned(server, "kill-session", "-t", session_id)
             logger.info("Workspace restore: rolled back the half-built %s", name)
         raise
     return launched
@@ -307,9 +349,14 @@ def _restore_into(sess: dict, live_claude: set[str]) -> int:
     then drop its original window."""
     name = sess["name"]
     windows = sorted(sess["windows"], key=lambda w: w["index"])
-    original, original_index = _tmux(
-        "display-message", "-p", "-t", f"={name}:", "#{window_id}\t#{window_index}"
-    ).split("\t", 1)
+    original, original_index, pid, start = _tmux(
+        "display-message",
+        "-p",
+        "-t",
+        f"={name}:",
+        "#{window_id}\t#{window_index}\t#{pid}\t#{start_time}",
+    ).split("\t", 3)
+    server = _identity(pid, start)
     # Park the original window above every snapshot index so none collides.
     park = max([w["index"] for w in windows] + [0]) + 1
     _tmux("move-window", "-s", original, "-t", f"={name}:{park}", check=False)
@@ -340,15 +387,8 @@ def _restore_into(sess: dict, live_claude: set[str]) -> int:
         # the original window returns to its index, so the session is
         # fillable again and the offer still lists it.
         for wid in added:
-            _tmux("kill-window", "-t", wid, check=False)
-        _tmux(
-            "move-window",
-            "-s",
-            original,
-            "-t",
-            f"={name}:{original_index}",
-            check=False,
-        )
+            _owned(server, "kill-window", "-t", wid)
+        _owned(server, "move-window", "-s", original, "-t", f"={name}:{original_index}")
         logger.info("Workspace restore: rolled back the half-filled %s", name)
         raise
     _select_active(sess)

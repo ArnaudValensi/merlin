@@ -54,9 +54,13 @@ _TIME_MAX = 2**33
 def valid_time(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
+    # The bound first: JSON ints are unbounded and ``isfinite`` converts to
+    # a float, which overflows on a big enough one.
+    if isinstance(value, int):
+        return float(value) if 0 <= value <= _TIME_MAX else None
     if not math.isfinite(value) or not 0 <= value <= _TIME_MAX:
         return None
-    return float(value)
+    return value
 
 
 def latest_path() -> Path:

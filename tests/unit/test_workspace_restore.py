@@ -440,6 +440,88 @@ class TestRestore:
         assert rs.restore(snapshot)["restored"] == ["merlin-dev"]
         assert windows_of("merlin-dev") == [("0", "zero"), ("1", "one")]
 
+    def _replace_server(self, *sessions):
+        """Kill the isolated server by its socket and start a replacement on the
+        same socket, as the web terminal does the instant a server dies. The
+        replacement hands out $0, @0, @1 again."""
+        sock = os.environ["TMUX_TMPDIR"] + f"/tmux-{os.getuid()}/default"
+        subprocess.run(["tmux", "-S", sock, "kill-server"], capture_output=True)
+        for _ in range(100):  # the old server takes a moment to leave the socket
+            r = subprocess.run(
+                ["tmux", "-S", sock, "list-sessions"], capture_output=True, text=True
+            )
+            if "no server running" in r.stderr:
+                break
+            time.sleep(0.02)
+        for name, windows in sessions:
+            tmux("new-session", "-d", "-s", name)
+            for _ in range(windows - 1):
+                tmux("new-window", "-d", "-t", f"={name}:")
+        time.sleep(0.3)
+
+    def test_rollback_never_touches_a_replacement_server(self, iso, monkeypatch):
+        # The server dies mid-restore and the web terminal recreates one on
+        # the same socket, with the same ids, before the rollback runs. The
+        # rollback is bound to the dead server: the replacement survives.
+        root, _ = iso
+        a, b = dirs(root, "a", "b")
+        snapshot = snapshot_of(
+            {
+                "name": "half",
+                "active_window": 0,
+                "windows": [
+                    win(0, "zero", [{"index": 0, "cwd": a}]),
+                    win(1, "one", [{"index": 0, "cwd": b}]),
+                ],
+            }
+        )
+        real_fill = rs._fill_window
+
+        def fill_then_replace(win, wid, live_claude):
+            if win["name"] == "one":
+                self._replace_server(("merlin-dev", 1))
+                raise rs.RestoreError("server died")
+            return real_fill(win, wid, live_claude)
+
+        monkeypatch.setattr(rs, "_fill_window", fill_then_replace)
+        assert rs.restore(snapshot)["failed"] == ["half"]
+        assert tmux("list-sessions", "-F", "#{session_id} #{session_name}") == (
+            "$0 merlin-dev"
+        )
+
+    def test_placeholder_rollback_never_touches_a_replacement_server(
+        self, iso, monkeypatch
+    ):
+        root, _ = iso
+        a, b = dirs(root, "a", "b")
+        tmux("new-session", "-d", "-s", "merlin-dev", "-c", a)
+        time.sleep(0.3)
+        snapshot = snapshot_of(
+            {
+                "name": "merlin-dev",
+                "active_window": 1,
+                "windows": [
+                    win(0, "zero", [{"index": 0, "cwd": a}]),
+                    win(1, "one", [{"index": 0, "cwd": b}]),
+                ],
+            }
+        )
+        real_fill = rs._fill_window
+
+        def fill_then_replace(win, wid, live_claude):
+            if win["name"] == "one":
+                # The replacement reuses @0 and @1, the ids the rollback holds
+                # for the original and the added window, and index 0.
+                self._replace_server(("other", 2))
+                raise rs.RestoreError("server died")
+            return real_fill(win, wid, live_claude)
+
+        monkeypatch.setattr(rs, "_fill_window", fill_then_replace)
+        assert rs.restore(snapshot)["failed"] == ["merlin-dev"]
+        fmt = "#{session_name}:#{window_index} #{window_id}"
+        after = tmux("list-windows", "-a", "-F", fmt)
+        assert after.splitlines() == ["other:0 @0", "other:1 @1"]
+
     def test_running_claude_conversation_is_not_launched_twice(self, iso, monkeypatch):
         root, log = iso
         (d,) = dirs(root, "d")
