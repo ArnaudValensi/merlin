@@ -9,6 +9,17 @@ its pane's fresh interactive shell (``send-keys``), so the user's shell config,
 aliases and PATH apply and quitting the agent leaves a shell in the right
 place. Nothing else is ever typed: other panes come back as a plain shell.
 
+Two guards, in the engine so that every caller (the banner, ``merlin
+workspace restore``) gets them:
+
+- one restore at a time, across processes: ``restore.lock`` under the
+  workspace directory, an advisory ``flock`` taken without waiting; a second
+  restore fails at once with ``RestoreBusy``;
+- no conversation launched twice, whatever the provider: a conversation is
+  live when a Claude session file names it, or when a live window's
+  ``@agent_provider`` / ``@agent_conv`` (stamped by the agents' SessionStart
+  hook, Codex included) names it. Its pane comes back as a plain shell.
+
 A session whose name is live is skipped, except a *fillable* one: the single
 plain shell the web terminal auto-creates (``merlin-dev``) when it is opened
 before Restore. The snapshot's windows are created inside it, then its original
@@ -30,12 +41,15 @@ other server it does nothing.
 from __future__ import annotations
 
 from collections.abc import Collection
+import contextlib
+import fcntl
 import logging
 import os
 import re
 import subprocess
 import time
 
+import paths
 from terminal.tmux import (
     JOBS_SESSION_NAME,
     DEFAULT_SESSION_NAME,
@@ -55,6 +69,32 @@ _LAUNCH_PAUSE = 0.3
 
 class RestoreError(RuntimeError):
     pass
+
+
+class RestoreBusy(RestoreError):
+    """Another restore holds ``restore.lock``, in this process or another."""
+
+
+def lock_path():
+    return paths.workspace_dir() / "restore.lock"
+
+
+@contextlib.contextmanager
+def restore_lock():
+    """Hold the one restore slot for the duration of a restore. Never waits:
+    a restore already running, from the banner or the CLI, in this process
+    or another, makes this one fail at once with ``RestoreBusy``."""
+    path = lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RestoreBusy("a restore is already running") from None
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _env() -> dict[str, str]:
@@ -224,16 +264,27 @@ def layout_size(layout: str) -> tuple[str, str]:
     return (m.group(1), m.group(2)) if m else ("200", "50")
 
 
-def _live_claude_convs() -> set[str]:
+def live_conversations(
+    rows: tuple[list[dict], list[dict], list[dict]] | None,
+) -> set[tuple[str, str]]:
+    """``(provider, conversation)`` of every conversation running right now:
+    the live Claude session files, and the ``@agent_provider`` /
+    ``@agent_conv`` of every live window (the hook stamps both agents, so
+    this covers Codex). A restore never launches one of these again."""
+    out: set[tuple[str, str]] = set()
     proc = snap.Proc()
-    return {
-        r.get("sessionId")
-        for r in snap.live_claude_sessions(proc).values()
-        if r.get("sessionId")
-    }
+    for record in snap.live_claude_sessions(proc).values():
+        if record.get("sessionId"):
+            out.add(("claude", record["sessionId"]))
+    if rows is not None:
+        for w in rows[1]:
+            provider, conv = w.get("@agent_provider", ""), w.get("@agent_conv", "")
+            if provider and conv:
+                out.add((provider, conv))
+    return out
 
 
-def _fill_window(win: dict, wid: str, live_claude: set[str]) -> int:
+def _fill_window(win: dict, wid: str, live: set[tuple[str, str]]) -> int:
     """Split the panes of a freshly created window, restamp its options and
     type the agents. Returns the number of agents launched."""
     panes = sorted(win["panes"], key=lambda p: p["index"])
@@ -277,7 +328,7 @@ def _fill_window(win: dict, wid: str, live_claude: set[str]) -> int:
         agent = pane.get("agent")
         if not agent or not agent.get("conv"):
             continue
-        if agent["provider"] == "claude" and agent["conv"] in live_claude:
+        if (agent["provider"], agent["conv"]) in live:
             continue  # already running elsewhere: never launched twice
         _tmux(
             "send-keys",
@@ -292,7 +343,9 @@ def _fill_window(win: dict, wid: str, live_claude: set[str]) -> int:
     return launched
 
 
-def _restore_new(sess: dict, server_running: bool, live_claude: set[str]) -> int:
+def _restore_new(
+    sess: dict, server_running: bool, live_claude: set[tuple[str, str]]
+) -> int:
     name = sess["name"]
     windows = sorted(sess["windows"], key=lambda w: w["index"])
     launched = 0
@@ -356,7 +409,7 @@ def _restore_new(sess: dict, server_running: bool, live_claude: set[str]) -> int
     return launched
 
 
-def _restore_into(sess: dict, live_claude: set[str]) -> int:
+def _restore_into(sess: dict, live_claude: set[tuple[str, str]]) -> int:
     """Fill the auto-created single-shell session with the snapshot's windows,
     then drop its original window."""
     name = sess["name"]
@@ -427,13 +480,20 @@ def restore(snapshot: dict) -> dict:
 
     Returns ``{"restored": [names], "skipped": [names], "agents": n,
     "failed": [names]}``. One session failing does not stop the others.
+    Raises ``RestoreBusy`` at once when another restore is running.
     """
-    live = live_sessions()
-    server_running = live is not None
-    live = live or {}
-    live_claude = _live_claude_convs()
+    with restore_lock():
+        return _restore(snapshot)
+
+
+def _restore(snapshot: dict) -> dict:
+    rows = snap.read_tmux()
+    server_running = rows is not None
+    live = live_sessions_of(rows) if rows is not None else {}
+    job_runs = job_runs_of(rows) if rows is not None else set()
+    live_claude = live_conversations(rows)
     result: dict = {"restored": [], "skipped": [], "failed": [], "agents": 0}
-    for sess in _without_live_kept(snapshot["sessions"], live_job_runs()):
+    for sess in _without_live_kept(snapshot["sessions"], job_runs):
         name = sess["name"]
         if not sess.get("windows") or name == JOBS_SESSION_NAME:
             continue

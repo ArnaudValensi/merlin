@@ -525,7 +525,9 @@ class TestRestore:
     def test_running_claude_conversation_is_not_launched_twice(self, iso, monkeypatch):
         root, log = iso
         (d,) = dirs(root, "d")
-        monkeypatch.setattr(rs, "_live_claude_convs", lambda: {"busy-conv"})
+        monkeypatch.setattr(
+            rs, "live_conversations", lambda rows: {("claude", "busy-conv")}
+        )
         snapshot = snapshot_of(
             {
                 "name": "s",
@@ -553,6 +555,140 @@ class TestRestore:
         assert rs.restore(snapshot)["agents"] == 0
         time.sleep(0.5)
         assert list(log.iterdir()) == []
+
+    def test_a_conversation_live_in_a_window_is_not_launched_twice(self, iso):
+        # The hook stamps @agent_provider / @agent_conv on an agent's window:
+        # a conversation named there is running, whatever the provider, and
+        # its pane comes back as a plain shell. An unrelated one is launched.
+        root, log = iso
+        a, b, c = dirs(root, "a", "b", "c")
+        tmux("new-session", "-d", "-s", "elsewhere", "-c", a)
+        tmux("set-option", "-w", "-t", "=elsewhere:0", "@agent_provider", "codex")
+        tmux("set-option", "-w", "-t", "=elsewhere:0", "@agent_conv", "thread-live")
+        tmux("new-window", "-d", "-t", "=elsewhere:", "-c", a)
+        tmux("set-option", "-w", "-t", "=elsewhere:1", "@agent_provider", "claude")
+        tmux("set-option", "-w", "-t", "=elsewhere:1", "@agent_conv", "conv-live")
+        assert rs.live_conversations(snap.read_tmux()) >= {
+            ("codex", "thread-live"),
+            ("claude", "conv-live"),
+        }
+
+        def agent(provider, conv, cwd):
+            return {"provider": provider, "conv": conv, "cwd": cwd, "options": []}
+
+        snapshot = snapshot_of(
+            {
+                "name": "s",
+                "active_window": 0,
+                "windows": [
+                    win(
+                        0,
+                        "cx",
+                        [
+                            {
+                                "index": 0,
+                                "cwd": a,
+                                "agent": agent("codex", "thread-live", a),
+                            }
+                        ],
+                    ),
+                    win(
+                        1,
+                        "cl",
+                        [
+                            {
+                                "index": 0,
+                                "cwd": b,
+                                "agent": agent("claude", "conv-live", b),
+                            }
+                        ],
+                    ),
+                    win(
+                        2,
+                        "ok",
+                        [
+                            {
+                                "index": 0,
+                                "cwd": c,
+                                "agent": agent("codex", "thread-new", c),
+                            }
+                        ],
+                    ),
+                ],
+            }
+        )
+        result = rs.restore(snapshot)
+        assert result["restored"] == ["s"] and result["agents"] == 1
+        assert wait_for(log / "codex.c.args") == [c, "resume", "thread-new"]
+        time.sleep(0.5)
+        assert sorted(p.name for p in log.iterdir()) == ["codex.c.args"]
+
+    def test_a_second_restore_fails_at_once_while_one_runs(self, iso, monkeypatch):
+        import fcntl
+
+        from workspace import service, store
+
+        root, _ = iso
+        (d,) = dirs(root, "d")
+        snapshot = snapshot_of(
+            {
+                "name": "s",
+                "active_window": 0,
+                "windows": [win(0, "w", [{"index": 0, "cwd": d}])],
+            }
+        )
+        store.write_pending(
+            {**store.frozen(snapshot, "server-gone", 5.0), "id": "20200101-000001"}
+        )
+        rs.lock_path().parent.mkdir(parents=True, exist_ok=True)
+        with open(rs.lock_path(), "a") as holder:
+            fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with pytest.raises(rs.RestoreBusy, match="a restore is already running"):
+                rs.restore(snapshot)
+            with pytest.raises(rs.RestoreBusy):
+                service.restore_pending()
+            fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        assert store.read_pending() is not None  # nothing was consumed
+        assert rs.live_sessions() in (None, {})  # nothing was created
+        assert service.restore_pending()["restored"] == ["s"]
+        assert store.read_pending() is None
+
+    def test_the_restore_lock_holds_across_processes(self, iso):
+        import sys
+
+        root, _ = iso
+        (d,) = dirs(root, "d")
+        snapshot = snapshot_of(
+            {
+                "name": "s",
+                "active_window": 0,
+                "windows": [win(0, "w", [{"index": 0, "cwd": d}])],
+            }
+        )
+        rs.lock_path().parent.mkdir(parents=True, exist_ok=True)
+        # Another process (a CLI restore, say) holds the lock until told.
+        holder = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import fcntl, sys; f = open(sys.argv[1], 'a');"
+                " fcntl.flock(f.fileno(), fcntl.LOCK_EX); print('held', flush=True);"
+                " sys.stdin.readline()",
+                str(rs.lock_path()),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert holder.stdout.readline().strip() == "held"
+            with pytest.raises(rs.RestoreBusy):
+                rs.restore(snapshot)
+        finally:
+            holder.stdin.write("\n")
+            holder.stdin.close()
+            holder.wait(timeout=10)
+        assert rs.restore(snapshot)["restored"] == ["s"]
 
     def test_capture_round_trip(self, iso):
         root, _ = iso
@@ -654,9 +790,10 @@ class TestKeptJobWindows:
 
     def test_the_restore_itself_skips_a_live_run(self, monkeypatch):
         restored = []
-        monkeypatch.setattr(rs, "live_sessions", lambda: {})
-        monkeypatch.setattr(rs, "_live_claude_convs", lambda: {})
-        monkeypatch.setattr(rs, "live_job_runs", lambda: {"r1"})
+        monkeypatch.setattr(snap, "read_tmux", lambda: ([], [], []))
+        monkeypatch.setattr(rs, "live_sessions_of", lambda rows: {})
+        monkeypatch.setattr(rs, "live_conversations", lambda rows: set())
+        monkeypatch.setattr(rs, "job_runs_of", lambda rows: {"r1"})
         monkeypatch.setattr(
             rs,
             "_restore_new",

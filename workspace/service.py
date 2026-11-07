@@ -40,7 +40,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import threading
 import time
 from dataclasses import dataclass, field
 
@@ -53,10 +52,6 @@ logger = logging.getLogger("merlin.workspace")
 SWEEP_INTERVAL = 15.0
 # Consecutive sweeps without a server before the server counts as gone.
 NO_SERVER_SWEEPS = 2
-
-# Restore and Dismiss race the sweep and each other only through the pending
-# file; one lock keeps a double click from restoring twice.
-_restore_lock = threading.Lock()
 
 
 def freeze(snapshot: dict, reason: str, now: float | None = None) -> dict:
@@ -244,22 +239,22 @@ def pending_info() -> dict:
 def restore_pending() -> dict:
     """Run the restore of the pending offer, then drop the offer, unless a
     session failed: the offer stays for what is still missing, which
-    ``pending_info`` keeps recomputing."""
-    with _restore_lock:
-        pending = store.read_pending()
-        if pending is None:
-            return {"restored": [], "skipped": [], "failed": [], "agents": 0}
-        result = rs.restore(pending)
-        if not result["failed"]:
-            # The offer restored, not one the sweep published meanwhile.
-            store.delete_pending(pending.get("id"))
-        return result
+    ``pending_info`` keeps recomputing. A double click, or a CLI restore
+    running at the same time, makes the engine raise ``RestoreBusy``: the
+    second one does nothing."""
+    pending = store.read_pending()
+    if pending is None:
+        return {"restored": [], "skipped": [], "failed": [], "agents": 0}
+    result = rs.restore(pending)
+    if not result["failed"]:
+        # The offer restored, not one the sweep published meanwhile.
+        store.delete_pending(pending.get("id"))
+    return result
 
 
 def dismiss_pending(examined: object = store.ANY_OFFER) -> None:
     """Drop the offer: the one the user saw when it is named, else any."""
-    with _restore_lock:
-        store.delete_pending(examined)
+    store.delete_pending(examined)
 
 
 async def run(stop: asyncio.Event, interval: float = SWEEP_INTERVAL) -> None:

@@ -9,8 +9,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
+from . import restore as rs
 from . import service
 
 URL_SLUG = "workspace"
@@ -27,7 +28,10 @@ async def api_pending():
 
 @api_router.post("/restore")
 async def api_restore():
-    return await asyncio.to_thread(service.restore_pending)
+    try:
+        return await asyncio.to_thread(service.restore_pending)
+    except rs.RestoreBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @api_router.post("/dismiss")
