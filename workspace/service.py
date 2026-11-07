@@ -2,9 +2,14 @@
 
 At server start, ``start()`` first freezes the restore offer (see ``store``),
 then runs the sweep: every ``SWEEP_INTERVAL`` seconds it snapshots tmux and
-writes ``latest.json`` only when the workspace changed. It never writes when
-there is no tmux server or it holds no session, so a dead server never erases
-the last good snapshot. A power cut loses at most one interval of changes.
+writes ``latest.json`` only when the workspace changed, with a copy in
+``history/`` (thinned after each write). It never writes when there is no
+tmux server or it holds no session, so a dead server never erases the last
+good snapshot. A power cut loses at most one interval of changes.
+
+An offer is always a crash point first: the snapshot is written to
+``crashes/`` with its ``crash`` object (reason ``startup`` for the freeze at
+startup), then copied to ``pending-restore.json`` with its ``id``.
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ import asyncio
 import contextlib
 import logging
 import threading
+import time
 
 from . import restore as rs
 from . import snapshot as snap
@@ -27,13 +33,31 @@ SWEEP_INTERVAL = 15.0
 _restore_lock = threading.Lock()
 
 
-def freeze_pending() -> bool:
+def freeze(snapshot: dict, reason: str, now: float | None = None) -> dict:
+    """Record ``snapshot`` as a crash point and make it the offer. Returns the
+    offer. The crash point is written first: if the offer's write then fails,
+    the restore point is already safe on disk and the caller retries."""
+    detected_at = time.time() if now is None else now
+    entry_id, frozen = store.write_crash(snapshot, reason, detected_at)
+    offer = {**frozen, "id": entry_id}
+    store.write_snapshot(store.pending_path(), offer)
+    logger.info(
+        "Workspace restore offer frozen (%s, %d sessions, crash point %s)",
+        reason,
+        len(snapshot["sessions"]),
+        entry_id,
+    )
+    return offer
+
+
+def freeze_pending(now: float | None = None) -> bool:
     """Set the restore offer aside before anything overwrites ``latest.json``.
 
     Keeps an existing offer (Merlin restarted again before the user acted).
-    Otherwise copies ``latest.json`` when sessions it holds are missing from
-    tmux, counting the terminal's fresh ``merlin-dev`` placeholder as missing
-    (``restore.missing_sessions``). Returns True when an offer is pending.
+    Otherwise freezes ``latest.json`` as a ``startup`` crash point when
+    sessions it holds are missing from tmux, counting the terminal's fresh
+    ``merlin-dev`` placeholder as missing (``restore.missing_sessions``).
+    Returns True when an offer is pending.
     """
     if store.read_snapshot(store.pending_path()) is not None:
         return True
@@ -42,9 +66,20 @@ def freeze_pending() -> bool:
         return False
     if not rs.missing_sessions(latest, rs.live_sessions(), rs.live_job_runs()):
         return False
-    store.write_snapshot(store.pending_path(), latest)
-    logger.info("Workspace restore offer frozen (%d sessions)", len(latest["sessions"]))
+    freeze(latest, "startup", now)
     return True
+
+
+def record_history(snapshot: dict) -> None:
+    """Copy a snapshot the sweep just wrote into ``history/`` and thin it.
+    Never raises: the history is a convenience, ``latest.json`` is the
+    restore point, and a failure here must not make the sweep rewrite it
+    every interval."""
+    try:
+        store.write_history(snapshot)
+        store.thin()
+    except Exception:
+        logger.warning("Workspace history: write or thinning failed", exc_info=True)
 
 
 def sweep_once(last: dict | None) -> dict | None:
@@ -55,6 +90,7 @@ def sweep_once(last: dict | None) -> dict | None:
     if snap.same_content(current, last):
         return last
     store.write_snapshot(store.latest_path(), current)
+    record_history(current)
     return current
 
 
@@ -89,15 +125,17 @@ def pending_info() -> dict:
 
 
 def restore_pending() -> dict:
-    """Run the restore of the pending offer, then drop the offer."""
+    """Run the restore of the pending offer, then drop the offer, unless a
+    session failed: the offer stays for what is still missing, which
+    ``pending_info`` keeps recomputing."""
     with _restore_lock:
         pending = store.read_snapshot(store.pending_path())
         if pending is None:
             return {"restored": [], "skipped": [], "failed": [], "agents": 0}
-        try:
-            return rs.restore(pending)
-        finally:
+        result = rs.restore(pending)
+        if not result["failed"]:
             store.delete_pending()
+        return result
 
 
 def dismiss_pending() -> None:

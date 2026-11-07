@@ -200,10 +200,11 @@ def reviews_dir() -> Path:
 
 
 def workspace_dir() -> Path:
-    """Workspace restore state: the continuous tmux snapshot (``latest.json``)
-    and the restore frozen at startup (``pending-restore.json``). Under
-    ``~/.merlin/`` rather than ``~/.local/state`` so that in a Merlin Cloud
-    container it lives on the persistent volume with the rest of Merlin's data.
+    """Workspace restore state: the continuous tmux snapshot (``latest.json``),
+    its thinned history (``history/``), the crash points (``crashes/``) and
+    the restore offer (``pending-restore.json``). Under ``~/.merlin/`` rather
+    than ``~/.local/state`` so that in a Merlin Cloud container it lives on
+    the persistent volume with the rest of Merlin's data.
     """
     return data_dir() / "data" / "workspace"
 

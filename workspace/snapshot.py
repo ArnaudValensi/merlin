@@ -7,6 +7,10 @@ relaunch from and the launch options to keep. No scrollback, no screen content.
 Every other program is recorded only as its pane's directory: the restore never
 reruns a command (see ``docs/dev/workspace-restore.md``).
 
+The snapshot also records the identity of the tmux server it was taken from
+(``server``: the server's pid and start time, an optional field), which is
+how a later sweep tells that this server has died (``service``).
+
 Conversation ids, in order:
 
 - Claude: ``~/.claude/sessions/<pid>.json``, which every interactive Claude
@@ -346,6 +350,11 @@ _PANE_FIELDS = (
 )
 
 
+# The server's identity rides the session rows (``#{pid}`` and
+# ``#{start_time}`` are server formats), so reading it costs no extra call.
+_SESSION_FIELDS = ("session_name", "pid", "start_time")
+
+
 def live_session_names() -> list[str] | None:
     """Names of the live tmux sessions; None when no server is running."""
     rows = _tmux_rows(["list-sessions"], ("session_name",))
@@ -355,7 +364,7 @@ def live_session_names() -> list[str] | None:
 def read_tmux() -> tuple[list[dict], list[dict], list[dict]] | None:
     """(sessions, windows, panes) rows of the whole server, or None when there
     is no server or any of the three reads failed."""
-    sessions = _tmux_rows(["list-sessions"], ("session_name",))
+    sessions = _tmux_rows(["list-sessions"], _SESSION_FIELDS)
     if sessions is None:
         return None
     # A failed read is not an empty one: the sweep must skip the write rather
@@ -367,6 +376,17 @@ def read_tmux() -> tuple[list[dict], list[dict], list[dict]] | None:
     if panes is None:
         return None
     return sessions, windows, panes
+
+
+def server_identity(sessions: list[dict]) -> dict | None:
+    """``{"pid", "start_time"}`` of the server the session rows came from, or
+    None when the rows do not carry it (older callers, canned rows)."""
+    for row in sessions:
+        try:
+            return {"pid": int(row["pid"]), "start_time": int(row["start_time"])}
+        except (KeyError, TypeError, ValueError):
+            return None
+    return None
 
 
 # --- capture ----------------------------------------------------------------
@@ -519,9 +539,11 @@ def build_snapshot(
         out_sessions.append(
             {"name": name, "active_window": active_window, "windows": out_windows}
         )
+    server = server_identity(sessions)
     return {
         "version": SNAPSHOT_VERSION,
         "saved_at": time.time() if now is None else now,
+        **({"server": server} if server else {}),
         "sessions": out_sessions,
     }
 

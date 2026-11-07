@@ -411,6 +411,10 @@ class TestRestore:
         ]
         assert [w["panes"][0]["cwd"] for w in sess["windows"]] == [x, y]
         assert sess["windows"][1]["options"] == {"@agent_sid": "keep-me"}
+        server = captured["server"]
+        assert isinstance(server["pid"], int) and server["pid"] > 0
+        assert isinstance(server["start_time"], int) and server["start_time"] > 0
+        assert server == snap.server_identity(snap.read_tmux()[0])
 
 
 def test_server_spawn_prefix(monkeypatch):

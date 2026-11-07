@@ -231,6 +231,34 @@ class TestBuild:
         assert not snap.same_content(a, None)
 
 
+class TestServerIdentity:
+    def test_recorded_from_the_session_rows(self):
+        proc = FakeProc({100: (1, ["zsh"], "/work")})
+        rows = [{"session_name": "main", "pid": "4242", "start_time": "1791200000"}]
+        s = snap.build_snapshot(rows, [window()], [pane()], proc, {}, now=1.0)
+        assert s["server"] == {"pid": 4242, "start_time": 1791200000}
+
+    def test_absent_when_the_rows_do_not_carry_it(self):
+        proc = FakeProc({100: (1, ["zsh"], "/work")})
+        s = snap.build_snapshot(
+            [{"session_name": "main"}], [window()], [pane()], proc, {}, now=1.0
+        )
+        assert "server" not in s
+        assert snap.server_identity([{"session_name": "m", "pid": "x"}]) is None
+        assert snap.server_identity([]) is None
+
+    def test_the_sessions_read_asks_for_it(self, monkeypatch):
+        asked = []
+
+        def rows(args, fields):
+            asked.append((tuple(args), fields))
+            return []
+
+        monkeypatch.setattr(snap, "_tmux_rows", rows)
+        snap.read_tmux()
+        assert asked[0] == (("list-sessions",), ("session_name", "pid", "start_time"))
+
+
 class TestReadTmux:
     def test_a_failed_read_is_no_snapshot(self, monkeypatch):
         # A failed list-panes must not become a snapshot without panes.
