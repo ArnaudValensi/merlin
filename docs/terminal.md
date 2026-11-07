@@ -30,14 +30,23 @@ session when you come back. Multiple browser tabs attach to the same
 session, and SSH access shares it too: phone, desktop browser, and SSH
 are one continuous workspace.
 
-## Get your workspace back after a restart
+## Get your workspace back
 
-tmux survives a closed tab, not a reboot or a power cut. Merlin covers that
-case: it keeps a snapshot of your sessions, saved every 15 seconds when
-something changed. After the machine restarts, the first page you open shows
-a banner: *Your last workspace didn't come back*, with the sessions it would
-bring back and when they were saved. **Restore** rebuilds them; **Dismiss**
-drops the offer.
+tmux survives a closed tab, not a reboot, a power cut, or a `tmux
+kill-server` typed in the wrong place. Merlin covers those cases: it keeps a
+snapshot of your sessions, saved every 15 seconds when something changed.
+After the machine restarts, the first page you open shows a banner: *Your
+last workspace didn't come back*, with the sessions it would bring back and
+when they were saved. **Restore** rebuilds them; **Dismiss** drops the offer.
+
+When tmux dies while Merlin keeps running, the banner appears on its own
+within half a minute on every open page, titled *tmux stopped at HH:MM*, and
+your phone gets a push ("tmux stopped: N sessions, M agents lost at HH:MM")
+if you subscribed to [notifications](notifications.md). It waits for you:
+nothing is restored until you click Restore, and the offer keeps until the
+morning if the crash happened at night. A crash is never mistaken for a
+single flaky read of tmux, and Merlin keeps the last good snapshot aside
+before anything can overwrite it.
 
 What comes back:
 
@@ -55,11 +64,26 @@ resumed like the others; tell it to continue.
 
 A session whose name is already in use is left as it is. The one exception
 is the session the terminal creates by itself when you open it before
-clicking Restore: Merlin fills it with your saved windows.
+clicking Restore: Merlin fills it with your saved windows. A conversation
+that is already running somewhere is never started a second time: its pane
+comes back as a shell. If a session fails halfway through its restore, it is
+taken down again and the offer stays, so you can try again.
 
-The banner also appears after `tmux kill-server`, since Merlin cannot tell a
-deliberate kill from a crash. Dismiss it. Restarting Merlin itself never
-shows it, because your tmux sessions keep running.
+The banner also appears after a deliberate `tmux kill-server`, since Merlin
+cannot tell a deliberate kill from a crash. Dismiss it. Restarting Merlin
+itself never shows it, because your tmux sessions keep running.
+
+### Older restore points, and restoring from the shell
+
+Merlin keeps a history of its snapshots (every one of the last two hours,
+then one per hour for a week) and every crash point for thirty days, so you
+can go back further than the last one. `merlin workspace list` shows them,
+`merlin workspace show <id>` what one holds and which of its sessions are
+missing right now, and `merlin workspace restore` rebuilds the pending offer
+(or a point by id), all of it or only `--session NAME`; `--dry-run` prints
+what would be created and the exact command that would be typed in each
+agent pane, and touches nothing. It works with Merlin stopped, from any
+shell. Syntax: `merlin workspace --help`.
 
 ## Manage windows
 

@@ -27,8 +27,9 @@ Sessions board with its state (idle, busy, waiting for an answer, done),
 read from hooks Merlin installs in your settings with the user's consent;
 Merlin notifies the user, on their phone too, when you finish or ask in a
 window they are not looking at. Your conversation is bound to the window
-(the `@agent_conv` option), which is how a restart of the machine brings
-you back on the same conversation through the workspace restore.
+(the `@agent_conv` option), which is how a restart of the machine, or a
+tmux that died, brings you back on the same conversation through the
+workspace restore (the user's call, from the banner or `merlin workspace`).
 
 A conversation lives as long as its window: the user resumes you by
 coming back to it. Nothing is carried from one window to another by

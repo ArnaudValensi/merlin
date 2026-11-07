@@ -171,8 +171,11 @@ an older cursor neither replays nor regresses the cursor.
   the worker's `showNotification` is used instead.
 - **Retraction.** `board.js` hands `syncWaiting(sids)` the sids of the windows still in
   done or ask on every successful poll, from the tree. The page closes its own
-  notifications and, through the registration, the pushed ones whose tag is not in that
-  set. The state is the one the green pill uses: visiting or leaving a done window, or
+  notifications and, through the registration, the pushed window notifications (those
+  whose data carries a window sid) whose tag is not in that set; a push that is not about
+  a window, the test push and the workspace crash push (`workspace-restore`, see
+  [`workspace-restore.md`](workspace-restore.md)), stays until the user acts on it. The
+  state is the one the green pill uses: visiting or leaving a done window, or
   answering an ask, clears it, so a window handled on one device disappears from the
   others on their next poll. A phone in a pocket clears on the next open, since a push
   that shows nothing is not allowed (Apple drops silent pushes and revokes after a few,
@@ -245,7 +248,9 @@ written atomically with mode 0600:
 
 A store file that fails to parse is moved to `<name>.corrupt-<timestamp>` and the store
 starts empty. A send answered with 404 or 410 removes the subscription. Any other failure is
-logged with `log_event("push_failed", ...)` and never raised. TTL 300, urgency `high`,
+logged with `log_event("push_failed", ...)` and never raised. TTL 300 (a prepared payload
+can carry its own through the `ttl` argument of `send_one` / `send_all_sync`: the workspace
+crash push asks for twelve hours), urgency `high`,
 payload under 3 KB: `title`, `body`, `tag`, `url` (`/terminal?target=...`), `sid`, `state`,
 `icon` (the environment color's `icon-192.png`, resolved at send time, so a color change
 shows on the next push). `title` and `body` are the event's own. `encode_payload` clips `title` to 120 and `body` to

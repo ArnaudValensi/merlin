@@ -75,6 +75,7 @@ See [`skill-system.md`](skill-system.md) for how `skills/` and `skills-user/` ar
 | `merlin agent` | Print the agent-facing brain doc |
 | `merlin job ...` | Manage scheduled jobs (wraps `job/manage.py`) |
 | `merlin review ...` | Read and answer the Commits page reviews |
+| `merlin workspace ...` | List, show and restore the tmux workspace's restore points (see [`workspace-restore.md`](workspace-restore.md)) |
 | `merlin dashboard-url` | Print the dashboard URL |
 
 ### First-Run Setup

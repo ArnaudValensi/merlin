@@ -23,6 +23,9 @@ there, not here: this page is the map.
   [knowledge base](notes.md), once the notes extension is enabled.
 - `merlin review`: read and answer the code reviews you leave on the
   [Commits](commits.md) page.
+- `merlin workspace`: list, inspect and restore the saved points of your
+  tmux workspace, with Merlin running or not; see
+  [Terminal](terminal.md#get-your-workspace-back).
 - `merlin skills`: list every agent skill and where it comes from (core,
   an extension, or your personal skills), in precedence order; see
   [Extensions](extensions.md).

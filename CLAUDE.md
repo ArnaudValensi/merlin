@@ -74,7 +74,7 @@ New to the codebase? Read `architecture.md` first, then `extension-system.md` an
 | [`docs/dev/commit-review.md`](docs/dev/commit-review.md) | Commits page comparisons (`base..head`, ref safety, routes, the sticky header), saved reviews, comments, `merlin review` |
 | [`docs/dev/notifications.md`](docs/dev/notifications.md) | Attention watcher, event cursor, poll transport, in-tab rule, manifest and worker, Web Push, suppression, the seams kept for the hub |
 | [`docs/dev/voice-mode.md`](docs/dev/voice-mode.md) | Voice mode: the OpenAI-compatible TTS seam, config keys, the voice context hook and tmux options, the transcript reader (Codex seam), sessions, control frames, the console, the reference Kokoro server |
-| [`docs/dev/workspace-restore.md`](docs/dev/workspace-restore.md) | Continuous tmux snapshot, the startup freeze, the restore banner and engine, `@agent_conv` hook stamping |
+| [`docs/dev/workspace-restore.md`](docs/dev/workspace-restore.md) | Continuous tmux snapshot, its history and crash points, the startup freeze and the death detection while Merlin runs, the restore banner, push and engine with its guards, `merlin workspace`, `@agent_conv` hook stamping |
 | [`docs/dev/notifications-acceptance.md`](docs/dev/notifications-acceptance.md) | What only a person can verify on notifications: real push delivery, real focus, real agent screens, real browsers, the phone as an app |
 | [`docs/dev/claude-code-reference.md`](docs/dev/claude-code-reference.md) | Claude Code CLI flags and options |
 | [`docs/dev/releasing.md`](docs/dev/releasing.md) | Tagging, GitHub Releases, install/update flow, rollback |
