@@ -60,6 +60,10 @@ class ControlError(Exception):
 class Reply:
     ok: bool
     lines: list[bytes] = field(default_factory=list)
+    # How many %output lines the stream had carried when this reply's %begin
+    # arrived: output numbered below it was in tmux's grid when the command
+    # ran, output from it on came after (see ControlClient.seq).
+    seq: int = 0
 
     def text(self) -> list[str]:
         return [line.decode("utf-8", "replace") for line in self.lines]
@@ -105,6 +109,18 @@ class ControlClient:
         self._pending: deque[list[asyncio.Future[Reply]]] = deque()
         self._block: list[bytes] | None = None
         self._block_ours = False
+        # The %end / %error that closes the open block repeats its %begin's
+        # time, command number and flags: only that exact line ends it, so
+        # captured pane text that starts with "%end " stays content.
+        self._block_end = b""
+        self._block_error = b""
+        self._block_seq = 0
+        # Number of %output / %extended-output lines seen so far. Read it in
+        # on_output to place a chunk against a Reply's seq.
+        self.seq = 0
+        self._write_lock = asyncio.Lock()
+        self._broken = False
+        self._closing: asyncio.Task | None = None
         self._started: asyncio.Future[None] | None = None
         self._reader: asyncio.Task | None = None
         self._closed = False
@@ -165,8 +181,8 @@ class ControlClient:
 
     def _feed(self, line: bytes) -> None:
         if self._block is not None:
-            if line.startswith((b"%end ", b"%error ")):
-                ok = line.startswith(b"%end ")
+            if line == self._block_end or line == self._block_error:
+                ok = line == self._block_end
                 block, ours = self._block, self._block_ours
                 self._block = None
                 if self._started is not None and not self._started.done():
@@ -176,7 +192,7 @@ class ControlClient:
                     group = self._pending[0]
                     fut = group.pop(0)
                     if not fut.done():
-                        fut.set_result(Reply(ok, block))
+                        fut.set_result(Reply(ok, block, self._block_seq))
                     if not ok:
                         # tmux runs nothing after a failed command of a line.
                         for skipped in group:
@@ -191,17 +207,23 @@ class ControlClient:
             self._block.append(line)
             return
         if line.startswith(b"%begin "):
+            args = line[len(b"%begin ") :]
             self._block = []
-            self._block_ours = line.rsplit(b" ", 1)[-1] == b"1"
+            self._block_ours = args.rsplit(b" ", 1)[-1] == b"1"
+            self._block_end = b"%end " + args
+            self._block_error = b"%error " + args
+            self._block_seq = self.seq
             return
         if line.startswith(b"%output "):
             _, pane, value = (line.split(b" ", 2) + [b""])[:3]
+            self.seq += 1
             self._on_output(pane.decode(), unescape(value))
             return
         if line.startswith(b"%extended-output "):
             head, _, value = line.partition(b" : ")
             parts = head.split(b" ")
             if len(parts) >= 2:
+                self.seq += 1
                 self._on_output(parts[1].decode(), unescape(value))
             return
         if line.startswith(b"%"):
@@ -218,31 +240,61 @@ class ControlClient:
                 if not fut.done():
                     fut.set_exception(ControlError(reason))
 
+    def _check_open(self) -> None:
+        if (
+            self._closed
+            or self._broken
+            or self._proc is None
+            or self._proc.stdin is None
+            or self.exited.is_set()
+        ):
+            raise ControlError("tmux control client is closed")
+
     async def command(
         self, *commands: str, timeout: float = COMMAND_TIMEOUT
     ) -> list[Reply]:
         """Run commands as one line (``a ; b``), so tmux runs them back to back
         with no pane output parsed in between; one reply per command. After a
         failed command, the ones after it in the line did not run and their
-        replies say so."""
-        if (
-            self._closed
-            or self._proc is None
-            or self._proc.stdin is None
-            or self.exited.is_set()
-        ):
-            raise ControlError("tmux control client is closed")
-        loop = asyncio.get_running_loop()
-        futures = [loop.create_future() for _ in commands]
-        self._pending.append(list(futures))
+        replies say so.
+
+        ``timeout`` bounds the whole operation: waiting for the writer, the
+        write itself (tmux may stop reading its stdin) and the replies. Past
+        it nothing is known about which replies are still to come, so the
+        client is abandoned (killed and reaped) and every caller gets
+        ControlError: a late reply can never be handed to the wrong command.
+        """
+        self._check_open()
         line = " ; ".join(commands).encode("utf-8") + b"\n"
+        loop = asyncio.get_running_loop()
         try:
-            self._proc.stdin.write(line)
-            await self._proc.stdin.drain()
+            async with asyncio.timeout(timeout):
+                async with self._write_lock:
+                    self._check_open()
+                    futures = [loop.create_future() for _ in commands]
+                    # Registered under the lock, right before the write: the
+                    # order of _pending is the order of the lines on stdin.
+                    self._pending.append(list(futures))
+                    assert self._proc is not None and self._proc.stdin is not None
+                    self._proc.stdin.write(line)
+                    await self._proc.stdin.drain()
+                return list(await asyncio.gather(*futures))
+        except TimeoutError:
+            self._abandon("tmux control client stopped answering")
+            raise ControlError("tmux control command timed out") from None
         except (ConnectionError, OSError) as e:
-            self._fail_pending("tmux control client is gone")
+            self._abandon("tmux control client is gone")
             raise ControlError(str(e)) from e
-        return list(await asyncio.wait_for(asyncio.gather(*futures), timeout))
+
+    def _abandon(self, reason: str) -> None:
+        """Give up on a client whose protocol state is unknown: fail every
+        waiting command and close it (killed and reaped) in the background."""
+        if self._broken:
+            return
+        self._broken = True
+        logger.warning("Abandoning a tmux control client: %s", reason)
+        self._fail_pending(reason)
+        self._closing = asyncio.ensure_future(self.close())
 
     async def run(self, command: str) -> Reply:
         """One command; raises ControlError on ``%error``."""
@@ -262,7 +314,11 @@ class ControlClient:
             return
         if proc.stdin is not None:
             with contextlib.suppress(Exception):
-                proc.stdin.close()
+                if self._broken:
+                    # Writes may be stuck in the transport: drop them.
+                    proc.stdin.transport.abort()
+                else:
+                    proc.stdin.close()
         try:
             await asyncio.wait_for(proc.wait(), 2.0)
         except asyncio.TimeoutError:

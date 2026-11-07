@@ -86,10 +86,112 @@ async def test_feed_routes_blocks_output_and_notifications():
     client._feed(b"no such pane")
     client._feed(b"%error 2 7 1")
     client._feed(b"%extended-output %3 12 : z\\134")
-    assert first.result() == Reply(True, [b"line one"])
-    assert second.result() == Reply(False, [b"no such pane"])
+    assert first.result() == Reply(True, [b"line one"], seq=1)
+    assert second.result() == Reply(False, [b"no such pane"], seq=1)
     assert outputs == [("%3", b"a\r\nb"), ("%3", b"z\\")]
     assert notes == [("window-add", b"@4")]
+
+
+@pytest.mark.asyncio
+async def test_only_the_matching_terminator_ends_a_block():
+    """Captured pane text that looks like the protocol stays content: only the
+    %end / %error repeating the %begin's arguments closes the reply."""
+    client, outputs, notes = _client()
+    loop = asyncio.get_running_loop()
+    client._started = loop.create_future()
+    client._started.set_result(None)
+    capture, after = loop.create_future(), loop.create_future()
+    client._pending.extend([[capture], [after]])
+    content = [
+        b"before",
+        b"%end this is terminal content",
+        b"%error 100 7 0",
+        b"%end 100 7",
+        b"%begin 5 6 1",
+        b"%output %1 x",
+        b"%window-add @9",
+        b"after",
+    ]
+    client._feed(b"%begin 100 7 1")
+    for line in content:
+        client._feed(line)
+    client._feed(b"%end 100 7 1")
+    client._feed(b"%begin 100 8 1")
+    client._feed(b"next")
+    client._feed(b"%end 100 8 1")
+    assert capture.result() == Reply(True, content)
+    assert after.result().lines == [b"next"]
+    assert outputs == [] and notes == []
+
+
+@pytest.mark.asyncio
+async def test_reply_carries_the_stream_position_of_its_begin():
+    client, outputs, _ = _client()
+    loop = asyncio.get_running_loop()
+    client._started = loop.create_future()
+    client._started.set_result(None)
+    fut = loop.create_future()
+    client._pending.append([fut])
+    client._feed(b"%output %1 a")
+    client._feed(b"%output %1 b")
+    client._feed(b"%begin 1 2 1")
+    client._feed(b"%end 1 2 1")
+    client._feed(b"%output %1 c")
+    assert fut.result().seq == 2
+    assert client.seq == 3
+
+
+class _StuckStdin:
+    """A stdin whose pipe is full: writes are accepted, drain never returns."""
+
+    def __init__(self) -> None:
+        self.lines: list[bytes] = []
+        self.aborted = False
+        stdin = self
+
+        class _Transport:
+            def abort(self) -> None:
+                stdin.aborted = True
+
+        self.transport = _Transport()
+
+    def write(self, data: bytes) -> None:
+        self.lines.append(data)
+
+    async def drain(self) -> None:
+        await asyncio.Event().wait()
+
+    def close(self) -> None:
+        pass
+
+
+class _ExitedProc:
+    pid = 0  # never signalled: wait() answers at once
+
+    def __init__(self) -> None:
+        self.stdin = _StuckStdin()
+
+    async def wait(self) -> int:
+        return 0
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_stdin_times_out_and_abandons_the_client():
+    from terminal.control import ControlError
+
+    client, _, _ = _client()
+    client._proc = _ExitedProc()  # type: ignore[assignment]
+    started = time.monotonic()
+    with pytest.raises(ControlError):
+        await client.command("display -p one", timeout=0.05)
+    assert time.monotonic() - started < 1.0
+    # A second caller is refused at once instead of queueing behind the stall.
+    with pytest.raises(ControlError):
+        await client.command("display -p two", timeout=5)
+    assert client._closing is not None
+    await client._closing
+    assert client._proc.stdin.aborted
+    assert not client._pending
 
 
 # -- real tmux ------------------------------------------------------------------
@@ -341,6 +443,27 @@ async def test_capture_then_live_stream_loses_and_doubles_nothing(server):
         text = "\n".join(lines)
         numbers = [line for line in text.split("\n") if line.isdigit()]
         assert numbers == [str(i) for i in range(1, n + 1)]
+    finally:
+        await client.close()
+
+
+@needs_tmux
+@pytest.mark.asyncio
+async def test_captured_protocol_lookalikes_stay_content(server):
+    socket, env, _, _ = server
+    client, _ = await _attach(socket, env)
+    try:
+        pane = await _pane(client)
+        lines = ["%end 1 2 1", "%error 3 4 1", "%begin 5 6 1", "%output %0 x", "%exit"]
+        script = "; ".join(f"echo {quote(line)}" for line in lines)
+        await _run_in_pane(client, pane, f"clear; {script}")
+        await asyncio.sleep(0.5)
+        captured, following = await client.command(
+            f"capture-pane -p -t {pane}", "display -p after"
+        )
+        assert captured.ok
+        assert [line for line in captured.text() if line.startswith("%")] == lines
+        assert following.text() == ["after"]
     finally:
         await client.close()
 
