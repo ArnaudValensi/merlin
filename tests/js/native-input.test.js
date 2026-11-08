@@ -236,11 +236,11 @@ test('keyAction: an Option dead key is Meta with its letter', () => {
 });
 
 test('afterDeadKey: the accent was the dead key, the rest is what followed', () => {
-  assert.equal(Core.afterDeadKey('\u00b4'), '');
+  assert.equal(Core.afterDeadKey('\u00b4'), ' ');
   assert.equal(Core.afterDeadKey('\u00b4x'), 'x');
   assert.equal(Core.afterDeadKey('\u00e1'), 'a');
   assert.equal(Core.afterDeadKey('\u00f1'), 'n');
-  assert.equal(Core.afterDeadKey('\u02c6'), '');
+  assert.equal(Core.afterDeadKey('\u02c6'), ' ');
   assert.equal(Core.afterDeadKey(''), '');
 });
 
@@ -258,7 +258,8 @@ function harness() {
     addEventListener(t, f) { (listeners[t] = listeners[t] || []).push(f); },
     setSelectionRange(a, b) { this.selectionStart = a; this.selectionEnd = b; },
     focus() { doc.activeElement = fieldEl; },
-    blur() { doc.activeElement = null; },
+    // A browser that commits a composition on blur sets onBlur.
+    blur() { doc.activeElement = null; if (this.onBlur) this.onBlur(); },
     parentNode: null,
   };
   const doc = {
@@ -600,18 +601,73 @@ test('the toolbar: a held arrow keeps the hold\'s sticky modifier, then it clear
   assert.equal(h.input.modifiers.peek(), null);
 });
 
-test('the toolbar during a composition: the reset waits for the composition to end', () => {
+// A composition replacing typed text (b becomes 漢), then a toolbar key
+// before it commits.
+function composeOverB(h) {
+  h.type('a');
+  h.type('b');
+  h.fire('compositionstart', {});
+  h.field.value = S + 'a\u6f22' + S;
+  h.field.setSelectionRange(S.length + 2, S.length + 2);
+}
+
+test('the toolbar during a composition: the composition commits where it was typed, then the key', () => {
   const h = harness();
   const t = h.toolbar();
-  h.type('a');
-  h.fire('compositionstart', {});
-  h.field.value = S + 'a\u304b' + S;
+  // This browser commits a composition on blur (Chromium, WebKit).
+  h.field.onBlur = () => h.fire('compositionend', { data: '\u6f22' });
+  composeOverB(h);
   t.tapLeft();
-  assert.equal(h.field.value, S + 'a\u304b' + S); // not cancelled under the IME
+  assert.deepEqual(h.sent, [['input', 'a'], ['input', 'b'], ['input', '\x7f\u6f22'], ['key', 'Left']]);
+  assert.equal(h.field.value, S + S);
+  assert.equal(h.input.composing, false);
+  h.type('X');
+  assert.equal(line(h.sent), 'aX\u6f22');
+});
+
+test('the toolbar during a composition the browser keeps: it is dropped, never sent later', () => {
+  const h = harness();
+  const t = h.toolbar();
+  composeOverB(h);
+  t.tapLeft();
+  assert.deepEqual(h.sent, [['input', 'a'], ['input', 'b'], ['key', 'Left']]);
+  // The browser's own end of that composition, later, sends nothing.
   h.field.value = S + 'a\u6f22' + S;
   h.fire('compositionend', { data: '\u6f22' });
-  assert.deepEqual(h.sent.slice(-2), [['key', 'Left'], ['input', '\u6f22']]);
+  assert.equal(h.sent.length, 3);
   assert.equal(h.field.value, S + S);
+  h.type('X');
+  assert.equal(line(h.sent), 'aXb');
+});
+
+test('toolbar Enter during a composition: the composition belongs to the command it ends', () => {
+  const h = harness();
+  const t = h.toolbar();
+  h.field.onBlur = () => h.fire('compositionend', { data: '\u6f22' });
+  composeOverB(h);
+  t.enter();
+  assert.deepEqual(h.sent.slice(2), [['input', '\x7f\u6f22'], ['input', '\r']]);
+  h.backspace();
+  assert.deepEqual(h.sent[h.sent.length - 1], ['input', '\x7f']);
+});
+
+test('another pane: what the field holds is dropped, nothing sent to the new pane', () => {
+  // Typed text, then the displayed pane changes.
+  const h = harness();
+  for (const ch of 'abc') h.type(ch);
+  h.input.invalidate();
+  assert.equal(h.field.value, S + S);
+  h.rewrite('ABC');
+  assert.deepEqual(h.sent.slice(3), [['input', 'ABC']]); // no DEL into the new pane
+  // A composition in progress: dropped, and its later end ignored.
+  const c = harness();
+  composeOverB(c);
+  c.input.invalidate();
+  c.field.value = S + 'a\u6f22' + S;
+  c.fire('compositionend', { data: '\u6f22' });
+  assert.deepEqual(c.sent, [['input', 'a'], ['input', 'b']]);
+  c.type('x');
+  assert.deepEqual(c.sent[2], ['input', 'x']);
 });
 
 test('the field: a caret move over an ellipsis or a dash moves the terminal by what it got', () => {
@@ -654,13 +710,30 @@ test('the field: an Option dead key sends Meta once and its accent never', () =>
   h.fire('compositionend', { data: '\u00e1' });
   assert.deepEqual(h.sent, [['key', 'M-e'], ['input', 'a']]);
   assert.equal(h.field.value, S + S);
-  // The accent alone (the dead key then a space): nothing more.
+  // The dead key then a Space: the accent alone is committed, the Space is
+  // what reaches the program.
   const g = harness();
-  g.keydown('Dead', { altKey: true, code: 'KeyU' });
+  g.keydown('Dead', { altKey: true, code: 'KeyE', keyCode: 229 });
   g.fire('compositionstart', {});
-  g.field.value = S + '\u00a8' + S;
-  g.fire('compositionend', { data: '\u00a8' });
-  assert.deepEqual(g.sent, [['key', 'M-u']]);
+  g.keydown(' ', { isComposing: true, code: 'Space' });
+  g.field.value = S + '\u00b4' + S;
+  g.fire('compositionend', { data: '\u00b4' });
+  assert.deepEqual(g.sent, [['key', 'M-e'], ['input', ' ']]);
+  // The same without the keydown of the Space (a browser that hides it).
+  const u = harness();
+  u.keydown('Dead', { altKey: true, code: 'KeyU' });
+  u.fire('compositionstart', {});
+  u.field.value = S + '\u00a8' + S;
+  u.fire('compositionend', { data: '\u00a8' });
+  assert.deepEqual(u.sent, [['key', 'M-u'], ['input', ' ']]);
+  // The dead key then a letter that does not combine: the letter.
+  const x = harness();
+  x.keydown('Dead', { altKey: true, code: 'KeyE' });
+  x.fire('compositionstart', {});
+  x.keydown('x', { isComposing: true, code: 'KeyX' });
+  x.field.value = S + '\u00b4x' + S;
+  x.fire('compositionend', { data: '\u00b4x' });
+  assert.deepEqual(x.sent, [['key', 'M-e'], ['input', 'x']]);
   // The browser honours the cancelled keydown: the next key is plain text.
   const c = harness();
   c.keydown('Dead', { altKey: true, code: 'KeyE' });
@@ -677,4 +750,30 @@ test('the field: a dead key without Option is the keyboard\'s composition, sent 
   h.field.value = S + '\u00ea' + S;
   h.fire('compositionend', { data: '\u00ea' });
   assert.deepEqual(h.sent, [['input', '\u00ea']]);
+});
+
+test('the document: an Option dead key after a mouse selection is Meta, the field focused again', () => {
+  const h = harness();
+  h.field.blur();
+  const docKey = (key, ev) => {
+    const e = Object.assign({ key, code: '', ctrlKey: false, altKey: false, shiftKey: false, metaKey: false,
+      isComposing: false, keyCode: 0, defaultPrevented: false, target: { nodeType: 1, tagName: 'BODY' },
+      preventDefault() { this.defaultPrevented = true; } }, ev);
+    for (const f of h.docListeners.keydown || []) f(e);
+    return e;
+  };
+  const e = docKey('Dead', { altKey: true, code: 'KeyE', keyCode: 229 });
+  assert.ok(e.defaultPrevented);
+  assert.deepEqual(h.sent, [['key', 'M-e']]);
+  assert.equal(globalThis.document.activeElement, h.field);
+  // A composition the browser starts in the field then: the dead key's
+  // accent is not sent, the letter typed after it is.
+  h.fire('compositionstart', {});
+  h.keydown('a', { isComposing: true, code: 'KeyA' });
+  h.field.value = S + '\u00e1' + S;
+  h.fire('compositionend', { data: '\u00e1' });
+  assert.deepEqual(h.sent, [['key', 'M-e'], ['input', 'a']]);
+  // Real IME keydowns on the document stay ignored.
+  assert.equal(docKey('a', { keyCode: 229 }).defaultPrevented, false);
+  assert.equal(docKey('Dead', { altKey: true, code: 'KeyE', isComposing: true }).defaultPrevented, false);
 });

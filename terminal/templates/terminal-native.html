@@ -120,6 +120,7 @@
     let delay = 1000;
     let stopped = false;
     let current = null;
+    let input = null; // the input field, made once the engine exists
     // The last text a program copied (merlin-clip, OSC 52, tmux's own copy):
     // what Ctrl+Shift+C copies when nothing is selected.
     let lastClip = null;
@@ -149,8 +150,6 @@
         onControl: (msg) => {
             if (msg.type === 'session') {
                 if (MerlinSessionIdentity.confirm(msg)) confirmed = true;
-                // Another window: what the field holds was typed elsewhere.
-                if (current && current.window_id !== msg.window_id && input) input.reset();
                 current = msg;
                 document.title = (msg.name || 'term') + (msg.window ? ': ' + msg.window : '');
                 status('connected', msg.name + (msg.window ? ' : ' + msg.window : ''));
@@ -167,6 +166,9 @@
             if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(() => {});
         },
         onStuck: (stuck) => { jump.hidden = stuck; },
+        // Another pane (of this window or another): what the field holds was
+        // typed for the old one.
+        onPane: () => { if (input) input.invalidate(); },
         onClose: (e) => {
             if (e.code === 4401) { stopped = true; status('disconnected', 'Unauthorized: reload the page'); return; }
             MerlinSessionIdentity.clearAfterClose(attempted, confirmed, e.code);
@@ -181,7 +183,7 @@
         const sel = getSelection();
         return !!(sel && !sel.isCollapsed && sel.rangeCount && sel.getRangeAt(0).intersectsNode(container));
     }
-    const input = new MerlinNativeInput(field, engine, {
+    input = new MerlinNativeInput(field, engine, {
         modifiers,
         hasSelection,
         cursorRect: () => {
@@ -206,7 +208,7 @@
         // The Sessions panel's create-and-switch path when it is on the page,
         // else the F2 binding.
         newWindow: (btn) => {
-            input.reset();
+            input.invalidate();
             const board = window.SessionsBoard;
             if (board && board.openNewWindow && current) {
                 btn.disabled = true;

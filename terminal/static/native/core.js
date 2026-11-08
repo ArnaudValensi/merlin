@@ -591,11 +591,13 @@
   // What a composition commits after an Option dead key the page already
   // sent as Meta (Option+e is M-e): the browser may still compose, giving the
   // accent alone or on the next letter (``´``, ``´x``, ``á``). The accent is
-  // the dead key's, already sent; the rest is what was typed after it.
+  // the dead key's, already sent; the rest is what was typed after it. The
+  // accent alone is what a Space after a dead key commits: that Space.
   const DEAD_ACCENTS = '\u00b4`\u02c6^\u02dc~\u00a8\u02da\u00b8';
   function afterDeadKey(text) {
     const chars = Array.from(text || '');
     if (!chars.length) return '';
+    if (chars.length === 1 && DEAD_ACCENTS.includes(chars[0])) return ' ';
     if (DEAD_ACCENTS.includes(chars[0])) return chars.slice(1).join('');
     chars[0] = chars[0].normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     return chars.join('');

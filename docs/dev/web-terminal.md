@@ -449,7 +449,14 @@ module docstring lists every guarantee and its test.
   is `DC`, a deleted line is Ctrl+U, undo is ignored. A caret move (the
   space-bar trackpad) becomes one arrow per character, then a reset. A
   composition (an IME, an accent held on a key) is shown at the cursor
-  (`.nt-preedit`) and sent once, when it commits. Physical keys with no text
+  (`.nt-preedit`) and sent once, when it commits. A key from the keyboard or
+  the toolbar resets the field (what was typed no longer sits before the
+  terminal's cursor); during a composition it first commits it with a blur,
+  where it was typed, and a composition the browser keeps is dropped, never
+  sent later against the moved cursor. When the displayed pane changes, the
+  field is emptied and nothing is sent: its text was typed for the old pane.
+  An Option dead key on a Mac is Meta with its letter, and an accent the
+  browser still composes after it is not sent (the key typed after it is). Physical keys with no text
   (arrows, Escape, Tab, function keys, anything with Ctrl or Alt) are encoded
   from keydown as tmux key names (`Core.keyAction`; Alt is Meta, from the
   key's code when Option composes a character on a Mac), which tmux turns

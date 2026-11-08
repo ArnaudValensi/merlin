@@ -396,3 +396,48 @@ def test_a_toolbar_key_resets_the_field_like_a_physical_key(page, tmp_path):
     tool(page, "↵")
     assert field_value(page) == SENTINEL * 2
     assert finish(page, out) == b"abc\x1b[D\x7f\r"
+
+
+def test_a_toolbar_key_during_a_composition_comes_after_it(page, tmp_path):
+    """The composition commits where it was typed (the browser commits it on
+    the blur the page gives it), then the key."""
+    out = record(page, tmp_path)
+    page.keyboard.type("ab")
+    cdp = page.context.new_cdp_session(page)
+    cdp.send(
+        "Input.imeSetComposition",
+        {"text": "か", "selectionStart": 1, "selectionEnd": 1},
+    )
+    page.wait_for_function("window.MerlinNativeTerminalPage.input.composing")
+    page.locator("#nt-toolbar [data-key=ArrowLeft]").click()
+    page.wait_for_function("!window.MerlinNativeTerminalPage.input.composing")
+    assert field_value(page) == SENTINEL * 2
+    assert page.evaluate("document.activeElement.id") == "nt-input"
+    page.keyboard.type("X")
+    assert finish(page, out) == "abか\x1b[DX".encode()
+
+
+def test_another_pane_of_the_window_gets_nothing_of_the_field(page, tmp_path, tmux_env):
+    """Text typed for one pane stays out of the next: the field starts afresh
+    when the displayed pane changes, so a later rewrite or delete cannot erase
+    in the new pane."""
+    page.keyboard.type("abc")
+    first = page.evaluate(f"{ENGINE}.pane")
+    script = tmp_path / "rec.py"
+    script.write_text(RECORDER)
+    out = tmp_path / "split.bin"
+    token = f"SPLIT{time.monotonic_ns() % 10**9}"
+    tmux(tmux_env, "split-window", "-t", first, f"python3 {script} {out} plain {token}")
+    page.wait_for_function(f"p => {ENGINE}.pane !== p", arg=first)
+    wait_text(page, f"REC {token} READY", "screen")
+    assert field_value(page) == SENTINEL * 2
+    # What a rewrite of "abc" would be now: the new pane gets only the text.
+    page.evaluate("document.execCommand('insertText', false, 'ABC')")
+    page.keyboard.press("Backspace")
+    page.evaluate(f"{ENGINE}.input('\\x1d')")
+    data = until(out, QUIT)
+    assert data == b"ABC\x7f" + QUIT
+    # Back on the first pane (the recorder's pane closed): clear its line.
+    page.wait_for_function(f"p => {ENGINE}.pane === p", arg=first)
+    page.evaluate(f"{ENGINE}.input('\\x15')")
+    ready(page)

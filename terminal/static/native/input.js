@@ -69,7 +69,11 @@
       this.sent = '';
       this.composing = false;
       this.resetPending = false;
+      // A composition ended by the page (its context changed): the browser's
+      // own compositionend for it, if it comes, is ignored.
+      this.cancelled = false;
       this.deadMeta = false;
+      this.deadNext = null;
       this.preedit = null;
       field.setAttribute('autocapitalize', 'off');
       field.setAttribute('enterkeyhint', 'enter');
@@ -128,10 +132,38 @@
 
     // A key or an explicit edit: it consumes the sticky modifiers and the
     // field starts afresh (what was typed is no longer where the terminal's
-    // cursor is).
+    // cursor is). A composition in progress is committed first, where it was
+    // typed, so the key comes after it as it did for the user.
     sendKey(action) {
+      if (this.composing) this.commitComposition();
       this.modifiers.clear();
       this.send(action);
+      this.reset();
+    }
+
+    // Ends the composition now: a blur makes the browser commit it (its
+    // compositionend runs the diff); one that does not is dropped, never sent
+    // later against a moved cursor.
+    commitComposition() {
+      const f = this.field;
+      const focused = document.activeElement === f;
+      f.blur();
+      if (focused) this.focus();
+      if (this.composing) this.dropComposition();
+    }
+
+    dropComposition() {
+      this.composing = false;
+      this.cancelled = true;
+      this.deadMeta = false;
+      this.hidePreedit();
+    }
+
+    // The terminal's target changed (another pane or window): what the field
+    // holds, a composition included, belongs to the old one and is dropped,
+    // nothing sent.
+    invalidate() {
+      if (this.composing) this.dropComposition();
       this.reset();
     }
 
@@ -173,17 +205,26 @@
 
     onCompositionStart() {
       this.composing = true;
+      this.cancelled = false;
       this.showPreedit('');
     }
 
     onCompositionEnd() {
+      if (this.cancelled) {
+        this.cancelled = false;
+        this.reset();
+        return;
+      }
       this.composing = false;
       this.hidePreedit();
       // After an Option dead key already sent as Meta, the accent it
-      // composed is not sent again.
+      // composed is not sent again: what follows it is the key typed after
+      // the dead key (a Space included), else what the composition gives.
       const dead = this.deadMeta;
+      const next = this.deadNext;
       this.deadMeta = false;
-      this.diff(dead ? Core.afterDeadKey : null);
+      this.deadNext = null;
+      this.diff(dead ? (text) => (next != null ? next : Core.afterDeadKey(text)) : null);
       if (this.resetPending) this.reset();
     }
 
@@ -279,11 +320,19 @@
       return e.key === 'Dead' && e.altKey && !e.ctrlKey && !e.metaKey && /^Key[A-Z]$/.test(e.code || '');
     }
 
+    // The key typed after an Option dead key, while the browser composes.
+    noteDeadNext(e) {
+      if (this.deadMeta && this.deadNext == null && e.key && Array.from(e.key).length === 1) {
+        this.deadNext = Core.typedText(e.key);
+      }
+    }
+
     onKeyDown(e) {
-      if (e.isComposing) return;
+      if (e.isComposing) { this.noteDeadNext(e); return; }
       const dead = this.deadKey(e);
       if (e.keyCode === 229 && !dead) return;
       this.deadMeta = dead;
+      this.deadNext = null;
       if (this.shortcut(e)) return;
       const action = Core.fieldKeyAction(e.key, this.mods(e), e.code);
       if (!action) return;
@@ -296,7 +345,11 @@
     // focus back for what follows.
     onDocumentKeyDown(e) {
       if (e.defaultPrevented || e.target === this.field || editable(e.target)) return;
-      if (e.isComposing || e.keyCode === 229) return;
+      if (e.isComposing) return;
+      const dead = this.deadKey(e);
+      if (e.keyCode === 229 && !dead) return;
+      this.deadMeta = dead;
+      this.deadNext = null;
       if (this.shortcut(e)) return;
       const action = Core.documentKeyAction(e.key, this.mods(e), e.code);
       if (!action) return;

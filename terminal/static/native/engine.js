@@ -17,7 +17,9 @@
 
   class NativeTerminal {
     // opts: { container, wsUrl: () => string, onOpen(ws), onClose(event),
-    //         onControl(msg), onClipboard(text), onStuck(stuck), onUpdate() }
+    //         onControl(msg), onClipboard(text), onStuck(stuck), onUpdate(),
+    //         onPane(pane): the displayed pane changed (another window, or
+    //         another pane of the window) }
     constructor(opts) {
       this.opts = opts;
       this.renderer = new root.MerlinNativeRenderer(opts.container);
@@ -182,10 +184,12 @@
       const h = frame.header;
       const r = this.renderer;
       if (h.reset || h.pane !== this.pane || h.cols !== r.cols) {
+        const moved = h.pane !== this.pane;
         this.pane = h.pane;
         this.generation = h.history.generation;
         this.loading = false;
         r.reset(h.cols, h.rows);
+        if (moved && this.opts.onPane) this.opts.onPane(h.pane);
       }
       r.rows = h.rows;
       // History first (the rows it confirms, in order; a gap before them for
