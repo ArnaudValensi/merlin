@@ -463,7 +463,12 @@ module docstring lists every guarantee and its test.
   encoding has no value: nothing is sent, as xterm.js does).
 - `native.css`: the classic terminal's theme colours, styles, the cursor.
 - `input.js`: the input, one real `textarea` (invisible: the terminal's own
-  cursor shows where typing goes). It holds a sentinel of four no-break
+  cursor shows where typing goes). On a touch screen it lies over the "Hold
+  to paste" label at the end of the tab row, so a long press there opens the
+  system's Paste menu while a long press on the terminal selects its text; a
+  caret placed by a finger on the field is never sent as arrows (it goes back
+  after what was typed before the next edit), and the menu's Cut is cancelled.
+  It holds a sentinel of four no-break
   spaces on each side of the caret, so a software keyboard always has text to
   delete and a caret to move, and between them what was typed since the last
   reset. Every change is diffed against what the terminal already got

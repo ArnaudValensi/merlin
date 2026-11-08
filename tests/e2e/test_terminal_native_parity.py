@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -121,6 +122,17 @@ def wait_count(page, marker: str, n: int, timeout: int = 8000) -> None:
     page.wait_for_function(
         f"m => {SCREEN}.split(m).length - 1 >= {n}", arg=marker, timeout=timeout
     )
+
+
+def wait_value(page, expression: str, expected, timeout: float = 8.0) -> None:
+    """Until ``expression`` evaluates to ``expected``. For anything async:
+    wait_for_function takes a returned promise for a truthy value."""
+    deadline = time.monotonic() + timeout
+    value = page.evaluate(expression)
+    while value != expected and time.monotonic() < deadline:
+        page.wait_for_timeout(50)
+        value = page.evaluate(expression)
+    assert value == expected
 
 
 def status(page) -> str:
@@ -517,10 +529,7 @@ def test_a_refused_read_is_reported_and_not_asked_twice(page):
 
 def test_a_program_copy_reaches_the_clipboard_on_a_desktop(page, tmux_env):
     tmux(tmux_env, "set-buffer", "-b", "merlin-clip", "PROGRAM_COPY_MARK")
-    page.wait_for_function(
-        "async () => (await navigator.clipboard.readText()) === 'PROGRAM_COPY_MARK'",
-        timeout=10000,
-    )
+    wait_value(page, "navigator.clipboard.readText()", "PROGRAM_COPY_MARK")
     # And Ctrl+Shift+C with nothing selected copies it again (synced).
     frames = sent_frames(page)
     page.evaluate(f"{ENGINE}.connect()")
@@ -528,10 +537,7 @@ def test_a_program_copy_reaches_the_clipboard_on_a_desktop(page, tmux_env):
     page.evaluate("navigator.clipboard.writeText('other')")
     page.click("#nt-container")
     page.keyboard.press("Control+Shift+C")
-    page.wait_for_function(
-        "async () => (await navigator.clipboard.readText()) === 'PROGRAM_COPY_MARK'",
-        timeout=5000,
-    )
+    wait_value(page, "navigator.clipboard.readText()", "PROGRAM_COPY_MARK")
     assert {"type": "clipboard_sync", "text": "PROGRAM_COPY_MARK"} in frames
 
 
@@ -554,10 +560,7 @@ def test_a_program_copy_on_a_phone_offers_the_copy_pill(
     # merlin-clip paste in the container gets it at once.
     assert {"type": "clipboard_sync", "text": "PHONE_COPY_MARK"} in frames
     pg.tap("#copy-toast")
-    pg.wait_for_function(
-        "async () => (await navigator.clipboard.readText()) === 'PHONE_COPY_MARK'",
-        timeout=5000,
-    )
+    wait_value(pg, "navigator.clipboard.readText()", "PHONE_COPY_MARK")
     assert pg.is_hidden("#copy-toast")
     ctx.close()
 
@@ -746,6 +749,107 @@ def test_voice_input_targets_the_stopped_window_and_types_a_fallback(browser, se
     pg.click("#nt-notice")
     pg.evaluate("window.MerlinTerminal.notice('Seam notice')")
     assert pg.text_content("#nt-notice") == "Seam notice"
+    ctx.close()
+
+
+def _audio_of(body: bytes) -> bytes:
+    """The recording inside a multipart upload."""
+    boundary = body.split(b"\r\n", 1)[0]
+    for part in body.split(boundary):
+        if b'name="file"' in part:
+            return part.split(b"\r\n\r\n", 1)[1].rsplit(b"\r\n", 1)[0]
+    raise AssertionError("no recording in the upload")
+
+
+PENDING_VOICE = """() => new Promise((resolve, reject) => {
+    const req = indexedDB.open('merlin-voice', 1);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+        const db = req.result;
+        const c = db.transaction('audio', 'readonly').objectStore('audio').count('pending_voice');
+        c.onsuccess = () => { db.close(); resolve(c.result); };
+    };
+})"""
+
+
+def _failed_recording(browser, server):
+    """A page whose recording failed all three uploads: the recording is kept
+    and the mic offers a retry."""
+    ctx = browser.new_context(**DESKTOP, permissions=["microphone"])
+    pg = ctx.new_page()
+    answer = {"status": 500, "body": "{}"}
+    bodies: list[bytes] = []
+
+    def handle(route):
+        bodies.append(route.request.post_data_buffer or b"")
+        route.fulfill(
+            status=answer["status"],
+            content_type="application/json",
+            body=answer["body"],
+        )
+
+    pg.route("**/api/terminal/transcribe", handle)
+    _native(pg, server)
+    target = pg.evaluate("window.MerlinTerminal.currentTarget()")
+    pg.click("#mic-btn")
+    pg.wait_for_timeout(700)
+    pg.click("#mic-btn")
+    pg.wait_for_selector("#mic-btn.retry-pending", timeout=20000)
+    assert len(bodies) == 3
+    assert pg.evaluate(PENDING_VOICE) == 1
+    return ctx, pg, answer, bodies, target
+
+
+def test_a_failed_recording_survives_a_reload_and_keeps_its_window(
+    browser, server, tmux_env
+):
+    ctx, pg, answer, bodies, target = _failed_recording(browser, server)
+    wid = new_window(tmux_env)
+    try:
+        audio = _audio_of(bodies[0])
+        assert audio
+
+        # Back after a reload, the retry is still offered.
+        pg.reload()
+        wait_native(pg)
+        pg.wait_for_selector("#mic-btn.retry-pending", timeout=10000)
+        assert pg.evaluate(PENDING_VOICE) == 1
+
+        # In another window by now: the text still belongs to the first.
+        session = pg.evaluate("window.MerlinTerminal.currentSession()")
+        pg.evaluate("t => window.MerlinTerminal.switchSession(t)", f"{session}:{wid}")
+        pg.wait_for_function(
+            f"window.MerlinTerminal.currentWindow() === '{wid}'", timeout=10000
+        )
+
+        answer.update(status=202, body='{"status": "accepted"}')
+        pg.click("#mic-btn")
+        pg.wait_for_function(
+            "() => { const c = document.getElementById('mic-btn').classList;"
+            " return !c.contains('retry-pending') && !c.contains('uploading'); }",
+            timeout=10000,
+        )
+        assert len(bodies) == 4
+        assert target.encode() in bodies[3]
+        assert wid.encode() not in bodies[3]
+        assert _audio_of(bodies[3]) == audio
+        wait_value(pg, PENDING_VOICE, 0)
+    finally:
+        kill_window(tmux_env, wid)
+        ctx.close()
+
+
+def test_a_refused_retry_drops_the_recording(browser, server):
+    ctx, pg, answer, bodies, _ = _failed_recording(browser, server)
+    answer.update(status=422, body='{"error": "Audio unreadable here"}')
+    pg.click("#mic-btn")
+    pg.wait_for_selector("#nt-notice:not([hidden])", timeout=10000)
+    assert "Audio unreadable here" in pg.text_content("#nt-notice")
+    wait_value(pg, PENDING_VOICE, 0)
+    assert "retry-pending" not in (pg.get_attribute("#mic-btn", "class") or "")
+    # Final: no attempt after the one refused.
+    pg.wait_for_timeout(2500)
+    assert len(bodies) == 4
     ctx.close()
 
 

@@ -834,3 +834,73 @@ test('a normal edit ends a dropped composition the browser never closed', () => 
   assert.deepEqual(h.sent, [['input', 'a'], ['input', 'b'], ['input', 'z']]);
   assert.equal(h.input.cancelled, false);
 });
+
+// -- a finger on the field (its "Hold to paste" zone on a touch screen) ----------
+
+test('the field: a long press moves the caret and sends nothing, typing then goes where it should', () => {
+  const h = harness();
+  for (const ch of 'ab') h.type(ch);
+  const n = h.sent.length;
+  h.fire('touchstart');
+  // The system places the caret under the finger, after the trailing sentinel.
+  h.field.setSelectionRange(h.field.value.length, h.field.value.length);
+  h.selectionchange();
+  h.fire('touchend');
+  h.selectionchange();
+  assert.equal(h.sent.length, n);
+  assert.equal(h.field.value, S + 'ab' + S);
+  // The next edit starts from the caret after what was typed.
+  h.type('c');
+  assert.equal(line(h.sent), 'abc');
+  assert.equal(h.field.selectionStart, S.length + 3);
+});
+
+test('the field: the system menu selecting the sentinels, then a key, sends only the key', () => {
+  const h = harness();
+  h.fire('touchstart');
+  h.field.setSelectionRange(0, h.field.value.length);
+  h.selectionchange();
+  h.type('x');
+  assert.deepEqual(h.sent, [['input', 'x']]);
+  assert.equal(h.field.value, S + 'x' + S);
+});
+
+test('the field: a Paste from the system menu after a long press pastes once and resets', () => {
+  const h = harness();
+  h.type('a');
+  h.fire('touchstart');
+  h.field.setSelectionRange(h.field.value.length, h.field.value.length);
+  const e = h.fire('paste', { clipboardData: { items: [], getData: () => 'hello' } });
+  assert.equal(e.defaultPrevented, true);
+  assert.deepEqual(h.sent, [['input', 'a'], ['paste', 'hello']]);
+  assert.equal(h.field.value, S + S);
+  assert.equal(h.field.selectionStart, S.length);
+});
+
+test('the field: Cut from the system menu deletes nothing', () => {
+  const h = harness();
+  h.fire('touchstart');
+  h.field.setSelectionRange(0, h.field.value.length);
+  const e = h.fire('cut');
+  assert.equal(e.defaultPrevented, true);
+  assert.deepEqual(h.sent, []);
+  assert.equal(h.field.value, S + S);
+});
+
+test('the field: a touch elsewhere ends the long press, and the trackpad moves the cursor again', () => {
+  const h = harness();
+  for (const ch of 'abc') h.type(ch);
+  const n = h.sent.length;
+  h.fire('touchstart');
+  h.field.setSelectionRange(0, 0);
+  h.selectionchange();
+  assert.equal(h.sent.length, n);
+  for (const f of h.docListeners.touchstart) f({ target: {} });
+  assert.equal(h.field.selectionStart, S.length + 3);
+  h.selectionchange();
+  assert.equal(h.sent.length, n);
+  // The space-bar trackpad has no touch on the page: still arrows.
+  h.field.setSelectionRange(S.length + 1, S.length + 1);
+  h.selectionchange();
+  assert.deepEqual(h.sent.slice(-2), [['key', 'Left'], ['key', 'Left']]);
+});

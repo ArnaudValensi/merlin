@@ -237,7 +237,9 @@ What is different:
   window.
 - **Paste** works as described below, except that a right-click over a
   selection opens the browser's menu (so you can Copy); without a selection
-  it pastes. On a phone use the toolbar's paste button, and a program's copy
+  it pastes. On a phone, use the toolbar's paste button or long press **Hold
+  to paste** at the end of the tab row for the system's Paste menu (a long
+  press on the terminal itself selects text). A program's copy
   (`merlin-clip copy`, a NeoVim yank) offers the green **Copy** pill.
 - A message the classic terminal writes into its screen (a voice or upload
   error) is a line over the terminal: tap it to dismiss it.

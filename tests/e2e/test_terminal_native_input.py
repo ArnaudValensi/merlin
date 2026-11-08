@@ -373,17 +373,30 @@ def test_ctrl_shift_c_copies_the_selection(page):
     page.context.grant_permissions(["clipboard-read", "clipboard-write"])
     run(page, "echo COPY''THIS")
     wait_text(page, "COPYTHIS", ".nt-content")
-    page.evaluate(
+    # A real drag, as a user selects (it takes the focus off the field).
+    box = page.evaluate(
         """() => {
             const l = [...document.querySelectorAll('.nt-content .l')].filter(x => x.textContent.startsWith('COPYTHIS')).pop();
             const r = document.createRange();
             r.selectNodeContents(l);
-            getSelection().removeAllRanges();
-            getSelection().addRange(r);
+            const b = r.getBoundingClientRect();
+            return {x: b.left, y: b.top + b.height / 2, w: b.width};
         }"""
     )
+    page.mouse.move(box["x"] + 1, box["y"])
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["w"] - 1, box["y"], steps=5)
+    page.mouse.up()
+    assert page.evaluate("getSelection().toString().trim()") == "COPYTHIS"
     page.keyboard.press("Control+Shift+C")
-    page.wait_for_function("navigator.clipboard.readText().then(t => t === 'COPYTHIS')")
+    # Polled here: wait_for_function takes a returned promise for a truthy value.
+    deadline = time.monotonic() + 5
+    while (
+        page.evaluate("navigator.clipboard.readText()") != "COPYTHIS"
+        and time.monotonic() < deadline
+    ):
+        page.wait_for_timeout(50)
+    assert page.evaluate("navigator.clipboard.readText()") == "COPYTHIS"
 
 
 def test_a_toolbar_key_resets_the_field_like_a_physical_key(page, tmp_path):
@@ -445,3 +458,111 @@ def test_another_pane_of_the_window_gets_nothing_of_the_field(page, tmp_path, tm
     page.wait_for_function(f"p => {ENGINE}.pane === p", arg=first)
     page.evaluate(f"{ENGINE}.input('\\x15')")
     ready(page)
+
+
+# -- the field's own paste surface on a touch screen -----------------------------------
+
+PNG_BYTES = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082"
+)
+
+
+def _long_press(page, cdp, x: float, y: float) -> None:
+    """A real touch held long enough to be a long press."""
+    point = [{"x": x, "y": y}]
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": point})
+    page.wait_for_timeout(800)
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    page.wait_for_timeout(200)
+
+
+def test_on_a_phone_a_long_press_reaches_the_field_and_sends_nothing(
+    browser,  # noqa: F811
+    server,
+    tmp_path,
+):
+    """The system's Paste menu needs a real field under the finger: the zone at
+    the end of the tab row is one, the terminal's text stays selectable, and
+    the caret a long press places never becomes arrows. The iOS menu itself is
+    on the founder's device checklist; its paste event is what is sent here."""
+    ctx, page, errors = _open(
+        browser,
+        server,
+        viewport={"width": 390, "height": 664},
+        is_mobile=True,
+        has_touch=True,
+        device_scale_factor=2,
+    )
+    cdp = ctx.new_cdp_session(page)
+    hit = page.evaluate(
+        """() => {
+            const b = document.getElementById('nt-paste-zone').getBoundingClientRect();
+            const x = b.left + b.width / 2, y = b.top + b.height / 2;
+            const field = document.getElementById('nt-input');
+            const term = document.getElementById('nt-container').getBoundingClientRect();
+            const tabs = document.getElementById('nt-tabs').getBoundingClientRect();
+            return {x, y, w: b.width, h: b.height, right: b.right, bottom: b.bottom,
+                hit: document.elementFromPoint(x, y).id,
+                select: getComputedStyle(field).userSelect,
+                tabsRight: tabs.right, tabsTop: tabs.top,
+                label: document.getElementById('nt-paste-zone').textContent,
+                output: !!document.elementFromPoint(term.left + term.width / 2, term.top + term.height / 2)
+                    .closest('#nt-container')}; }"""
+    )
+    assert hit["hit"] == "nt-input"
+    assert hit["w"] >= 90 and hit["h"] >= 30
+    assert hit["select"] == "text"
+    assert hit["label"] == "Hold to paste"
+    assert hit["right"] <= 390
+    # Beside the tabs, not over them, and the terminal's text is still the
+    # terminal's to select.
+    assert hit["tabsRight"] <= hit["x"] - hit["w"] / 2 + 1
+    assert hit["output"]
+
+    page.tap("#nt-container")
+    ready(page)
+    out = record(page, tmp_path, "paste")
+
+    # A long press, then typing: only the key, no arrow for the caret.
+    _long_press(page, cdp, hit["x"], hit["y"])
+    assert page.evaluate("document.activeElement.id") == "nt-input"
+    page.keyboard.type("a")
+    until(out, b"a")
+
+    # A long press, then the Paste of the system's menu: bracketed, once.
+    _long_press(page, cdp, hit["x"], hit["y"])
+    page.evaluate(
+        """() => { const dt = new DataTransfer(); dt.setData('text/plain', 'PASTED; C-c');
+            document.getElementById('nt-input').dispatchEvent(
+                new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true})); }"""
+    )
+    until(out, b"\x1b[201~")
+
+    # A long press, then an image from the same menu: its path is typed.
+    _long_press(page, cdp, hit["x"], hit["y"])
+    page.evaluate(
+        """(bytes) => { const dt = new DataTransfer();
+            dt.items.add(new File([new Uint8Array(bytes)], 'held.png', {type: 'image/png'}));
+            document.getElementById('nt-input').dispatchEvent(
+                new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true})); }""",
+        list(PNG_BYTES),
+    )
+    until(out, b"held.png")
+    page.keyboard.type("b")
+    until(out, b"held.pngb")
+    data = finish(page, out)
+    head = b"a\x1b[200~PASTED; C-c\x1b[201~/tmp/merlin-clipboard/"
+    assert data.startswith(head), data
+    assert data.endswith(b"-held.pngb"), data
+    assert b"\x1b[C" not in data and b"\x1b[D" not in data, data
+    path = data[len(b"a\x1b[200~PASTED; C-c\x1b[201~") : -1].decode()
+    assert Path(path).read_bytes() == PNG_BYTES
+    assert errors == []
+    ctx.close()
+
+
+def test_on_a_desktop_the_field_stays_out_of_the_way(page):
+    assert page.is_hidden("#nt-paste-zone")
+    box = page.locator("#nt-input").bounding_box()
+    assert box["width"] <= 1

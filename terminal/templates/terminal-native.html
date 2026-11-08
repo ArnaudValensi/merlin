@@ -16,6 +16,10 @@ MerlinTerminalChoice.route('native');</script>
          gesture its clipboard needs (docs/merlin-cli/clipboard.md). -->
     <button id="copy-toast" class="nt-copy-toast" type="button" hidden>Copy</button>
     <textarea id="nt-input" class="nt-input" rows="1" aria-label="Terminal input"></textarea>
+    <!-- Touch screens: the input field lies over this label, at the end of
+         the tab row, so a long press on it opens the system's Paste menu. A
+         long press on the terminal stays a selection of its text. -->
+    <div id="nt-paste-zone" class="nt-paste-zone" aria-hidden="true">Hold to paste</div>
 </div>
 <!-- The window tabs with their agent-state pills: tmux's status bar, drawn by
      the page (the glyph and colour rules of terminal/tmux.conf). -->
@@ -110,6 +114,25 @@ MerlinTerminalChoice.route('native');</script>
     .nt-tab .nt-tab-name { overflow: hidden; text-overflow: ellipsis; }
     .nt-tab.active { background: #313244; color: #bd93f9; }
     .nt-tab:hover { color: var(--text-primary); }
+    .nt-paste-zone { display: none; }
+    /* A touch screen: the field becomes a real target, over the zone at the
+       end of the tab row. Still invisible (the terminal's cursor shows where
+       typing goes); the label says what a long press there does. */
+    @media (pointer: coarse) {
+        .nt-tabs, .nt-tabs:empty { display: flex; min-height: 30px; margin-right: 96px; }
+        .nt-tab { height: 30px; }
+        .nt-paste-zone {
+            display: flex; align-items: center; justify-content: center;
+            position: absolute; right: 0; bottom: -30px; width: 96px; height: 30px;
+            box-sizing: border-box; z-index: 6; pointer-events: none;
+            background: #1e1e2e; border-left: 1px solid var(--border);
+            color: var(--text-muted); font-size: 11px; white-space: nowrap;
+        }
+        .nt-input {
+            left: auto; right: 0; bottom: -30px; width: 96px; height: 30px; z-index: 7;
+            -webkit-user-select: text; user-select: text; -webkit-touch-callout: default;
+        }
+    }
     .nt-toolbar {
         display: none;
         background: var(--bg-secondary); border-top: 1px solid var(--border);

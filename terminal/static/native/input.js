@@ -77,6 +77,10 @@
       this.deadMeta = false;
       this.deadNext = null;
       this.preedit = null;
+      // A finger on the field itself (its "Hold to paste" zone on a touch
+      // screen): the caret it places is the system's Paste menu's, not a
+      // cursor move for the terminal.
+      this.touched = false;
       field.setAttribute('autocapitalize', 'off');
       field.setAttribute('enterkeyhint', 'enter');
       this.setSuggestions(stored(SUGGESTIONS_KEY) === '1', false);
@@ -88,6 +92,11 @@
       field.addEventListener('compositionend', () => this.onCompositionEnd());
       field.addEventListener('keydown', (e) => this.onKeyDown(e));
       field.addEventListener('paste', (e) => this.onPaste(e));
+      field.addEventListener('touchstart', () => { this.touched = true; }, { passive: true });
+      field.addEventListener('blur', () => this.settleTouch());
+      // The system's menu also offers Cut: it would delete the sentinels.
+      field.addEventListener('cut', (e) => { e.preventDefault(); this.reset(); });
+      document.addEventListener('touchstart', (e) => { if (e.target !== field) this.settleTouch(); }, { passive: true });
       document.addEventListener('selectionchange', () => this.onSelectionChange());
       document.addEventListener('keydown', (e) => this.onDocumentKeyDown(e));
       document.addEventListener('paste', (e) => { if (e.target !== field && !editable(e.target)) this.onPaste(e); });
@@ -101,6 +110,7 @@
     reset() {
       if (this.composing) { this.resetPending = true; return; }
       this.resetPending = false;
+      this.touched = false;
       this.typed = '';
       this.sent = '';
       this.field.value = this.value();
@@ -194,6 +204,7 @@
     // -- the field ---------------------------------------------------------------
 
     onBeforeInput(e) {
+      this.settleTouch();
       const t = e.inputType;
       const composition = e.isComposing || /Composition/.test(t || '');
       if (this.cancelled) {
@@ -274,7 +285,7 @@
     // trackpad (or a tap in the field). Arrows, one per character, then a
     // fresh field.
     onSelectionChange() {
-      if (this.composing || document.activeElement !== this.field) return;
+      if (this.composing || this.touched || document.activeElement !== this.field) return;
       const f = this.field;
       if (f.value !== this.value() || f.selectionStart !== f.selectionEnd) return;
       const end = SENTINEL.length + this.typed.length;
@@ -284,6 +295,16 @@
       this.modifiers.clear();
       for (const k of Core.caretAction(moved)) this.sink.key(k);
       this.reset();
+    }
+
+    // The finger is done with the field: the caret goes back after what was
+    // typed, before any edit applies, and nothing is sent for where it was.
+    settleTouch() {
+      if (!this.touched) return;
+      this.touched = false;
+      if (this.composing) return;
+      const end = SENTINEL.length + this.typed.length;
+      this.field.setSelectionRange(end, end);
     }
 
     mods(e) {
@@ -346,6 +367,7 @@
 
     onKeyDown(e) {
       if (e.isComposing) { this.noteDeadNext(e); return; }
+      this.settleTouch();
       if (this.cancelled && e.keyCode !== 229) { this.cancelled = false; this.reset(); }
       const dead = this.deadKey(e);
       if (e.keyCode === 229 && !dead) return;
