@@ -451,6 +451,7 @@ class NativeBridge:
         self.last_screen: tuple | None = None
         self.dirty = asyncio.Event()  # the pane wrote, or its view changed
         self.typed_at = -1.0  # when the page last sent input (monotonic)
+        self.client_size = ""  # the last size the page asked for, "COLSxROWS"
         self.room = asyncio.Event()  # the page acknowledged enough
         self.room.set()
         self.state_dirty = asyncio.Event()  # session / windows may have changed
@@ -1036,7 +1037,10 @@ class NativeBridge:
             elif kind == "resize":
                 cols = min(max(int(msg.get("cols", 120)), 1), 500)
                 rows = min(max(int(msg.get("rows", 40)), 1), 500)
+                self.client_size = f"{cols}x{rows}"
                 await self.client.command(f"refresh-client -C {cols}x{rows}")
+            elif kind == "active":
+                await self.take_window_size()
             elif kind == "ack":
                 self.ack(int(msg.get("bytes", 0)))
             elif kind == "switch":
@@ -1115,6 +1119,22 @@ class NativeBridge:
                 await self.client.command(f"send-keys -K {name}")
             else:
                 await self.client.command(f"send-keys -t {pane} {name}")
+
+    async def take_window_size(self) -> None:
+        """Give the window this page's size: the user just did something here.
+
+        ``window-size latest`` follows the last active client, but a control
+        client's ``send-keys`` and ``refresh-client`` do not make it the latest;
+        selecting the window it is on does. Only when the size differs, since
+        selecting a window runs its hooks.
+        """
+        if not self.client_size:
+            return
+        (shown,) = await self.client.command(
+            "display-message -p '#{window_width}x#{window_height}'"
+        )
+        if shown.ok and shown.text() != [self.client_size]:
+            await self.client.command("select-window -t :")
 
     async def switch(self, target: str) -> None:
         if not target or "\n" in target:

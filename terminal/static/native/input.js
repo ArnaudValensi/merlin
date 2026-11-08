@@ -80,7 +80,7 @@
       this.deadMeta = false;
       this.deadNext = null;
       this.preedit = null;
-      // A finger on the field itself (its "Hold to paste" zone on a touch
+      // A finger on the field itself (over the Paste button on a touch
       // screen): the caret it places is the system's Paste menu's, not a
       // cursor move for the terminal.
       this.touched = false;

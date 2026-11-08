@@ -12,9 +12,6 @@
 // - Selection and copy are the platform's: a right-click with a selection
 //   opens the browser's menu (Copy), without one it pastes as in the classic
 //   page; a phone's long press selects.
-// - The window tabs with their agent-state pills are drawn by the page, from
-//   the bridge's `windows` frames (tmux draws no status bar for a control
-//   client).
 (function () {
   'use strict';
   const Choice = window.MerlinTerminalChoice;
@@ -32,10 +29,10 @@
   const statusText = $('status-text');
   const toolbarEl = $('nt-toolbar');
   const toolbarToggle = $('toolbar-toggle');
-  const tabs = $('nt-tabs');
   const noticeEl = $('nt-notice');
   const copyToast = $('copy-toast');
   const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  const ACTIVE_EVERY_MS = 1000;
   const isTouchDevice = ('ontouchstart' in window || navigator.maxTouchPoints > 0);
 
   // Menu button opens the sidebar (the mobile top bar is hidden here).
@@ -134,47 +131,6 @@
     }));
   }
 
-  // -- the window tabs ---------------------------------------------------------------
-
-  let sessionId = '';
-  function renderTabs(msg) {
-    sessionId = msg.session_id || '';
-    const windows = (msg.windows || []).slice().sort((a, b) => a.index - b.index);
-    const frag = document.createDocumentFragment();
-    for (const w of windows) {
-      const pill = Core.windowPill(w.state || '', !!w.active);
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'nt-tab' + (w.active ? ' active' : '');
-      btn.setAttribute('role', 'tab');
-      btn.setAttribute('aria-selected', String(!!w.active));
-      btn.dataset.window = w.id;
-      btn.dataset.state = w.state || '';
-      btn.title = w.index + ': ' + w.name + (pill.label ? ' (' + pill.label + ')' : '');
-      const glyph = document.createElement('span');
-      glyph.className = 'nt-pill';
-      glyph.textContent = pill.glyph;
-      glyph.style.color = pill.color;
-      glyph.setAttribute('aria-hidden', 'true');
-      const name = document.createElement('span');
-      name.className = 'nt-tab-name';
-      name.textContent = w.name;
-      btn.append(glyph, name);
-      frag.appendChild(btn);
-    }
-    tabs.replaceChildren(frag);
-    const active = tabs.querySelector('.nt-tab.active');
-    if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }
-  // No tab takes the focus from the input field.
-  tabs.addEventListener('mousedown', (e) => e.preventDefault());
-  tabs.addEventListener('click', (e) => {
-    const tab = e.target.closest('.nt-tab');
-    if (!tab || !sessionId) return;
-    window.MerlinTerminal.switchSession(sessionId + ':' + tab.dataset.window);
-    setTimeout(refreshBoard, 300);
-  });
-
   function refreshBoard() {
     if (window.SessionsBoard && window.SessionsBoard.refresh) window.SessionsBoard.refresh();
   }
@@ -206,7 +162,6 @@
       switch (msg.type) {
         case 'pong': onPong(); break;
         case 'session': onSession(msg); break;
-        case 'windows': renderTabs(msg); break;
         case 'sessions-changed': refreshBoard(); break;
         // A background transcription (the 202 path) was lost after the page
         // was told it was accepted.
@@ -329,7 +284,26 @@
     toolbarToggle.classList.toggle('active', toolbarEl.classList.contains('visible'));
   });
 
-  jump.addEventListener('click', () => { engine.toBottom(); input.focus(); });
+  // The keyboard stays as it was: the button takes no focus, and on a touch
+  // screen the field gets it back only if it had it.
+  let jumpFromField = false;
+  jump.addEventListener('touchstart', () => { jumpFromField = document.activeElement === field; }, { passive: true });
+  jump.addEventListener('mousedown', (e) => e.preventDefault());
+  jump.addEventListener('click', () => { engine.toBottom(); if (!coarse || jumpFromField) input.focus(); });
+
+  // tmux sizes a window after its latest active client, and what this page
+  // sends does not count as activity for a control client (only keys typed at
+  // a terminal do): the page says so itself, on any gesture of the user.
+  let lastActive = 0;
+  function reportActive() {
+    const now = Date.now();
+    if (now - lastActive < ACTIVE_EVERY_MS) return;
+    lastActive = now;
+    engine.send({ type: 'active' });
+  }
+  for (const name of ['keydown', 'beforeinput', 'pointerdown', 'touchstart', 'wheel']) {
+    document.addEventListener(name, reportActive, { capture: true, passive: true });
+  }
   // A tap or a click focuses the input field, unless it ends a selection or
   // hits a link.
   container.addEventListener('click', (e) => {
@@ -348,10 +322,14 @@
   // and `merlin-clip paste` gets it at once; on a desktop the recent key or
   // click covers the write (docs/merlin-cli/clipboard.md).
   let toastTimer = null;
-  function hideCopyToast() { copyToast.hidden = true; clearTimeout(toastTimer); }
+  // Set while the pill offers the selection made under a held finger, kept
+  // here because a tap on the pill may clear the selection before its click.
+  let offeredSelection = null;
+  function hideCopyToast() { copyToast.hidden = true; clearTimeout(toastTimer); offeredSelection = null; }
   function programCopied(text) {
     if (!text) return;
     lastClip = text;
+    offeredSelection = null;
     if (isTouchDevice) {
       syncClipboard(text);
       copyToast.hidden = false;
@@ -369,11 +347,13 @@
   copyToast.addEventListener('mousedown', (e) => e.preventDefault());
   copyToast.addEventListener('click', (e) => {
     e.stopPropagation();
-    const text = lastClip;
+    const selection = offeredSelection;
+    const text = selection || lastClip;
     if (text) {
       syncClipboard(text);
       writeClipboard(text, () => flash('Copied!', 'copied'), () => {});
     }
+    if (selection) getSelection().removeAllRanges();
     hideCopyToast();
     input.focus();
   });
@@ -406,6 +386,11 @@
     input.focus();
   }
   $('paste-btn').addEventListener('click', (e) => { e.preventDefault(); handlePaste(); });
+  // On a touch screen the field lies over the button (the template): a tap
+  // lands on the field. A long press raises the system's menu and no click.
+  field.addEventListener('click', () => {
+    if (coarse && toolbarEl.classList.contains('visible')) handlePaste();
+  });
 
   // A right-click with a selection is the browser's menu (Copy); without one
   // it pastes, as in the classic terminal. Not on a touch screen, where a
@@ -836,10 +821,113 @@
     const vv = window.visualViewport;
     const main = document.querySelector('.main');
     if (!vv || !main || !coarse) return;
+    // A finger held still on the terminal while the keyboard is up. iOS only
+    // selects inside the focused field, and does not follow a finger already
+    // down when the field lets go: the page selects itself, the word under
+    // the finger, extended by dragging, with the Copy pill when it lifts. The
+    // keyboard leaves, and the layout waits for the selection to be over, so
+    // the text stays under the finger.
+    const HOLD_MS = 320;
+    const HOLD_SLOP = 10;
+    const PILL_GRACE_MS = 400;
+    let held = false;
+    let fingerDown = false;
+    let holdTimer = null;
+    let selecting = false;
+    function caretAt(x, y) {
+      let node = null, offset = 0;
+      if (document.caretRangeFromPoint) {
+        const r = document.caretRangeFromPoint(x, y);
+        if (r) { node = r.startContainer; offset = r.startOffset; }
+      } else if (document.caretPositionFromPoint) {
+        const p = document.caretPositionFromPoint(x, y);
+        if (p) { node = p.offsetNode; offset = p.offset; }
+      }
+      return node && container.contains(node) ? { node, offset } : null;
+    }
+    function selectWordAt(x, y) {
+      const at = caretAt(x, y);
+      if (!at) return;
+      const sel = getSelection();
+      sel.collapse(at.node, at.offset);
+      // One character in first: a caret on the word's first letter would
+      // otherwise go back to the word before.
+      sel.modify('move', 'forward', 'character');
+      sel.modify('move', 'backward', 'word');
+      sel.modify('extend', 'forward', 'word');
+      if (!sel.isCollapsed) return;
+      // No word here (a blank): the row.
+      const el = at.node.nodeType === 1 ? at.node : at.node.parentElement;
+      const row = el && el.closest('.r');
+      if (row) sel.selectAllChildren(row);
+    }
+    function releaseLayout() {
+      if (!held || fingerDown || hasSelection()) return;
+      held = false;
+      apply();
+    }
+    container.addEventListener('touchstart', (e) => {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+      if (document.activeElement !== field || e.touches.length !== 1 || e.target.closest('a')) return;
+      fingerDown = true;
+      const { clientX: x, clientY: y } = e.touches[0];
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        held = true;
+        selecting = true;
+        field.blur();
+        selectWordAt(x, y);
+        // The drag selects: the view must not start scrolling.
+        engine.scroller.style.overflow = 'hidden';
+      }, HOLD_MS);
+      // On the node itself: output may redraw it out of the document.
+      const moved = (m) => {
+        const t = m.touches[0];
+        if (!t) return;
+        if (selecting) {
+          const at = caretAt(t.clientX, t.clientY);
+          if (at) getSelection().extend(at.node, at.offset);
+        } else if (Math.hypot(t.clientX - x, t.clientY - y) > HOLD_SLOP) {
+          clearTimeout(holdTimer);
+          holdTimer = null;
+        }
+      };
+      const ended = () => {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+        fingerDown = false;
+        e.target.removeEventListener('touchmove', moved);
+        e.target.removeEventListener('touchend', ended);
+        e.target.removeEventListener('touchcancel', ended);
+        if (selecting) {
+          selecting = false;
+          engine.scroller.style.overflow = '';
+          const text = hasSelection() ? engine.selectionText() : null;
+          if (text) {
+            offeredSelection = text;
+            clearTimeout(toastTimer);
+            copyToast.hidden = false;
+          }
+        }
+        releaseLayout();
+      };
+      e.target.addEventListener('touchmove', moved, { passive: true });
+      e.target.addEventListener('touchend', ended, { passive: true });
+      e.target.addEventListener('touchcancel', ended, { passive: true });
+    }, { passive: true });
+    document.addEventListener('selectionchange', () => {
+      if (offeredSelection !== null) {
+        if (hasSelection()) offeredSelection = engine.selectionText() || offeredSelection;
+        else setTimeout(() => { if (!hasSelection()) hideCopyToast(); }, PILL_GRACE_MS);
+      }
+      releaseLayout();
+    });
     function apply() {
-      if (Math.abs(vv.scale - 1) > 0.01) return;
+      if (held || Math.abs(vv.scale - 1) > 0.01) return;
       const free = Math.round(vv.height);
       const opened = free < window.innerHeight - 1;
+      engine.keyboard = opened;
       main.style.height = opened ? free + 'px' : '';
       document.documentElement.classList.toggle('keyboard-open', opened);
       if (window.scrollY || vv.offsetTop) window.scrollTo(0, 0);

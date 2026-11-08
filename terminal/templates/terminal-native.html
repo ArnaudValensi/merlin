@@ -16,14 +16,7 @@ MerlinTerminalChoice.route('native');</script>
          gesture its clipboard needs (docs/merlin-cli/clipboard.md). -->
     <button id="copy-toast" class="nt-copy-toast" type="button" hidden>Copy</button>
     <textarea id="nt-input" class="nt-input" rows="1" aria-label="Terminal input"></textarea>
-    <!-- Touch screens: the input field lies over this label, at the end of
-         the tab row, so a long press on it opens the system's Paste menu. A
-         long press on the terminal stays a selection of its text. -->
-    <div id="nt-paste-zone" class="nt-paste-zone" aria-hidden="true">Hold to paste</div>
 </div>
-<!-- The window tabs with their agent-state pills: tmux's status bar, drawn by
-     the page (the glyph and colour rules of terminal/tmux.conf). -->
-<div id="nt-tabs" class="nt-tabs" role="tablist" aria-label="Windows"></div>
 <div id="nt-toolbar" class="nt-toolbar visible">
     <div class="nt-toolbar-row">
         <button class="tk" type="button" data-key="Escape">Esc</button>
@@ -44,9 +37,6 @@ MerlinTerminalChoice.route('native');</script>
         <button class="tk tk-arrow" type="button" data-key="ArrowDown" data-repeat>&darr;</button>
         <button class="tk tk-arrow" type="button" data-key="ArrowRight" data-repeat>&rarr;</button>
         <span class="nt-toolbar-sep"></span>
-        <button class="tk" type="button" id="paste-btn" title="Paste from clipboard">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
-        </button>
         <button class="tk" type="button" id="upload-btn" title="Upload files to send to the terminal">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
         </button>
@@ -57,6 +47,13 @@ MerlinTerminalChoice.route('native');</script>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
         </button>
     </div>
+    <!-- Outside the scrolling row: always on screen. On a touch screen the
+         input field lies over it, so a tap pastes and a long press opens the
+         system's Paste menu; a long press on the terminal selects its text. -->
+    <button class="tk" type="button" id="paste-btn" title="Paste from clipboard">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+        <span>Paste</span>
+    </button>
 </div>
 <input type="file" id="upload-file-input" multiple style="display:none">
 {% include "terminal-status-bar.html" %}
@@ -97,40 +94,17 @@ MerlinTerminalChoice.route('native');</script>
         caret-color: transparent; color: transparent; background: transparent;
         z-index: -1;
     }
-    /* The window tabs: tmux's status bar row, one pill and name per window. */
-    .nt-tabs {
-        display: flex; gap: 2px; align-items: stretch; flex: 0 0 auto;
-        background: #1e1e2e; overflow-x: auto; scrollbar-width: none;
-        font-family: 'GeistMono Nerd Font', 'Geist Mono', monospace; font-size: 12px;
-    }
-    .nt-tabs::-webkit-scrollbar { display: none; }
-    .nt-tabs:empty { display: none; }
-    .nt-tab {
-        display: flex; align-items: center; gap: 5px; flex: 0 0 auto; max-width: 14em;
-        height: 24px; padding: 0 9px; border: 0; background: none; color: #6272a4;
-        font: inherit; cursor: pointer; white-space: nowrap;
-        -webkit-tap-highlight-color: transparent; touch-action: manipulation;
-    }
-    .nt-tab .nt-tab-name { overflow: hidden; text-overflow: ellipsis; }
-    .nt-tab.active { background: #313244; color: #bd93f9; }
-    .nt-tab:hover { color: var(--text-primary); }
-    .nt-paste-zone { display: none; }
-    /* A touch screen: the field becomes a real target, over the zone at the
-       end of the tab row. Still invisible (the terminal's cursor shows where
-       typing goes); the label says what a long press there does. */
+    /* A touch screen: the field becomes a real target, over the Paste button
+       (the toolbar's border and padding, 7px, above a 32px button). Still
+       invisible: the terminal's cursor shows where typing goes. */
     @media (pointer: coarse) {
-        .nt-tabs, .nt-tabs:empty { display: flex; min-height: 30px; margin-right: 96px; }
-        .nt-tab { height: 30px; }
-        .nt-paste-zone {
-            display: flex; align-items: center; justify-content: center;
-            position: absolute; right: 0; bottom: -30px; width: 96px; height: 30px;
-            box-sizing: border-box; z-index: 6; pointer-events: none;
-            background: #1e1e2e; border-left: 1px solid var(--border);
-            color: var(--text-muted); font-size: 11px; white-space: nowrap;
-        }
+        #paste-btn { width: 72px; }
         .nt-input {
-            left: auto; right: 0; bottom: -30px; width: 96px; height: 30px; z-index: 7;
+            left: auto; right: 8px; bottom: -39px; width: 72px; height: 32px; z-index: 7;
             -webkit-user-select: text; user-select: text; -webkit-touch-callout: default;
+        }
+        .nt-page:has(~ .nt-toolbar:not(.visible)) .nt-input {
+            right: 0; bottom: 0; width: 1px; height: 1em; z-index: -1;
         }
     }
     .nt-toolbar {
@@ -138,8 +112,9 @@ MerlinTerminalChoice.route('native');</script>
         background: var(--bg-secondary); border-top: 1px solid var(--border);
         flex: 0 0 auto; padding: 6px 8px;
     }
-    .nt-toolbar.visible { display: block; }
+    .nt-toolbar.visible { display: flex; gap: 4px; align-items: center; }
     .nt-toolbar-row {
+        flex: 1 1 auto; min-width: 0;
         display: flex; gap: 4px; align-items: center; overflow-x: auto;
         scrollbar-width: none; -ms-overflow-style: none;
     }
@@ -158,7 +133,8 @@ MerlinTerminalChoice.route('native');</script>
         background: rgba(74, 158, 255, 0.15); border-color: rgba(74, 158, 255, 0.4); color: var(--accent-blue);
     }
     .nt-toolbar .tk-arrow { font-size: 14px; padding: 0 8px; }
-    #paste-btn, #upload-btn, #cd-btn, #commits-btn { padding: 0 8px; }
+    #upload-btn, #cd-btn, #commits-btn { padding: 0 8px; }
+    #paste-btn { padding: 0 8px; gap: 5px; flex: 0 0 auto; box-sizing: border-box; }
     #upload-btn.uploading { color: var(--accent-yellow); border-color: var(--accent-yellow); }
     .nt-notice {
         position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 6;

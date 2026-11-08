@@ -4,7 +4,7 @@ switch between them.
 The native page (``/terminal/native``, ``terminal/static/native/page.js``)
 does what the classic page does around its terminal, through the same seams
 (``window.MerlinTerminal``, the Sessions panel, the shared status bar and
-panels): the window tabs with their agent-state pills, the deep link and the
+panels): the deep link and the
 push-tap relay, the paste button and a right-click, uploads (picker, drop, a
 pasted image), ``clipboard_sync``, a program's copy (desktop and the phone's
 Copy pill), the cd and commits buttons, voice input and its target, the
@@ -309,77 +309,8 @@ def test_a_direct_visit_on_an_old_tmux_says_why_without_changing_the_choice(
 # -- windows ----------------------------------------------------------------------------
 
 
-def _tab(page, wid: str) -> dict:
-    return page.evaluate(
-        """wid => { const t = document.querySelector(`.nt-tab[data-window="${wid}"]`);
-            if (!t) return null;
-            const p = t.querySelector('.nt-pill');
-            return {glyph: p.textContent, color: getComputedStyle(p).color,
-                    active: t.classList.contains('active'), name: t.textContent}; }""",
-        wid,
-    )
-
-
-def test_window_tabs_show_the_agent_state_pills_and_switch(page, tmux_env):
-    first = page.evaluate("window.MerlinTerminal.currentWindow()")
-    states = {"busy": None, "ask": None, "done": None, "idle": None}
-    try:
-        for state in states:
-            wid = new_window(tmux_env)
-            tmux(tmux_env, "set", "-w", "-t", wid, "@agent_state", state)
-            states[state] = wid
-        page.wait_for_function(
-            "n => document.querySelectorAll('.nt-tab').length === n",
-            arg=len(states) + 1,
-            timeout=10000,
-        )
-        # The glyph and colour rules of tmux.conf.
-        expected = {
-            "busy": ("◐", "rgb(249, 226, 175)"),
-            "ask": ("?", "rgb(137, 220, 235)"),
-            "done": ("●", "rgb(166, 227, 161)"),
-            "idle": ("○", "rgb(98, 114, 164)"),
-        }
-        for state, wid in states.items():
-            page.wait_for_function(
-                f"""() => {{ const p = document.querySelector('.nt-tab[data-window="{wid}"] .nt-pill');
-                    return p && p.textContent === '{expected[state][0]}'; }}""",
-                timeout=10000,
-            )
-            tab = _tab(page, wid)
-            assert (tab["glyph"], tab["color"]) == expected[state], state
-            assert not tab["active"]
-        # The current window without an agent: the classic filled circle.
-        tab = _tab(page, first)
-        assert tab["active"] and tab["glyph"] == "●"
-        assert tab["color"] == "rgb(189, 147, 249)"
-
-        # A tap on a tab selects its window, and the field keeps the focus.
-        page.click(f'.nt-tab[data-window="{states["busy"]}"]')
-        page.wait_for_function(
-            f"window.MerlinTerminal.currentWindow() === '{states['busy']}'",
-            timeout=10000,
-        )
-        page.wait_for_function(
-            f"""() => document.querySelector('.nt-tab[data-window="{states["busy"]}"]').classList.contains('active')""",
-            timeout=10000,
-        )
-        assert page.evaluate("document.activeElement.id") == "nt-input"
-        # The idle agent's pill turns purple when its window is active.
-        page.click(f'.nt-tab[data-window="{states["idle"]}"]')
-        page.wait_for_function(
-            f"""() => {{ const t = document.querySelector('.nt-tab[data-window="{states["idle"]}"]');
-                return t.classList.contains('active')
-                    && getComputedStyle(t.querySelector('.nt-pill')).color === 'rgb(189, 147, 249)'; }}""",
-            timeout=10000,
-        )
-    finally:
-        for wid in states.values():
-            if wid:
-                kill_window(tmux_env, wid)
-        page.evaluate(
-            "t => window.MerlinTerminal.switchSession(t)", f"merlin-dev:{first}"
-        )
+def test_the_page_draws_no_window_tabs(page):
+    assert page.locator(".nt-tabs, .nt-tab").count() == 0
 
 
 def test_the_sessions_panel_and_a_push_tap_switch_the_window(page, tmux_env):

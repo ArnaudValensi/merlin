@@ -835,7 +835,7 @@ test('a normal edit ends a dropped composition the browser never closed', () => 
   assert.equal(h.input.cancelled, false);
 });
 
-// -- a finger on the field (its "Hold to paste" zone on a touch screen) ----------
+// -- a finger on the field (over the Paste button on a touch screen) ----------
 
 test('the field: a long press moves the caret and sends nothing, typing then goes where it should', () => {
   const h = harness();

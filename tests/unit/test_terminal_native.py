@@ -1099,6 +1099,51 @@ async def test_resize_switch_and_window_events_reach_the_page(server):
 
 @needs_tmux
 @pytest.mark.asyncio
+async def test_the_last_active_page_sizes_the_window_without_running_hooks_for_nothing(
+    server,
+):
+    socket, tmux, _ = server
+    size = lambda: tmux(
+        "display-message", "-p", "-t", "t", "#{window_width}x#{window_height}"
+    ).strip()  # noqa: E731
+    phone, phone_ws, phone_task = await _bridge(socket)
+    desk, desk_ws, desk_task = await _bridge(socket)
+    selected = []
+    try:
+        phone_ws.push({"type": "resize", "cols": 40, "rows": 20})
+        desk_ws.push({"type": "resize", "cols": 120, "rows": 40})
+        assert await _until(
+            lambda: desk.client_size == "120x40" and phone.client_size == "40x20"
+        )
+        desk_ws.push({"type": "active"})
+        assert await _until(lambda: size() == "120x40")
+        # Typing is not enough for tmux: the page has to say it is active.
+        await phone.send_input(phone.pane, " ")
+        await asyncio.sleep(0.2)
+        assert size() == "120x40"
+        phone_ws.push({"type": "active"})
+        assert await _until(lambda: size() == "40x20")
+        desk_ws.push({"type": "active"})
+        assert await _until(lambda: size() == "120x40")
+
+        # Already the size it wants: no select-window, so no hooks.
+        real = desk.client.command
+
+        async def spy(*commands, **kw):
+            selected.extend(c for c in commands if "select-window" in c)
+            return await real(*commands, **kw)
+
+        desk.client.command = spy
+        desk_ws.push({"type": "active"})
+        await asyncio.sleep(0.2)
+        assert selected == []
+    finally:
+        await _stop(phone, phone_task)
+        await _stop(desk, desk_task)
+
+
+@needs_tmux
+@pytest.mark.asyncio
 async def test_history_rows_by_absolute_number(server):
     socket, tmux, _ = server
     bridge, ws, task = await _bridge(socket)

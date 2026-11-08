@@ -71,16 +71,23 @@
       this.stuck = true;
       this.touching = false;
       this.ourTop = -1;
+      this.viewH = 0; // the height the view was last settled at
+      this.lastUsed = 0; // the screen's last row with text or the cursor
       this.scroller.addEventListener('scroll', () => this.onScroll(), { passive: true });
-      this.scroller.addEventListener('touchstart', () => { this.touching = true; }, { passive: true });
       const release = () => {
         this.touching = false;
         // A fling keeps scrolling after the finger lifts: its scroll events
         // decide. Only a release at the bottom sticks at once.
         if (this.atBottom()) this.setStuck(true);
       };
-      this.scroller.addEventListener('touchend', release, { passive: true });
-      this.scroller.addEventListener('touchcancel', release, { passive: true });
+      // The end of a touch goes to the node it started on, and output may have
+      // redrawn that node out of the document meanwhile: an end listened for
+      // on the scroller would never come, and the view would stop following.
+      this.scroller.addEventListener('touchstart', (e) => {
+        this.touching = true;
+        e.target.addEventListener('touchend', release, { passive: true, once: true });
+        e.target.addEventListener('touchcancel', release, { passive: true, once: true });
+      }, { passive: true });
       this.scroller.addEventListener('wheel', (e) => {
         if (e.deltaY < 0) this.setStuck(false);
       }, { passive: true });
@@ -723,12 +730,55 @@
         this.alt.hidden = true;
         if (this.oldest == null) { this.oldest = top; this.next = top; }
         this.applyRows(top, html, texts, wrapped);
+        this.dropBelow(top + this.rows);
         this.screenTop = top;
+        let used = cursor ? cursor.y : 0;
+        for (let y = texts.length - 1; y > used; y--) if (/\S/.test(texts[y])) { used = y; break; }
+        this.lastUsed = used;
       }
       this.placeCursor(cursor);
       this.retryDeferred();
       this.trim();
       if (this.stuck && !this.touching) this.scrollToBottom();
+    }
+
+    // Rows from ``end`` on are no longer in the pane: the screen got shorter (a
+    // phone's keyboard opened). Left in place, they would sit frozen at the
+    // bottom of the view, with the live screen above them.
+    dropBelow(end) {
+      const keep = Math.max(0, end - this.next);
+      if (keep >= this.live.length) return;
+      const emptied = (c) => {
+        if (c.firstChild) { this.sizeChunk(c); return; }
+        if (c === this.tail) { this.tail = null; this.tailLines = 0; }
+        c.remove();
+      };
+      for (let i = this.live.length - 1; i >= keep; i--) {
+        const r = this.live[i];
+        if (!r) continue;
+        const l = r.parentNode, c = l.parentNode;
+        r.remove();
+        this.deferred.delete(r);
+        c._rows--;
+        this.rowCount--;
+        if (!firstRow(l)) { l.remove(); c._lines--; if (c === this.tail) this.tailLines--; }
+        emptied(c);
+      }
+      this.live.length = keep;
+      while (this.pendings.length) {
+        const p = this.pendings[this.pendings.length - 1];
+        if (p.b <= end) break;
+        if (p.a < end) { p.b = end; p.el.style.height = (p.b - p.a) * this.rowH + 'px'; this.sizeChunk(p.el.parentNode); break; }
+        const c = p.el.parentNode;
+        p.el.remove();
+        this.pendings.pop();
+        emptied(c);
+      }
+      const chunk = this.hist.lastElementChild;
+      const node = chunk ? chunk.lastElementChild : null;
+      const line = !!node && node.classList.contains('l');
+      this.lastEl = line ? lastRow(node) : null;
+      this.endBreak = !!node && !line;
     }
 
     // The text of the screen rows, one line per row (for tests and checks).
@@ -782,8 +832,19 @@
     // -- scrolling -------------------------------------------------------------------
 
     atBottom() {
-      const s = this.scroller;
-      return s.scrollTop + s.clientHeight >= s.scrollHeight - 4;
+      return this.scroller.scrollTop >= this.followTop() - 4;
+    }
+
+    // Where a view that follows the output stands. In a view shorter than the
+    // screen (the keyboard is up), the blank rows under the last used one are
+    // not text: the used rows end at its bottom, and when they all fit the
+    // screen's first row is at its top.
+    followTop() {
+      const s = this.scroller, h = s.clientHeight, end = s.scrollHeight;
+      if (this.alternate || this.screenTop == null) return end - h;
+      const top = end - this.rows * this.rowH;
+      const used = top + (this.lastUsed + 1) * this.rowH;
+      return Math.min(end, Math.max(used, top + h)) - h;
     }
 
     setStuck(stuck) {
@@ -793,6 +854,9 @@
     }
 
     onScroll() {
+      // The browser clamping a view that just got taller, before it is put
+      // back where it was: not the user's scroll.
+      if (this.viewH && this.scroller.clientHeight !== this.viewH) return;
       // Our own scroll to the bottom fires a scroll event later, when more rows
       // may have arrived: an event at the position we set is ours.
       if (this.scroller.scrollTop === this.ourTop) return;
@@ -801,9 +865,16 @@
       if (this.onScrolled) this.onScrolled();
     }
 
+    // Moves the view without it counting as the user's scroll.
+    moveTo(top) {
+      const s = this.scroller;
+      s.scrollTop = top;
+      this.ourTop = s.scrollTop;
+    }
+
     scrollToBottom() {
       const s = this.scroller;
-      s.scrollTop = s.scrollHeight;
+      s.scrollTop = this.followTop();
       this.ourTop = s.scrollTop;
       this.setStuck(true);
     }

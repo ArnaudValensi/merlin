@@ -27,6 +27,10 @@
       this.alt = this.renderer.alt;
       this.renderer.onStuck = (stuck) => { if (opts.onStuck) opts.onStuck(stuck); };
       this.renderer.onScrolled = () => this.maybeLoadHistory();
+      this.scroller.addEventListener('scroll', () => {
+        const s = this.scroller;
+        if (s.clientHeight === this.renderer.viewH) this.viewBottom = s.scrollTop + s.clientHeight;
+      }, { passive: true });
       this.ws = null;
       this.pane = '';
       this.state = null; // the last update's pane state
@@ -39,13 +43,32 @@
       this.ackTimer = null;
       this.size = { cols: 0, rows: 0 };
       this.resizeTimer = null;
+      // A software keyboard is up (set by the page): it shortens the view, not
+      // the window (see fit), and fullRows is the height the window keeps.
+      this.keyboard = false;
+      this.fullRows = 0;
+      this.viewBottom = 0;
       this.decoder = null;
       this.cell = null;
       this.renderer.measure();
       document.addEventListener('copy', (e) => this.onCopy(e));
       this.bindAltMouse();
       if (typeof ResizeObserver === 'function') {
-        new ResizeObserver(() => this.fit()).observe(this.scroller);
+        new ResizeObserver(() => {
+          // Whatever was at the bottom of the view stays there when its
+          // height changes (the keyboard opening or closing): the last rows
+          // when it follows the output, else the row the user was reading.
+          // (From where the view last was: a taller view has been clamped by
+          // now.)
+          const h = this.scroller.clientHeight;
+          if (this.renderer.stuck) this.toBottom();
+          else if (this.renderer.viewH && h !== this.renderer.viewH) {
+            this.renderer.moveTo(Math.min(this.viewBottom, this.renderer.followTop() + h) - h);
+          }
+          this.renderer.viewH = h;
+          this.viewBottom = this.scroller.scrollTop + h;
+          this.fit();
+        }).observe(this.scroller);
       }
       // The terminal font, loaded now (a web font is only fetched once text
       // uses it, and document.fonts.ready does not wait for that), and the
@@ -217,10 +240,12 @@
         const cell = line.getCell(c.x);
         if (cell) { ch = cell.getChars() || ' '; wide = cell.getWidth() === 2; }
       }
+      const wasAlternate = !!r.alternate;
       r.applyScreen(top, out.html, out.texts, sc.wrapped, {
         x: c.x, y: c.y, visible: c.visible, shape: c.shape, blink: c.blink, ch, wide,
       }, h.alternate);
       this.state = h;
+      if (this.keyboard && !!r.alternate !== wasAlternate) this.fit();
     }
 
     onHistory(frame) {
@@ -268,9 +293,16 @@
     // -- size --------------------------------------------------------------------
 
     // Columns and rows that fit, sent to tmux once, RESIZE_DELAY after the
-    // last change (``now``: at once).
+    // last change (``now``: at once). A keyboard leaves the window its height:
+    // the view shows its last rows, and the program is not redrawn each time
+    // the keyboard moves. A full-screen program draws for the rows it is told
+    // about and cannot be scrolled, so it gets the shorter height.
     fit(now) {
-      const { cols, rows } = this.renderer.fit();
+      const got = this.renderer.fit();
+      const cols = got.cols;
+      let rows = got.rows;
+      if (!this.keyboard) this.fullRows = rows;
+      else if (!this.renderer.alternate && this.fullRows) rows = this.fullRows;
       if (cols === this.size.cols && rows === this.size.rows) return;
       this.size = { cols, rows };
       clearTimeout(this.resizeTimer);

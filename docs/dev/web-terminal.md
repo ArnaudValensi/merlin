@@ -518,10 +518,8 @@ module docstring lists every guarantee and its test.
   `focus`, `notice`, `lastPasteResult`, `probeStats`) for the Sessions panel,
   the bell, the voice console and the Apps panel; the `merlin:terminal-window`
   and `merlin:terminal-socket` events; the deep link and the push-tap relay;
-  the window tabs with their agent-state pills, drawn from the bridge's
-  `windows` frames by the rules of `tmux.conf` (`Core.windowPill`: the glyph
-  carries the state, the colour reinforces it, the active window is
-  highlighted), a tap selecting the window; the paste button (the clipboard
+  no window tabs (the founder dropped them: the bridge's `windows` frames are
+  still sent, and the page ignores them); the paste button (the clipboard
   ladder), a right-click without a selection (with one, it is the browser's
   menu, so Copy is native; never on a touch screen, where a long press
   selects), image paste, the upload button and drag and drop typing the
@@ -532,7 +530,12 @@ module docstring lists every guarantee and its test.
   the recording stops, IndexedDB retry, the 200 fallback typed here); the
   toolbar toggle; the keyboard suggestions item of the terminal menu; the
   reconnect with backoff, the ping probe after a suspension, the visibility
-  report; the software keyboard following the visual viewport. What the
+  report; the software keyboard following the visual viewport (it shortens the
+  view and keeps the row at its bottom, the blank rows under the last used one
+  not counting as text; only a full-screen program is resized for it). With the keyboard up iOS only selects inside the focused field and
+  does not follow a finger already down when the field lets go, so a finger
+  held on the terminal makes the page select itself: the word, a drag extends
+  it, and the Copy pill writes it (the same pill as a program's copy). What the
   classic page writes into its screen (a voice or upload error) is a notice
   over the terminal (`#nt-notice`): this page shows tmux's grid only.
 

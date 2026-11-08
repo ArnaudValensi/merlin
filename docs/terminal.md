@@ -232,15 +232,15 @@ What is different:
   and speeds up to words, a long press on the space bar moves the cursor,
   dictation works. Autocorrect and predictions are off by default; turn
   them on with **Keyboard suggestions** in the terminal menu.
-- **Window tabs** with the [agent-state pills](#agent-state-pills) sit above
-  the key toolbar, in place of tmux's status bar. Tap a tab to go to its
-  window.
+- **Windows** have no tab row: the status bar names the current one, the
+  toolbar's arrows move between them, and the Sessions panel lists them with
+  their [agent-state pills](#agent-state-pills).
+- **Size** follows the last device you used, as in tmux: a tap, a scroll or a
+  key on one device gives the window that device's size.
 - **Paste** works as described below, except that a right-click over a
   selection opens the browser's menu (so you can Copy); without a selection
-  it pastes. On a phone, use the toolbar's paste button or long press **Hold
-  to paste** at the end of the tab row for the system's Paste menu (a long
-  press on the terminal itself selects text). A program's copy
-  (`merlin-clip copy`, a NeoVim yank) offers the green **Copy** pill.
+  it pastes. On a phone, tap the **Paste** button at the right of the key
+  toolbar, or long press it for the system's Paste menu.
 - A message the classic terminal writes into its screen (a voice or upload
   error) is a line over the terminal: tap it to dismiss it.
 
