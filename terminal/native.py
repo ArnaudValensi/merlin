@@ -745,7 +745,9 @@ class NativeBridge:
                     # From the overlap row (the one before the first row the
                     # page lacks), with a margin for the rows that may scroll
                     # in before the capture runs.
-                    margin = 2 * self.scrolled + 2
+                    # Bounded: a burst cannot make the skipped prefix longer
+                    # than one capture.
+                    margin = min(2 * self.scrolled + 2, ROWS_PER_CAPTURE)
                     start = -(self.added_seen - self.sent_next + 1) - margin
                     end = min(-1, start + ROWS_PER_CAPTURE + margin)
                     commands.append(capture(pane, start, end))
@@ -888,7 +890,8 @@ class NativeBridge:
             self._send_history(pane, end, end, [], 0, None, busy=True)
             return
         margin = 2
-        for _ in range(8):
+        drift_left = 8  # aims that missed because the pane scrolled meanwhile
+        while True:
             (now,) = await self.client.command(
                 f"display -p -t {pane} '#{{history_added}}'"
             )
@@ -913,9 +916,18 @@ class NativeBridge:
             rows = [r for r in parse_rows(reply.lines, added) if r.number < end]
             first = next((i for i, r in enumerate(rows) if r.number == start), None)
             if first is None or rows[-1].number != end - 1:
-                margin = 2 * max(0, added - estimate) + 2
-                continue  # the pane scrolled meanwhile: aim again
+                drift_left -= 1
+                if drift_left == 0:
+                    # Never caught up with the scrolling: the page asks again.
+                    self._send_history(pane, end, end, [], 0, None, busy=True)
+                    return
+                margin = min(2 * max(0, added - estimate) + 2, ROWS_PER_CAPTURE)
+                continue
             if sum(len(r.data) + 1 for r in rows) > HISTORY_BYTES_MAX and count > 1:
+                # Too large: fewer rows (the newest, next to what the page
+                # has), captured again from their own first row. This does not
+                # use the drift budget, and ends at one row, which is sent
+                # whatever its size.
                 count //= 2
                 continue
             self._send_history(pane, start, end, rows, first, generation)

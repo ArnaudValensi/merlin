@@ -1281,3 +1281,49 @@ async def test_history_batches_and_ranges_keep_attributes(server, monkeypatch):
             await _stop(bridge, task)
     finally:
         await recorder.close()
+
+
+@needs_node
+@pytest.mark.asyncio
+async def test_a_capture_whose_skipped_prefix_is_long_still_delivers_its_rows():
+    """After a burst the aim's margin makes the skipped prefix long (bounded by
+    one capture); the page's decoder keeps every row the frame advertises."""
+    bridge, ws, fake = _fake_bridge(added=40000)
+    await bridge.update()
+    _drain(bridge)
+    fake.drift = 6000
+    await bridge.update()
+    _drain(bridge)
+    fake.drift = 0
+    await bridge.update()
+    frames = [f.data for f in bridge.out.frames if not f.text]
+    ((_, header, _),) = [parse_frame(f) for f in frames if f[0] == FRAME_UPDATE]
+    assert header["hist"]["count"] > 0
+    assert header["hist"]["skip"] <= native.ROWS_PER_CAPTURE + 1
+    state = _xterm(20, 2, {"page": ("frames", frames)}, history=0)
+    page_rows = [
+        "".join(c[0] for c in row["cells"]).strip() for row in state["page"]["history"]
+    ]
+    start = header["hist"]["start"]
+    assert page_rows == [
+        f"row {n}" for n in range(start, start + header["hist"]["count"])
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_range_of_large_rows_shrinks_until_it_fits_whatever_it_takes():
+    bridge, _, _ = _fake_bridge(added=3000, row_bytes=20000)
+    bridge.added_seen = 3000
+    await bridge.history("%1", 2500, 2000)
+    ((_, h, rows),) = _queued(bridge, FRAME_HISTORY)
+    assert h["end"] == 2500 and rows and _numbers(rows)[-1] == 2499
+    assert sum(len(r) for r in rows) <= native.HISTORY_BYTES_MAX + 20100
+
+
+@pytest.mark.asyncio
+async def test_a_range_that_never_catches_up_with_scrolling_gets_busy():
+    bridge, _, fake = _fake_bridge(added=3000)
+    fake.drift = 100_000  # every aim misses
+    await bridge.history("%1", 2500, 100)
+    ((_, h, rows),) = _queued(bridge, FRAME_HISTORY)
+    assert h["busy"] and rows == []

@@ -52,6 +52,9 @@
   function decodeRows(term, rows, skip) {
     term.reset();
     if (!rows.length) return [];
+    // Every row of the capture must stay in the parser's buffer until read:
+    // the skipped prefix is decoded (its attributes carry) but may be long.
+    if (term.options.scrollback < rows.length) term.options.scrollback = rows.length;
     let size = G1_GRAPHICS.length;
     for (const r of rows) size += r.length + 2;
     const all = new Uint8Array(size);
@@ -64,7 +67,9 @@
     term._core._inputHandler.parse(all.subarray(0, o));
     const buf = term.buffer.active;
     const lines = [];
-    const first = Math.max(0, buf.length - rows.length) + (skip || 0);
+    // The capture's rows are the buffer's last rows.length lines.
+    const first = buf.length - rows.length + (skip || 0);
+    if (first < 0) throw new Error('decodeRows: rows were trimmed from the parser');
     for (let y = first; y < buf.length; y++) lines.push(buf.getLine(y));
     return lines;
   }
