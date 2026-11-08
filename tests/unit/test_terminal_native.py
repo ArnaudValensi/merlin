@@ -898,6 +898,163 @@ async def test_bound_keys_run_their_binding_and_unbound_keys_follow_the_pane_mod
         await _stop(bridge, task)
 
 
+# What the page's key encoder (``keyAction`` in core.js, pinned per key in
+# tests/js/native-input.test.js) relies on: tmux turns each name into the
+# xterm bytes for the pane's modes.
+KEY_BYTES = {
+    # name: (normal, application cursor and keypad)
+    "Up": (b"\x1b[A", b"\x1bOA"),
+    "Down": (b"\x1b[B", b"\x1bOB"),
+    "Right": (b"\x1b[C", b"\x1bOC"),
+    "Left": (b"\x1b[D", b"\x1bOD"),
+    "Home": (b"\x1b[1~", b"\x1b[1~"),
+    "End": (b"\x1b[4~", b"\x1b[4~"),
+    "PPage": (b"\x1b[5~", b"\x1b[5~"),
+    "NPage": (b"\x1b[6~", b"\x1b[6~"),
+    "IC": (b"\x1b[2~", b"\x1b[2~"),
+    "DC": (b"\x1b[3~", b"\x1b[3~"),
+    "F1": (b"\x1bOP", b"\x1bOP"),
+    "F6": (b"\x1b[17~", b"\x1b[17~"),
+    "F12": (b"\x1b[24~", b"\x1b[24~"),
+    "C-Left": (b"\x1b[1;5D", b"\x1b[1;5D"),
+    "S-Left": (b"\x1b[1;2D", b"\x1b[1;2D"),
+    "M-Left": (b"\x1b[1;3D", b"\x1b[1;3D"),
+    "C-S-Up": (b"\x1b[1;6A", b"\x1b[1;6A"),
+    "C-M-Right": (b"\x1b[1;7C", b"\x1b[1;7C"),
+    "S-Home": (b"\x1b[1;2H", b"\x1b[1;2H"),
+    "C-DC": (b"\x1b[3;5~", b"\x1b[3;5~"),
+    "S-F5": (b"\x1b[15;2~", b"\x1b[15;2~"),
+    "C-F1": (b"\x1b[1;5P", b"\x1b[1;5P"),
+    "BTab": (b"\x1b[Z", b"\x1b[Z"),
+    "Tab": (b"\t", b"\t"),
+    "C-Enter": (b"\r", b"\r"),
+    "M-Enter": (b"\x1b\r", b"\x1b\r"),
+    "M-BSpace": (b"\x1b\x7f", b"\x1b\x7f"),
+    "M-Escape": (b"\x1b\x1b", b"\x1b\x1b"),
+    "C-Space": (b"\x00", b"\x00"),
+    "M-Space": (b"\x1b ", b"\x1b "),
+    "C-a": (b"\x01", b"\x01"),
+    "C-c": (b"\x03", b"\x03"),
+    "C-z": (b"\x1a", b"\x1a"),
+    "C-M-a": (b"\x1b\x01", b"\x1b\x01"),
+    "M-a": (b"\x1ba", b"\x1ba"),
+    "M-A": (b"\x1bA", b"\x1bA"),
+    "M-.": (b"\x1b.", b"\x1b."),
+    "M-1": (b"\x1b1", b"\x1b1"),
+    "C-[": (b"\x1b", b"\x1b"),
+    "C-\\": (b"\x1c", b"\x1c"),
+    "C-]": (b"\x1d", b"\x1d"),
+    "C-_": (b"\x1f", b"\x1f"),
+    "C-/": (b"\x1f", b"\x1f"),
+    "C-2": (b"\x00", b"\x00"),
+    "C-;": (b";", b";"),
+    "M-;": (b"\x1b;", b"\x1b;"),
+    "M-'": (b"\x1b'", b"\x1b'"),
+    "M-é": (b"\x1b\xc3\xa9", b"\x1b\xc3\xa9"),
+}
+KEY_MODIFIERS = ["", "C-", "M-", "S-", "C-M-", "C-S-", "M-S-", "C-M-S-"]
+KEY_BASES = (
+    (
+        "Up Down Left Right Home End PPage NPage IC DC Escape Tab BTab Enter Space BSpace"
+    ).split()
+    + [f"F{i}" for i in range(1, 13)]
+    + list("a1/;\\@[]^_-=.,'`~?#\"{}é")
+)
+# Names that run a binding of tmux.conf or the prefix: their effect is pinned
+# by test_bound_keys_run_their_binding_and_unbound_keys_follow_the_pane_modes.
+KEY_BOUND = {"F2", "F3", "F4", "F5", "C-b"}
+SEPARATOR = b"\xff\xfe"  # no key sends 0xff
+
+
+async def _keys_to_pane(
+    bridge: NativeBridge, out: Path, names: list[str]
+) -> list[bytes]:
+    """What the pane reads for each name, in order (SEPARATOR after each)."""
+    for name in names:
+        await bridge.send_key(bridge.pane, name)
+        await bridge.handle(
+            {"type": "input", "pane": bridge.pane, "hex": SEPARATOR.hex()}
+        )
+    assert await _until(
+        lambda: out.exists() and out.read_bytes().count(SEPARATOR) >= len(names)
+    )
+    return out.read_bytes().split(SEPARATOR)[: len(names)]
+
+
+@needs_tmux
+@pytest.mark.asyncio
+async def test_every_key_name_the_bridge_accepts_reaches_the_pane_as_a_key(server):
+    """tmux types a key name it cannot parse as literal text (measured:
+    ``C-Escape``, ``C-BSpace`` and ``C-#``), which would put a key-name-like
+    word into the program. Every combination of modifiers and keys the bridge
+    accepts reaches the pane as bytes other than its name; the refused ones
+    send nothing."""
+    socket, _, tmp = server
+    bridge, _, task = await _bridge(socket)
+    try:
+        out = tmp / "every"
+        await _run(bridge, f"stty raw -echo; cat > {out}")
+        await asyncio.sleep(0.3)
+        names = [
+            m + b
+            for m in KEY_MODIFIERS
+            for b in KEY_BASES
+            if m + b not in KEY_BOUND and m + b not in bridge.prefixes
+        ]
+        got = await _keys_to_pane(bridge, out, names)
+        accepted = [n for n in names if native.valid_key_name(n)]
+        refused = [n for n in names if not native.valid_key_name(n)]
+        assert {"C-Escape", "C-BSpace", "C-#"} <= set(refused)
+        assert set(refused) == {
+            n
+            for n in names
+            if n.split("-")[-1] in ("Escape", "BSpace", "#") and "C-" in n
+        }
+        for name, data in zip(names, got):
+            if name in refused:
+                assert data == b"", name
+            else:
+                assert data, name
+                if len(name) > 1:
+                    assert name.encode() not in data, (name, data)
+        assert len(accepted) > 380
+    finally:
+        await _stop(bridge, task)
+
+
+@needs_tmux
+@pytest.mark.asyncio
+async def test_key_names_become_the_xterm_bytes_of_the_pane_modes(server):
+    socket, _, tmp = server
+    bridge, _, task = await _bridge(socket)
+    try:
+        names = list(KEY_BYTES)
+        # A recorder per mode, which exits once it read every key.
+        rec = tmp / "rec.py"
+        rec.write_text(
+            "import os, sys, tty\n"
+            "out, setup, n = sys.argv[1], sys.argv[2], int(sys.argv[3])\n"
+            "tty.setraw(0)\n"
+            "os.write(1, setup.encode().decode('unicode_escape').encode())\n"
+            "data = b''\n"
+            f"while data.count({SEPARATOR!r}) < n:\n"
+            "    data += os.read(0, 4096)\n"
+            "    open(out, 'wb').write(data)\n"
+            "os.write(1, b'\\033[?1l\\033>')\n"
+        )
+        for i, (setup, label) in enumerate(
+            (("", "normal"), ("\\033[?1h\\033=", "app"))
+        ):
+            out = tmp / f"keys-{label}"
+            await _run(bridge, f"python3 {rec} {out} '{setup}' {len(names)}; stty sane")
+            await asyncio.sleep(0.4)
+            got = await _keys_to_pane(bridge, out, names)
+            assert dict(zip(names, got)) == {n: KEY_BYTES[n][i] for n in names}, label
+            await asyncio.sleep(0.2)
+    finally:
+        await _stop(bridge, task)
+
+
 @needs_tmux
 @pytest.mark.asyncio
 async def test_resize_switch_and_window_events_reach_the_page(server):

@@ -410,11 +410,11 @@
     return { end: oldest, count: Math.min(page, oldest - first) };
   }
 
-  // Physical keys: what a keydown sends, or null when the text field's
-  // beforeinput carries it (printable text, IME, dictation). Special keys and
-  // modified keys become tmux key names, so tmux encodes them for the pane's
-  // own modes (application cursor, extended keys) and its bindings (the
-  // prefix, F2 to F5, Escape) run exactly as for a typed key.
+  // Physical keys: what a keydown sends. Special keys and modified keys
+  // become tmux key names, so tmux encodes them for the pane's own modes
+  // (application cursor, the xterm modifier forms such as ``\x1b[1;5D``) and
+  // its bindings (the prefix, F2 to F5, Escape) run exactly as for a typed key
+  // (measured on tmux 3.8 for every name: ``tests/unit/test_terminal_native.py``).
   const NAMED = {
     ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
     Home: 'Home', End: 'End', PageUp: 'PPage', PageDown: 'NPage',
@@ -422,61 +422,158 @@
   };
   for (let i = 1; i <= 12; i++) NAMED['F' + i] = 'F' + i;
 
-  // ``mods``: {ctrl, alt, shift, meta}; ``macOptionIsMeta`` as in the classic
-  // terminal (Option is Meta). Cmd/Win combinations stay the browser's.
-  function keyAction(key, mods) {
+  function oneChar(s) {
+    return typeof s === 'string' && s.length > 0 && s.length <= 2 && Array.from(s).length === 1;
+  }
+
+  // ``mods``: {ctrl, alt, shift, meta, altGraph}; ``code``: the event's
+  // physical key (``KeyA``), for Alt and Ctrl on keys whose character is not
+  // the letter (Option on a Mac composes: Option+h is ``˙``; a Cyrillic
+  // layout). Alt is Meta (ESC prefix), as in the classic terminal; Cmd/Win
+  // combinations and AltGr characters stay the browser's (null). Returns
+  // {key: <tmux name>} or {data: <bytes as text>} or null.
+  function keyAction(key, mods, code) {
     const m = mods || {};
-    if (m.meta) return null;
+    if (m.meta || m.altGraph || typeof key !== 'string') return null;
     const ctrl = !!m.ctrl, alt = !!m.alt, shift = !!m.shift;
     const prefix = (ctrl ? 'C-' : '') + (alt ? 'M-' : '');
     if (NAMED[key]) {
       if (key === 'Tab' && shift && !ctrl && !alt) return { key: 'BTab' };
+      // tmux has no Ctrl+Escape (it would type the name): Ctrl is dropped.
+      if (key === 'Escape') return { key: (alt ? 'M-' : '') + (shift ? 'S-' : '') + 'Escape' };
       return { key: prefix + (shift ? 'S-' : '') + NAMED[key] };
     }
     if (key === 'Enter') return ctrl || alt ? { key: prefix + 'Enter' } : { data: '\r' };
     if (key === 'Backspace') {
-      if (alt) return { key: 'M-BSpace' };
-      return { data: ctrl ? '\x08' : '\x7f' };
+      // tmux has no Ctrl+BSpace either: ^H, as xterm sends it.
+      if (ctrl) return { data: alt ? '\x1b\x08' : '\x08' };
+      return alt ? { key: 'M-BSpace' } : { data: '\x7f' };
     }
-    if (key.length === 1 && (ctrl || alt)) {
-      // A letter with Ctrl is case-insensitive for a terminal.
-      const k = /[A-Za-z]/.test(key) && ctrl ? key.toLowerCase() : key;
-      if (key === ' ') return { key: prefix + 'Space' };
-      return { key: prefix + k };
-    }
-    return null;
+    if (!(ctrl || alt) || !oneChar(key)) return null;
+    let ch = key;
+    const letter = code ? /^Key([A-Z])$/.exec(code) : null;
+    const digit = code ? /^Digit([0-9])$/.exec(code) : null;
+    if (alt && !ctrl && letter) ch = shift ? letter[1] : letter[1].toLowerCase();
+    else if (alt && !ctrl && digit && !shift) ch = digit[1];
+    if (ctrl && !/^[\x21-\x7e ]$/.test(ch) && letter) ch = letter[1];
+    if (ch === ' ') return { key: prefix + 'Space' };
+    // A letter with Ctrl is case-insensitive for a terminal.
+    if (ctrl && /^[A-Za-z]$/.test(ch)) ch = ch.toLowerCase();
+    // Nor Ctrl+# (typed as its name too): the character, with Alt if any.
+    if (ctrl && ch === '#') return alt ? { key: 'M-#' } : { data: '#' };
+    return { key: prefix + ch };
   }
 
-  // The sentinel text field (touch keyboards): what a beforeinput event
-  // sends. ``data``: the event's data (or the dropped/pasted text).
-  function inputAction(inputType, data) {
+  // A keydown in the text field: only what the field cannot carry itself.
+  // Printable text, plain Enter and plain Backspace go through the field
+  // (beforeinput / input), which is what the iOS keyboard needs: its held
+  // delete accelerates from the field's own content.
+  function fieldKeyAction(key, mods, code) {
+    const m = mods || {};
+    if ((key === 'Enter' || key === 'Backspace') && !m.ctrl && !m.alt) return null;
+    return keyAction(key, mods, code);
+  }
+
+  // A keydown with no text field focused (after a mouse selection took the
+  // focus): every key, printable text included.
+  function documentKeyAction(key, mods, code) {
+    const m = mods || {};
+    // An AltGr character (``@`` on many layouts) is text.
+    if (m.altGraph) return !m.meta && oneChar(key) ? { data: typedText(key) } : null;
+    const a = keyAction(key, m, code);
+    if (a || m.meta || m.ctrl || m.alt) return a;
+    return oneChar(key) ? { data: typedText(key) } : null;
+  }
+
+  // Typed text as the terminal gets it. iOS smart punctuation curls quotes
+  // and makes dashes, which breaks shell commands (the founder's test on the
+  // iPhone); a no-break space (the sentinel's, or iOS's own around French
+  // punctuation) is a space; a line break is Enter. Every mapping is per
+  // character, so a prefix of the field maps to a prefix of what was sent.
+  const TYPED = {
+    '\u2018': "'", '\u2019': "'", '\u201a': "'", '\u201b': "'", '\u2032': "'",
+    '\u201c': '"', '\u201d': '"', '\u201e': '"', '\u201f': '"', '\u2033': '"',
+    '\u2014': '--', '\u2013': '-', '\u2026': '...',
+    '\u00a0': ' ', '\u202f': ' ', '\u2007': ' ', '\n': '\r',
+  };
+  const TYPED_RE = /[\u2018\u2019\u201a\u201b\u2032\u201c\u201d\u201e\u201f\u2033\u2014\u2013\u2026\u00a0\u202f\u2007\n]/g;
+  function typedText(s) {
+    return s.replace(/\r\n/g, '\n').replace(TYPED_RE, (c) => TYPED[c]);
+  }
+
+  // The text field's diff model (the founder's iPhone test, variant C). The
+  // field holds ``sentinel + typed + sentinel``, with the caret after
+  // ``typed``: what was typed since the last reset. iOS edits that text in
+  // place (dictation streams a hypothesis and rewrites it, autocorrect and
+  // predictions replace a word, held delete removes characters then words),
+  // so each change is compared with what the terminal already got (``sent``):
+  // DEL back to the first character that differs, then the new tail. Deleting
+  // into the leading sentinel deletes in the terminal too (held backspace on
+  // an empty field), and the field is then reset. Returns {dels, text, typed,
+  // sent, reset}; counts are in characters (code points), as a line editor
+  // deletes them.
+  function fieldDiff(sent, value, sentinel) {
+    if (!value.endsWith(sentinel)) return { dels: 0, text: '', typed: '', sent: '', reset: true };
+    const head = value.slice(0, value.length - sentinel.length);
+    const before = Array.from(typedText(sentinel) + sent);
+    const after = Array.from(typedText(head));
+    let p = 0;
+    const max = Math.min(before.length, after.length);
+    while (p < max && before[p] === after[p]) p++;
+    const out = { dels: before.length - p, text: after.slice(p).join(''), typed: '', sent: '', reset: false };
+    if (!head.startsWith(sentinel)) { out.reset = true; return out; }
+    out.typed = head.slice(sentinel.length);
+    out.sent = typedText(out.typed);
+    return out;
+  }
+
+  // The bytes for a diff: DELs then the new text, in one message.
+  function diffBytes(d) {
+    return '\x7f'.repeat(d.dels) + d.text;
+  }
+
+  // Edits the field must not apply (the diff model would misread them), and
+  // what they send instead. ``typed``: the field's typed text (a word deleted
+  // with nothing typed is the terminal's word: Ctrl+W).
+  function inputAction(inputType, data, typed) {
     switch (inputType) {
-      case 'insertText':
-      case 'insertReplacementText':
-      case 'insertFromDrop':
-      case 'insertFromYank':
-        return data ? { data: data.replace(/\r?\n/g, '\r') } : null;
-      case 'insertFromPaste':
-        return data ? { paste: data } : null;
       case 'insertLineBreak':
       case 'insertParagraph':
         return { data: '\r' };
-      case 'deleteContentBackward':
-        return { data: '\x7f' };
       case 'deleteWordBackward':
-        return { data: '\x17' };
+        return typed ? null : { data: '\x17' };
       case 'deleteContentForward':
+      case 'deleteWordForward':
         return { key: 'DC' };
       case 'deleteSoftLineBackward':
       case 'deleteHardLineBackward':
         return { data: '\x15' };
+      case 'insertFromPaste':
+      case 'insertFromDrop':
+      case 'insertFromPasteAsQuotation':
+        return data ? { paste: data } : { none: true };
+      case 'historyUndo':
+      case 'historyRedo':
+        return { none: true };
       default:
         return null;
     }
   }
 
-  // A caret move in the pristine sentinel field (the iOS space-bar
-  // trackpad): arrow keys, one per character moved.
+  // The toolbar's sticky Ctrl or Alt on the next thing typed on a software
+  // keyboard: a character, Enter or delete become that key with the
+  // modifiers. Null when the modifiers do not apply.
+  function stickyAction(inputType, data, mods) {
+    if (!mods || !(mods.ctrl || mods.alt)) return null;
+    const m = { ctrl: !!mods.ctrl, alt: !!mods.alt };
+    if (inputType === 'insertText' && oneChar(data)) return keyAction(typedText(data), m, null);
+    if (inputType === 'insertLineBreak' || inputType === 'insertParagraph') return keyAction('Enter', m, null);
+    if (inputType === 'deleteContentBackward') return keyAction('Backspace', m, null);
+    return null;
+  }
+
+  // A caret move in the field (the iOS space-bar trackpad): arrow keys, one
+  // per character moved.
   function caretAction(delta) {
     if (!delta) return [];
     return new Array(Math.min(Math.abs(delta), 200)).fill(delta < 0 ? 'Left' : 'Right');
@@ -485,7 +582,8 @@
   return {
     mouseBytes, mouseCode,
     FRAME_UPDATE, FRAME_HISTORY, parseFrame, splitRows, newDecoder, decodeRows, joinSelection, encodeMouse,
-    mouseWants, nextHistoryRequest, keyAction, inputAction, caretAction,
+    mouseWants, nextHistoryRequest, keyAction, fieldKeyAction, documentKeyAction, inputAction, caretAction,
+    typedText, fieldDiff, diffBytes, stickyAction,
     P256, rowHtml, rowColumns, findLinks, groupRows, rowsHtml, mouseMode, mouseEncoding,
   };
 });

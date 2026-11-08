@@ -431,7 +431,48 @@ module docstring lists every guarantee and its test.
   "hex": ...}`, which the bridge sends as they are, up to 223 (past it the
   encoding has no value: nothing is sent, as xterm.js does).
 - `native.css`: the classic terminal's theme colours, styles, the cursor.
-- `input.js`: the input field (completed by the epic's input milestone).
+- `input.js`: the input, one real `textarea` (invisible: the terminal's own
+  cursor shows where typing goes). It holds a sentinel of four no-break
+  spaces on each side of the caret, so a software keyboard always has text to
+  delete and a caret to move, and between them what was typed since the last
+  reset. Every change is diffed against what the terminal already got
+  (`Core.fieldDiff`): DEL back to the first character that differs, then the
+  new tail, in one message. iOS rewrites its own text in place (a dictation
+  hypothesis, an autocorrection, a prediction, held delete accelerating to
+  words) and the terminal follows exactly; deleting into the leading sentinel
+  deletes in the terminal and refills the field. Typed text is mapped per
+  character before the comparison (`Core.typedText`: curly quotes, smart
+  dashes and the ellipsis back to ASCII, no-break spaces to spaces, a line
+  break to CR), so iOS turning a space into a no-break space costs nothing.
+  Edits the diff cannot read are cancelled and mapped (`Core.inputAction`):
+  Enter is CR, a word deleted with nothing typed is Ctrl+W, forward delete
+  is `DC`, a deleted line is Ctrl+U, undo is ignored. A caret move (the
+  space-bar trackpad) becomes one arrow per character, then a reset. A
+  composition (an IME, an accent held on a key) is shown at the cursor
+  (`.nt-preedit`) and sent once, when it commits. Physical keys with no text
+  (arrows, Escape, Tab, function keys, anything with Ctrl or Alt) are encoded
+  from keydown as tmux key names (`Core.keyAction`; Alt is Meta, from the
+  key's code when Option composes a character on a Mac), which tmux turns
+  into the bytes of the pane's modes; text, plain Enter and plain Backspace go
+  through the field. Keys typed while nothing editable has the focus (a
+  mouse selection took it) go to the terminal and give the field the focus
+  back. Ctrl+C over a selection is the browser's copy; Ctrl+Shift+C copies
+  the selection or the last text a program copied; Ctrl+V (Cmd+V on a Mac,
+  where Ctrl+V stays the program's) and Ctrl+Shift+V are the browser's own
+  paste, read from the paste event (text through the bridge's paste path,
+  images to the page). Suggestions (autocorrect, predictions, spellcheck)
+  are off by default and opt-in per browser (`setSuggestions`, stored in
+  `localStorage`, `?suggestions=1` on the URL).
+- `toolbar.js`: the classic toolbar's keys (Esc, Tab, Shift+Tab, Enter, F3
+  to F5, the new-window button, the arrows repeating while held) and its
+  sticky Ctrl, Alt and Shift, shared with the input (`MerlinNativeInput.Modifiers`):
+  a modifier applies to the next key from the toolbar, a physical keyboard
+  or a software keyboard, then clears. No button takes the focus.
+
+The bridge accepts a key name only if tmux 3.8 parses it
+(`native.valid_key_name`): tmux types a name it cannot parse as literal text
+(measured: `C-Escape`, `C-BSpace`, `C-#`), which would put a key-name-like
+word into the program.
 
 What a row copies is exactly its text: trailing blanks of a row that ends its
 line are left out, styled ones become empty boxes (`span.p`); a wide character
@@ -441,6 +482,10 @@ font cannot shift the columns after it.
 
 Tests: `tests/unit/test_terminal_native.py` (the bridge, on a private tmux,
 with differential checks of the page's decoder against a terminal fed the
-whole stream), `tests/js/native-core.test.js`, and
-`tests/e2e/test_terminal_native.py` (the page in Chromium, desktop and phone
-emulation, and Firefox for copy).
+whole stream, and every key name to the bytes of each pane mode),
+`tests/js/native-core.test.js`, `tests/js/native-input.test.js` (the key
+encoder per key, the diff model, the field driven by the event sequences a
+phone produces), `tests/e2e/test_terminal_native.py` (the page in Chromium,
+desktop and phone emulation, and Firefox for copy) and
+`tests/e2e/test_terminal_native_input.py` (the exact bytes a recorder
+program reads, in Chromium and Firefox).

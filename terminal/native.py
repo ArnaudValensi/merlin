@@ -115,8 +115,30 @@ CLOSE_STALLED = 4408
 CLIPBOARD_BUFFER = "merlin-clip"
 
 _PANE_ID = re.compile(r"%\d+")
-# A tmux key name: optional modifiers, then a name or one printable character.
-_KEY_NAME = re.compile(r"(?:[CMS]-){0,3}(?:[A-Za-z][A-Za-z0-9]{0,15}|[!-~])")
+# A tmux key name the page may send: optional modifiers, then a key tmux names
+# or one printable character. tmux types a name it cannot parse as literal
+# text, so only names measured on tmux 3.8 to parse are accepted: not Ctrl
+# with Escape, BSpace or ``#`` (tests/unit/test_terminal_native.py sends every
+# accepted combination and checks no name reaches the pane as text).
+_KEY_BASES = (
+    "Up|Down|Left|Right|Home|End|PPage|NPage|IC|DC|Escape|Tab|BTab|Enter|Space|BSpace"
+    "|F1[0-2]|F[1-9]"
+)
+_KEY_NAME = re.compile(r"((?:[CMS]-){0,3})(" + _KEY_BASES + r"|[^\x00-\x20\x7f])")
+_KEY_NO_CTRL = frozenset({"Escape", "BSpace", "#"})
+
+
+def valid_key_name(key: str) -> bool:
+    """True for a key name tmux 3.8 parses (see ``_KEY_NAME``)."""
+    m = _KEY_NAME.fullmatch(key)
+    if not m:
+        return False
+    mods = m.group(1).split("-")[:-1]
+    if len(set(mods)) != len(mods):
+        return False
+    return not ("C" in mods and m.group(2) in _KEY_NO_CTRL)
+
+
 _VERSION = re.compile(r"(\d+)\.(\d+)")
 # A ``capture-pane -L -F`` line: relative line number, flags, the row.
 _ROW = re.compile(rb"(-?\d+) (\S+) (.*)", re.S)
@@ -1079,7 +1101,7 @@ class NativeBridge:
                 os.unlink(path)
 
     async def send_key(self, pane: str, key: str) -> None:
-        if not _PANE_ID.fullmatch(pane) or not _KEY_NAME.fullmatch(key):
+        if not _PANE_ID.fullmatch(pane) or not valid_key_name(key):
             return
         name = quote(key)
         async with self._input_lock:
