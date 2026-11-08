@@ -901,14 +901,14 @@ def test_on_a_phone_jump_to_bottom_leaves_the_keyboard_as_it_was(
     ctx.close()
 
 
-def test_a_finger_held_on_the_terminal_selects_and_offers_to_copy(
+def test_a_finger_held_on_the_terminal_selects_for_the_native_menu(
     browser,  # noqa: F811
     server,
 ):
     """iOS will not select outside the focused field. The page selects, the
-    layout waits for the selection, and the Copy pill writes the clipboard."""
+    layout waits for the selection, and the copying is the system's: the page
+    offers nothing of its own."""
     ctx, page, errors = _open(browser, server, **PHONE)
-    ctx.grant_permissions(["clipboard-read", "clipboard-write"])
     cdp = ctx.new_cdp_session(page)
     page.tap("#nt-container")
     ready(page)
@@ -943,38 +943,38 @@ def test_a_finger_held_on_the_terminal_selects_and_offers_to_copy(
     assert page.evaluate(focused) and page.evaluate(selected) == ""
     touch("touchEnd")
 
-    # A finger that stays: the word, the layout does not move, the pill copies
-    # and the keyboard's field gets the focus back.
+    # A finger that stays: the word, and the layout does not move.
     touch("touchStart", row("295"))
     page.wait_for_function(f"{selected}.trim() === '295'", timeout=3000)
     assert not page.evaluate(focused)
     _keyboard(page, None)
     assert page.evaluate(height) == "340px"
     touch("touchEnd")
-    page.wait_for_function(f"!{pill}", timeout=3000)
-    assert page.evaluate(height) == "340px"
-    page.tap("#copy-toast")
-    page.wait_for_function(
-        "navigator.clipboard.readText().then(t => t.trim() === '295')", timeout=3000
-    )
-    page.wait_for_function(f"{height} === '' && {pill} && {focused}", timeout=3000)
+    page.wait_for_timeout(200)
+    assert page.evaluate(selected).strip() == "295"
+    assert page.evaluate(height) == "340px" and page.evaluate(pill)
+    assert page.evaluate(f"{ENGINE}.scroller.style.overflow") == ""
+
+    # A selection given up lets the layout go, and the keyboard stays down.
+    page.evaluate("getSelection().removeAllRanges()")
+    page.wait_for_function(f"{height} === ''", timeout=3000)
+    assert not page.evaluate(focused)
     page.wait_for_function(
         f"{ENGINE}.renderer.viewH === {ENGINE}.scroller.clientHeight", timeout=3000
     )
 
-    # A drag extends it; a selection given up lets the layout go.
+    # A drag extends it.
+    page.evaluate("document.getElementById('nt-input').focus()")
     _keyboard(page, 340)
     touch("touchStart", row("295"))
     page.wait_for_function(f"{selected}.trim() === '295'", timeout=3000)
-    target = row("297")
-    touch("touchMove", target)
+    touch("touchMove", row("297"))
     page.wait_for_function(f"{selected}.includes('296')", timeout=3000)
     touch("touchEnd")
-    page.wait_for_function(f"!{pill}", timeout=3000)
-    _keyboard(page, None)
+    assert page.evaluate(pill)
     page.evaluate("getSelection().removeAllRanges()")
-    page.wait_for_function(f"{height} === '' && {pill}", timeout=3000)
-    assert page.evaluate(f"{ENGINE}.scroller.style.overflow") == ""
+    _keyboard(page, None)
+    page.wait_for_function(f"{height} === ''", timeout=3000)
     assert errors == []
     ctx.close()
 

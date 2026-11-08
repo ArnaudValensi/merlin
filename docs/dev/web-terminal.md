@@ -534,8 +534,8 @@ module docstring lists every guarantee and its test.
   view and keeps the row at its bottom, the blank rows under the last used one
   not counting as text; only a full-screen program is resized for it). With the keyboard up iOS only selects inside the focused field and
   does not follow a finger already down when the field lets go, so a finger
-  held on the terminal makes the page select itself: the word, a drag extends
-  it, and the Copy pill writes it (the same pill as a program's copy). What the
+  held on the terminal makes the page select the word itself (a drag extends
+  it), and iOS shows its own handles and Copy menu on that selection. What the
   classic page writes into its screen (a voice or upload error) is a notice
   over the terminal (`#nt-notice`): this page shows tmux's grid only.
 

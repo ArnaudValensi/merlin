@@ -322,14 +322,10 @@
   // and `merlin-clip paste` gets it at once; on a desktop the recent key or
   // click covers the write (docs/merlin-cli/clipboard.md).
   let toastTimer = null;
-  // Set while the pill offers the selection made under a held finger, kept
-  // here because a tap on the pill may clear the selection before its click.
-  let offeredSelection = null;
-  function hideCopyToast() { copyToast.hidden = true; clearTimeout(toastTimer); offeredSelection = null; }
+  function hideCopyToast() { copyToast.hidden = true; clearTimeout(toastTimer); }
   function programCopied(text) {
     if (!text) return;
     lastClip = text;
-    offeredSelection = null;
     if (isTouchDevice) {
       syncClipboard(text);
       copyToast.hidden = false;
@@ -347,13 +343,11 @@
   copyToast.addEventListener('mousedown', (e) => e.preventDefault());
   copyToast.addEventListener('click', (e) => {
     e.stopPropagation();
-    const selection = offeredSelection;
-    const text = selection || lastClip;
+    const text = lastClip;
     if (text) {
       syncClipboard(text);
       writeClipboard(text, () => flash('Copied!', 'copied'), () => {});
     }
-    if (selection) getSelection().removeAllRanges();
     hideCopyToast();
     input.focus();
   });
@@ -823,13 +817,12 @@
     if (!vv || !main || !coarse) return;
     // A finger held still on the terminal while the keyboard is up. iOS only
     // selects inside the focused field, and does not follow a finger already
-    // down when the field lets go: the page selects itself, the word under
-    // the finger, extended by dragging, with the Copy pill when it lifts. The
-    // keyboard leaves, and the layout waits for the selection to be over, so
-    // the text stays under the finger.
+    // down when the field lets go: the page selects the word under the finger
+    // itself (a drag extends it), and iOS shows its own handles and menu on
+    // it. The keyboard leaves, and the layout waits for the selection to be
+    // over, so the text stays under the finger.
     const HOLD_MS = 320;
     const HOLD_SLOP = 10;
-    const PILL_GRACE_MS = 400;
     let held = false;
     let fingerDown = false;
     let holdTimer = null;
@@ -903,12 +896,6 @@
         if (selecting) {
           selecting = false;
           engine.scroller.style.overflow = '';
-          const text = hasSelection() ? engine.selectionText() : null;
-          if (text) {
-            offeredSelection = text;
-            clearTimeout(toastTimer);
-            copyToast.hidden = false;
-          }
         }
         releaseLayout();
       };
@@ -916,13 +903,7 @@
       e.target.addEventListener('touchend', ended, { passive: true });
       e.target.addEventListener('touchcancel', ended, { passive: true });
     }, { passive: true });
-    document.addEventListener('selectionchange', () => {
-      if (offeredSelection !== null) {
-        if (hasSelection()) offeredSelection = engine.selectionText() || offeredSelection;
-        else setTimeout(() => { if (!hasSelection()) hideCopyToast(); }, PILL_GRACE_MS);
-      }
-      releaseLayout();
-    });
+    document.addEventListener('selectionchange', releaseLayout);
     function apply() {
       if (held || Math.abs(vv.scale - 1) > 0.01) return;
       const free = Math.round(vv.height);
