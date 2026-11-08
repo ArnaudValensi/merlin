@@ -337,6 +337,17 @@ def terminal_page(request: Request):
     )
 
 
+@page_router.get("/native", response_class=HTMLResponse)
+def terminal_native_page(request: Request):
+    """The native terminal (``/ws/terminal2``, ``terminal/native.py``): tmux's
+    grid as real DOM text in a native scrolling container."""
+    import main as _main
+
+    if not getattr(_main, "TMUX_AVAILABLE", True):
+        return HTMLResponse("<h2>Terminal unavailable</h2>", status_code=503)
+    return templates.TemplateResponse(request, "terminal-native.html")
+
+
 @page_router.get("/clipboard-test", response_class=HTMLResponse)
 def clipboard_test_page(request: Request):
     return templates.TemplateResponse(request, "clipboard-test.html")

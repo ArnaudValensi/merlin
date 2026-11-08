@@ -259,7 +259,10 @@ class FakeControl:
     def __init__(self, added: int = 0, rows: int = 2, row_bytes: int = 0) -> None:
         self.added = added
         self.rows = rows
-        self.collected = 0
+        self.collected = 0  # the oldest row it holds (added - history_size)
+        # What history_collected says, minus ``collected``: after a reflow the
+        # two differ (the bridge must not use it).
+        self.collected_skew = 0
         self.drift = 0
         self.row_bytes = row_bytes
         self.calls: list[tuple[str, ...]] = []
@@ -281,7 +284,7 @@ class FakeControl:
                 values.update(
                     pane_id="%1", pane_width="20", pane_height=str(self.rows),
                     cursor_flag="1", bracket_paste_flag="0",
-                    history_added=str(self.added), history_collected=str(self.collected),
+                    history_added=str(self.added), history_collected=str(self.collected + self.collected_skew),
                     history_size=str(self.added - self.collected),
                 )  # fmt: skip
                 row = "\t".join(values[f] for f in native._PANE_FIELDS).encode()
@@ -300,7 +303,10 @@ class FakeControl:
                 replies.append(Reply(True, [str(self.added).encode()]))
             elif "history_added" in c:
                 replies.append(
-                    Reply(True, [f"{self.added}\t{self.collected}\t0".encode()])
+                    Reply(
+                        True,
+                        [f"{self.added}\t{self.added - self.collected}\t0".encode()],
+                    )
                 )
             else:
                 replies.append(Reply(True, []))
@@ -377,6 +383,46 @@ async def test_rows_tmux_dropped_are_reported_as_a_gap():
     frames = _queued(bridge, FRAME_UPDATE)
     assert sum(h["hist"]["gap"] for _, h, _ in frames) == 3000 - 10
     assert _history_numbers(bridge)[0] == 3000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("skew", [-7, 7])
+async def test_the_oldest_row_held_comes_from_history_size_not_collected(skew):
+    # After a reflow, history_collected no longer names the oldest row tmux
+    # holds (measured on 3.8). Below it, a gap would drop rows tmux still has;
+    # above it, the bridge would aim for rows that are gone and retry forever.
+    bridge, _, fake = _fake_bridge(added=10)
+    await bridge.update()
+    _drain(bridge)
+    fake.added, fake.collected, fake.collected_skew = 5000, 3000, skew
+    for _ in range(10):
+        bridge.dirty.clear()
+        await bridge.update()
+        if not bridge.dirty.is_set():
+            break
+    assert not bridge.dirty.is_set()  # done, not looping
+    frames = _queued(bridge, FRAME_UPDATE)
+    assert sum(h["hist"]["gap"] for _, h, _ in frames) == 3000 - 10
+    assert _history_numbers(bridge) == list(range(3000, 5000))
+    assert all(h["history"]["first"] == 3000 for _, h, _ in frames)
+    # Older rows on request stop at the same row.
+    _drain(bridge)
+    await bridge.history("%1", 3100, 500)
+    ((_, h, rows),) = _queued(bridge, FRAME_HISTORY)
+    assert (h["start"], h["end"]) == (3000, 3100)
+    assert _numbers(rows[h["skip"] :]) == list(range(3000, 3100))
+
+
+@pytest.mark.asyncio
+async def test_history_rows_below_zero_are_served():
+    # A reflow can leave more history rows than history_added counted: the
+    # oldest have negative numbers (measured: added 20581, size 20586).
+    bridge, _, fake = _fake_bridge(added=20)
+    fake.collected = -5
+    await bridge.history("%1", 0, 100)
+    ((_, h, rows),) = _queued(bridge, FRAME_HISTORY)
+    assert (h["start"], h["end"]) == (-5, 0)
+    assert _numbers(rows[h["skip"] :]) == [-5, -4, -3, -2, -1]
 
 
 @pytest.mark.asyncio
@@ -1067,6 +1113,10 @@ DIFFERENTIAL = {
     "full-width-colour": (r"\033[31m%060d", r"X"),
     "graphics-rows": (r"\033)0\016" + "q" * 60, r"q"),
     "colour-across-history": (r"\033[31m%0200d", r"X"),
+    # Widths as tmux counts them: an emoji is two columns (Unicode 11), a
+    # symbol one, and a wide character that does not fit wraps.
+    "wide-and-emoji": ("a\U0001f389b\u65e5c", "\u23fad\u273be"),
+    "emoji-at-the-edge": (r"%019d" + "\U0001f389", r"x"),
 }
 
 
@@ -1327,3 +1377,35 @@ async def test_a_range_that_never_catches_up_with_scrolling_gets_busy():
     await bridge.history("%1", 2500, 100)
     ((_, h, rows),) = _queued(bridge, FRAME_HISTORY)
     assert h["busy"] and rows == []
+
+
+@pytest.mark.asyncio
+async def test_updates_right_after_input_are_not_spaced(monkeypatch):
+    # The echo of a keystroke goes out as soon as tmux has it, even while the
+    # pane streams (updates otherwise at most every UPDATE_INTERVAL).
+    monkeypatch.setattr(native, "UPDATE_INTERVAL", 0.2)
+    bridge, _, _ = _fake_bridge(added=0)
+    times: list[float] = []
+
+    async def update() -> None:
+        times.append(time.monotonic())
+
+    monkeypatch.setattr(bridge, "update", update)
+    task = asyncio.create_task(bridge._updater())
+    try:
+        for typed in (False, True):
+            times.clear()
+            bridge.typed_at = time.monotonic() if typed else -1.0
+            bridge.dirty.set()
+            while len(times) < 1:
+                await asyncio.sleep(0.005)
+            bridge.dirty.set()  # more output at once
+            while len(times) < 2:
+                await asyncio.sleep(0.005)
+            gap = times[1] - times[0]
+            assert (gap < 0.1) if typed else (gap >= 0.19), (typed, gap)
+            await asyncio.sleep(0.25)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task

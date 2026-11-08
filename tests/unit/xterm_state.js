@@ -13,6 +13,7 @@
 // stdout: {"name": state, ...}
 const path = require('path');
 const { Terminal } = require(path.join(__dirname, '..', '..', 'static', 'vendor', 'xterm.min.js'));
+const { Unicode11Addon } = require(path.join(__dirname, '..', '..', 'static', 'vendor', 'xterm-addon-unicode11.min.js'));
 const Core = require(path.join(__dirname, '..', '..', 'terminal', 'static', 'native', 'core.js'));
 
 function cells(line, cols) {
@@ -32,7 +33,10 @@ function cells(line, cols) {
 }
 
 async function stream(cols, rows, keep, chunks) {
+  // Widths as tmux counts them (Unicode 11), like the page's decoder.
   const term = new Terminal({ cols, rows, scrollback: 100000, allowProposedApi: true });
+  term.loadAddon(new Unicode11Addon());
+  term.unicode.activeVersion = '11';
   for (const c of chunks) await new Promise((res) => term.write(Buffer.from(c, 'base64'), res));
   const lines = (buf, from, to) => {
     const out = [];
@@ -54,7 +58,7 @@ async function stream(cols, rows, keep, chunks) {
 }
 
 function frames(cols, rows, keep, list) {
-  const decoder = new Terminal({ cols, rows: 1, scrollback: 10000, allowProposedApi: true });
+  const decoder = Core.newDecoder(Terminal, Unicode11Addon, cols);
   let history = [];
   let screen = [];
   let cursor = [0, 0];

@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 
 const Core = require('../../terminal/static/native/core.js');
 const { Terminal } = require('../../static/vendor/xterm.min.js');
+const { Unicode11Addon } = require('../../static/vendor/xterm-addon-unicode11.min.js');
 
 function frame(kind, header, rows) {
     return new Uint8Array(Buffer.concat([
@@ -34,7 +35,8 @@ test('parseFrame splits an update into its two captures, skips included', () => 
 });
 
 test('decodeRows decodes a capture as one stream: attributes and shift carry across rows', () => {
-    const term = new Terminal({ cols: 5, rows: 1, scrollback: 50, allowProposedApi: true });
+    const term = Core.newDecoder(Terminal, Unicode11Addon, 5);
+    term.options.scrollback = 50;
     const rows = ['\x1b[31mAAAAA', 'BBBBB', '\x0eqq\x0fx'].map((s) => Buffer.from(s));
     const lines = Core.decodeRows(term, rows, 1);
     assert.deepEqual(lines.map((l) => l.translateToString(true)), ['BBBBB', '──x']);
@@ -42,7 +44,8 @@ test('decodeRows decodes a capture as one stream: attributes and shift carry acr
 });
 
 test('decodeRows keeps the rows after a skipped prefix longer than the scrollback', () => {
-    const term = new Terminal({ cols: 20, rows: 1, scrollback: 100, allowProposedApi: true });
+    const term = Core.newDecoder(Terminal, Unicode11Addon, 20);
+    term.options.scrollback = 100;
     const rows = [Buffer.from('\x1b[32mstart')];
     for (let i = 1; i < 12003; i++) rows.push(Buffer.from('p' + i));
     for (let i = 0; i < 2000; i++) rows.push(Buffer.from('k' + i));
@@ -64,4 +67,110 @@ test('keyAction and inputAction map keys and edits', () => {
     assert.equal(Core.keyAction('a', {}), null);
     assert.deepEqual(Core.inputAction('deleteWordBackward'), { data: '\x17' });
     assert.deepEqual(Core.caretAction(-2), ['Left', 'Left']);
+});
+
+// -- rows to DOM text ----------------------------------------------------------------
+
+// Lines of a terminal fed ``data`` (synchronously, as decodeRows does).
+function lines(cols, data, rows) {
+    const t = Core.newDecoder(Terminal, Unicode11Addon, cols);
+    t.resize(cols, rows || 4);
+    t._core._inputHandler.parse(data);
+    const buf = t.buffer.active;
+    const out = [];
+    for (let y = 0; y < buf.length; y++) out.push(buf.getLine(y));
+    return out;
+}
+
+// The text a browser copies from a row's HTML: the text nodes, entities
+// decoded. Boxes (span.p) have no text; the markup carries no other text.
+function text(html) {
+    return html.replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+
+test('rowHtml: the text of a row is its characters, trailing blanks left out', () => {
+    const [l] = lines(20, 'ab  cd   ');
+    assert.equal(text(Core.rowHtml(l, 20)), 'ab  cd');
+    const [e] = lines(20, '');
+    assert.equal(Core.rowHtml(e, 20), '');
+});
+
+test('rowHtml: a row that wraps keeps every cell, spaces included', () => {
+    // 10 columns: "abcde     " then "fgh" on the next row, one logical line.
+    const [a, b] = lines(10, 'abcde     fgh');
+    assert.equal(text(Core.rowHtml(a, 10, { wraps: true })), 'abcde     ');
+    assert.equal(text(Core.rowHtml(b, 10)), 'fgh');
+});
+
+test('rowHtml: styled trailing blanks are boxes with no text', () => {
+    const [l] = lines(10, 'ab\x1b[41m    \x1b[0m');
+    const html = Core.rowHtml(l, 10);
+    assert.equal(text(html), 'ab');
+    assert.match(html, /<span class="p g1" style="width:4ch;"><\/span>$/);
+    // An inverse status bar: the same.
+    const [s] = lines(10, '\x1b[7mtop       \x1b[0m');
+    const h2 = Core.rowHtml(s, 10);
+    assert.equal(text(h2), 'top');
+    assert.match(h2, /class="p gi fi"/);
+});
+
+test('rowHtml: wide characters once, in a 2ch box; symbols in a 1ch box', () => {
+    const [l] = lines(20, '日本x🎉│é');
+    const html = Core.rowHtml(l, 20);
+    assert.equal(text(html), '日本x🎉│é');
+    assert.equal((html.match(/class="w"/g) || []).length, 3);
+    assert.match(html, /<span class="n">│<\/span>é/);
+});
+
+test('rowHtml: colours, bright bold, inverse, underline styles, escaping', () => {
+    const [l] = lines(60, '\x1b[1;31mR\x1b[0m\x1b[38;5;208mO\x1b[0m\x1b[38;2;1;2;3mT\x1b[0m'
+        + '\x1b[7mI\x1b[0m\x1b[4:3mC\x1b[0m\x1b[3;9mX\x1b[0m<&>');
+    const html = Core.rowHtml(l, 60);
+    assert.match(html, /<span class="f9 B">R<\/span>/);
+    assert.match(html, /<span style="color:#ff8700;">O<\/span>/);
+    assert.match(html, /<span style="color:#010203;">T<\/span>/);
+    assert.match(html, /<span class="gi fi">I<\/span>/);
+    assert.match(html, /<span class="U3">C<\/span>/);
+    assert.match(html, /<span class="I S">X<\/span>/);
+    assert.ok(html.endsWith('&lt;&amp;&gt;'));
+    assert.equal(text(html), 'ROTICX<&>');
+});
+
+test('findLinks: a URL across wrapped rows, and across a boundary drawn earlier', () => {
+    const cols = 12;
+    // "see https://" | "example.com/" | "a?b=1. ok"
+    const ls = lines(cols, 'see https://example.com/a?b=1. ok');
+    const texts = ls.slice(0, 3).map((l) => Core.rowColumns(l, cols));
+    const href = 'https://example.com/a?b=1';
+    const per = Core.findLinks(texts, '');
+    assert.deepEqual(per, [[[4, 12, href]], [[0, 12, href]], [[0, 5, href]]]);
+    // The rows' HTML carries the anchors, the text unchanged.
+    const out = Core.rowsHtml(ls.slice(0, 3), cols, '110', false, '');
+    assert.equal(out.html.map(text).join(''), 'see https://example.com/a?b=1. ok');
+    assert.equal((out.html.join('').match(/<a class="nt-link"[^>]*href="https:\/\/example.com\/a\?b=1"/g) || []).length, 3);
+    // The last row alone, after the rows drawn elsewhere (the history/screen
+    // boundary): the whole URL is still found.
+    assert.deepEqual(Core.findLinks([texts[2]], texts[0] + texts[1]), [[[0, 5, href]]]);
+    // A wide character stops a URL; no URL, no work.
+    assert.deepEqual(Core.findLinks(['http://a.b日x'.replace('日', '\u0001')], ''), [[[0, 10, 'http://a.b']]]);
+    assert.deepEqual(Core.findLinks(['plain', 'text'], ''), [null, null]);
+});
+
+test('groupRows: logical lines from wrap flags', () => {
+    assert.deepEqual(Core.groupRows('0110', 4), [[0, 1], [1, 4]]);
+    assert.deepEqual(Core.groupRows('', 0), []);
+    assert.deepEqual(Core.groupRows('1', 1), [[0, 1]]);
+});
+
+test('mouseMode and mouseEncoding from the bridge state', () => {
+    assert.equal(Core.mouseMode(null), 'none');
+    assert.equal(Core.mouseMode({ standard: true }), 'vt200');
+    assert.equal(Core.mouseMode({ standard: true, button: true }), 'drag');
+    assert.equal(Core.mouseMode({ all: true }), 'any');
+    assert.equal(Core.mouseEncoding({ sgr: true, utf8: true }), 'SGR');
+    assert.equal(Core.mouseEncoding({ utf8: true }), 'UTF8');
+    assert.equal(Core.mouseEncoding({}), 'DEFAULT');
+    assert.equal(Core.encodeMouse('SGR', 64, 3, 4, false), '\x1b[<64;3;4M');
+    assert.equal(Core.encodeMouse('DEFAULT', 0, 96, 1, false), '');
+    assert.equal(Core.encodeMouse('UTF8', 0, 200, 1, false), '\x1b[M ' + String.fromCharCode(232) + '!');
 });

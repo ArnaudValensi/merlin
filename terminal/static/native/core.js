@@ -42,6 +42,17 @@
     return rows;
   }
 
+  // The scratch parser rows are decoded with: as wide as the pane, never
+  // opened, and counting character widths as tmux does (Unicode 11: an emoji
+  // such as U+1F389 takes two columns, which xterm.js's default Unicode 6
+  // tables count as one, shifting every column after it).
+  function newDecoder(Terminal, Unicode11Addon, cols) {
+    const term = new Terminal({ cols, rows: 1, scrollback: 4000, allowProposedApi: true });
+    term.loadAddon(new Unicode11Addon());
+    term.unicode.activeVersion = '11';
+    return term;
+  }
+
   // One capture of tmux's grid decoded by a scratch xterm.js parser (never
   // opened) as one continuous stream, as tmux wrote it: attributes and the
   // shift state carry from row to row. Returns the buffer lines of the rows
@@ -80,13 +91,282 @@
     return lines.map((l) => l.replace(/[  ]+$/, '')).join('\n');
   }
 
+  // -- rows to DOM text --------------------------------------------------------
+  //
+  // One visual row becomes the inner HTML of a ``span.r`` (an inline-block as
+  // wide as the pane, ``white-space: pre``). What the platform copies is that
+  // HTML's text, so it must be exactly the row's text: no cursor, no padding.
+  //
+  // - Trailing blanks of a row that ends its logical line are not text: plain
+  //   ones are left out, styled ones (a background, an inverse status bar)
+  //   become an empty box ``span.p`` as wide as they are.
+  // - A row that wraps into the next keeps every cell as text (its spaces are
+  //   part of the line).
+  // - A wide character is one character in a 2ch box (``span.w``); a character
+  //   from U+2000 on (box drawing, symbols, Nerd Font icons, emoji) is in a 1ch
+  //   box (``span.n``) so a fallback font cannot shift the columns after it.
+  //
+  // Classes: f0..f15 / g0..g15 the 16 theme colours (fg / bg), fi / gi the
+  // default colours swapped by an inverse, B bold, I italic, D dim, H hidden,
+  // S strike, O overline, U1..U5 the underline styles (single, double, curly,
+  // dotted, dashed). 256 and true colours are inline styles.
+
+  const CM_DEFAULT = 0, CM_P16 = 0x1000000, CM_RGB = 0x3000000;
+
+  const P256 = (function () {
+    const out = new Array(256);
+    const v = [0, 95, 135, 175, 215, 255];
+    const hx = (n) => n.toString(16).padStart(2, '0');
+    for (let i = 0; i < 216; i++) {
+      out[16 + i] = '#' + hx(v[Math.floor(i / 36)]) + hx(v[Math.floor(i / 6) % 6]) + hx(v[i % 6]);
+    }
+    for (let i = 0; i < 24; i++) { const c = 8 + i * 10; out[232 + i] = '#' + hx(c) + hx(c) + hx(c); }
+    return out;
+  })();
+
+  function esc(s) {
+    return s.replace(/[&<>]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
+  }
+  function attrEsc(s) { return esc(s).replace(/"/g, '&quot;'); }
+
+  // A colour as a theme index (0..15) or a CSS colour, null for the default.
+  function colour(mode, value) {
+    if (mode === CM_DEFAULT) return null;
+    if (mode === CM_RGB) return { css: '#' + value.toString(16).padStart(6, '0') };
+    if (mode === CM_P16 || value < 16) return { n: value };
+    return { css: P256[value] };
+  }
+
+  // The class list and inline style of one cell.
+  function cellStyle(cell) {
+    let fg = colour(cell.getFgColorMode(), cell.getFgColor());
+    const bg = colour(cell.getBgColorMode(), cell.getBgColor());
+    const bold = cell.isBold();
+    // Bold text in the 8 base colours is drawn bright, as the classic terminal
+    // does (xterm.js drawBoldTextInBrightColors).
+    if (bold && fg && fg.n != null && fg.n < 8) fg = { n: fg.n + 8 };
+    let c = '';
+    let s = '';
+    if (cell.isInverse()) {
+      c += fg ? (fg.n != null ? ' g' + fg.n : '') : ' gi';
+      if (fg && fg.css) s += 'background:' + fg.css + ';';
+      c += bg ? (bg.n != null ? ' f' + bg.n : '') : ' fi';
+      if (bg && bg.css) s += 'color:' + bg.css + ';';
+    } else {
+      if (fg) { if (fg.n != null) c += ' f' + fg.n; else s += 'color:' + fg.css + ';'; }
+      if (bg) { if (bg.n != null) c += ' g' + bg.n; else s += 'background:' + bg.css + ';'; }
+    }
+    if (bold) c += ' B';
+    if (cell.isItalic()) c += ' I';
+    if (cell.isDim()) c += ' D';
+    if (cell.isInvisible()) c += ' H';
+    if (cell.isStrikethrough()) c += ' S';
+    if (cell.isOverline && cell.isOverline()) c += ' O';
+    if (cell.isUnderline()) {
+      const ext = cell.extended;
+      const style = ext && ext.underlineStyle ? ext.underlineStyle : 1;
+      c += ' U' + Math.min(Math.max(style, 1), 5);
+      if (cell.isUnderlineColorDefault && !cell.isUnderlineColorDefault()) {
+        const u = colour(cell.getUnderlineColorMode(), cell.getUnderlineColor());
+        if (u) s += 'text-decoration-color:' + (u.css || 'var(--nt-c' + u.n + ')') + ';';
+      }
+    }
+    return { cls: c.trim(), style: s };
+  }
+
+  function blank(cell) {
+    const ch = cell.getChars();
+    return ch === '' || ch === ' ';
+  }
+
+  // Whether a blank cell shows anything (a background or an inverse).
+  function painted(cell) {
+    return cell.getBgColorMode() !== CM_DEFAULT || cell.isInverse();
+  }
+
+  function wrapChar(ch, width) {
+    if (width === 2) return '<span class="w">' + ch + '</span>';
+    if (ch.codePointAt(0) >= 0x2000) return '<span class="n">' + ch + '</span>';
+    return ch;
+  }
+
+  // The inner HTML of one row. ``line``: an xterm.js buffer line; ``cols``:
+  // the pane's width; ``opts.wraps``: the row continues on the next one;
+  // ``opts.links``: [[fromCol, toCol, href], ...], sorted, not overlapping.
+  // ``scratch``: an optional cell object reused across calls.
+  function rowHtml(line, cols, opts, scratch) {
+    const o = opts || {};
+    const cell = line.getCell(0, scratch);
+    // The end of the row's text: after the last non-blank cell, unless the
+    // row wraps (every cell is then part of the line).
+    let textEnd = cols;
+    if (!o.wraps) {
+      while (textEnd > 0) {
+        line.getCell(textEnd - 1, cell);
+        if (cell.getWidth() === 0 || !blank(cell)) break;
+        textEnd--;
+      }
+    }
+    // Styled trailing blanks become empty boxes, up to the last painted one.
+    let paintEnd = textEnd;
+    for (let x = cols - 1; x >= textEnd; x--) {
+      line.getCell(x, cell);
+      if (painted(cell)) { paintEnd = x + 1; break; }
+    }
+    const links = o.links || null;
+    let out = '';
+    let run = '';
+    let key = null;
+    let cls = '';
+    let style = '';
+    let li = 0;
+    let inLink = false;
+    const flush = () => {
+      if (run === '') return;
+      out += cls || style
+        ? '<span' + (cls ? ' class="' + cls + '"' : '') + (style ? ' style="' + style + '"' : '') + '>' + run + '</span>'
+        : run;
+      run = '';
+    };
+    for (let x = 0; x < textEnd; x++) {
+      line.getCell(x, cell);
+      const w = cell.getWidth();
+      if (w === 0) continue;
+      if (links && li < links.length) {
+        if (inLink && x >= links[li][1]) { flush(); out += '</a>'; inLink = false; li++; }
+        if (!inLink && li < links.length && x >= links[li][0] && x < links[li][1]) {
+          flush();
+          out += '<a class="nt-link" draggable="false" href="' + attrEsc(links[li][2])
+            + '" target="_blank" rel="noopener noreferrer">';
+          inLink = true;
+        }
+      }
+      const st = cellStyle(cell);
+      const k = st.cls + '|' + st.style;
+      if (k !== key) { flush(); key = k; cls = st.cls; style = st.style; }
+      run += wrapChar(esc(cell.getChars() || ' '), w);
+    }
+    flush();
+    if (inLink) out += '</a>';
+    // Painted trailing blanks: boxes with no text, one per style run.
+    let x = textEnd;
+    while (x < paintEnd) {
+      line.getCell(x, cell);
+      const st = cellStyle(cell);
+      const k = st.cls + '|' + st.style;
+      let n = 0;
+      while (x < paintEnd) {
+        line.getCell(x, cell);
+        const s2 = cellStyle(cell);
+        if (s2.cls + '|' + s2.style !== k) break;
+        const w = Math.max(cell.getWidth(), 1);
+        n += w;
+        x += w;
+      }
+      out += '<span class="p' + (st.cls ? ' ' + st.cls : '') + '" style="width:' + n + 'ch;' + st.style + '"></span>';
+    }
+    return out;
+  }
+
+  // One string per row in which column x is character x (a wide or combined
+  // character becomes U+0001, its second column too), for finding links.
+  function rowColumns(line, cols, scratch) {
+    const cell = line.getCell(0, scratch);
+    let s = '';
+    for (let x = 0; x < cols; x++) {
+      line.getCell(x, cell);
+      const ch = cell.getChars();
+      if (cell.getWidth() !== 1) s += '\u0001';
+      else s += ch.length === 1 ? ch : (ch === '' ? ' ' : '\u0001');
+    }
+    return s;
+  }
+
+  // The classic terminal's WebLinksAddon pattern (U+0001 marks a column no
+  // URL can cross).
+  const URL_RE = /https?:[/]{2}[^\s"'!*(){}|\\^<>`\u0001]*[^\s"':,.!?{}|\\^~[\]`()<>\u0001]/g;
+
+  // Links of a logical line: ``texts`` are its rows' column strings
+  // (rowColumns), ``prefix`` the text of its rows already drawn elsewhere (so
+  // a URL crossing that boundary is found whole). Per row: [[from, to, href]]
+  // or null when the row has none.
+  function findLinks(texts, prefix) {
+    const pre = prefix || '';
+    const text = pre + texts.join('');
+    const per = texts.map(() => null);
+    if (text.indexOf('http') < 0) return per;
+    const starts = [];
+    let at = pre.length;
+    for (const t of texts) { starts.push(at); at += t.length; }
+    URL_RE.lastIndex = 0;
+    let m;
+    while ((m = URL_RE.exec(text))) {
+      const from = m.index, to = m.index + m[0].length;
+      for (let r = 0; r < texts.length; r++) {
+        const a = Math.max(from, starts[r]), b = Math.min(to, starts[r] + texts[r].length);
+        if (a < b) (per[r] || (per[r] = [])).push([a - starts[r], b - starts[r], m[0]]);
+      }
+    }
+    return per;
+  }
+
+  // Logical lines from wrap flags: ``wrapped[i]`` is '1' when row i continues
+  // on row i + 1. Returns [[firstRow, endRow), ...].
+  function groupRows(wrapped, count) {
+    const groups = [];
+    let start = 0;
+    for (let i = 0; i < count; i++) {
+      if (i === count - 1 || wrapped[i] !== '1') {
+        groups.push([start, i + 1]);
+        start = i + 1;
+      }
+    }
+    return groups;
+  }
+
+  // The inner HTML of rows decoded from one capture, with the links of each
+  // logical line. ``cont``: the first row continues a line drawn before, whose
+  // column text is ``prefix``. Returns {html: [...], texts: [...]}.
+  function rowsHtml(lines, cols, wrapped, cont, prefix, scratch) {
+    const texts = lines.map((l) => rowColumns(l, cols, scratch));
+    const html = new Array(lines.length);
+    for (const [a, b] of groupRows(wrapped, lines.length)) {
+      const links = findLinks(texts.slice(a, b), a === 0 && cont ? prefix : '');
+      for (let i = a; i < b; i++) {
+        html[i] = rowHtml(lines[i], cols, { wraps: wrapped[i] === '1', links: links[i - a] }, scratch);
+      }
+    }
+    return { html, texts };
+  }
+
+  // The mouse tracking mode a pane asked for, from the bridge's state
+  // (mouse_all_flag, mouse_button_flag, mouse_standard_flag).
+  function mouseMode(mouse) {
+    if (!mouse) return 'none';
+    if (mouse.all) return 'any';
+    if (mouse.button) return 'drag';
+    if (mouse.standard) return 'vt200';
+    return 'none';
+  }
+
+  function mouseEncoding(mouse) {
+    if (mouse && mouse.sgr) return 'SGR';
+    if (mouse && mouse.utf8) return 'UTF8';
+    return 'DEFAULT';
+  }
+
   // Mouse report for a program that asked for the mouse. ``button``: 0 left,
   // 1 middle, 2 right, 3 release (X10 encoding), 64/65 wheel up/down; add 32
   // for motion. ``col``/``row`` are 1-based. ``encoding``: 'SGR' or 'DEFAULT'.
+  // 'UTF8' (mode 1005) writes each value as one character, which the socket
+  // carries as UTF-8: exactly that encoding. 'DEFAULT' (X10) needs raw bytes
+  // above 127, which a text message cannot carry: past column or row 95 the
+  // event is dropped.
   function encodeMouse(encoding, button, col, row, release) {
     if (encoding === 'SGR') return '\x1b[<' + button + ';' + col + ';' + row + (release ? 'm' : 'M');
     const b = release && button < 64 ? 3 : button;
-    if (col > 223 || row > 223) return '';
+    const limit = encoding === 'UTF8' ? 2015 : 95;
+    if (col > limit || row > limit) return '';
     return '\x1b[M' + String.fromCharCode(32 + b, 32 + col, 32 + row);
   }
 
@@ -101,11 +381,11 @@
   }
 
   // Lazy history: which rows to ask for next. ``oldest`` is the absolute
-  // number of the oldest row the page has, ``collected`` the oldest tmux still
+  // number of the oldest row the page has, ``first`` the oldest tmux still
   // holds. Null when there is nothing older.
-  function nextHistoryRequest(oldest, collected, page) {
-    if (oldest == null || oldest <= collected) return null;
-    return { end: oldest, count: Math.min(page, oldest - collected) };
+  function nextHistoryRequest(oldest, first, page) {
+    if (oldest == null || oldest <= first) return null;
+    return { end: oldest, count: Math.min(page, oldest - first) };
   }
 
   // Physical keys: what a keydown sends, or null when the text field's
@@ -181,7 +461,8 @@
   }
 
   return {
-    FRAME_UPDATE, FRAME_HISTORY, parseFrame, splitRows, decodeRows, joinSelection, encodeMouse,
+    FRAME_UPDATE, FRAME_HISTORY, parseFrame, splitRows, newDecoder, decodeRows, joinSelection, encodeMouse,
     mouseWants, nextHistoryRequest, keyAction, inputAction, caretAction,
+    P256, rowHtml, rowColumns, findLinks, groupRows, rowsHtml, mouseMode, mouseEncoding,
   };
 });

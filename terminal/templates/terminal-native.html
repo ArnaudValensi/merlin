@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}term{% endblock %}
+
+{% block content %}
+<div class="nt-page">
+    <div id="nt-container"></div>
+    <button id="nt-jump" class="nt-jump" type="button" hidden>Jump to bottom</button>
+    <textarea id="nt-input" class="nt-input" rows="1" aria-label="Terminal input"></textarea>
+</div>
+<div id="nt-status" class="nt-status">
+    <span id="nt-dot" class="nt-dot"></span>
+    <span id="nt-status-text">Connecting...</span>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<link rel="stylesheet" href="/static/vendor/geistmono-nerd-font.css">
+<link rel="stylesheet" href="/static/terminal/native/native.css">
+<style>
+    html, body { overflow: hidden !important; overscroll-behavior: none; height: 100%; }
+    .mobile-topbar { display: none !important; }
+    .main {
+        padding: 0 !important;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        height: 100dvh;
+        min-height: 0 !important;
+        overflow: hidden;
+    }
+    .main-banners:empty { display: none; }
+    .nt-page { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    #nt-container { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+    /* The input field is real and focusable (a phone opens its keyboard on
+       it) but invisible: the terminal's own cursor shows where typing goes. */
+    .nt-input {
+        position: absolute; left: 0; bottom: 0; width: 1px; height: 1em;
+        opacity: 0; border: 0; padding: 0; margin: 0; resize: none; font-size: 16px;
+        caret-color: transparent; color: transparent; background: transparent;
+        z-index: -1;
+    }
+    .nt-status {
+        display: flex; gap: 8px; align-items: center; padding: 4px 10px;
+        font-size: 12px; color: var(--text-muted, #6272a4); background: var(--bg-secondary, #1e1e2e);
+        flex: 0 0 auto;
+    }
+    .nt-dot { width: 8px; height: 8px; border-radius: 50%; background: #f1fa8c; flex: 0 0 auto; }
+    .nt-dot.connected { background: #50fa7b; }
+    .nt-dot.disconnected { background: #ff5555; }
+</style>
+<script src="/static/vendor/xterm.min.js"></script>
+<script src="/static/vendor/xterm-addon-unicode11.min.js"></script>
+<script src="/static/terminal/native/core.js"></script>
+<script src="/static/terminal/native/renderer.js"></script>
+<script src="/static/terminal/native/engine.js"></script>
+<script src="/static/terminal/native/input.js"></script>
+<script>{% include "session-identity.js" %}</script>
+<script>
+(function () {
+    'use strict';
+    const container = document.getElementById('nt-container');
+    const jump = document.getElementById('nt-jump');
+    const field = document.getElementById('nt-input');
+    const dot = document.getElementById('nt-dot');
+    const statusText = document.getElementById('nt-status-text');
+    let attempted = null;
+    let confirmed = false;
+    let delay = 1000;
+    let stopped = false;
+    let current = null;
+
+    function status(state, text) {
+        dot.className = 'nt-dot ' + state;
+        statusText.textContent = text;
+    }
+
+    const engine = new MerlinNativeTerminal({
+        container,
+        wsUrl: () => {
+            attempted = MerlinSessionIdentity.read();
+            confirmed = false;
+            return MerlinSessionIdentity.websocketUrl(location, attempted).replace('/ws/terminal', '/ws/terminal2');
+        },
+        onOpen: () => { delay = 1000; status('connected', 'Connected'); },
+        onControl: (msg) => {
+            if (msg.type === 'session') {
+                if (MerlinSessionIdentity.confirm(msg)) confirmed = true;
+                current = msg;
+                document.title = (msg.name || 'term') + (msg.window ? ': ' + msg.window : '');
+                status('connected', msg.name + (msg.window ? ' : ' + msg.window : ''));
+            } else if (msg.type === 'unsupported') {
+                stopped = true;
+                status('disconnected', 'This tmux (' + (msg.version || 'unknown') + ') is older than '
+                    + msg.minimum + ': use the classic terminal');
+            }
+        },
+        onClipboard: (text) => {
+            if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(() => {});
+        },
+        onStuck: (stuck) => { jump.hidden = stuck; },
+        onClose: (e) => {
+            if (e.code === 4401) { stopped = true; status('disconnected', 'Unauthorized: reload the page'); return; }
+            MerlinSessionIdentity.clearAfterClose(attempted, confirmed, e.code);
+            if (stopped) return;
+            status('disconnected', 'Disconnected');
+            setTimeout(() => engine.connect(), delay);
+            delay = Math.min(delay * 2, 30000);
+        },
+    });
+    const input = new MerlinNativeInput(field, engine);
+    window.MerlinNativeTerminalPage = { engine, input, current: () => current };
+
+    jump.addEventListener('click', () => { engine.toBottom(); input.focus(); });
+    // A tap or a click focuses the input field, unless it ends a selection or
+    // hits a link.
+    container.addEventListener('click', (e) => {
+        if (e.target.closest('a')) return;
+        const sel = getSelection();
+        if (sel && !sel.isCollapsed) return;
+        input.focus();
+    });
+    field.addEventListener('focus', () => container.classList.add('nt-focused'));
+    field.addEventListener('blur', () => container.classList.remove('nt-focused'));
+    status('connecting', 'Connecting...');
+    engine.connect();
+    if (!matchMedia('(pointer: coarse)').matches) input.focus();
+})();
+</script>
+{% endblock %}

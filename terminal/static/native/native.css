@@ -1,0 +1,150 @@
+/* Native terminal: real DOM text in a native scroll container
+   (terminal/static/native/renderer.js). The colours are the classic
+   terminal's theme (terminal/templates/terminal.html). */
+.nt-term {
+    --nt-bg: #282a36;
+    --nt-fg: #f8f8f2;
+    --nt-cursor: #f8f8f2;
+    --nt-c0: #21222c; --nt-c1: #ff5555; --nt-c2: #50fa7b; --nt-c3: #f1fa8c;
+    --nt-c4: #bd93f9; --nt-c5: #ff79c6; --nt-c6: #8be9fd; --nt-c7: #f8f8f2;
+    --nt-c8: #6272a4; --nt-c9: #ff6e6e; --nt-c10: #69ff94; --nt-c11: #ffffa5;
+    --nt-c12: #d6acff; --nt-c13: #ff92df; --nt-c14: #a4ffff; --nt-c15: #ffffff;
+    --nt-row-h: 14px;
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+    background: var(--nt-bg);
+    color: var(--nt-fg);
+    font-family: 'GeistMono Nerd Font', 'Geist Mono', monospace;
+    font-size: 11px;
+    line-height: var(--nt-row-h);
+    font-variant-ligatures: none;
+    font-kerning: none;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+.nt-scroller {
+    position: absolute;
+    inset: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    /* The renderer keeps the view itself (the spacer, the stuck bottom). */
+    overflow-anchor: none;
+}
+.nt-content { position: relative; }
+.nt-spacer { height: 0; }
+.nt-chunk { content-visibility: auto; }
+.nt-term .l { display: block; }
+.nt-term .r {
+    display: inline-block;
+    position: relative;
+    width: 100%;
+    height: var(--nt-row-h);
+    vertical-align: top;
+    white-space: pre;
+    overflow: visible;
+}
+/* A wide character in two columns, a symbol in one, whatever font draws it. */
+.nt-term .w, .nt-term .n, .nt-term .p {
+    display: inline-block;
+    height: var(--nt-row-h);
+    vertical-align: top;
+    text-align: center;
+}
+.nt-term .w { width: 2ch; }
+.nt-term .n { width: 1ch; }
+.nt-probe { position: absolute; visibility: hidden; width: auto !important; }
+/* Rows tmux dropped before the page got them. No text: nothing to copy. */
+.nt-gap { height: var(--nt-row-h); color: var(--nt-c8); user-select: none; -webkit-user-select: none; }
+.nt-gap::before { content: '\2026 ' attr(data-rows) ' rows not received \2026'; }
+.nt-alt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    min-width: 100%;
+    z-index: 2;
+    background: var(--nt-bg);
+    overflow: hidden;
+    touch-action: none;
+}
+.nt-alt[hidden] { display: none; }
+
+/* Styles (core.js rowHtml). */
+.nt-term .B { font-weight: bold; }
+.nt-term .I { font-style: italic; }
+.nt-term .D { opacity: 0.5; }
+.nt-term .H { color: transparent !important; }
+.nt-term .S { text-decoration-line: line-through; }
+.nt-term .O { text-decoration-line: overline; }
+.nt-term .U1, .nt-term .U2, .nt-term .U3, .nt-term .U4, .nt-term .U5 { text-decoration-line: underline; }
+.nt-term .U2 { text-decoration-style: double; }
+.nt-term .U3 { text-decoration-style: wavy; }
+.nt-term .U4 { text-decoration-style: dotted; }
+.nt-term .U5 { text-decoration-style: dashed; }
+.nt-term .S.U1, .nt-term .S.U2, .nt-term .S.U3, .nt-term .S.U4, .nt-term .S.U5 { text-decoration-line: underline line-through; }
+.nt-link { color: inherit; text-decoration: underline; text-decoration-color: var(--nt-c8); -webkit-user-drag: none; }
+.nt-link:hover { text-decoration-color: currentColor; }
+
+/* The cursor: an overlay in its row, its character from generated content
+   (never part of a selection). */
+.nt-cursor {
+    position: absolute;
+    top: 0;
+    height: var(--nt-row-h);
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+    z-index: 1;
+    text-align: center;
+}
+.nt-cursor[data-shape="block"] { background: var(--nt-cursor); color: var(--nt-bg); }
+.nt-cursor[data-shape="block"]::before { content: attr(data-ch); }
+.nt-cursor[data-shape="underline"] { border-bottom: 2px solid var(--nt-cursor); box-sizing: border-box; }
+.nt-cursor[data-shape="bar"] { border-left: 2px solid var(--nt-cursor); box-sizing: border-box; width: 0 !important; }
+/* Unfocused: a hollow block, still. */
+.nt-term:not(.nt-focused) .nt-cursor[data-shape="block"] { background: transparent; outline: 1px solid var(--nt-cursor); outline-offset: -1px; }
+.nt-term:not(.nt-focused) .nt-cursor[data-shape="block"]::before { content: none; }
+.nt-term.nt-focused .nt-cursor.nt-blink { animation: nt-blink 1.2s step-end infinite; }
+@keyframes nt-blink { 50% { opacity: 0; } }
+
+/* The 16 theme colours. */
+.nt-term .f0 { color: var(--nt-c0); } .nt-term .g0 { background: var(--nt-c0); }
+.nt-term .f1 { color: var(--nt-c1); } .nt-term .g1 { background: var(--nt-c1); }
+.nt-term .f2 { color: var(--nt-c2); } .nt-term .g2 { background: var(--nt-c2); }
+.nt-term .f3 { color: var(--nt-c3); } .nt-term .g3 { background: var(--nt-c3); }
+.nt-term .f4 { color: var(--nt-c4); } .nt-term .g4 { background: var(--nt-c4); }
+.nt-term .f5 { color: var(--nt-c5); } .nt-term .g5 { background: var(--nt-c5); }
+.nt-term .f6 { color: var(--nt-c6); } .nt-term .g6 { background: var(--nt-c6); }
+.nt-term .f7 { color: var(--nt-c7); } .nt-term .g7 { background: var(--nt-c7); }
+.nt-term .f8 { color: var(--nt-c8); } .nt-term .g8 { background: var(--nt-c8); }
+.nt-term .f9 { color: var(--nt-c9); } .nt-term .g9 { background: var(--nt-c9); }
+.nt-term .f10 { color: var(--nt-c10); } .nt-term .g10 { background: var(--nt-c10); }
+.nt-term .f11 { color: var(--nt-c11); } .nt-term .g11 { background: var(--nt-c11); }
+.nt-term .f12 { color: var(--nt-c12); } .nt-term .g12 { background: var(--nt-c12); }
+.nt-term .f13 { color: var(--nt-c13); } .nt-term .g13 { background: var(--nt-c13); }
+.nt-term .f14 { color: var(--nt-c14); } .nt-term .g14 { background: var(--nt-c14); }
+.nt-term .f15 { color: var(--nt-c15); } .nt-term .g15 { background: var(--nt-c15); }
+/* An inverse with default colours. */
+.nt-term .fi { color: var(--nt-bg); }
+.nt-term .gi { background: var(--nt-fg); }
+
+/* The page around the terminal (terminal-native.html). */
+.nt-jump {
+    position: absolute;
+    right: 14px;
+    bottom: 12px;
+    z-index: 3;
+    border: 1px solid #44475a;
+    border-radius: 16px;
+    background: #21222c;
+    color: #f8f8f2;
+    font: 12px system-ui, sans-serif;
+    padding: 6px 12px;
+    cursor: pointer;
+    opacity: 0.92;
+}
+.nt-jump[hidden] { display: none; }

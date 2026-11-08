@@ -346,3 +346,77 @@ its token that way) is kept, mode 0600, in `data/server-secrets.json`, rewritten
 at every start. A restart reads it there, `merlin job url` for the public host,
 and `merlin dashboard-url` for its login: only the operation that needs one reads it, so a program launched
 from a pane (`merlin app run`, say) gets none.
+
+## Native terminal (`/terminal/native`, in progress)
+
+A second terminal, built beside the classic one by the native-terminal epic
+(`epics/cli/native-terminal/` in merlin-saas, journal included), so a phone gets
+native momentum scrolling, native selection and copy, and a real text field for
+its keyboard. The classic page above is unchanged and stays the default; a
+per-browser switch between the two comes with the epic's parity milestone.
+
+```
+Browser: real DOM text in a native scroll container
+  ↕ WebSocket (/ws/terminal2): binary grid frames, \x00 + JSON control frames
+terminal/native.py: one tmux control-mode client per page (tmux -C, pipes)
+  ↕
+tmux 3.8 or newer (older: the page is told to use the classic terminal)
+```
+
+### Bridge (`terminal/native.py`, `terminal/control.py`)
+
+tmux renders and the page mirrors tmux's own grid of the displayed pane: rows
+of its screen and of its history from `capture-pane -p -e -N -L -F`, each with
+its wrap flag and an absolute number. Row `k` of the history is
+`history_added - k`; the oldest row tmux holds is
+`history_added - history_size` (not `history_collected`, which a reflow
+leaves behind; after one, numbers can be negative). The bridge sends each
+history row once, in order, reports rows tmux dropped before the page got them
+as a gap, starts the page afresh on a history clear or reflow
+(`history_generation`), and answers older rows by number on request. Updates
+are pulled: at most one every 16 ms, except for the 100 ms after the page sent
+input (the echo of a keystroke goes out at once), and only while the page has
+room in its window of unacknowledged bytes. Nothing is ever paused in tmux. The
+module docstring lists every guarantee and its test.
+
+### Renderer (`terminal/static/native/`)
+
+- `core.js`: pure helpers, also run by node in `tests/js/native-core.test.js`.
+  Frames are decoded by a scratch xterm.js parser that is never opened
+  (`newDecoder`, with the Unicode 11 widths tmux uses:
+  `static/vendor/xterm-addon-unicode11.min.js`), one capture as one stream
+  (attributes carry from row to row). `rowHtml` turns a decoded row into the
+  HTML of one visual row; `findLinks` finds URLs over a logical line.
+- `renderer.js`: the DOM. A logical line is a `div.l`; each visual row in it a
+  `span.r`, an inline-block as wide as the pane. The platform's own selection
+  then copies a soft-wrapped line joined and breaks hard lines once, with no
+  script (what iOS needs). History lives in chunks of 200 logical lines with
+  `content-visibility: auto`; no row is removed under a selection. Every row
+  is one integer row height, so the spacer above the history (one row height
+  for each row tmux holds that the page has not loaded) shrinks by exactly the
+  height of the rows that replace it: loading older history never moves the
+  view and never sets `scrollTop` (which would stop an iOS momentum scroll).
+  The alternate screen is a layer over the scroller; leaving it shows the main
+  screen where it was. The cursor is an overlay in its row whose character is
+  generated content, so it is never copied.
+- `engine.js`: the socket, frames drawn on the next animation frame and then
+  acknowledged (a hidden page acknowledges nothing, so the bridge stops), lazy
+  history, the size (the terminal font is loaded before the first size is
+  sent), the desktop copy handler (Firefox serialises an empty selection over
+  `content-visibility`, so the handler builds the text from the rows), and
+  the mouse for programs that ask for it in the alternate screen (a wheel or a
+  swipe is a wheel report then, arrow keys otherwise).
+- `native.css`: the classic terminal's theme colours, styles, the cursor.
+- `input.js`: the input field (completed by the epic's input milestone).
+
+What a row copies is exactly its text: trailing blanks of a row that ends its
+line are left out, styled ones become empty boxes (`span.p`); a wide character
+is one character in a 2ch box (`span.w`); a character from U+2000 on (box
+drawing, symbols, Nerd Font icons) sits in a 1ch box (`span.n`) so a fallback
+font cannot shift the columns after it.
+
+Tests: `tests/unit/test_terminal_native.py` (the bridge, on a private tmux,
+with differential checks of the page's decoder against a terminal fed the
+whole stream), `tests/js/native-core.test.js`, and
+`tests/e2e/test_terminal_native.py` (the page in Chromium, desktop and phone
+emulation, and Firefox for copy).

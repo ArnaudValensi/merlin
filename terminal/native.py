@@ -96,6 +96,10 @@ LOW_WATER = 256 * 1024
 HARD_LIMIT = 4 * HIGH_WATER
 HISTORY_BYTES_MAX = 256 * 1024
 UPDATE_INTERVAL = 0.016
+# For this long after the page sent input, updates are not spaced by
+# UPDATE_INTERVAL: the echo of a keystroke goes out as soon as tmux has it,
+# even while the pane streams output (measured: p95 30 ms to 16 ms).
+ECHO_WINDOW = 0.1
 CLIPBOARD_MAX = 1024 * 1024
 SEND_TIMEOUT = 10.0
 PROBE_TIMEOUT = 5.0
@@ -247,6 +251,17 @@ class PaneModes:
     def added(self) -> int:
         return self.num("history_added")
 
+    @property
+    def first(self) -> int:
+        """The absolute number of the oldest history row tmux holds. Not
+        ``history_collected``: a reflow (a resize) changes how many rows the
+        history has but not ``history_added``, so after one the two differ
+        (measured on 3.8: 4 rows reflowed into 11 at half the width, then
+        ``added - size`` = 18 while ``collected`` = 25). ``capture-pane -L``
+        numbers rows by ``history_size``, so this is the number that
+        matches the rows."""
+        return self.added - self.num("history_size")
+
     def state(self) -> dict:
         """What the page needs besides the rows."""
         return {
@@ -270,7 +285,7 @@ class PaneModes:
             },
             "history": {
                 "added": self.added,
-                "collected": self.num("history_collected"),
+                "first": self.first,
                 "generation": self.num("history_generation"),
             },
         }
@@ -413,6 +428,7 @@ class NativeBridge:
         self.generation: int | None = None
         self.last_screen: tuple | None = None
         self.dirty = asyncio.Event()  # the pane wrote, or its view changed
+        self.typed_at = -1.0  # when the page last sent input (monotonic)
         self.room = asyncio.Event()  # the page acknowledged enough
         self.room.set()
         self.state_dirty = asyncio.Event()  # session / windows may have changed
@@ -709,8 +725,9 @@ class NativeBridge:
         while True:
             await self.dirty.wait()
             await self.room.wait()
-            wait = last + UPDATE_INTERVAL - time.monotonic()
-            if wait > 0:
+            now = time.monotonic()
+            wait = last + UPDATE_INTERVAL - now
+            if wait > 0 and now - self.typed_at > ECHO_WINDOW:
                 await asyncio.sleep(wait)
             self.dirty.clear()
             try:
@@ -762,7 +779,7 @@ class NativeBridge:
             if modes is None:
                 return
             added = modes.added
-            collected = modes.num("history_collected")
+            first_held = modes.first
             generation = modes.num("history_generation")
             if not reset and generation != self.generation:
                 # Cleared or reflowed (a resize): what the page has is stale.
@@ -795,11 +812,11 @@ class NativeBridge:
                 kept = [r for r in captured if r.number < added]
                 start_row = kept[0].number if kept else added
             else:
-                if next_row < collected:
+                if next_row < first_held:
                     # tmux dropped rows the page never got (its history
                     # limit): say so, and carry on from what is left.
-                    gap = collected - next_row
-                    next_row = collected
+                    gap = first_held - next_row
+                    next_row = first_held
                 first = next(
                     (i for i, r in enumerate(captured) if r.number == next_row), None
                 )
@@ -898,18 +915,18 @@ class NativeBridge:
             if not now.ok or not now.lines or not now.text()[0].isdigit():
                 return
             estimate = int(now.text()[0])
-            start = max(0, end - count)
+            start = end - count  # may be negative: numbers after a reflow
             first_rel = -(estimate - start) - margin
             last_rel = min(-1, -(estimate - end) - 1)
             info, reply = await self.client.command(
                 f"display -p -t {pane} "
-                "'#{history_added}\t#{history_collected}\t#{history_generation}'",
+                "'#{history_added}\t#{history_size}\t#{history_generation}'",
                 capture(pane, first_rel, last_rel),
             )
             if not info.ok or not reply.ok or not info.lines:
                 return
-            added, collected, generation = (int(x) for x in info.text()[0].split("\t"))
-            start = max(start, collected)
+            added, size, generation = (int(x) for x in info.text()[0].split("\t"))
+            start = max(start, added - size)
             if end <= start:
                 self._send_history(pane, start, start, [], 0, generation)
                 return
@@ -977,6 +994,8 @@ class NativeBridge:
 
     async def handle(self, msg: dict) -> None:
         kind = msg.get("type")
+        if kind in ("input", "paste", "key"):
+            self.typed_at = time.monotonic()
         try:
             if kind == "input":
                 await self.send_input(
