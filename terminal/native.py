@@ -731,16 +731,26 @@ class NativeBridge:
             if reset:
                 # The last INITIAL_HISTORY rows (tmux clamps to what exists).
                 commands.append(capture(pane, -INITIAL_HISTORY, -1))
-            elif self.added_seen > self.sent_next or self.scrolled:
-                # From the row before the first one the page lacks (the
-                # overlap row), aimed with the last known history_added and a
-                # margin for the rows that scroll in meanwhile; the row
-                # numbers say what was really captured, extra rows are dropped.
-                margin = 2 * self.scrolled + 8
-                start = -(self.added_seen - self.sent_next + 1) - margin
-                end = min(-1, start + ROWS_PER_CAPTURE + margin)
-                commands.append(capture(pane, start, end))
+            else:
+                # Aim from where the pane is now: a capture streams its rows
+                # with attributes carried from row to row, so every row from
+                # its first one is sent (the page decodes them all and skips
+                # the ones it has), and a tight aim keeps those few.
+                (now,) = await self.client.command(
+                    f"display -p -t {pane} '#{{history_added}}'"
+                )
+                if now.ok and now.lines and now.text()[0].isdigit():
+                    self.added_seen = int(now.text()[0])
+                if self.added_seen > self.sent_next:
+                    # From the overlap row (the one before the first row the
+                    # page lacks), with a margin for the rows that may scroll
+                    # in before the capture runs.
+                    margin = 2 * self.scrolled + 2
+                    start = -(self.added_seen - self.sent_next + 1) - margin
+                    end = min(-1, start + ROWS_PER_CAPTURE + margin)
+                    commands.append(capture(pane, start, end))
             commands.append(capture(pane, -1, "-"))
+            aimed = self.added_seen
             replies = await self.client.command(*commands)
             if pane != self.pane:
                 return  # the page moved on meanwhile
@@ -752,77 +762,98 @@ class NativeBridge:
             added = modes.added
             collected = modes.num("history_collected")
             generation = modes.num("history_generation")
-            self.scrolled = max(0, added - self.added_seen) if not reset else 0
             if not reset and generation != self.generation:
                 # Cleared or reflowed (a resize): what the page has is stale.
                 self.reset_due = True
                 self.dirty.set()
                 return
-            history_rows = (
-                parse_rows(replies[1].lines, added) if len(replies) == 3 else []
-            )
+            # Rows that scrolled in between the aim and the capture.
+            self.scrolled = max(0, added - aimed) if not reset else 0
+            captured = parse_rows(replies[1].lines, added) if len(replies) == 3 else []
             screen_all = parse_rows(replies[-1].lines, added)
             overlap = next((r for r in screen_all if r.number == added - 1), None)
-            screen = [r for r in screen_all if added <= r.number < added + modes.rows]
+            screen_end = next(
+                (
+                    i + 1
+                    for i, r in enumerate(screen_all)
+                    if r.number == added + modes.rows - 1
+                ),
+                len(screen_all),
+            )
+            screen_stream = screen_all[:screen_end]
+            screen_skip = sum(1 for r in screen_stream if r.number < added)
+            screen = screen_stream[screen_skip:]
             # Nothing about what the page has changes until the frame is in
             # the outbox: a frame that is not admitted leaves it all due.
             gap = 0
             cont = False
             next_row = self.sent_next
             if reset:
-                rows = [r for r in history_rows if r.number < added]
-                start_row = rows[0].number if rows else added
+                first = 0
+                kept = [r for r in captured if r.number < added]
+                start_row = kept[0].number if kept else added
             else:
                 if next_row < collected:
                     # tmux dropped rows the page never got (its history
                     # limit): say so, and carry on from what is left.
                     gap = collected - next_row
                     next_row = collected
-                before = [r for r in history_rows if r.number == next_row - 1]
-                rows = [r for r in history_rows if next_row <= r.number < added]
-                if next_row < added and (not rows or rows[0].number != next_row):
-                    # Output scrolled more rows than aimed for since the last
-                    # update: none sent now, the next try is aimed with the
-                    # history_added just read.
-                    rows = []
-                    self.added_seen = added
-                    self.dirty.set()
-                cont = bool(before and before[0].wrapped and rows)
+                first = next(
+                    (i for i, r in enumerate(captured) if r.number == next_row), None
+                )
+                if first is None:
+                    kept = []
+                    if next_row < added:
+                        # More rows scrolled in than aimed for: none sent
+                        # now, retried at once aimed afresh.
+                        self.dirty.set()
+                else:
+                    kept = [r for r in captured[first:] if r.number < added]
+                before = captured[first - 1] if first else None
+                cont = bool(
+                    before and before.number == next_row - 1 and before.wrapped and kept
+                )
                 start_row = next_row
-            # A batch at most HISTORY_BYTES_MAX, cut at any row (each carries
-            # its own wrap flag); the rest goes in the next update.
-            total = 0
-            for i, r in enumerate(rows):
+            # A batch at most HISTORY_BYTES_MAX: the stream is cut at its end
+            # only (each row's attributes may come from the rows before it);
+            # the rest goes in the next update.
+            total = sum(len(r.data) + 1 for r in captured[: first or 0])
+            for i, r in enumerate(kept):
                 total += len(r.data) + 1
                 if total > HISTORY_BYTES_MAX and i > 0:
-                    rows = rows[:i]
+                    kept = kept[:i]
                     self.dirty.set()
                     break
+            hist_stream = captured[: (first or 0) + len(kept)] if kept else []
+            hist_skip = (first or 0) if kept else 0
             state = modes.state()
             screen_key = (
-                tuple(r.data for r in screen),
+                tuple(r.data for r in screen_stream),
                 _flags(screen),
                 json.dumps(state, sort_keys=True),
             )
-            if not reset and not rows and not gap and screen_key == self.last_screen:
-                self.added_seen = max(self.added_seen, added)
+            if not reset and not kept and not gap and screen_key == self.last_screen:
                 return
             header = {
                 **state,
                 "reset": reset,
                 "hist": {
                     "start": start_row,
-                    "count": len(rows),
-                    "wrapped": _flags(rows),
+                    "count": len(kept),
+                    "skip": hist_skip,
+                    "wrapped": _flags(kept),
                     "cont": cont,
                     "gap": gap,
                 },
                 "screen": {
+                    "skip": screen_skip,
                     "wrapped": _flags(screen),
                     "cont": bool(overlap and overlap.wrapped),
                 },
             }
-            frame = _frame(FRAME_UPDATE, header, [r.data for r in rows + screen])
+            frame = _frame(
+                FRAME_UPDATE, header, [r.data for r in hist_stream + screen_stream]
+            )
             if not self.admit(len(frame)):
                 # No room: nothing sent, everything still in tmux; the next
                 # update runs once the page acknowledged enough.
@@ -832,8 +863,8 @@ class NativeBridge:
                 return
             self.reset_due = False
             self.generation = generation
-            if rows:
-                self.sent_next = rows[-1].number + 1
+            if kept:
+                self.sent_next = kept[-1].number + 1
             elif reset:
                 self.sent_next = added
             else:
@@ -846,51 +877,49 @@ class NativeBridge:
 
     async def history(self, pane: str, end: int, count: int) -> None:
         """Rows ``[end - count, end)`` of ``pane``'s history by absolute
-        number, at most HISTORY_BYTES_MAX (the newest of them kept). A page
-        that is behind gets ``busy`` and asks again later."""
+        number, at most HISTORY_BYTES_MAX (fewer rows asked for until they
+        fit). The capture is sent from its first row (attributes carry from row
+        to row; ``skip`` says how many the page decodes without keeping). A
+        page that is behind gets ``busy`` and asks again later."""
         if not _PANE_ID.fullmatch(pane) or count <= 0:
             return
         count = min(count, HISTORY_PAGE_MAX)
         if not self.admit(4096):
-            self._send_history(pane, end, end, [], None, busy=True)
+            self._send_history(pane, end, end, [], 0, None, busy=True)
             return
-        estimate = max(self.added_seen, end)
-        margin = 2 * self.scrolled + 8
-        wanted: list[Row] = []
-        generation = None
-        for _ in range(4):
+        margin = 2
+        for _ in range(8):
+            (now,) = await self.client.command(
+                f"display -p -t {pane} '#{{history_added}}'"
+            )
+            if not now.ok or not now.lines or not now.text()[0].isdigit():
+                return
+            estimate = int(now.text()[0])
             start = max(0, end - count)
-            first = -(estimate - start) - margin
-            last = min(-1, -(estimate - end) - 1)
+            first_rel = -(estimate - start) - margin
+            last_rel = min(-1, -(estimate - end) - 1)
             info, reply = await self.client.command(
                 f"display -p -t {pane} "
                 "'#{history_added}\t#{history_collected}\t#{history_generation}'",
-                capture(pane, first, last),
+                capture(pane, first_rel, last_rel),
             )
             if not info.ok or not reply.ok or not info.lines:
                 return
             added, collected, generation = (int(x) for x in info.text()[0].split("\t"))
             start = max(start, collected)
-            wanted = [
-                r for r in parse_rows(reply.lines, added) if start <= r.number < end
-            ]
-            if end <= start or (
-                wanted and wanted[0].number == start and wanted[-1].number == end - 1
-            ):
-                break
-            margin = 2 * max(0, added - estimate) + 8
-            estimate = added  # the pane scrolled meanwhile: aim again
-        else:
+            if end <= start:
+                self._send_history(pane, start, start, [], 0, generation)
+                return
+            rows = [r for r in parse_rows(reply.lines, added) if r.number < end]
+            first = next((i for i, r in enumerate(rows) if r.number == start), None)
+            if first is None or rows[-1].number != end - 1:
+                margin = 2 * max(0, added - estimate) + 2
+                continue  # the pane scrolled meanwhile: aim again
+            if sum(len(r.data) + 1 for r in rows) > HISTORY_BYTES_MAX and count > 1:
+                count //= 2
+                continue
+            self._send_history(pane, start, end, rows, first, generation)
             return
-        total = 0
-        for i, r in enumerate(reversed(wanted)):
-            total += len(r.data) + 1
-            if total > HISTORY_BYTES_MAX and i > 0:
-                wanted = wanted[len(wanted) - i :]
-                break
-        self._send_history(
-            pane, wanted[0].number if wanted else end, end, wanted, generation
-        )
 
     def _send_history(
         self,
@@ -898,16 +927,20 @@ class NativeBridge:
         start: int,
         end: int,
         rows: list[Row],
+        skip: int,
         generation: int | None,
         *,
         busy: bool = False,
     ) -> None:
+        """``rows`` is the capture from its first row: the first ``skip``
+        are decoded by the page and not kept."""
         header: dict = {
             "pane": pane,
             "start": start,
             "end": end,
+            "skip": skip,
             "generation": generation,
-            "wrapped": _flags(rows),
+            "wrapped": _flags(rows[skip:]),
         }
         if busy:
             header["busy"] = True

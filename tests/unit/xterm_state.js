@@ -48,7 +48,7 @@ async function stream(cols, rows, keep, chunks) {
   return {
     alternate: active.type === 'alternate',
     screen: lines(active, active.baseY, active.baseY + rows),
-    history: lines(normal, Math.max(0, normal.baseY - keep), normal.baseY),
+    history: lines(normal, keep ? Math.max(0, normal.baseY - keep) : 0, normal.baseY),
     cursor: [Math.min(core.buffer.x, cols - 1), core.buffer.y],
   };
 }
@@ -61,17 +61,23 @@ function frames(cols, rows, keep, list) {
   let alternate = false;
   for (const b64 of list) {
     const frame = Core.parseFrame(new Uint8Array(Buffer.from(b64, 'base64')));
-    if (!frame || frame.kind !== Core.FRAME_UPDATE) continue;
+    if (!frame) continue;
     const h = frame.header;
-    const lines = Core.decodeRows(decoder, frame.rows).map((l) => cells(l, cols));
-    const n = h.hist.count;
+    if (frame.kind === Core.FRAME_HISTORY) {
+      const older = Core.decodeRows(decoder, frame.rows, h.skip)
+        .map((l, i) => ({ cells: cells(l, cols), wrapped: h.wrapped[i] === '1' }));
+      history = older.concat(history);
+      continue;
+    }
     if (h.reset) history = [];
-    for (let i = 0; i < n; i++) history.push({ cells: lines[i], wrapped: h.hist.wrapped[i] === '1' });
-    screen = lines.slice(n).map((c, i) => ({ cells: c, wrapped: h.screen.wrapped[i] === '1' }));
+    const hist = Core.decodeRows(decoder, frame.histRows, h.hist.skip).map((l) => cells(l, cols));
+    for (let i = 0; i < h.hist.count; i++) history.push({ cells: hist[i], wrapped: h.hist.wrapped[i] === '1' });
+    screen = Core.decodeRows(decoder, frame.screenRows, h.screen.skip)
+      .map((l, i) => ({ cells: cells(l, cols), wrapped: h.screen.wrapped[i] === '1' }));
     cursor = [h.cursor.x, h.cursor.y];
     alternate = h.alternate;
   }
-  return { alternate, screen, history: history.slice(Math.max(0, history.length - keep)), cursor };
+  return { alternate, screen, history: keep ? history.slice(Math.max(0, history.length - keep)) : history, cursor };
 }
 
 let input = '';

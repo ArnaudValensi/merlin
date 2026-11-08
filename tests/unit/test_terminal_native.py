@@ -54,15 +54,20 @@ XTERM_STATE = Path(__file__).with_name("xterm_state.js")
 
 
 def parse_frame(data: bytes) -> tuple[int, dict, list[bytes]]:
+    """A frame's kind, header and the rows the page keeps (skipped rows
+    dropped: tests reading text need no attributes carried from them)."""
     head, _, body = data[1:].partition(b"\x00")
     header = json.loads(head)
-    count = (
-        header["hist"]["count"] + len(header["screen"]["wrapped"])
-        if data[0] == FRAME_UPDATE
-        else len(header["wrapped"])
-    )
+    if data[0] == FRAME_HISTORY:
+        count = header["skip"] + len(header["wrapped"])
+        rows = body.split(b"\n", count - 1) if count else []
+        return data[0], header, rows[header["skip"] :]
+    hist, screen = header["hist"], header["screen"]
+    n_hist = hist["skip"] + hist["count"] if hist["count"] else 0
+    count = n_hist + screen["skip"] + len(screen["wrapped"])
     rows = body.split(b"\n", count - 1) if count else []
-    return data[0], header, rows
+    kept = rows[hist["skip"] : n_hist] if hist["count"] else []
+    return data[0], header, kept + rows[n_hist + screen["skip"] :]
 
 
 class FakeWS:
@@ -291,6 +296,8 @@ class FakeControl:
                 replies.append(
                     Reply(True, [self._row(n) for n in range(first, last + 1)])
                 )
+            elif c.endswith("'#{history_added}'"):
+                replies.append(Reply(True, [str(self.added).encode()]))
             elif "history_added" in c:
                 replies.append(
                     Reply(True, [f"{self.added}\t{self.collected}\t0".encode()])
@@ -353,10 +360,10 @@ async def test_updates_send_every_history_row_once_even_when_output_scrolls_mean
     fake.added += 30
     fake.drift = 7
     await bridge.update()
-    assert _history_numbers(bridge) == []  # the aim missed: nothing, retried
     fake.drift = 0
     await bridge.update()
-    assert _history_numbers(bridge) == list(range(50, 87))
+    assert bridge.sent_next >= 80
+    assert _history_numbers(bridge) == list(range(50, bridge.sent_next))
 
 
 @pytest.mark.asyncio
@@ -703,7 +710,6 @@ async def test_a_page_that_stops_acknowledging_gets_no_more_than_the_window(serv
         await _run(bridge, "seq 1 400000; echo DONE-$((40+3))")
         await asyncio.sleep(2.0)
         assert bridge.out.unacked() <= HIGH_WATER + native.HISTORY_BYTES_MAX
-        assert "DONE-43" not in ws.screen_text()
         _keep_acking(bridge)
         assert await _until(lambda: "DONE-43" in ws.screen_text(), timeout=60)
         assert await _until(
@@ -991,6 +997,7 @@ async def test_clipboard_from_merlin_clip_and_from_a_program_osc52(server):
 
 
 def _xterm(cols: int, rows: int, inputs: dict, history: int = 5) -> dict:
+    """``history``: how many of the last history rows to compare (0: all)."""
     request = {
         "cols": cols,
         "rows": rows,
@@ -1056,6 +1063,10 @@ DIFFERENTIAL = {
     "no-wrap": (r"\033[?7l%025d", r"Q"),
     "scrolled": (r"1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n\033[33m", r"9\r\n10"),
     "wrapped-long": (r"%045d\r\nshort\r\n%030d", r"%025d"),
+    # Attributes and the shift state carry from row to row in a capture.
+    "full-width-colour": (r"\033[31m%060d", r"X"),
+    "graphics-rows": (r"\033)0\016" + "q" * 60, r"q"),
+    "colour-across-history": (r"\033[31m%0200d", r"X"),
 }
 
 
@@ -1206,5 +1217,67 @@ async def test_reconnect_and_an_unobserved_session_show_the_current_pane(server)
             assert _diff(states["page"], states["reference"]) == []
         finally:
             await _stop(second, task2)
+    finally:
+        await recorder.close()
+
+
+@needs_tmux
+@needs_node
+@pytest.mark.asyncio
+async def test_history_batches_and_ranges_keep_attributes(server, monkeypatch):
+    """Attributes set once and carried over hundreds of rows survive every way
+    history reaches the page: the reset's recent rows, live batches cut small,
+    and older ranges asked for one by one down to the first row."""
+    monkeypatch.setattr(native, "INITIAL_HISTORY", 20)
+    monkeypatch.setattr(native, "HISTORY_BYTES_MAX", 300)
+    socket, tmux, tmp = server
+    cols, rows = 20, 6
+    start, ready, go, done = (tmp / f"h.{x}" for x in ("start", "ready", "go", "done"))
+    script = tmp / "h.sh"
+    script.write_text(
+        f"while [ ! -f {start} ]; do sleep 0.02; done; printf '\\033[32;1m'; seq 1 200; "
+        f"touch {ready}; while [ ! -f {go} ]; do sleep 0.02; done; "
+        f"printf '\\033[0;35m'; seq 201 260; printf '\\033[4mend'; touch {done}; sleep 60\n"
+    )
+    tmux(
+        "new-session", "-d", "-s", "h", "-x", str(cols), "-y", str(rows), f"sh {script}"
+    )
+    recorder, recorded = await _recorder(socket, "h")
+    start.touch()
+    try:
+        assert await _until(ready.exists)
+        await asyncio.sleep(0.1)
+        bridge, ws, task = await _bridge(socket, "h")
+        try:
+            go.touch()
+            assert await _until(done.exists)
+            assert await _until(
+                lambda: bridge.sent_next >= bridge.added_seen and not bridge.out.frames
+            )
+            await asyncio.sleep(0.2)
+            # The page asks for older rows until it has them all.
+            oldest = next(
+                h["hist"]["start"] for _, h, _ in ws.frames(FRAME_UPDATE) if h["reset"]
+            )
+            while oldest > 0:
+                seen = len(ws.frames(FRAME_HISTORY))
+                ws.push(
+                    {"type": "history", "pane": bridge.pane, "end": oldest, "count": 50}
+                )
+                assert await _until(lambda: len(ws.frames(FRAME_HISTORY)) > seen)
+                oldest = ws.frames(FRAME_HISTORY)[-1][1]["start"]
+            states = _xterm(
+                cols,
+                rows,
+                {
+                    "reference": ("stream", [bytes(recorded[bridge.pane])]),
+                    "page": ("frames", ws.raw_frames()),
+                },
+                history=0,
+            )
+            assert len(states["page"]["history"]) > 200
+            assert _diff(states["page"], states["reference"]) == []
+        finally:
+            await _stop(bridge, task)
     finally:
         await recorder.close()

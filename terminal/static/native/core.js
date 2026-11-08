@@ -10,8 +10,10 @@
   const FRAME_UPDATE = 1, FRAME_HISTORY = 3;
 
   // A binary frame from /ws/terminal2 (terminal/native.py): kind byte, JSON
-  // header, NUL, then ``count`` rows of tmux's grid (capture-pane -e lines)
-  // separated by LF.
+  // header, NUL, then rows of tmux's grid (capture-pane -e lines) separated by
+  // LF. An update carries two captures, the history's then the screen's; each
+  // starts with ``skip`` rows to decode and not keep (a capture carries
+  // attributes from row to row, so it is decoded from its first row).
   function parseFrame(buffer) {
     const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
     const kind = bytes[0];
@@ -19,10 +21,13 @@
     if (nul < 0 || (kind !== FRAME_UPDATE && kind !== FRAME_HISTORY)) return null;
     let header;
     try { header = JSON.parse(new TextDecoder().decode(bytes.subarray(1, nul))); } catch (e) { return null; }
-    const count = kind === FRAME_UPDATE
-      ? header.hist.count + header.screen.wrapped.length
-      : header.wrapped.length;
-    return { kind, header, rows: splitRows(bytes.subarray(nul + 1), count) };
+    if (kind === FRAME_HISTORY) {
+      return { kind, header, rows: splitRows(bytes.subarray(nul + 1), header.skip + header.wrapped.length) };
+    }
+    const nHist = header.hist.count ? header.hist.skip + header.hist.count : 0;
+    const nScreen = header.screen.skip + header.screen.wrapped.length;
+    const rows = splitRows(bytes.subarray(nul + 1), nHist + nScreen);
+    return { kind, header, histRows: rows.slice(0, nHist), screenRows: rows.slice(nHist) };
   }
 
   // ``count`` rows separated by LF (an empty body is no row, not one empty row).
@@ -37,29 +42,30 @@
     return rows;
   }
 
-  // Rows of tmux's grid decoded by a scratch xterm.js parser (never opened):
-  // returns its buffer lines, one per row, valid until the next call. The
-  // parser must be as wide as the pane. capture-pane -e writes line-drawing
-  // cells between SO and SI, hence G1 = DEC graphics.
-  const SO_G1 = [0x1b, 0x29, 0x30];
-  const ROW_END = [0x0f, 0x1b, 0x5b, 0x30, 0x6d];
-  function decodeRows(term, rows) {
+  // One capture of tmux's grid decoded by a scratch xterm.js parser (never
+  // opened) as one continuous stream, as tmux wrote it: attributes and the
+  // shift state carry from row to row. Returns the buffer lines of the rows
+  // after the first ``skip``, valid until the next call. The parser must be as
+  // wide as the pane. capture-pane -e writes line-drawing cells with SO, hence
+  // G1 = DEC graphics.
+  const G1_GRAPHICS = [0x1b, 0x29, 0x30];
+  function decodeRows(term, rows, skip) {
     term.reset();
     if (!rows.length) return [];
-    let size = SO_G1.length;
-    for (const r of rows) size += r.length + ROW_END.length + 2;
+    let size = G1_GRAPHICS.length;
+    for (const r of rows) size += r.length + 2;
     const all = new Uint8Array(size);
     let o = 0;
-    all.set(SO_G1, o); o += SO_G1.length;
+    all.set(G1_GRAPHICS, o); o += G1_GRAPHICS.length;
     rows.forEach((r, i) => {
       all.set(r, o); o += r.length;
-      all.set(ROW_END, o); o += ROW_END.length;
       if (i < rows.length - 1) { all[o++] = 13; all[o++] = 10; }
     });
     term._core._inputHandler.parse(all.subarray(0, o));
     const buf = term.buffer.active;
     const lines = [];
-    for (let y = Math.max(0, buf.length - rows.length); y < buf.length; y++) lines.push(buf.getLine(y));
+    const first = Math.max(0, buf.length - rows.length) + (skip || 0);
+    for (let y = first; y < buf.length; y++) lines.push(buf.getLine(y));
     return lines;
   }
 
