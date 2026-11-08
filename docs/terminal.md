@@ -205,6 +205,46 @@ Want to be told instead of looking? The bell in the bottom bar turns the same si
 browser notifications, an app badge and push to your phone. See
 [Notifications](notifications.md).
 
+## The new terminal
+
+A second terminal lives beside the classic one, made to feel native on a
+phone. The classic terminal stays the default. To try the new one, open
+the terminal menu (the sliders button in the bottom bar) and pick **New
+terminal**, or add `?terminal=native` to the address. The choice is
+remembered per browser and `/terminal` follows it; **Classic terminal** in
+the same menu goes back. Both attach to the same tmux sessions and can be
+open at the same time. The new terminal needs tmux 3.8 or newer: on an
+older one the page goes back to the classic terminal and says why.
+
+What is different:
+
+- **Scrolling** is the platform's own, with momentum, through the whole
+  history (older rows load as you get to them). Output arriving while you
+  read does not move the view; a **Jump to bottom** button appears, and
+  typing brings you back.
+- **Selecting and copying** is the platform's own too. On a phone, long
+  press a word, drag the handles, and tap Copy in the system menu. On a
+  desktop, select with the mouse and press Ctrl+C (Cmd+C on a Mac) or
+  Ctrl+Shift+C: selecting alone does not copy, and Ctrl+C with nothing
+  selected stays SIGINT. Wrapped lines come out joined and trailing blanks
+  are trimmed.
+- **The keyboard** is a real text field on a phone: holding delete repeats
+  and speeds up to words, a long press on the space bar moves the cursor,
+  dictation works. Autocorrect and predictions are off by default; turn
+  them on with **Keyboard suggestions** in the terminal menu.
+- **Window tabs** with the [agent-state pills](#agent-state-pills) sit above
+  the key toolbar, in place of tmux's status bar. Tap a tab to go to its
+  window.
+- **Paste** works as described below, except that a right-click over a
+  selection opens the browser's menu (so you can Copy); without a selection
+  it pastes. On a phone use the toolbar's paste button, and a program's copy
+  (`merlin-clip copy`, a NeoVim yank) offers the green **Copy** pill.
+- A message the classic terminal writes into its screen (a voice or upload
+  error) is a line over the terminal: tap it to dismiss it.
+
+In full-screen programs (NeoVim, less, htop), a swipe scrolls the program,
+as wheel events when it asked for the mouse and as arrow keys otherwise.
+
 ## Copy and paste
 
 Desktop copy: select with the mouse; on release the selection lands in

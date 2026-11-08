@@ -34,7 +34,7 @@ merlin/
 │   └── templates/jobs.html    # Dashboard page template
 ├── webhooks/                  # Public webhook front desk (secret check, dispatch)
 ├── files/                     # File browser module
-├── terminal/                  # Web terminal module (xterm.js + tmux)
+├── terminal/                  # Web terminal module (classic: xterm.js + tmux; native: control mode + DOM text)
 ├── commits/                   # Git commit browser module
 ├── board/                     # Sessions board — /api/board + assets for the terminal's Sessions drawer
 ├── workspace/                 # Workspace restore: continuous tmux snapshot, restore banner after a restart
@@ -64,7 +64,7 @@ New to the codebase? Read `architecture.md` first, then `extension-system.md` an
 | [`docs/dev/job-system.md`](docs/dev/job-system.md) | Job format, dispatcher, state/locks, scheduler, staleness guard |
 | [`docs/dev/notes-system.md`](docs/dev/notes-system.md) | 3-layer notes system (user, logs, KB), frontmatter format, search tools |
 | [`docs/dev/auth-and-tunnel.md`](docs/dev/auth-and-tunnel.md) | Cookie auth, HMAC signing, login flow |
-| [`docs/dev/web-terminal.md`](docs/dev/web-terminal.md) | Web terminal internals: xterm.js, WebSocket, PTY/tmux, touch gesture implementation, transcription API |
+| [`docs/dev/web-terminal.md`](docs/dev/web-terminal.md) | Web terminal internals: xterm.js, WebSocket, PTY/tmux, touch gesture implementation, transcription API; the native terminal (`/terminal/native`, tmux control mode, DOM renderer, input field) and the per-browser switch |
 | [`docs/dev/notes-editor.md`](docs/dev/notes-editor.md) | Notes routes, command palette, git ops, media upload, content search |
 | [`docs/dev/agent-activity-timeline.md`](docs/dev/agent-activity-timeline.md) | Timeline schema, consent, hooks, emitter, store, query API, and live UI |
 | [`docs/dev/extension-system.md`](docs/dev/extension-system.md) | Extension tiers, interface, feature flags, state, registry, Extensions/Settings pages |

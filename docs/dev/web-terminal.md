@@ -1,6 +1,7 @@
 # Web Terminal — Internals
 
-Implementation reference for the browser-based terminal. The user guide is
+Implementation reference for the browser-based terminal (the classic page
+below, and the [native terminal](#native-terminal-terminalnative) beside it). The user guide is
 [`docs/terminal.md`](../terminal.md); this doc covers how it is built.
 
 ## Architecture
@@ -324,6 +325,11 @@ Terminal access requires the same cookie auth as the rest of the dashboard. WebS
 | `terminal/pty_bridge.py` | Non-blocking PTY I/O, tmux client termination |
 | `templates/terminal.html` | xterm.js frontend, toolbar, clipboard, voice input |
 | `terminal/transcribe.py` | Audio transcription (faster-whisper) |
+| `terminal/native.py`, `terminal/control.py` | Native terminal: the `/ws/terminal2` bridge, the tmux control-mode client |
+| `terminal/static/native/` | Native terminal: `core.js`, `renderer.js`, `engine.js`, `input.js`, `toolbar.js`, `page.js`, `native.css` |
+| `templates/terminal-native.html` | The native page |
+| `templates/terminal-choice.js` | The per-browser switch between the two pages |
+| `templates/terminal-status-bar.html` and `.css`, `terminal-panels.html`, `terminal-head.html`, `terminal-chrome.html` | The chrome both pages share |
 | `auth.py` | `verify_ws_cookie()` for WebSocket auth |
 | `main.py` | Mounts terminal router |
 
@@ -385,7 +391,7 @@ Browser: real DOM text in a native scroll container
   ↕ WebSocket (/ws/terminal2): binary grid frames, \x00 + JSON control frames
 terminal/native.py: one tmux control-mode client per page (tmux -C, pipes)
   ↕
-tmux 3.8 or newer (older: the page is told to use the classic terminal)
+tmux 3.8 or newer (older: the tab goes back to the classic terminal)
 ```
 
 ### Bridge (`terminal/native.py`, `terminal/control.py`)
