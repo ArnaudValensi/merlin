@@ -100,9 +100,14 @@ class ControlClient:
         self,
         on_output: Callable[[str, bytes], None],
         on_notification: Callable[[str, bytes], None],
+        *,
+        decode_output: bool = True,
     ) -> None:
         self._on_output = on_output
         self._on_notification = on_notification
+        # A consumer that only needs to know that a pane wrote something
+        # (the native bridge) skips the unescaping: it gets b"".
+        self._decode = decode_output
         self._proc: asyncio.subprocess.Process | None = None
         # One entry per command line sent, in order: the futures of its
         # commands, answered front to back.
@@ -217,14 +222,16 @@ class ControlClient:
         if line.startswith(b"%output "):
             _, pane, value = (line.split(b" ", 2) + [b""])[:3]
             self.seq += 1
-            self._on_output(pane.decode(), unescape(value))
+            self._on_output(pane.decode(), unescape(value) if self._decode else b"")
             return
         if line.startswith(b"%extended-output "):
             head, _, value = line.partition(b" : ")
             parts = head.split(b" ")
             if len(parts) >= 2:
                 self.seq += 1
-                self._on_output(parts[1].decode(), unescape(value))
+                self._on_output(
+                    parts[1].decode(), unescape(value) if self._decode else b""
+                )
             return
         if line.startswith(b"%"):
             name, _, rest = line[1:].partition(b" ")

@@ -1,34 +1,41 @@
 """Native terminal: the ``/ws/terminal2`` WebSocket, a tmux control-mode bridge.
 
 The classic terminal (``/ws/terminal``, ``terminal/routes.py``) runs a tmux
-client on a PTY and streams the screen tmux draws. This bridge attaches a tmux
-client in control mode instead (``terminal/control.py``): tmux draws nothing
-and reports each pane's raw output, and the page parses it and keeps the
-history itself, so it can scroll and select natively. Both terminals attach to
-the same tmux server and can be open at once.
+client on a PTY and streams the screen tmux draws for it. This bridge attaches
+a tmux client in control mode instead (``terminal/control.py``), so nothing is
+drawn for it, and mirrors tmux's own grid of the displayed pane to the page:
+the rows of its screen and of its history, exactly as tmux holds them, with
+each row's wrap flag. The page turns rows into real DOM text in a native
+scrolling container and keeps the history itself, so it can scroll and select
+natively. Both terminals attach to the same tmux server and can be open at once.
+
+Why the grid and not the raw output: tmux interprets every byte a program
+writes, and part of that interpretation (the current rendition, the charsets,
+a saved cursor, an unfinished UTF-8 character) is state tmux reports to no
+client. A page that re-parsed the raw bytes after attaching to a running pane
+could not know it, and would draw the following text differently from tmux.
+Rows captured from tmux's grid are what tmux itself shows, whatever happened
+before Merlin attached. See the native-terminal journal (2026-11-08) for the
+measurements and the comparison.
 
 What the bridge guarantees (pinned by ``tests/unit/test_terminal_native.py``):
 
-- **One pane on the wire.** The page shows the active pane of its client's
-  current window. Only that pane's output is forwarded; every other pane's
-  output is dropped here (after updating its ``StreamState``). Nothing is ever
-  paused in tmux: a pane paused or turned off by its only client stops being
-  read, which would freeze the program writing to it (Phase 1 decision record).
-- **Snapshots are exact.** Showing a pane starts with a snapshot: its cells,
-  modes, recent history, pending-wrap state and the state tmux does not report
-  (``terminal/stream_state.py``: rendition, charsets, an unfinished UTF-8
-  character), captured in one command line, then the live stream. Output
-  numbered up to the snapshot reply's ``seq`` is in the capture, output after
-  it is not (``ControlClient`` orders both on one stream).
-- **Bounded memory per page.** Every frame the page gets (output, snapshot,
-  history, control) counts against one window of unacknowledged bytes; the
-  page acknowledges what it has handled. Pane output past ``HIGH_WATER`` is
-  dropped and replaced by a fresh snapshot once the page is back under
-  ``LOW_WATER``; a snapshot or a history range waits for room, and is capped in
-  size; output held during a capture is capped too. A page that stops reading
-  entirely is disconnected (``HARD_LIMIT``), so it reconnects and
-  resynchronises. One sender writes every frame, in order, each within
-  ``SEND_TIMEOUT``.
+- **Exact rows.** Every update is one tmux command line: the pane's state
+  (formats) and ``capture-pane -p -e -N -L -F`` of the rows it needs. ``-L``
+  numbers each row relative to the screen top and ``history_added`` (read in
+  the same line) makes it absolute, so history rows are sent once each, in
+  order, even while output keeps scrolling the pane; ``-F`` gives each row's
+  wrap flag (``W``). A row before the range (the overlap row) tells whether
+  the first new row continues a row the page already has.
+- **Pulled, bounded.** Output of the displayed pane only marks it dirty; the
+  next update is taken when the page has room in its window of unacknowledged
+  bytes, at most every ``UPDATE_INTERVAL``. Pending history stays in tmux, not
+  here. Every frame (updates, history ranges, control frames, broadcasts) is
+  admitted against the window; a history batch is capped at
+  ``HISTORY_BYTES_MAX``; one frame larger than the window (a huge screen) is
+  only sent when nothing is outstanding; a page past ``HARD_LIMIT`` is closed
+  and reconnects. Nothing is ever paused in tmux: a pane paused by its only
+  client stops being read, which would freeze the program writing to it.
 - **Input exactly once.** Text goes as ``send-keys -H`` in 1 KiB commands, a
   paste through a private paste buffer with ``paste-buffer -p`` (tmux adds the
   bracketed-paste markers when the program asked for them), a named key as
@@ -37,9 +44,10 @@ What the bridge guarantees (pinned by ``tests/unit/test_terminal_native.py``):
   so the binding runs exactly as for a typed key; plainly otherwise, so tmux
   encodes it for the pane's own modes.
 - **The running server is checked.** The control connection asks the server it
-  attached to for its version; below 3.8 the page gets an ``unsupported``
-  notice and falls back to the classic terminal. The installed binary is only
-  checked when no server runs (it would create one).
+  attached to for its version and the formats the bridge needs; below 3.8 the
+  page gets an ``unsupported`` notice and falls back to the classic terminal.
+  The installed binary is only checked when no server runs (it would create
+  one). Every probe runs off the event loop and bounded.
 """
 
 from __future__ import annotations
@@ -52,6 +60,7 @@ import os
 import re
 import secrets
 import tempfile
+import time
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -62,8 +71,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from auth import verify_ws_cookie
 from board import sweep as board_sweep
 from terminal import routes as classic
-from terminal.control import ControlClient, ControlError, Reply, hex_keys, quote
-from terminal.stream_state import StreamState
+from terminal.control import ControlClient, ControlError, hex_keys, quote
 from terminal.tmux import (
     parse_session_identity,
     reconnect_argv,
@@ -76,20 +84,18 @@ logger = logging.getLogger("merlin.terminal")
 
 MIN_TMUX = (3, 8)
 
-# Binary frames to the page: one kind byte, then the payload.
-FRAME_OUTPUT = 0x01  # + pane id + NUL + raw pane bytes
-FRAME_SNAPSHOT = 0x02  # + JSON header + NUL + bytes to replay into a reset parser
-FRAME_HISTORY = 0x03  # + JSON header + NUL + captured history lines
+# Binary frames to the page: one kind byte, a JSON header, a NUL, the rows
+# (``capture-pane -e`` lines, separated by LF).
+FRAME_UPDATE = 0x01  # the displayed pane: new history rows and the screen
+FRAME_HISTORY = 0x03  # older history rows, asked for by the page
 
 # The flow-control window, in bytes the page has not acknowledged yet.
 HIGH_WATER = 1024 * 1024
 LOW_WATER = 256 * 1024
 # Past this the page is not reading at all: close it, it reconnects.
 HARD_LIMIT = 4 * HIGH_WATER
-FRAME_MAX = 256 * 1024
-HELD_MAX = HIGH_WATER
-SNAPSHOT_MAX = 512 * 1024
 HISTORY_BYTES_MAX = 256 * 1024
+UPDATE_INTERVAL = 0.016
 CLIPBOARD_MAX = 1024 * 1024
 SEND_TIMEOUT = 10.0
 PROBE_TIMEOUT = 5.0
@@ -97,14 +103,19 @@ INPUT_CHUNK = 1024
 INPUT_COMMANDS_PER_LINE = 8
 PASTE_MAX = 1024 * 1024
 INITIAL_HISTORY = 1000
+# History rows asked for in one capture.
+ROWS_PER_CAPTURE = 2000
 HISTORY_PAGE_MAX = 2000
 CLOSE_UNSUPPORTED = 4426
 CLOSE_STALLED = 4408
 CLIPBOARD_BUFFER = "merlin-clip"
 
 _PANE_ID = re.compile(r"%\d+")
-_KEY_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,31}")
+# A tmux key name: optional modifiers, then a name or one printable character.
+_KEY_NAME = re.compile(r"(?:[CMS]-){0,3}(?:[A-Za-z][A-Za-z0-9]{0,15}|[!-~])")
 _VERSION = re.compile(r"(\d+)\.(\d+)")
+# A ``capture-pane -L -F`` line: relative line number, flags, the row.
+_ROW = re.compile(rb"(-?\d+) (\S+) (.*)", re.S)
 
 _PANE_FIELDS = (
     "pane_id",
@@ -116,15 +127,6 @@ _PANE_FIELDS = (
     "cursor_shape",
     "cursor_blinking",
     "alternate_on",
-    "alternate_saved_x",
-    "alternate_saved_y",
-    "keypad_cursor_flag",
-    "keypad_flag",
-    "insert_flag",
-    "wrap_flag",
-    "origin_flag",
-    "scroll_region_upper",
-    "scroll_region_lower",
     "mouse_standard_flag",
     "mouse_button_flag",
     "mouse_all_flag",
@@ -203,13 +205,12 @@ async def binary_version() -> str:
     return (await run_tmux(["-V"]) or "").strip()
 
 
-# -- snapshot ---------------------------------------------------------------------
+# -- the grid ---------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class PaneModes:
-    """A pane's state as tmux reports it, enough to put a fresh parser in the
-    same modes."""
+    """A pane's state as tmux reports it."""
 
     values: dict[str, str]
 
@@ -243,113 +244,78 @@ class PaneModes:
         return self.num("pane_height", 24)
 
     @property
-    def pending_wrap(self) -> bool:
-        """The cursor sits past the last column: the next character wraps.
-        tmux reports that as ``cursor_x == pane_width``."""
-        return self.flag("wrap_flag") and self.num("cursor_x") >= self.cols
+    def added(self) -> int:
+        return self.num("history_added")
+
+    def state(self) -> dict:
+        """What the page needs besides the rows."""
+        return {
+            "pane": self.pane,
+            "cols": self.cols,
+            "rows": self.rows,
+            "cursor": {
+                "x": min(self.num("cursor_x"), self.cols - 1),
+                "y": self.num("cursor_y"),
+                "visible": self.flag("cursor_flag"),
+                "shape": self.values.get("cursor_shape", "default"),
+                "blink": self.flag("cursor_blinking"),
+            },
+            "alternate": self.flag("alternate_on"),
+            "mouse": {
+                "standard": self.flag("mouse_standard_flag"),
+                "button": self.flag("mouse_button_flag"),
+                "all": self.flag("mouse_all_flag"),
+                "sgr": self.flag("mouse_sgr_flag"),
+                "utf8": self.flag("mouse_utf8_flag"),
+            },
+            "history": {
+                "added": self.added,
+                "collected": self.num("history_collected"),
+                "generation": self.num("history_generation"),
+            },
+        }
 
 
-_CURSOR_STYLES = {"block": 1, "underline": 3, "bar": 5}
+@dataclass(frozen=True)
+class Row:
+    """One row of a pane's grid. ``number`` counts from the pane's first row
+    ever (history rows below ``history_added``, the screen from it on);
+    ``wrapped``: the row continues on the next one."""
+
+    number: int
+    wrapped: bool
+    data: bytes
 
 
-def _cup(row: int, col: int) -> bytes:
-    return b"\x1b[%d;%dH" % (row + 1, col + 1)
+def parse_rows(lines: Sequence[bytes], added: int) -> list[Row]:
+    """Rows of a ``capture-pane -p -e -N -L -F`` reply. ``added`` is the
+    pane's ``history_added`` read in the same command line, which turns the
+    relative line numbers into absolute ones."""
+    rows = []
+    for line in lines:
+        m = _ROW.fullmatch(line)
+        if m is None:
+            continue
+        rows.append(Row(added + int(m.group(1)), b"W" in m.group(2), m.group(3)))
+    return rows
 
 
-def mode_sequences(modes: PaneModes, cursor_row: bytes | None = None) -> bytes:
-    """Escape sequences that put a reset parser in the pane's modes and place
-    the cursor. The scroll region and origin mode come first (both move the
-    cursor home), the cursor next, insert mode only after the cursor row may
-    have been rewritten. With a pending wrap, ``cursor_row`` (that row exactly,
-    ``capture-pane -e -N``) is written again from column 0, which leaves the
-    parser in the same pending-wrap state."""
-    out = bytearray()
-    rows = modes.rows
-    upper = modes.num("scroll_region_upper", 0)
-    lower = modes.num("scroll_region_lower", rows - 1)
-    if (upper, lower) != (0, rows - 1) and 0 <= upper < lower < rows:
-        out += b"\x1b[%d;%dr" % (upper + 1, lower + 1)
-    if modes.flag("origin_flag"):
-        out += b"\x1b[?6h"
-    if not modes.flag("wrap_flag"):
-        out += b"\x1b[?7l"
-    row = modes.num("cursor_y")
-    if modes.flag("origin_flag"):
-        row -= upper
-    if modes.pending_wrap and cursor_row is not None:
-        out += _cup(row, 0) + cursor_row
-    else:
-        out += _cup(row, min(modes.num("cursor_x"), modes.cols - 1))
-    if modes.flag("insert_flag"):
-        out += b"\x1b[4h"
-    if modes.flag("keypad_cursor_flag"):
-        out += b"\x1b[?1h"
-    if modes.flag("keypad_flag"):
-        out += b"\x1b="
-    for name, mode in (
-        ("mouse_standard_flag", 1000),
-        ("mouse_button_flag", 1002),
-        ("mouse_all_flag", 1003),
-        ("mouse_utf8_flag", 1005),
-        ("mouse_sgr_flag", 1006),
-    ):
-        if modes.flag(name):
-            out += b"\x1b[?%dh" % mode
-    if modes.flag("bracket_paste_flag"):
-        out += b"\x1b[?2004h"
-    style = _CURSOR_STYLES.get(modes.values.get("cursor_shape", ""))
-    if style is not None:
-        out += b"\x1b[%d q" % (style if modes.flag("cursor_blinking") else style + 1)
-    if not modes.flag("cursor_flag"):
-        out += b"\x1b[?25l"
-    return bytes(out)
+def capture(target: str, start: int, end: int | str) -> str:
+    """The capture command for relative lines ``start``..``end``."""
+    return f"capture-pane -p -e -N -L -F -S {start} -E {end} -t {target}"
 
 
-def build_replay(
-    modes: PaneModes,
-    lines: Sequence[bytes],
-    alt_screen: Sequence[bytes] | None = None,
-    *,
-    cursor_row: bytes | None = None,
-) -> bytes:
-    """The bytes that rebuild a pane in a reset parser of its size.
-
-    ``lines`` are the main screen's history and its visible rows, captured
-    with ``-J`` (soft wraps joined, the parser wraps them again at the same
-    width): written one per line, so the visible rows land on the screen and
-    the rest scrolls into the parser's history. Each row is written whole: the
-    cursor may sit at column 0 of a row already written (after a carriage
-    return), so the cursor is placed afterwards, never by truncating.
-
-    With the alternate screen on, ``alt_screen`` holds its rows (row-exact):
-    the main screen is written first with the saved cursor, the alternate
-    screen entered, its rows drawn in place. Then the modes and the cursor
-    (``mode_sequences``). The bridge then appends the state tmux does not
-    report (``StreamState.restore``: rendition, charsets, an unfinished UTF-8
-    character) and the escape sequence cut in the middle (``capture-pane
-    -P``), in that order, so the live bytes complete it.
-    """
-    # capture-pane -e writes line-drawing cells between SO and SI: G1 is the
-    # DEC graphics set while the captured rows are written (``state`` puts
-    # the program's own charsets back afterwards).
-    out = bytearray(b"\x1b)0")
-    out += b"\r\n".join(line + b"\x1b[0m" for line in lines)
-    if alt_screen is not None:
-        out += _cup(modes.num("alternate_saved_y"), modes.num("alternate_saved_x"))
-        out += b"\x1b[?1049h\x1b[H\x1b[2J"
-        for row, line in enumerate(alt_screen[: modes.rows]):
-            out += _cup(row, 0) + line + b"\x1b[0m"
-    out += mode_sequences(modes, cursor_row)
-    return bytes(out)
-
-
-def _frame(kind: int, header: dict, body: bytes) -> bytes:
+def _frame(kind: int, header: dict, rows: Sequence[bytes]) -> bytes:
     return (
         bytes([kind])
         + json.dumps(header, separators=(",", ":")).encode()
         + b"\x00"
-        + body
+        + b"\n".join(rows)
     )
+
+
+def _flags(rows: Sequence[Row]) -> str:
+    return "".join("1" if r.wrapped else "0" for r in rows)
 
 
 # -- the outbox -----------------------------------------------------------------------
@@ -357,13 +323,9 @@ def _frame(kind: int, header: dict, body: bytes) -> bytes:
 
 @dataclass
 class _Frame:
-    data: bytes | bytearray
+    data: bytes
     text: bool = False
     on_sent: Callable[[], None] | None = None
-
-    @property
-    def is_output(self) -> bool:
-        return not self.text and self.data[:1] == b"\x01"
 
 
 @dataclass
@@ -385,11 +347,6 @@ class _Outbox:
         self.frames.append(frame)
         self.queued += len(frame.data)
         self.wake.set()
-
-    def drop_output(self) -> None:
-        kept = deque(f for f in self.frames if not f.is_output)
-        self.frames = kept
-        self.queued = sum(len(f.data) for f in kept)
 
 
 class _PageSocket:
@@ -436,30 +393,35 @@ class NativeBridge:
     def __init__(self, websocket: WebSocket, tmux: Sequence[str] = ("tmux",)) -> None:
         self.ws = websocket
         self.tmux = list(tmux)
-        self.client = ControlClient(self._on_output, self._on_notification)
+        self.client = ControlClient(
+            self._on_output, self._on_notification, decode_output=False
+        )
         self.report = classic.SessionReportState()
         self.page_socket = _PageSocket(self)
         self.out = _Outbox()
         self.shown: _Shown | None = None
-        self.pane = ""
         self.windows_sent: list | None = None
         self.session_queued: board_sweep.ClientSession | None = None
-        self.states: dict[str, StreamState] = {}
-        self.session_id = ""
-        self.overflow = False
-        self.resync_wanted = False
-        self.snapshotting = False
-        self.held: list[tuple[int, bytes]] = []
-        self.held_bytes = 0
-        self.spoiled = False
-        self.dirty = asyncio.Event()
+        # The displayed pane and what the page has of it.
+        self.pane = ""
+        self.reset_due = True  # the page must start this pane afresh
+        self.sent_next = 0  # the next history row the page lacks
+        self.added_seen = 0  # history_added at the last update
+        # Rows that scrolled in between two updates, last time: the margin a
+        # capture aims with, since its range is relative to the screen top.
+        self.scrolled = 0
+        self.generation: int | None = None
+        self.last_screen: tuple | None = None
+        self.dirty = asyncio.Event()  # the pane wrote, or its view changed
+        self.room = asyncio.Event()  # the page acknowledged enough
+        self.room.set()
+        self.state_dirty = asyncio.Event()  # session / windows may have changed
         self.prefixes: set[str] = set()
         self.closing = False
         self._tasks: list[asyncio.Task] = []
-        self._snapshot_lock = asyncio.Lock()
-        self._input_lock = asyncio.Lock()
-        self._resync: asyncio.Task | None = None
         self._side: set[asyncio.Task] = set()
+        self._input_lock = asyncio.Lock()
+        self._grid_lock = asyncio.Lock()
 
     # -- attach and teardown ----------------------------------------------------
 
@@ -500,15 +462,6 @@ class NativeBridge:
         }
         # Window list changes and agent-state pills come as notifications.
         await self.client.command("refresh-client -B 'merlin-state:@*:#{@agent_state}'")
-        await self._register_panes()
-
-    async def _register_panes(self) -> None:
-        """Panes that existed before this client saw their output: their
-        rendition is not known until their next reset."""
-        (panes,) = await self.client.command("list-panes -s -F '#{pane_id}'")
-        if panes.ok:
-            for pane in panes.text():
-                self.states.setdefault(pane, StreamState(known=False))
 
     async def run(self) -> None:
         self.report.agent = classic.short_agent(self.ws.headers.get("user-agent", ""))
@@ -518,10 +471,11 @@ class NativeBridge:
         self._tasks = [
             asyncio.create_task(self._sender()),
             asyncio.create_task(self._syncer()),
+            asyncio.create_task(self._updater()),
             asyncio.create_task(self._receiver()),
             asyncio.create_task(self.client.exited.wait()),
         ]
-        self.dirty.set()
+        self.state_dirty.set()
         try:
             await asyncio.wait(self._tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
@@ -533,8 +487,6 @@ class NativeBridge:
         if self.report.sender is not None:
             self.report.sender.cancel()
         tasks = [*self._tasks, *self._side]
-        if self._resync is not None:
-            tasks.append(self._resync)
         current = asyncio.current_task()
         for task in tasks:
             if task is not current:
@@ -563,101 +515,9 @@ class NativeBridge:
 
     # -- tmux to page -------------------------------------------------------------
 
-    def _state(self, pane: str) -> StreamState:
-        state = self.states.get(pane)
-        if state is None:
-            # First output of a pane created while attached: known from birth.
-            state = self.states[pane] = StreamState(known=True)
-        return state
-
-    def _on_output(self, pane: str, data: bytes) -> None:
-        if pane != self.pane:
-            self._state(pane).feed(data)
-            return
-        if self.snapshotting:
-            if self.spoiled or self.held_bytes + len(data) > HELD_MAX:
-                # Too much arrived during the capture: this snapshot will be
-                # discarded and retried, so keep the stream state exact now.
-                if not self.spoiled:
-                    self.spoiled = True
-                    for _, chunk in self.held:
-                        self._state(pane).feed(chunk)
-                    self.held, self.held_bytes = [], 0
-                self._state(pane).feed(data)
-                return
-            self.held.append((self.client.seq, data))
-            self.held_bytes += len(data)
-            return
-        self._state(pane).feed(data)
-        if self.overflow:
-            return
-        self._forward(data)
-
-    def _forward(self, data: bytes) -> None:
-        if self.out.unacked() + len(data) > HIGH_WATER:
-            # The page is behind: stop forwarding, drop until it catches up,
-            # then resynchronise with a snapshot.
-            self.overflow = True
-            self.out.drop_output()
-            self._maybe_recover()
-            return
-        prefix = bytes([FRAME_OUTPUT]) + self.pane.encode() + b"\x00"
-        frames = self.out.frames
-        last = frames[-1] if frames else None
-        if (
-            last is not None
-            and isinstance(last.data, bytearray)
-            and last.data.startswith(prefix)
-            and len(last.data) + len(data) <= FRAME_MAX
-        ):
-            last.data += data
-            self.out.queued += len(data)
-            self.out.wake.set()
-        else:
-            self.out.push(_Frame(bytearray(prefix + data)))
-
-    def _maybe_recover(self) -> None:
-        """Start a fresh snapshot when the page needs one (after an overflow,
-        or a snapshot that had to wait or was spoiled) and there is room."""
-        if not (self.overflow or self.resync_wanted) or not self.pane:
-            return
-        if self.snapshotting or (self._resync is not None and not self._resync.done()):
-            return
-        if self.out.unacked() > LOW_WATER:
-            return
-        self._resync = asyncio.create_task(self._resnapshot())
-
-    async def _resnapshot(self) -> None:
-        """Snapshot until the page has a current view, while there is room.
-        A capture spoiled by a flood is retried after a short pause."""
-        while (
-            (self.overflow or self.resync_wanted)
-            and self.pane
-            and self.out.unacked() <= LOW_WATER
-        ):
-            try:
-                await self.snapshot(self.pane)
-            except ControlError:
-                return
-            if self.overflow or self.resync_wanted:
-                await asyncio.sleep(0.05)
-
-    def push_control(
-        self, payload: dict, on_sent: Callable[[], None] | None = None
-    ) -> bool:
-        return self.push_control_text("\x00" + json.dumps(payload), on_sent)
-
-    def push_control_text(
-        self, text: str, on_sent: Callable[[], None] | None = None
-    ) -> bool:
-        """Queue a control frame. A page so far behind that even control
-        frames pile up is closed (it reconnects); False then."""
-        data = text.encode("utf-8")
-        if self.out.unacked() + len(data) > HARD_LIMIT:
-            self._spawn(self.close_socket(CLOSE_STALLED, "page stopped reading"))
-            return False
-        self.out.push(_Frame(data, text=True, on_sent=on_sent))
-        return True
+    def _on_output(self, pane: str, _data: bytes) -> None:
+        if pane == self.pane:
+            self.dirty.set()
 
     def _on_notification(self, name: str, rest: bytes) -> None:
         if name == "exit":
@@ -675,22 +535,24 @@ class NativeBridge:
             "subscription-changed",
             "session-renamed",
         ):
-            self.dirty.set()
+            self.state_dirty.set()
         elif name == "sessions-changed":
             self.push_control({"type": "sessions-changed"})
-        elif name == "paste-buffer-changed" and rest == CLIPBOARD_BUFFER.encode():
-            self._spawn(self._send_clipboard())
+        elif name == "paste-buffer-changed" and (
+            rest == CLIPBOARD_BUFFER.encode() or rest.startswith(b"buffer")
+        ):
+            # merlin-clip's buffer, or one tmux made from a program's OSC 52
+            # (set-clipboard on) or a copy: the page's clipboard.
+            self._spawn(self._send_clipboard(rest.decode("utf-8", "replace")))
 
-    async def _send_clipboard(self) -> None:
-        """``merlin-clip copy`` stores its text in a named paste buffer (see
-        ``bin/merlin-clip``): hand it to the page, exactly (``save-buffer``
-        to a private file, since a reply block cannot carry a final
-        newline)."""
+    async def _send_clipboard(self, name: str) -> None:
+        """Hand a paste buffer to the page, exactly (``save-buffer`` to a
+        private file: a reply block cannot carry a final newline)."""
         fd, path = tempfile.mkstemp(prefix="merlin-clip-")
         os.close(fd)
         try:
             (saved,) = await self.client.command(
-                f"save-buffer -b {CLIPBOARD_BUFFER} {quote(path)}"
+                f"save-buffer -b {quote(name)} {quote(path)}"
             )
             if not saved.ok:
                 return
@@ -707,6 +569,44 @@ class NativeBridge:
             with contextlib.suppress(OSError):
                 os.unlink(path)
 
+    # -- admission ------------------------------------------------------------------
+
+    def ack(self, total: int) -> None:
+        """The page has handled the first ``total`` bytes of frames sent on
+        this socket."""
+        if total > self.out.acked:
+            self.out.acked = min(total, self.out.sent)
+        if self.out.unacked() <= LOW_WATER:
+            self.room.set()
+
+    def admit(self, size: int) -> bool:
+        """Whether a frame of ``size`` bytes may join the window now: under
+        HIGH_WATER, or alone when nothing is outstanding."""
+        unacked = self.out.unacked()
+        if unacked == 0 or unacked + size <= HIGH_WATER:
+            return True
+        self.room.clear()
+        return False
+
+    def push_control(
+        self, payload: dict, on_sent: Callable[[], None] | None = None
+    ) -> bool:
+        return self.push_control_text("\x00" + json.dumps(payload), on_sent)
+
+    def push_control_text(
+        self, text: str, on_sent: Callable[[], None] | None = None
+    ) -> bool:
+        """Queue a control frame. A page so far behind that even control
+        frames pile up is closed (it reconnects); False then."""
+        return self._push(_Frame(text.encode("utf-8"), text=True, on_sent=on_sent))
+
+    def _push(self, frame: _Frame) -> bool:
+        if self.out.unacked() + len(frame.data) > HARD_LIMIT:
+            self._spawn(self.close_socket(CLOSE_STALLED, "page stopped reading"))
+            return False
+        self.out.push(frame)
+        return True
+
     async def _sender(self) -> None:
         while True:
             await self.out.wake.wait()
@@ -717,24 +617,24 @@ class NativeBridge:
                 self.out.queued -= size
                 self.out.sent += size
                 if frame.text:
-                    send = self.ws.send_text(bytes(frame.data).decode("utf-8"))
+                    send = self.ws.send_text(frame.data.decode("utf-8"))
                 else:
-                    send = self.ws.send_bytes(bytes(frame.data))
+                    send = self.ws.send_bytes(frame.data)
                 await asyncio.wait_for(send, SEND_TIMEOUT)
                 if frame.on_sent is not None:
                     frame.on_sent()
 
-    # -- state ---------------------------------------------------------------------
+    # -- the session and its windows -------------------------------------------------
 
     async def _syncer(self) -> None:
         """Bring the page in line with tmux whenever a notification says
-        something may have changed: the session frame, the window strip, and a
-        snapshot when the displayed pane or its size changed."""
+        something may have changed: the session frame, the window strip, and
+        the displayed pane."""
         while True:
-            await self.dirty.wait()
+            await self.state_dirty.wait()
             # Coalesce a burst of notifications into one read.
             await asyncio.sleep(0.02)
-            self.dirty.clear()
+            self.state_dirty.clear()
             try:
                 await self.sync()
             except ControlError:
@@ -749,9 +649,6 @@ class NativeBridge:
         shown = _parse_shown(current.text()[0])
         if shown is None:
             return
-        if shown.session.session_id != self.session_id:
-            self.session_id = shown.session.session_id
-            await self._register_panes()
         self._report_session(shown.session)
         if windows.ok:
             rows = [_parse_window(line) for line in windows.text()]
@@ -767,12 +664,17 @@ class NativeBridge:
                 )
         previous = self.shown
         self.shown = shown
-        if (
-            previous is None
-            or previous.pane != shown.pane
-            or (previous.cols, previous.rows) != (shown.cols, shown.rows)
-        ):
-            await self.snapshot(shown.pane)
+        if previous is None or previous.pane != shown.pane:
+            self.show(shown.pane)
+        elif (previous.cols, previous.rows) != (shown.cols, shown.rows):
+            self.dirty.set()
+
+    def show(self, pane: str) -> None:
+        """Display ``pane``: the page starts it afresh at the next update."""
+        self.pane = pane
+        self.reset_due = True
+        self.last_screen = None
+        self.dirty.set()
 
     def _report_session(self, current: board_sweep.ClientSession) -> None:
         """The classic ``session`` control frame, through the outbox. What the
@@ -798,149 +700,218 @@ class NativeBridge:
             on_sent=sent,
         )
 
-    async def snapshot(self, pane: str) -> None:
-        """Send ``pane``'s state, then its live stream from where the capture
-        left off. Waits for room in the window: a page that is behind gets the
-        snapshot once it caught up (``_maybe_recover``)."""
-        async with self._snapshot_lock:
-            if self.pane != pane:
-                # Output of the old pane is no longer wanted; the new pane's
-                # output is dropped until its snapshot is sent.
-                self.out.drop_output()
-                self.pane = pane
-                self.overflow = True
-            if self.out.unacked() > LOW_WATER:
-                self.resync_wanted = True
-                return
-            self.snapshotting = True
-            self.spoiled = False
-            self.held, self.held_bytes = [], 0
-            try:
-                result = await self._capture(pane)
-            except ControlError:
-                self._end_snapshot(pane, None)
-                raise
-            self._end_snapshot(pane, result)
+    # -- the grid ----------------------------------------------------------------------
 
-    def _end_snapshot(
-        self, pane: str, result: tuple[bytes, bytes, dict, int] | None
-    ) -> None:
-        held, self.held, self.held_bytes = self.held, [], 0
-        self.snapshotting = False
-        state = self._state(pane)
-        if result is None or self.spoiled or self.pane != pane:
-            for _, chunk in held:
-                state.feed(chunk)
-            self.spoiled = False
-            if self.pane == pane:
-                # The page's view is stale until a snapshot gets through.
-                self.overflow = True
-                self.resync_wanted = True
-            self._maybe_recover()
-            return
-        replay, pending, header, seq = result
-        before = [chunk for number, chunk in held if number <= seq]
-        after = [chunk for number, chunk in held if number > seq]
-        for chunk in before:
-            state.feed(chunk)
-        # The unreported state, then the escape sequence cut in the middle,
-        # which the live bytes complete.
-        replay += state.restore() + pending
-        # Everything queued for this pane is older than the capture.
-        self.out.drop_output()
-        self.out.push(_Frame(_frame(FRAME_SNAPSHOT, header, replay)))
-        self.overflow = False
-        self.resync_wanted = False
-        for chunk in after:
-            state.feed(chunk)
-            if not self.overflow:
-                self._forward(chunk)
-
-    async def _capture(self, pane: str) -> tuple[bytes, bytes, dict, int] | None:
-        """The snapshot of ``pane`` (replay bytes without the stream state,
-        header, reply seq), at most SNAPSHOT_MAX: history rows are halved
-        until it fits."""
-        history = INITIAL_HISTORY
+    async def _updater(self) -> None:
+        """Mirror the displayed pane: when it changed and the page has room,
+        at most every UPDATE_INTERVAL."""
+        last = 0.0
         while True:
-            result = await self._capture_once(pane, history)
-            if result is None or len(result[0]) <= SNAPSHOT_MAX or history == 0:
-                return result
-            # Too big: the output since the first try is held, so the next
-            # capture's seq still splits it exactly.
-            history //= 4
+            await self.dirty.wait()
+            await self.room.wait()
+            wait = last + UPDATE_INTERVAL - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self.dirty.clear()
+            try:
+                await self.update()
+            except ControlError:
+                return
+            last = time.monotonic()
 
-    async def _capture_once(
-        self, pane: str, history: int
-    ) -> tuple[bytes, bytes, dict, int] | None:
-        t = f"-t {pane}"
-        start = f"-S -{history}" if history else "-S 0"
-        main = await self.client.command(
-            f"display -p {t} {quote(_PANE_FMT)}",
-            f"capture-pane -p -e -J {start} -E - {t}",
-            f"capture-pane -p -e -N {t}",
-            f"capture-pane -p -P {t}",
-        )
-        modes = (
-            PaneModes.parse(main[0].text()[0]) if main[0].ok and main[0].lines else None
-        )
-        if modes is None or not all(r.ok for r in main):
-            return None
-        if modes.flag("alternate_on"):
-            # The main screen is saved aside (-a); the visible rows are the
-            # alternate screen's. The history range is asked for only when
-            # there is one: an empty range answers the first visible row.
-            rows = min(history, modes.num("history_size"))
-            hist = (
-                f"capture-pane -p -e -J -S -{rows} -E -1 {t}"
-                if rows
-                else "display -p ''"
+    async def update(self) -> None:
+        """One update of the displayed pane: its state, the history rows the
+        page lacks (up to a batch), and its screen, read in one command line."""
+        pane = self.pane
+        if not pane:
+            return
+        async with self._grid_lock:
+            reset = self.reset_due
+            commands = [f"display -p -t {pane} {quote(_PANE_FMT)}"]
+            if reset:
+                # The last INITIAL_HISTORY rows (tmux clamps to what exists).
+                commands.append(capture(pane, -INITIAL_HISTORY, -1))
+            elif self.added_seen > self.sent_next or self.scrolled:
+                # From the row before the first one the page lacks (the
+                # overlap row), aimed with the last known history_added and a
+                # margin for the rows that scroll in meanwhile; the row
+                # numbers say what was really captured, extra rows are dropped.
+                margin = 2 * self.scrolled + 8
+                start = -(self.added_seen - self.sent_next + 1) - margin
+                end = min(-1, start + ROWS_PER_CAPTURE + margin)
+                commands.append(capture(pane, start, end))
+            commands.append(capture(pane, -1, "-"))
+            replies = await self.client.command(*commands)
+            if pane != self.pane:
+                return  # the page moved on meanwhile
+            if not all(r.ok for r in replies) or not replies[0].lines:
+                return
+            modes = PaneModes.parse(replies[0].text()[0])
+            if modes is None:
+                return
+            added = modes.added
+            collected = modes.num("history_collected")
+            generation = modes.num("history_generation")
+            self.scrolled = max(0, added - self.added_seen) if not reset else 0
+            if not reset and generation != self.generation:
+                # Cleared or reflowed (a resize): what the page has is stale.
+                self.reset_due = True
+                self.dirty.set()
+                return
+            history_rows = (
+                parse_rows(replies[1].lines, added) if len(replies) == 3 else []
             )
-            alt = await self.client.command(
-                f"display -p {t} {quote(_PANE_FMT)}",
-                hist,
-                f"capture-pane -p -e -J -a {t}",
-                f"capture-pane -p -e -N {t}",
-                f"capture-pane -p -P {t}",
+            screen_all = parse_rows(replies[-1].lines, added)
+            overlap = next((r for r in screen_all if r.number == added - 1), None)
+            screen = [r for r in screen_all if added <= r.number < added + modes.rows]
+            # Nothing about what the page has changes until the frame is in
+            # the outbox: a frame that is not admitted leaves it all due.
+            gap = 0
+            cont = False
+            next_row = self.sent_next
+            if reset:
+                rows = [r for r in history_rows if r.number < added]
+                start_row = rows[0].number if rows else added
+            else:
+                if next_row < collected:
+                    # tmux dropped rows the page never got (its history
+                    # limit): say so, and carry on from what is left.
+                    gap = collected - next_row
+                    next_row = collected
+                before = [r for r in history_rows if r.number == next_row - 1]
+                rows = [r for r in history_rows if next_row <= r.number < added]
+                if next_row < added and (not rows or rows[0].number != next_row):
+                    # Output scrolled more rows than aimed for since the last
+                    # update: none sent now, the next try is aimed with the
+                    # history_added just read.
+                    rows = []
+                    self.added_seen = added
+                    self.dirty.set()
+                cont = bool(before and before[0].wrapped and rows)
+                start_row = next_row
+            # A batch at most HISTORY_BYTES_MAX, cut at any row (each carries
+            # its own wrap flag); the rest goes in the next update.
+            total = 0
+            for i, r in enumerate(rows):
+                total += len(r.data) + 1
+                if total > HISTORY_BYTES_MAX and i > 0:
+                    rows = rows[:i]
+                    self.dirty.set()
+                    break
+            state = modes.state()
+            screen_key = (
+                tuple(r.data for r in screen),
+                _flags(screen),
+                json.dumps(state, sort_keys=True),
             )
-            alt_modes = (
-                PaneModes.parse(alt[0].text()[0])
-                if alt[0].ok and alt[0].lines
-                else None
+            if not reset and not rows and not gap and screen_key == self.last_screen:
+                self.added_seen = max(self.added_seen, added)
+                return
+            header = {
+                **state,
+                "reset": reset,
+                "hist": {
+                    "start": start_row,
+                    "count": len(rows),
+                    "wrapped": _flags(rows),
+                    "cont": cont,
+                    "gap": gap,
+                },
+                "screen": {
+                    "wrapped": _flags(screen),
+                    "cont": bool(overlap and overlap.wrapped),
+                },
+            }
+            frame = _frame(FRAME_UPDATE, header, [r.data for r in rows + screen])
+            if not self.admit(len(frame)):
+                # No room: nothing sent, everything still in tmux; the next
+                # update runs once the page acknowledged enough.
+                self.dirty.set()
+                return
+            if not self._push(_Frame(frame)):
+                return
+            self.reset_due = False
+            self.generation = generation
+            if rows:
+                self.sent_next = rows[-1].number + 1
+            elif reset:
+                self.sent_next = added
+            else:
+                self.sent_next = next_row
+            self.added_seen = max(added, self.sent_next)
+            self.last_screen = screen_key
+            if self.sent_next < added:
+                # More history is due than one capture holds.
+                self.dirty.set()
+
+    async def history(self, pane: str, end: int, count: int) -> None:
+        """Rows ``[end - count, end)`` of ``pane``'s history by absolute
+        number, at most HISTORY_BYTES_MAX (the newest of them kept). A page
+        that is behind gets ``busy`` and asks again later."""
+        if not _PANE_ID.fullmatch(pane) or count <= 0:
+            return
+        count = min(count, HISTORY_PAGE_MAX)
+        if not self.admit(4096):
+            self._send_history(pane, end, end, [], None, busy=True)
+            return
+        estimate = max(self.added_seen, end)
+        margin = 2 * self.scrolled + 8
+        wanted: list[Row] = []
+        generation = None
+        for _ in range(4):
+            start = max(0, end - count)
+            first = -(estimate - start) - margin
+            last = min(-1, -(estimate - end) - 1)
+            info, reply = await self.client.command(
+                f"display -p -t {pane} "
+                "'#{history_added}\t#{history_collected}\t#{history_generation}'",
+                capture(pane, first, last),
             )
-            if alt_modes is None:
-                return None
-            if not all(r.ok for r in alt):
-                # The program left the alternate screen in between.
-                return await self._capture_once(pane, history)
-            modes, replies = alt_modes, alt
-            lines = (alt[1].lines if rows else []) + alt[2].lines
-            screen = alt[3].lines
-            pending = _pending(alt[4])
-            replay = build_replay(
-                modes, lines, screen, cursor_row=_row(screen, modes.num("cursor_y"))
-            )
+            if not info.ok or not reply.ok or not info.lines:
+                return
+            added, collected, generation = (int(x) for x in info.text()[0].split("\t"))
+            start = max(start, collected)
+            wanted = [
+                r for r in parse_rows(reply.lines, added) if start <= r.number < end
+            ]
+            if end <= start or (
+                wanted and wanted[0].number == start and wanted[-1].number == end - 1
+            ):
+                break
+            margin = 2 * max(0, added - estimate) + 8
+            estimate = added  # the pane scrolled meanwhile: aim again
         else:
-            replies = main
-            pending = _pending(main[3])
-            replay = build_replay(
-                modes,
-                main[1].lines,
-                None,
-                cursor_row=_row(main[2].lines, modes.num("cursor_y")),
-            )
-        header = {
+            return
+        total = 0
+        for i, r in enumerate(reversed(wanted)):
+            total += len(r.data) + 1
+            if total > HISTORY_BYTES_MAX and i > 0:
+                wanted = wanted[len(wanted) - i :]
+                break
+        self._send_history(
+            pane, wanted[0].number if wanted else end, end, wanted, generation
+        )
+
+    def _send_history(
+        self,
+        pane: str,
+        start: int,
+        end: int,
+        rows: list[Row],
+        generation: int | None,
+        *,
+        busy: bool = False,
+    ) -> None:
+        header: dict = {
             "pane": pane,
-            "cols": modes.cols,
-            "rows": modes.rows,
-            "alternate": modes.flag("alternate_on"),
-            "history": {
-                "added": modes.num("history_added"),
-                "collected": modes.num("history_collected"),
-                "generation": modes.num("history_generation"),
-                "size": modes.num("history_size"),
-            },
+            "start": start,
+            "end": end,
+            "generation": generation,
+            "wrapped": _flags(rows),
         }
-        return replay, pending, header, replies[0].seq
+        if busy:
+            header["busy"] = True
+        self._push(_Frame(_frame(FRAME_HISTORY, header, [r.data for r in rows])))
 
     # -- page to tmux -------------------------------------------------------------
 
@@ -984,6 +955,10 @@ class NativeBridge:
                     int(msg.get("end", 0)),
                     int(msg.get("count", 0)),
                 )
+            elif kind == "resync":
+                # The page lost its view: start the pane afresh.
+                if self.pane:
+                    self.show(self.pane)
             elif kind == "visibility":
                 self.report.visible = bool(msg.get("visible", True))
                 self.report.focused = bool(msg.get("focused", True))
@@ -995,13 +970,6 @@ class NativeBridge:
             return
         except ControlError as e:
             logger.info("Native terminal command failed: %s", e)
-
-    def ack(self, total: int) -> None:
-        """The page has handled the first ``total`` bytes of frames sent on
-        this socket."""
-        if total > self.out.acked:
-            self.out.acked = min(total, self.out.sent)
-        self._maybe_recover()
 
     async def send_input(self, pane: str, data: str) -> None:
         if not _PANE_ID.fullmatch(pane) or not data:
@@ -1041,17 +1009,18 @@ class NativeBridge:
     async def send_key(self, pane: str, key: str) -> None:
         if not _PANE_ID.fullmatch(pane) or not _KEY_NAME.fullmatch(key):
             return
+        name = quote(key)
         async with self._input_lock:
             table, bound = await self.client.command(
-                "display -p '#{client_key_table}'", f"list-keys -T root {key}"
+                "display -p '#{client_key_table}'", f"list-keys -T root {name}"
             )
             in_table = table.ok and table.text() not in ([], ["root"])
             if in_table or bound.ok or key in self.prefixes:
                 # As if typed: the binding (or the prefix) runs, on this
                 # client and its current pane.
-                await self.client.command(f"send-keys -K {key}")
+                await self.client.command(f"send-keys -K {name}")
             else:
-                await self.client.command(f"send-keys -t {pane} {key}")
+                await self.client.command(f"send-keys -t {pane} {name}")
 
     async def switch(self, target: str) -> None:
         if not target or "\n" in target:
@@ -1062,70 +1031,6 @@ class NativeBridge:
             # hooks even when the window is already current.
             await self.client.command(f"select-window -t {quote(target)}")
         await self.sync()
-
-    async def history(self, pane: str, end: int, count: int) -> None:
-        """Rows ``[end - count, end)`` of ``pane``'s history, numbered from
-        the pane's first line ever (``history_added`` counts them), at most
-        HISTORY_BYTES_MAX (the count is halved until it fits). A page that is
-        behind gets ``busy`` and asks again later."""
-        if not _PANE_ID.fullmatch(pane) or count <= 0:
-            return
-        count = min(count, HISTORY_PAGE_MAX)
-        if self.out.unacked() > LOW_WATER:
-            self._send_history(pane, end, end, b"", None, busy=True)
-            return
-        while True:
-            (head,) = await self.client.command(
-                f"display -p -t {pane} '#{{history_added}}\t#{{history_collected}}'"
-            )
-            if not head.ok or not head.lines:
-                return
-            added, collected = (int(x) for x in head.text()[0].split("\t"))
-            stop = min(end, added)
-            start = max(stop - count, collected)
-            if start >= stop:
-                self._send_history(pane, start, start, b"", None)
-                return
-            info, lines = await self.client.command(
-                f"display -p -t {pane} '#{{history_added}}\t#{{history_generation}}'",
-                f"capture-pane -p -e -J -S -{added - start} -E -{added - stop + 1} -t {pane}",
-            )
-            if not info.ok or not lines.ok:
-                return
-            body = b"\r\n".join(lines.lines)
-            if len(body) > HISTORY_BYTES_MAX and count > 1:
-                count //= 2
-                continue
-            added_now, generation = (int(x) for x in info.text()[0].split("\t"))
-            # Output may have scrolled more rows in between: the offsets were
-            # relative to ``added``, so the rows captured moved by the
-            # difference.
-            shift = added_now - added
-            self._send_history(pane, start + shift, stop + shift, body, generation)
-            return
-
-    def _send_history(
-        self,
-        pane: str,
-        start: int,
-        end: int,
-        body: bytes,
-        generation: int | None,
-        *,
-        busy: bool = False,
-    ) -> None:
-        header = {"pane": pane, "start": start, "end": end, "generation": generation}
-        if busy:
-            header["busy"] = True
-        self.out.push(_Frame(_frame(FRAME_HISTORY, header, body)))
-
-
-def _pending(reply: Reply) -> bytes:
-    return b"\n".join(reply.lines) if reply.ok else b""
-
-
-def _row(lines: list[bytes], row: int) -> bytes | None:
-    return lines[row] if 0 <= row < len(lines) else None
 
 
 def _parse_shown(line: str) -> _Shown | None:

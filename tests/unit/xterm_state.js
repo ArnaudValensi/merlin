@@ -1,19 +1,26 @@
-// The vendored xterm.js parser's state after a byte stream, for the native
-// terminal's differential tests (tests/unit/test_terminal_native.py): the
-// same parser the page uses, never open()ed, run by node.
+// The native terminal's differential checks (tests/unit/test_terminal_native.py),
+// run by node with the vendored xterm.js parser (never opened):
 //
-// stdin: {"cols": n, "rows": n, "streams": {"name": [base64 chunk, ...], ...}}
+// - "stream": the oracle, a parser fed a program's whole raw output;
+// - "frames": the page's model, built from the bridge's frames with the
+//   page's own decoder (terminal/static/native/core.js).
+//
+// Both come out in one shape: the screen rows (cells and wrap flag, tmux's
+// sense: the row continues on the next), the last history rows, the cursor and
+// whether the alternate screen is on.
+//
+// stdin:  {"cols": n, "rows": n, "history": k, "inputs": {"name": {"stream": [b64...]} | {"frames": [b64...]}}}
 // stdout: {"name": state, ...}
 const path = require('path');
 const { Terminal } = require(path.join(__dirname, '..', '..', 'static', 'vendor', 'xterm.min.js'));
+const Core = require(path.join(__dirname, '..', '..', 'terminal', 'static', 'native', 'core.js'));
 
 function cells(line, cols) {
   const out = [];
   const cell = line.getCell(0);
   for (let x = 0; x < cols; x++) {
     line.getCell(x, cell);
-    // A cell never written and a written space look and copy the same: a
-    // capture writes the spaces before text that a cursor move skipped.
+    // A cell never written and a written space look and copy the same.
     out.push([
       cell.getChars() || (cell.getWidth() === 1 ? ' ' : ''), cell.getWidth(),
       cell.getFgColorMode(), cell.getFgColor(), cell.getBgColorMode(), cell.getBgColor(),
@@ -24,44 +31,47 @@ function cells(line, cols) {
   return out;
 }
 
-function state(term) {
-  const core = term._core;
-  const buf = term.buffer.active;
-  const screen = (b) => {
-    const rows = [];
-    for (let y = 0; y < term.rows; y++) {
-      const line = b.getLine(b.baseY + y);
-      rows.push({ wrapped: line.isWrapped, cells: cells(line, term.cols) });
+async function stream(cols, rows, keep, chunks) {
+  const term = new Terminal({ cols, rows, scrollback: 100000, allowProposedApi: true });
+  for (const c of chunks) await new Promise((res) => term.write(Buffer.from(c, 'base64'), res));
+  const lines = (buf, from, to) => {
+    const out = [];
+    for (let y = from; y < to; y++) {
+      const next = buf.getLine(y + 1);
+      out.push({ cells: cells(buf.getLine(y), cols), wrapped: !!(next && next.isWrapped) });
     }
-    return rows;
+    return out;
   };
+  const active = term.buffer.active;
+  const normal = term.buffer.normal;
+  const core = term._core;
   return {
-    type: buf.type,
-    cursor: [core.buffer.x, core.buffer.y],
-    modes: term.modes,
-    cursorHidden: core.coreService.isCursorHidden,
-    active: screen(buf),
-    normal: screen(term.buffer.normal),
-    // Every line of the main buffer, history included.
-    text: (() => {
-      const b = term.buffer.normal; const out = [];
-      for (let y = 0; y < b.length; y++) out.push(b.getLine(y).translateToString(true));
-      return out;
-    })(),
-    recentHistory: (() => {
-      const b = term.buffer.normal; const out = [];
-      for (let y = Math.max(0, b.baseY - 5); y < b.baseY; y++) out.push(b.getLine(y).translateToString(true));
-      return out;
-    })(),
+    alternate: active.type === 'alternate',
+    screen: lines(active, active.baseY, active.baseY + rows),
+    history: lines(normal, Math.max(0, normal.baseY - keep), normal.baseY),
+    cursor: [Math.min(core.buffer.x, cols - 1), core.buffer.y],
   };
 }
 
-async function run(cols, rows, chunks) {
-  const term = new Terminal({ cols, rows, scrollback: 100000, allowProposedApi: true });
-  for (const c of chunks) {
-    await new Promise((res) => term.write(Buffer.from(c, 'base64'), res));
+function frames(cols, rows, keep, list) {
+  const decoder = new Terminal({ cols, rows: 1, scrollback: 10000, allowProposedApi: true });
+  let history = [];
+  let screen = [];
+  let cursor = [0, 0];
+  let alternate = false;
+  for (const b64 of list) {
+    const frame = Core.parseFrame(new Uint8Array(Buffer.from(b64, 'base64')));
+    if (!frame || frame.kind !== Core.FRAME_UPDATE) continue;
+    const h = frame.header;
+    const lines = Core.decodeRows(decoder, frame.rows).map((l) => cells(l, cols));
+    const n = h.hist.count;
+    if (h.reset) history = [];
+    for (let i = 0; i < n; i++) history.push({ cells: lines[i], wrapped: h.hist.wrapped[i] === '1' });
+    screen = lines.slice(n).map((c, i) => ({ cells: c, wrapped: h.screen.wrapped[i] === '1' }));
+    cursor = [h.cursor.x, h.cursor.y];
+    alternate = h.alternate;
   }
-  return state(term);
+  return { alternate, screen, history: history.slice(Math.max(0, history.length - keep)), cursor };
 }
 
 let input = '';
@@ -69,6 +79,10 @@ process.stdin.on('data', (d) => { input += d; });
 process.stdin.on('end', async () => {
   const req = JSON.parse(input);
   const out = {};
-  for (const [name, chunks] of Object.entries(req.streams)) out[name] = await run(req.cols, req.rows, chunks);
+  for (const [name, spec] of Object.entries(req.inputs)) {
+    out[name] = spec.stream
+      ? await stream(req.cols, req.rows, req.history, spec.stream)
+      : frames(req.cols, req.rows, req.history, spec.frames);
+  }
   process.stdout.write(JSON.stringify(out));
 });
