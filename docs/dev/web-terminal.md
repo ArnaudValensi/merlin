@@ -401,8 +401,9 @@ module docstring lists every guarantee and its test.
   wrap flag changed, a placeholder filled the start of a line already shown,
   rows dropped from the middle of a line), only the side no selection touches
   moves (filled rows go to the start of the line they continue, as older
-  history does); with a selection on both sides the regrouping waits for it
-  to go. Rows the page has no content for yet
+  history does); with a selection on both sides the row waits, and when the
+  selection goes its boundary is reconciled with its wrap flag as it is then
+  (a flag that changed and changed back leaves nothing to do). Rows the page has no content for yet
   (the screen moved down by more than its height while history was on its
   way) are a placeholder of their exact height, filled in order; rows tmux
   dropped become a gap marker. Every row is one integer row height, and a

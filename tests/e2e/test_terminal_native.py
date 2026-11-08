@@ -883,3 +883,61 @@ def test_a_selection_survives_history_filling_in_above_it(page, tmux_env):
     assert final["spacer"] == 0 and final["line"]
     assert final["height"] == final["rows"] * final["rowH"]
     assert page.evaluate(CONTIGUOUS)
+
+
+# A renderer of its own on the page, fed rows directly: rows 0..2 of a 10-column
+# pane, and the text a copy of all of them gives (lines joined by newlines).
+REGROUP = """([flagsSeq, selectFrom]) => {
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:0;top:0;width:400px;height:200px;z-index:99';
+    document.body.append(host);
+    const r = new MerlinNativeRenderer(host);
+    r.reset(10, 3);
+    const rows = ['aaaaaaaaaa', 'bbb', 'ccc'];
+    const apply = (flags) => r.applyScreen(0, rows, rows, flags, null, false);
+    const lines = () => [...host.querySelectorAll('.l')].map(l => l.textContent);
+    const copy = () => lines().join('\\n');
+    apply(flagsSeq[0]);
+    // Select across rows 0 and 1.
+    const a = r.rowEl(0).firstChild, b = r.rowEl(1).firstChild;
+    const range = document.createRange();
+    range.setStart(a, 2);
+    range.setEnd(b, 2);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    const seen = [];
+    for (const flags of flagsSeq.slice(1)) {
+        apply(flags);
+        const g = getSelection().getRangeAt(0);
+        seen.push({lines: lines(), kept: g.startContainer === a && g.endContainer === b
+                   && g.startOffset === 2 && g.endOffset === 2, deferred: r.deferred.size});
+    }
+    getSelection().removeAllRanges();
+    apply(flagsSeq[flagsSeq.length - 1]);  // the next update, selection gone
+    const out = {seen, lines: lines(), copy: copy(), deferred: r.deferred.size};
+    host.remove();
+    return out;
+}"""
+
+
+@pytest.mark.parametrize(
+    "flags, final_lines",
+    [
+        # 0 -> 1 -> 0 while selected: two lines in the end, not merged.
+        (["000", "100", "000"], ["aaaaaaaaaa", "bbb", "ccc"]),
+        # 1 -> 0 -> 1 while selected: one line in the end, not split.
+        (["100", "000", "100"], ["aaaaaaaaaabbb", "ccc"]),
+        # 0 -> 1 while selected: merged once the selection is gone.
+        (["000", "100"], ["aaaaaaaaaabbb", "ccc"]),
+        # 1 -> 0 while selected: split once the selection is gone.
+        (["100", "000"], ["aaaaaaaaaa", "bbb", "ccc"]),
+    ],
+)
+def test_deferred_regrouping_follows_the_latest_wrap_flags(page, flags, final_lines):
+    """A regrouping a selection blocks waits, keeps the selection, and is
+    reconciled with the wrap flags as they are when the selection goes."""
+    out = page.evaluate(REGROUP, [flags, 0])
+    assert all(s["kept"] for s in out["seen"]), out
+    assert out["lines"] == final_lines, out
+    assert out["copy"] == "\n".join(final_lines)
+    assert out["deferred"] == 0

@@ -140,7 +140,7 @@
       this.live = [];
       this.lastConfirmed = null; // the row element of next - 1
       this.pendings = []; // placeholders, in order: {el, a, b} (rows [a, b))
-      this.deferred = []; // regroupings waiting for a selection to go
+      this.deferred = new Set(); // rows whose line boundary waits for a selection to go
       this.screenTop = null;
       this.firstHeld = null; // the oldest row tmux holds
       this.spacerRows = 0;
@@ -335,7 +335,7 @@
         else this.sizeChunk(c);
         // The row after the placeholder may continue the last one filled: the
         // two lines become one, moving only rows no selection touches.
-        if (last && last._w === '1') this.joinNext(last);
+        if (last && last._w === '1') this.settle(last);
       } else {
         p.el.style.height = (p.b - p.a) * this.rowH + 'px';
         this.sizeChunk(c);
@@ -474,9 +474,30 @@
     // A row whose wrap flag changed.
     rewrap(r, w) {
       r._w = w;
-      if (w === '1') { this.joinNext(r); return; }
+      this.settle(r);
+    }
+
+    // Make the line boundary after ``r`` match its wrap flag now, or remember
+    // the row (``deferred``) when a selection touches both sides. What is
+    // deferred is the row, not an operation: it is reconciled with its flag
+    // as it is when the selection goes, so a flag that changed and changed
+    // back leaves nothing to do.
+    settle(r) {
+      if (this.reconcile(r)) this.deferred.delete(r);
+      else this.deferred.add(r);
+    }
+
+    // True when the boundary after ``r`` matches its flag (now, or after the
+    // regrouping done here); false when a selection blocks the regrouping.
+    reconcile(r) {
+      if (!r.isConnected) return true;
+      if (r._w === '1') {
+        const nx = this.rowAfter(r);
+        if (!nx || nx.parentNode === r.parentNode || firstRow(nx.parentNode) !== nx) return true;
+        return this.mergeLines(r.parentNode, nx.parentNode);
+      }
       const after = this.rowAfterInLine(r);
-      if (after) this.splitBefore(after);
+      return after ? this.splitBefore(after) : true;
     }
 
     rowAfterInLine(r) {
@@ -484,16 +505,9 @@
       return null;
     }
 
-    // ``r`` wraps: the line starting with the row after it is the same line.
-    joinNext(r) {
-      const nx = this.rowAfter(r);
-      if (!nx || nx.parentNode === r.parentNode || firstRow(nx.parentNode) !== nx) return;
-      this.mergeLines(r.parentNode, nx.parentNode);
-    }
-
-    // Lines ``l1`` and ``l2`` (right after it) become one.
+    // Lines ``l1`` and ``l2`` (right after it) become one; false when a
+    // selection touches both (nothing moved).
     mergeLines(l1, l2) {
-      if (!l1.parentNode || !l2.parentNode || l1 === l2) return;
       const c1 = l1.parentNode, c2 = l2.parentNode;
       if (!this.selected(l1)) {
         // l1's rows go to the start of l2 (inserted before: nothing in l2 moves).
@@ -503,25 +517,20 @@
         l1.append(...rowsOf(l2));
         l2.remove();
       } else {
-        this.deferred.push(() => {
-          if (!l1.isConnected || !l2.isConnected) return true;
-          if (this.selected(l1) && this.selected(l2)) return false;
-          this.mergeLines(l1, l2);
-          return true;
-        });
-        return;
+        return false;
       }
       this.recount(c1, c2);
+      return true;
     }
 
     // The line of ``r`` ends before ``r``: r and the rows after it become a
     // line of their own (or the rows before it do, whichever no selection
-    // touches).
+    // touches); false when a selection touches both (nothing moved).
     splitBefore(r) {
       const l = r.parentNode;
       const rows = rowsOf(l);
       const at = rows.indexOf(r);
-      if (at <= 0) return;
+      if (at <= 0) return true;
       const head = rows.slice(0, at), tail = rows.slice(at);
       const touches = (list) => list.some((x) => this.selected(x));
       const l2 = el('div', 'l');
@@ -532,21 +541,14 @@
         l2.append(...head);
         l.before(l2);
       } else {
-        this.deferred.push(() => {
-          if (!r.isConnected || r.parentNode !== l) return true;
-          const all = rowsOf(l);
-          if (all.slice(0, all.indexOf(r)).some((x) => this.selected(x)) && all.slice(all.indexOf(r)).some((x) => this.selected(x))) return false;
-          this.splitBefore(r);
-          return true;
-        });
-        return;
+        return false;
       }
       this.recount(l2.parentNode);
+      return true;
     }
 
     retryDeferred() {
-      if (!this.deferred.length) return;
-      this.deferred = this.deferred.filter((f) => !f());
+      for (const r of Array.from(this.deferred)) this.settle(r);
     }
 
     // -- history -----------------------------------------------------------------------
@@ -610,9 +612,12 @@
         anchor.parentNode._gaps++;
         this.sizeChunk(anchor.parentNode);
         if (first && firstRow(first.parentNode) !== first) {
-          // The rows before it in its line come before the gap: it starts a
-          // line now.
-          this.splitBefore(first);
+          // The rows before it in its line come before the gap: the row before
+          // it no longer continues into anything, and its line ends there.
+          const rows = rowsOf(first.parentNode);
+          const before = rows[rows.indexOf(first) - 1];
+          before._w = '0';
+          this.settle(before);
         }
       } else {
         if (!this.tail) this.tail = this.newChunk(this.hist.lastElementChild);
