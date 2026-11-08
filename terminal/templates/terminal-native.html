@@ -2,12 +2,25 @@
 {% block title %}term{% endblock %}
 
 {% block content %}
+{# First: ?terminal=classic on this page goes back to the classic one. #}
+<script>{% include "terminal-choice.js" %}
+MerlinTerminalChoice.route('native');</script>
+<div class="terminal-col">
 <div class="nt-page">
     <div id="nt-container"></div>
     <button id="nt-jump" class="nt-jump" type="button" hidden>Jump to bottom</button>
+    <!-- One line over the terminal: what the classic terminal writes into its
+         screen (a voice or upload error), since this one only shows tmux's. -->
+    <div id="nt-notice" class="nt-notice" role="status" hidden></div>
+    <!-- A program copied text on a phone: the tap gives the browser the
+         gesture its clipboard needs (docs/merlin-cli/clipboard.md). -->
+    <button id="copy-toast" class="nt-copy-toast" type="button" hidden>Copy</button>
     <textarea id="nt-input" class="nt-input" rows="1" aria-label="Terminal input"></textarea>
 </div>
-<div id="nt-toolbar" class="nt-toolbar">
+<!-- The window tabs with their agent-state pills: tmux's status bar, drawn by
+     the page (the glyph and colour rules of terminal/tmux.conf). -->
+<div id="nt-tabs" class="nt-tabs" role="tablist" aria-label="Windows"></div>
+<div id="nt-toolbar" class="nt-toolbar visible">
     <div class="nt-toolbar-row">
         <button class="tk" type="button" data-key="Escape">Esc</button>
         <button class="tk" type="button" data-key="Tab">Tab</button>
@@ -18,7 +31,7 @@
         <button class="tk" type="button" data-key="Enter">↵</button>
         <span class="nt-toolbar-sep"></span>
         <button class="tk" type="button" data-key="F3" title="Previous window">◀</button>
-        <button class="tk" type="button" data-action="new-window" title="New window in current directory">+</button>
+        <button class="tk" type="button" id="new-window-btn" data-action="new-window" title="New window in current directory">+</button>
         <button class="tk" type="button" data-key="F4" title="Next window">▶</button>
         <button class="tk" type="button" data-key="F5" title="Close window">✕</button>
         <span class="nt-toolbar-sep"></span>
@@ -26,17 +39,34 @@
         <button class="tk tk-arrow" type="button" data-key="ArrowUp" data-repeat>&uarr;</button>
         <button class="tk tk-arrow" type="button" data-key="ArrowDown" data-repeat>&darr;</button>
         <button class="tk tk-arrow" type="button" data-key="ArrowRight" data-repeat>&rarr;</button>
+        <span class="nt-toolbar-sep"></span>
+        <button class="tk" type="button" id="paste-btn" title="Paste from clipboard">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+        </button>
+        <button class="tk" type="button" id="upload-btn" title="Upload files to send to the terminal">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+        </button>
+        <button class="tk" type="button" id="cd-btn" title="Change directory (folder picker)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        </button>
+        <button class="tk" type="button" id="commits-btn" title="View commits for current repo">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+        </button>
     </div>
 </div>
-<div id="nt-status" class="nt-status">
-    <span id="nt-dot" class="nt-dot"></span>
-    <span id="nt-status-text">Connecting...</span>
-</div>
+<input type="file" id="upload-file-input" multiple style="display:none">
+{% include "terminal-status-bar.html" %}
+</div><!-- /.terminal-col -->
+{% include "terminal-panels.html" %}
 {% endblock %}
 
 {% block scripts %}
 <link rel="stylesheet" href="/static/vendor/geistmono-nerd-font.css">
 <link rel="stylesheet" href="/static/terminal/native/native.css">
+{% include "terminal-head.html" %}
+<script src="/static/vendor/xterm.min.js"></script>
+<script src="/static/vendor/xterm-addon-unicode11.min.js"></script>
+{% include "terminal-chrome.html" %}
 <style>
     html, body { overflow: hidden !important; overscroll-behavior: none; height: 100%; }
     .mobile-topbar { display: none !important; }
@@ -49,9 +79,12 @@
         min-height: 0 !important;
         overflow: hidden;
     }
-    .main-banners:empty { display: none; }
     .nt-page { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
     #nt-container { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+    #nt-container.drag-over::after {
+        content: ''; position: absolute; inset: 0; border: 2px solid var(--accent-blue);
+        border-radius: 4px; pointer-events: none; z-index: 20;
+    }
     /* The input field is real and focusable (a phone opens its keyboard on
        it) but invisible: the terminal's own cursor shows where typing goes. */
     .nt-input {
@@ -60,10 +93,29 @@
         caret-color: transparent; color: transparent; background: transparent;
         z-index: -1;
     }
+    /* The window tabs: tmux's status bar row, one pill and name per window. */
+    .nt-tabs {
+        display: flex; gap: 2px; align-items: stretch; flex: 0 0 auto;
+        background: #1e1e2e; overflow-x: auto; scrollbar-width: none;
+        font-family: 'GeistMono Nerd Font', 'Geist Mono', monospace; font-size: 12px;
+    }
+    .nt-tabs::-webkit-scrollbar { display: none; }
+    .nt-tabs:empty { display: none; }
+    .nt-tab {
+        display: flex; align-items: center; gap: 5px; flex: 0 0 auto; max-width: 14em;
+        height: 24px; padding: 0 9px; border: 0; background: none; color: #6272a4;
+        font: inherit; cursor: pointer; white-space: nowrap;
+        -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+    }
+    .nt-tab .nt-tab-name { overflow: hidden; text-overflow: ellipsis; }
+    .nt-tab.active { background: #313244; color: #bd93f9; }
+    .nt-tab:hover { color: var(--text-primary); }
     .nt-toolbar {
+        display: none;
         background: var(--bg-secondary); border-top: 1px solid var(--border);
         flex: 0 0 auto; padding: 6px 8px;
     }
+    .nt-toolbar.visible { display: block; }
     .nt-toolbar-row {
         display: flex; gap: 4px; align-items: center; overflow-x: auto;
         scrollbar-width: none; -ms-overflow-style: none;
@@ -83,11 +135,26 @@
         background: rgba(74, 158, 255, 0.15); border-color: rgba(74, 158, 255, 0.4); color: var(--accent-blue);
     }
     .nt-toolbar .tk-arrow { font-size: 14px; padding: 0 8px; }
-    .nt-status {
-        display: flex; gap: 8px; align-items: center; padding: 4px 10px;
-        font-size: 12px; color: var(--text-muted, #6272a4); background: var(--bg-secondary, #1e1e2e);
-        flex: 0 0 auto;
+    #paste-btn, #upload-btn, #cd-btn, #commits-btn { padding: 0 8px; }
+    #upload-btn.uploading { color: var(--accent-yellow); border-color: var(--accent-yellow); }
+    .nt-notice {
+        position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 6;
+        padding: 6px 10px; border-radius: 6px; border: 1px solid var(--accent-yellow);
+        background: var(--bg-card); color: var(--accent-yellow);
+        font-family: 'GeistMono Nerd Font', 'Geist Mono', monospace; font-size: 12px;
+        cursor: pointer; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
     }
+    .nt-notice.error { border-color: var(--accent-red); color: var(--accent-red); }
+    .nt-notice[hidden] { display: none; }
+    .nt-copy-toast {
+        position: absolute; top: 40px; left: 50%; transform: translateX(-50%); z-index: 20;
+        padding: 8px 18px; background: var(--bg-card); border: 1px solid var(--accent-green);
+        border-radius: 8px; color: var(--accent-green);
+        font-family: 'GeistMono Nerd Font', 'Geist Mono', monospace; font-size: 13px; font-weight: 600;
+        cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+    }
+    .nt-copy-toast[hidden] { display: none; }
     /* The composition being typed (an IME), at the terminal's cursor. */
     .nt-preedit {
         position: absolute; z-index: 5; pointer-events: none; white-space: pre;
@@ -95,152 +162,17 @@
         line-height: 14px; color: var(--text-primary, #f8f8f2); background: var(--bg-card, #282a36);
         text-decoration: underline;
     }
-    .nt-dot { width: 8px; height: 8px; border-radius: 50%; background: #f1fa8c; flex: 0 0 auto; }
-    .nt-dot.connected { background: #50fa7b; }
-    .nt-dot.disconnected { background: #ff5555; }
+{% include "terminal-status-bar.css" %}
+    @media (max-width: 768px) {
+        .main { margin-left: 0 !important; }
+        #status-menu { display: flex; }
+    }
 </style>
-<script src="/static/vendor/xterm.min.js"></script>
-<script src="/static/vendor/xterm-addon-unicode11.min.js"></script>
 <script src="/static/terminal/native/core.js"></script>
 <script src="/static/terminal/native/renderer.js"></script>
 <script src="/static/terminal/native/engine.js"></script>
 <script src="/static/terminal/native/input.js"></script>
 <script src="/static/terminal/native/toolbar.js"></script>
-<script>{% include "session-identity.js" %}</script>
-<script>
-(function () {
-    'use strict';
-    const container = document.getElementById('nt-container');
-    const jump = document.getElementById('nt-jump');
-    const field = document.getElementById('nt-input');
-    const dot = document.getElementById('nt-dot');
-    const statusText = document.getElementById('nt-status-text');
-    let attempted = null;
-    let confirmed = false;
-    let delay = 1000;
-    let stopped = false;
-    let current = null;
-    let input = null; // the input field, made once the engine exists
-    // The last text a program copied (merlin-clip, OSC 52, tmux's own copy):
-    // what Ctrl+Shift+C copies when nothing is selected.
-    let lastClip = null;
-    let flashTimer = null;
-
-    let statusLine = '';
-    function status(state, text) {
-        dot.className = 'nt-dot ' + state;
-        statusLine = text;
-        if (!flashTimer) statusText.textContent = text;
-    }
-    // A short message in the status line, then the status again.
-    function flash(text) {
-        clearTimeout(flashTimer);
-        statusText.textContent = text;
-        flashTimer = setTimeout(() => { flashTimer = null; statusText.textContent = statusLine; }, 2500);
-    }
-
-    const engine = new MerlinNativeTerminal({
-        container,
-        wsUrl: () => {
-            attempted = MerlinSessionIdentity.read();
-            confirmed = false;
-            return MerlinSessionIdentity.websocketUrl(location, attempted).replace('/ws/terminal', '/ws/terminal2');
-        },
-        onOpen: () => { delay = 1000; status('connected', 'Connected'); },
-        onControl: (msg) => {
-            if (msg.type === 'session') {
-                if (MerlinSessionIdentity.confirm(msg)) confirmed = true;
-                current = msg;
-                document.title = (msg.name || 'term') + (msg.window ? ': ' + msg.window : '');
-                status('connected', msg.name + (msg.window ? ' : ' + msg.window : ''));
-            } else if (msg.type === 'paste_refused') {
-                flash(msg.reason || 'Paste refused');
-            } else if (msg.type === 'unsupported') {
-                stopped = true;
-                status('disconnected', 'This tmux (' + (msg.version || 'unknown') + ') is older than '
-                    + msg.minimum + ': use the classic terminal');
-            }
-        },
-        onClipboard: (text) => {
-            lastClip = text;
-            if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(() => {});
-        },
-        onStuck: (stuck) => { jump.hidden = stuck; },
-        // Another pane (of this window or another): what the field holds was
-        // typed for the old one.
-        onPane: () => { if (input) input.invalidate(); },
-        onClose: (e) => {
-            if (e.code === 4401) { stopped = true; status('disconnected', 'Unauthorized: reload the page'); return; }
-            MerlinSessionIdentity.clearAfterClose(attempted, confirmed, e.code);
-            if (stopped) return;
-            status('disconnected', 'Disconnected');
-            setTimeout(() => engine.connect(), delay);
-            delay = Math.min(delay * 2, 30000);
-        },
-    });
-    const modifiers = new MerlinNativeInput.Modifiers();
-    function hasSelection() {
-        const sel = getSelection();
-        return !!(sel && !sel.isCollapsed && sel.rangeCount && sel.getRangeAt(0).intersectsNode(container));
-    }
-    input = new MerlinNativeInput(field, engine, {
-        modifiers,
-        hasSelection,
-        cursorRect: () => {
-            const c = container.querySelector('.nt-cursor');
-            return c && c.isConnected ? c.getBoundingClientRect() : null;
-        },
-        // Ctrl+Shift+C: the selection, else the last text a program copied.
-        copy: () => {
-            const text = engine.selectionText() || lastClip;
-            if (!text) return;
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(text).then(() => flash('Copied!'), () => flash('Copy failed'));
-            }
-        },
-        // Images are uploaded and their path typed by the parity milestone.
-        onPasteFiles: () => flash('Image paste: use the classic terminal for now'),
-    });
-    // Through the input, so a toolbar key resets the field like a physical one.
-    const toolbar = new MerlinNativeToolbar(document.getElementById('nt-toolbar'), input.keys(), {
-        modifiers,
-        focus: () => input.focus(),
-        // The Sessions panel's create-and-switch path when it is on the page,
-        // else the F2 binding.
-        newWindow: (btn) => {
-            input.invalidate();
-            const board = window.SessionsBoard;
-            if (board && board.openNewWindow && current) {
-                btn.disabled = true;
-                Promise.resolve(board.openNewWindow(current.name)).finally(() => { btn.disabled = false; });
-            } else {
-                engine.key('F2');
-            }
-        },
-        onWindowKey: () => {
-            if (window.SessionsBoard && window.SessionsBoard.refresh) setTimeout(() => window.SessionsBoard.refresh(), 300);
-        },
-    });
-    // ?suggestions=1 (or 0) turns the keyboard's suggestions on (or off) for
-    // this browser.
-    const wanted = new URLSearchParams(location.search).get('suggestions');
-    if (wanted === '1' || wanted === '0') input.setSuggestions(wanted === '1');
-    window.MerlinNativeTerminalPage = { engine, input, toolbar, modifiers, current: () => current };
-
-    jump.addEventListener('click', () => { engine.toBottom(); input.focus(); });
-    // A tap or a click focuses the input field, unless it ends a selection or
-    // hits a link.
-    container.addEventListener('click', (e) => {
-        if (e.target.closest('a')) return;
-        const sel = getSelection();
-        if (sel && !sel.isCollapsed) return;
-        input.focus();
-    });
-    field.addEventListener('focus', () => container.classList.add('nt-focused'));
-    field.addEventListener('blur', () => container.classList.remove('nt-focused'));
-    status('connecting', 'Connecting...');
-    engine.connect();
-    if (!matchMedia('(pointer: coarse)').matches) input.focus();
-})();
-</script>
+<script type="application/json" id="nt-config">{{ {"homeDir": home_dir, "voiceAvailable": voice_available} | tojson }}</script>
+<script src="/static/terminal/native/page.js"></script>
 {% endblock %}

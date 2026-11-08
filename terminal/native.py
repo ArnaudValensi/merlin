@@ -1191,6 +1191,11 @@ async def _refuse(websocket: WebSocket, version: str) -> None:
 
 async def native_ws(websocket: WebSocket) -> None:
     if not verify_ws_cookie(websocket):
+        # Accepted first: a socket closed before its handshake is answered
+        # with HTTP 403, which a browser reports as close code 1006, so the
+        # page could not tell a refused login from a dropped network and
+        # would reconnect for ever. Nothing is read from or sent to it.
+        await websocket.accept()
         await websocket.close(code=4401, reason="Unauthorized")
         return
     await websocket.accept()

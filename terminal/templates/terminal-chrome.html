@@ -1,0 +1,267 @@
+{#- Shared by the classic and the native terminal pages: the Sessions panel,
+   the notifications bell, the Apps panel, the clipboard ladder, the session
+   identity, and the wiring of the Sessions panel. Nothing here knows which
+   terminal renders the pane: it talks to it through window.MerlinTerminal. -#}
+<script src="/static/vendor/sortable.min.js"></script>
+<script src="/static/board/board.js"></script>
+<script src="/static/notifications/notifications.js"></script>
+{% if app_enabled %}
+<link rel="stylesheet" href="/static/app/terminal-panel.css">
+<script src="/static/app/client.js"></script>
+<script defer src="/static/app/terminal-panel.js"></script>
+{% endif %}
+{# Shared clipboard ladder — the same partial /clipboard-test includes, so the
+   diagnostic page and the terminal can never disagree about what a paste does. #}
+<script>{% include "clipboard-core.js" %}</script>
+<script>{% include "session-identity.js" %}</script>
+<style>
+/* Terminal column wraps the terminal + toolbars so the panel sits beside it on
+   desktop; fills its slot in both the mobile column and the desktop row. */
+.terminal-col { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+/* Keep the bottom status bar above the sessions sheet (z-index 200) on mobile,
+   so its Sessions button is crisp and directly tappable to toggle in place. */
+#terminal-status { position: relative; z-index: 210; }
+/* body .main out-specifies the terminal's own `.main { flex-direction: column }`
+   so the desktop split wins regardless of source order. */
+@media (min-width: 769px) { body .main { flex-direction: row; } }
+
+/* The prompt banners (agent-state consent, workspace restore) sit in
+   .main-banners, a direct child of .main (see base.html).
+   Every other page lays .main out as a block, so the banner is a normal strip
+   at the top. This page makes .main a flex ROW, which turned the banner into a
+   third row item that align-items:stretch blew up to full height beside the
+   terminal. Float it instead: it is a prompt, not part of the split. Fixed
+   rather than absolute so it needs no positioning context on .main, whose
+   static positioning the docked panel relies on. Above the panel's z-index 200
+   and the status bar's 210, so it can never be half-covered.
+   Mobile keeps the in-flow strip: .main is a column there and stacks fine. */
+@media (min-width: 769px) {
+    body .main > .main-banners {
+        position: fixed;
+        top: 16px;
+        left: calc(var(--sidebar-width) + 16px);
+        right: 16px;
+        z-index: 300;
+        margin: 0;
+    }
+    body .main > .main-banners > .consent-banner { margin: 0 0 8px; }
+    html.sc body .main > .main-banners {
+        left: calc(var(--sidebar-collapsed-width) + 16px);
+    }
+}
+
+/* Sessions toolbar button: a sibling of the mic button — same shape/size so the
+   bar stays consistent. Hidden on desktop unless the panel is collapsed (see
+   board.css). Green when a session is waiting. */
+#sessions-btn {
+    position: relative;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    padding: 2px 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    height: 24px;
+}
+#sessions-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+#sessions-btn.has-waiting { color: var(--accent-green); border-color: rgba(52, 211, 153, 0.4); }
+/* Asking wins over waiting: a blocked turn is more urgent than an unread one,
+   so it takes the button colour whenever both are present. */
+#sessions-btn.has-asking { color: var(--accent-blue); border-color: rgba(74, 158, 255, 0.45); }
+#sessions-badge {
+    position: absolute; top: -6px; right: -6px;
+    min-width: 14px; height: 14px; padding: 0 3px;
+    border-radius: 999px; background: var(--accent-green); color: #0b1411;
+    font-size: 9px; font-weight: 700; line-height: 14px; text-align: center;
+}
+#sessions-btn.has-asking #sessions-badge { background: var(--accent-blue); color: #08111f; }
+
+/* Notifications bell: same shape as its neighbours. Blue while its popover is
+   open. The dot is a hint (permission granted, no push yet), not an alert. */
+#notif-btn {
+    position: relative;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    padding: 2px 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    height: 24px;
+}
+#notif-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+#notif-btn.active { color: var(--accent-blue); border-color: rgba(74, 158, 255, 0.45); }
+#notif-dot {
+    position: absolute; top: -3px; right: -3px;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent-blue);
+}
+/* Terminal menu button: same shape as its neighbours, blue while open. */
+#term-menu-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    padding: 2px 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    height: 24px;
+}
+#term-menu-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+#term-menu-btn.active { color: var(--accent-blue); border-color: rgba(74, 158, 255, 0.45); }
+/* The terminal menu: a small sheet above the status bar's right end. */
+.term-menu {
+    position: fixed; right: 8px; bottom: 44px; z-index: 260;
+    min-width: 220px; padding: 6px;
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+    font-size: 13px;
+}
+.term-menu[hidden] { display: none; }
+.term-menu-title { padding: 4px 8px 6px; color: var(--text-muted); font-size: 11px; }
+.term-menu-item {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 8px; border: 0; border-radius: 6px; background: none;
+    color: var(--text-primary); font: inherit; text-align: left; cursor: pointer;
+}
+.term-menu-item::before { content: ''; width: 14px; flex: 0 0 14px; text-align: center; color: var(--accent-blue); }
+.term-menu-item[aria-checked="true"]::before { content: '\2713'; }
+.term-menu-item:hover { background: var(--bg-hover); }
+.term-menu-note { padding: 4px 8px 6px 30px; color: var(--accent-yellow); font-size: 11px; }
+.term-menu-sep { height: 1px; margin: 4px 0; background: var(--border); }
+/* The one-line notice of a tab the native page sent back here. */
+.term-fallback {
+    display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+    background: var(--bg-card); border: 1px solid var(--accent-yellow); border-radius: 6px;
+    color: var(--text-primary); font-size: 12px;
+}
+.term-fallback span { flex: 1 1 auto; }
+.term-fallback button { background: none; border: 0; color: var(--text-muted); font-size: 16px; cursor: pointer; }
+</style>
+<script>
+// Sessions board wiring. Mobile: the button opens a fullscreen modal. Desktop:
+// the panel is docked and always open; the button (shown only when collapsed)
+// and the header control toggle a collapse, and the divider resizes it — both
+// persisted. board.js renders the list into the panel.
+(function () {
+    // A classic page leaving for the native one (terminal-choice.js).
+    if (window.MerlinTerminalChoice && MerlinTerminalChoice.leaving) return;
+    var btn = document.getElementById('sessions-btn');
+    var panel = document.getElementById('sessions-panel');
+    var backdrop = document.getElementById('sessions-backdrop');
+    var badge = document.getElementById('sessions-badge');
+    var divider = document.getElementById('sessions-divider');
+    var main = document.querySelector('.main');
+    if (!btn || !panel || !backdrop || !main) return;
+
+    var mq = window.matchMedia('(min-width: 769px)');
+    function desktop() { return mq.matches; }
+
+    // Mobile: the sheet stops above the terminal's bottom bar so that bar (with
+    // the Sessions button) stays visible — you toggle the sheet from the same
+    // spot. Desktop: the panel is in-flow, no offset.
+    var statusBar = document.getElementById('terminal-status');
+    function applyMobileOffset() {
+        if (desktop() || !statusBar) { panel.style.bottom = ''; }
+        else { panel.style.bottom = statusBar.offsetHeight + 'px'; }
+    }
+    applyMobileOffset();
+    mq.addEventListener('change', applyMobileOffset);
+    window.addEventListener('resize', applyMobileOffset);
+
+    var storedW = parseInt(localStorage.getItem('sessions-w'), 10);
+    if (storedW) main.style.setProperty('--sessions-w', storedW + 'px');
+    if (localStorage.getItem('sessions-collapsed') === '1') main.classList.add('panel-collapsed');
+
+    function refreshBoard() {
+        if (window.SessionsBoard && window.SessionsBoard.refresh) window.SessionsBoard.refresh();
+    }
+    function open() {
+        if (desktop()) { main.classList.remove('panel-collapsed'); localStorage.setItem('sessions-collapsed', '0'); }
+        else { applyMobileOffset(); panel.classList.add('open'); }  // recompute: bar height is settled now
+        refreshBoard();  // show fresh state the instant the panel opens, not on the next poll
+    }
+    function close() {
+        if (desktop()) { main.classList.add('panel-collapsed'); localStorage.setItem('sessions-collapsed', '1'); }
+        else { panel.classList.remove('open'); }
+    }
+    function toggle() {
+        if (desktop()) { main.classList.contains('panel-collapsed') ? open() : close(); }
+        else { panel.classList.contains('open') ? close() : open(); }
+    }
+    btn.addEventListener('click', toggle);
+    backdrop.addEventListener('click', close);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !desktop()) close(); });
+
+    // Keep the panel fresh on the events that change tmux state, so it never
+    // shows a stale slice: coming back to the tab, and window-nav keys (which
+    // flip pill state as you arrive at / leave a window). The 2s poll is the
+    // backstop for state that changes with no browser action (an agent turn).
+    window.addEventListener('focus', refreshBoard);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshBoard(); });
+
+    // Divider: drag the terminal/panel boundary on desktop. The terminal's
+    // ResizeObserver refits xterm as the panel width changes.
+    if (divider) {
+        var dragging = false, lastW = 0;
+        divider.addEventListener('pointerdown', function (e) {
+            if (!desktop()) return;
+            dragging = true; lastW = 0;
+            try { divider.setPointerCapture(e.pointerId); } catch (x) {}
+            e.preventDefault();
+        });
+        divider.addEventListener('pointermove', function (e) {
+            if (!dragging) return;
+            var w = window.innerWidth - e.clientX;
+            lastW = Math.max(44, Math.min(w, Math.round(window.innerWidth * 0.6)));
+            main.style.setProperty('--sessions-w', lastW + 'px');
+        });
+        function endDrag(e) {
+            if (!dragging) return;
+            dragging = false;
+            try { divider.releasePointerCapture(e.pointerId); } catch (x) {}
+            if (lastW) localStorage.setItem('sessions-w', lastW);
+        }
+        divider.addEventListener('pointerup', endDrag);
+        divider.addEventListener('pointercancel', endDrag);
+    }
+
+    // Notifications: the bell and its popover, the badge and the title count,
+    // and the in-tab Notification rule fed by the poll's events.
+    var notif = window.MerlinNotifications;
+    if (notif) {
+        notif.init({
+            bell: document.getElementById('notif-btn'),
+            dot: document.getElementById('notif-dot'),
+            popover: document.getElementById('notif-popover'),
+        });
+    }
+
+    window.SessionsBoard.init({
+        container: panel,
+        onJump: function () { if (!desktop()) close(); },   // jumping closes the modal (mobile)
+        onClose: close,                                     // the header collapse control
+        onAttention: function (n, asking) {
+            if (n > 0) { badge.textContent = n; badge.hidden = false; btn.classList.add('has-waiting'); }
+            else { badge.hidden = true; btn.classList.remove('has-waiting'); }
+            // Asking outranks waiting: a live turn is blocked, not just unread.
+            btn.classList.toggle('has-asking', asking > 0);
+            if (notif) notif.setAttention(n);
+        },
+        onEvents: function (events) { if (notif) notif.handleEvents(events); },
+        onWaiting: function (sids) { if (notif) notif.syncWaiting(sids); },
+    });
+})();
+</script>
+<script>
+// The terminal menu (Classic or the new terminal) and, on the classic page of
+// a tab the native page sent back, the notice saying why.
+if (window.MerlinTerminalChoice && !MerlinTerminalChoice.leaving) {
+    MerlinTerminalChoice.bindMenu();
+    MerlinTerminalChoice.showFallback();
+}
+</script>

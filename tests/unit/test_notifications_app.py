@@ -122,6 +122,10 @@ class TestServiceWorker:
         assert "navigator.serviceWorker.addEventListener('message'" in page
         assert "d.type !== 'deep-link'" in page
         assert "window.MerlinTerminal.switchSession(t)" in page
+        native = (ROOT / "terminal/static/native/page.js").read_text()
+        assert "navigator.serviceWorker.addEventListener('message'" in native
+        assert "d.type !== 'deep-link'" in native
+        assert "window.MerlinTerminal.switchSession(d.target)" in native
 
 
 class TestPageShell:

@@ -603,7 +603,23 @@
     return chars.join('');
   }
 
+  // A window's agent-state pill, by the rules of terminal/tmux.conf
+  // (window-status-format): the glyph carries the state (colourblind-safe),
+  // the colour reinforces it. A window with no @agent_state shows the classic
+  // open circle, or a filled one when it is the active window; an idle agent
+  // (or any other value) the open circle, purple when active.
+  const PILL_GREY = '#6272a4';
+  const PILL_ACTIVE = '#bd93f9';
+  function windowPill(state, active) {
+    if (state === 'done') return { glyph: '\u25cf', color: '#a6e3a1', label: 'done' };
+    if (state === 'ask') return { glyph: '?', color: '#89dceb', label: 'asking' };
+    if (state === 'busy') return { glyph: '\u25d0', color: '#f9e2af', label: 'working' };
+    if (state) return { glyph: '\u25cb', color: active ? PILL_ACTIVE : PILL_GREY, label: 'idle' };
+    return { glyph: active ? '\u25cf' : '\u25cb', color: active ? PILL_ACTIVE : PILL_GREY, label: '' };
+  }
+
   return {
+    windowPill,
     mouseBytes, mouseCode,
     FRAME_UPDATE, FRAME_HISTORY, parseFrame, splitRows, newDecoder, decodeRows, joinSelection, encodeMouse,
     mouseWants, nextHistoryRequest, keyAction, fieldKeyAction, documentKeyAction, inputAction, caretAction,

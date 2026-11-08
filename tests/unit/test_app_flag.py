@@ -102,9 +102,10 @@ class TestServer:
     def test_flag_off_terminal_has_no_app_button(self, monkeypatch):
         monkeypatch.setattr(app_mod, "TMUX_AVAILABLE", True)
         with TestClient(app_mod.app) as client:
-            html = client.get("/terminal").text
-        assert 'id="app-btn"' not in html
-        assert 'id="app-panel"' not in html
+            pages = [client.get(p).text for p in ("/terminal", "/terminal/native")]
+        for html in pages:
+            assert 'id="app-btn"' not in html
+            assert 'id="app-panel"' not in html
 
     def test_flag_on_loads_page_nav_and_terminal_button(self, monkeypatch):
         monkeypatch.setenv("MERLIN_FEATURES", "app")
@@ -118,9 +119,10 @@ class TestServer:
             assert any(i.get("url") == "/apps" for i in app_mod.nav_items)
             with TestClient(app_mod.app) as client:
                 assert client.get("/apps").status_code == 200
-                html = client.get("/terminal").text
-            assert 'id="app-btn"' in html
-            assert 'id="app-panel"' in html
+                pages = [client.get(p).text for p in ("/terminal", "/terminal/native")]
+            for html in pages:
+                assert 'id="app-btn"' in html
+                assert 'id="app-panel"' in html
         finally:
             app_mod.extension_registry.pop("app", None)
             app_mod.nav_items[:] = nav

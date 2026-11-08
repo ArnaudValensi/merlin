@@ -30,21 +30,41 @@ def test_core_partial_is_free_of_jinja_delimiters():
         assert delimiter not in source, f"{delimiter} in clipboard-core.js"
 
 
-@pytest.mark.parametrize("template", ["terminal.html", "clipboard-test.html"])
-def test_both_pages_include_the_shared_core(template):
-    """Neither page may grow its own copy of the paste ladder."""
+# The terminal pages (classic and native) get it through their shared chrome.
+CHROME = '{% include "terminal-chrome.html" %}'
+NATIVE_PAGE_JS = tr.TERMINAL_TEMPLATES_DIR.parent / "static" / "native" / "page.js"
+
+
+@pytest.mark.parametrize("template", ["terminal-chrome.html", "clipboard-test.html"])
+def test_every_page_includes_the_shared_core(template):
+    """No page may grow its own copy of the paste ladder."""
     source = (tr.TERMINAL_TEMPLATES_DIR / template).read_text()
     assert INCLUDE in source
 
 
-def test_terminal_does_not_walk_clipboard_items_itself():
+@pytest.mark.parametrize("template", ["terminal.html", "terminal-native.html"])
+def test_both_terminal_pages_include_the_shared_chrome(template):
+    source = (tr.TERMINAL_TEMPLATES_DIR / template).read_text()
+    assert CHROME in source
+    assert INCLUDE not in source
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        tr.TERMINAL_TEMPLATES_DIR / "terminal.html",
+        tr.TERMINAL_TEMPLATES_DIR / "terminal-native.html",
+        NATIVE_PAGE_JS,
+    ],
+    ids=lambda p: p.name,
+)
+def test_terminal_does_not_walk_clipboard_items_itself(path):
     """navigator.clipboard.read() belongs to the shared core, nowhere else.
 
     readText() is exempt: the permission icon deliberately probes it directly
     to find out whether Chrome has granted clipboard-read.
     """
-    source = (tr.TERMINAL_TEMPLATES_DIR / "terminal.html").read_text()
-    assert not re.search(r"navigator\.clipboard\.read\(", source)
+    assert not re.search(r"navigator\.clipboard\.read\(", path.read_text())
 
 
 def test_diagnostic_page_renders_with_the_core_inlined():

@@ -78,6 +78,9 @@ def _open(browser, server, **context):
     ctx = browser.new_context(
         **(context or {"viewport": {"width": 1000, "height": 700}})
     )
+    # The Sessions panel collapsed: these tests want the terminal's width
+    # (column 100 and more), not the panel's.
+    ctx.add_init_script("localStorage.setItem('sessions-collapsed', '1')")
     page = ctx.new_page()
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))

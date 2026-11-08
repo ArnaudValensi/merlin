@@ -80,9 +80,10 @@ class FakeWS:
         self.query_params: dict[str, str] = {}
         self.cookies: dict[str, str] = {}
         self.closed: tuple[int, str] | None = None
+        self.accepted = False
 
     async def accept(self) -> None:
-        pass
+        self.accepted = True
 
     async def send_text(self, text: str) -> None:
         self.sent.append(text)
@@ -611,7 +612,11 @@ async def test_endpoint_rejects_without_a_cookie(monkeypatch):
     monkeypatch.setattr(native, "verify_ws_cookie", lambda ws: False)
     ws = FakeWS()
     await native.native_ws(ws)  # type: ignore[arg-type]
+    # Accepted, so the browser sees 4401 (not the 1006 of a refused
+    # handshake), and closed with nothing sent.
+    assert ws.accepted
     assert ws.closed == (4401, "Unauthorized")
+    assert ws.sent == []
 
 
 # -- real tmux ------------------------------------------------------------------------

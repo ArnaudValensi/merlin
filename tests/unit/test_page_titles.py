@@ -80,6 +80,10 @@ def test_failed_hostname_lookup_degrades_to_no_machine():
             "MerlinPageTitle.tmuxContext(ctl.name, ctl.window)",
         ),
         (
+            "terminal/static/native/page.js",
+            "MerlinPageTitle.tmuxContext(msg.name, msg.window)",
+        ),
+        (
             "files/static/files.js",
             "MerlinPageTitle.pathContext(fsPath)",
         ),

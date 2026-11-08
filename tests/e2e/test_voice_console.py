@@ -200,7 +200,12 @@ def quiet_browser(playwright):
     b.close()
 
 
-def _open(browser, server, viewport=None, scale=1, view="full"):
+# The classic terminal and the native one (/terminal/native) host the same
+# console through window.MerlinTerminal and the same voice frames.
+PAGES = pytest.mark.parametrize("path", ["/terminal", "/terminal/native"])
+
+
+def _open(browser, server, viewport=None, scale=1, view="full", path="/terminal"):
     ctx = browser.new_context(
         viewport=viewport or {"width": 1100, "height": 760},
         device_scale_factor=scale,
@@ -239,8 +244,14 @@ def _open(browser, server, viewport=None, scale=1, view="full"):
             }, 20);
         })();"""
     )
-    page.goto(f"{server}/terminal")
-    page.wait_for_selector(".xterm-screen", timeout=30000)
+    page.goto(f"{server}{path}")
+    if path == "/terminal":
+        page.wait_for_selector(".xterm-screen", timeout=30000)
+    else:
+        page.wait_for_function(
+            "() => window.MerlinNativeTerminalPage && window.MerlinNativeTerminalPage.engine.pane",
+            timeout=30000,
+        )
     page.wait_for_function(
         "() => window.MerlinTerminal && window.MerlinTerminal.currentWindow()",
         timeout=20000,
@@ -301,10 +312,11 @@ def _start_voice(page, target):
 # ---------------------------------------------------------------------------
 
 
+@PAGES
 def test_a_spoken_turn_goes_round_and_the_console_listens_again(
-    browser, server, tmux_env, tts, tmp_path
+    browser, server, tmux_env, tts, tmp_path, path
 ):
-    ctx, page, fetched = _open(browser, server)
+    ctx, page, fetched = _open(browser, server, path=path)
     try:
         session = page.evaluate("() => window.MerlinTerminal.currentSession()")
         target, _ = _agent_window(tmux_env, session, tmp_path)
@@ -1017,10 +1029,11 @@ def test_skipping_one_stalled_answer_keeps_the_other_recoverable(
         ctx.close()
 
 
+@PAGES
 def test_a_window_without_claude_says_why_and_a_closed_window_ends_the_console(
-    browser, server, tmux_env, tts, tmp_path
+    browser, server, tmux_env, tts, tmp_path, path
 ):
-    ctx, page, _ = _open(browser, server)
+    ctx, page, _ = _open(browser, server, path=path)
     try:
         session = page.evaluate("() => window.MerlinTerminal.currentSession()")
         shell = _tmux(
@@ -1033,8 +1046,10 @@ def test_a_window_without_claude_says_why_and_a_closed_window_ends_the_console(
         )
         assert "No Claude Code session" in page.get_attribute("#voice-btn", "title")
         page.click("#voice-btn")
+        # Written into the classic screen, a notice over the native one.
         page.wait_for_function(
-            "() => document.querySelector('.xterm-rows').innerText.includes('No Claude Code session')",
+            "() => (document.querySelector('.xterm-rows') || document.getElementById('nt-notice'))"
+            ".innerText.includes('No Claude Code session')",
             timeout=5000,
         )
         assert page.is_hidden("#voice-console")

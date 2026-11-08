@@ -199,3 +199,19 @@ test('mouseCode: motion adds 32 to a drag and to a move with no button', () => {
     assert.equal(Core.mouseCode('press', 0, { shift: true, alt: true }), 12);
     assert.equal(Core.encodeMouse('SGR', Core.mouseCode('move', 3), 5, 3, false), '\x1b[<35;5;3M');
 });
+
+test('windowPill follows the glyph and colour rules of tmux.conf', () => {
+  const pill = (state, active) => { const p = Core.windowPill(state, active); return [p.glyph, p.color]; };
+  assert.deepEqual(pill('busy', false), ['\u25d0', '#f9e2af']);
+  assert.deepEqual(pill('busy', true), ['\u25d0', '#f9e2af']);
+  assert.deepEqual(pill('ask', false), ['?', '#89dceb']);
+  assert.deepEqual(pill('done', true), ['\u25cf', '#a6e3a1']);
+  // An idle agent (or any other value): open, purple when active.
+  assert.deepEqual(pill('idle', false), ['\u25cb', '#6272a4']);
+  assert.deepEqual(pill('idle', true), ['\u25cb', '#bd93f9']);
+  assert.deepEqual(pill('starting', true), ['\u25cb', '#bd93f9']);
+  // No agent state: the classic open and filled circles.
+  assert.deepEqual(pill('', false), ['\u25cb', '#6272a4']);
+  assert.deepEqual(pill('', true), ['\u25cf', '#bd93f9']);
+});
+

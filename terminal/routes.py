@@ -345,7 +345,20 @@ def terminal_native_page(request: Request):
 
     if not getattr(_main, "TMUX_AVAILABLE", True):
         return HTMLResponse("<h2>Terminal unavailable</h2>", status_code=503)
-    return templates.TemplateResponse(request, "terminal-native.html")
+    from voice.routes import capability as voice_mode_capability
+
+    # The classic page's context: the shared status bar and panels read it.
+    return templates.TemplateResponse(
+        request,
+        "terminal-native.html",
+        {
+            "voice_available": _voice_available(),
+            "voice_mode": voice_mode_capability(),
+            "home_dir": os.path.expanduser("~"),
+            "app_enabled": _app_enabled(),
+            "native": True,
+        },
+    )
 
 
 @page_router.get("/clipboard-test", response_class=HTMLResponse)

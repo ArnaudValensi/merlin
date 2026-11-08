@@ -347,13 +347,35 @@ at every start. A restart reads it there, `merlin job url` for the public host,
 and `merlin dashboard-url` for its login: only the operation that needs one reads it, so a program launched
 from a pane (`merlin app run`, say) gets none.
 
-## Native terminal (`/terminal/native`, in progress)
+## Native terminal (`/terminal/native`)
 
 A second terminal, built beside the classic one by the native-terminal epic
 (`epics/cli/native-terminal/` in merlin-saas, journal included), so a phone gets
 native momentum scrolling, native selection and copy, and a real text field for
-its keyboard. The classic page above is unchanged and stays the default; a
-per-browser switch between the two comes with the epic's parity milestone.
+its keyboard. The classic page above is unchanged and stays the default.
+
+**The switch** (`terminal/templates/terminal-choice.js`, inlined first on both
+pages): a per-browser choice in `localStorage` (`merlin-terminal`: `classic`,
+the default, or `native`), set from the terminal menu (the sliders button of
+the status bar: Classic terminal / New terminal) or with `?terminal=native` (or
+`classic`) on either page. `/terminal` leads to the chosen page with the rest
+of its URL (a deep link's `?target=`), before any socket opens (the classic
+page's scripts see `MerlinTerminalChoice.leaving` and start nothing);
+`/terminal/native` always opens the native page. When the bridge says tmux is
+too old, the native page sends the tab back to the classic one
+(`sessionStorage`, so that tab stays there), which says why in one line.
+
+**Shared chrome.** Both pages include the same partials, so the bars, panels and
+their wiring cannot drift: `terminal-status-bar.html` (the bottom bar) and its
+rules `terminal-status-bar.css`, `terminal-panels.html` (Sessions panel, Apps
+panel, notifications popover, voice console, folder picker, terminal menu),
+`terminal-head.html` (their stylesheets and early scripts) and
+`terminal-chrome.html` (board, notifications, Apps, the clipboard ladder, the
+session identity, the Sessions panel wiring). The extraction left the classic
+page's rendered HTML byte for byte the same; what changed it afterwards is the
+switch (its script, the menu button and popover) and a narrow-screen rule of the
+bar (the status text gives way with an ellipsis, the buttons tighten below
+420 px) so every button stays on a phone's screen.
 
 ```
 Browser: real DOM text in a native scroll container
@@ -476,6 +498,30 @@ module docstring lists every guarantee and its test.
   a modifier applies to the next key from the toolbar, a physical keyboard
   or a software keyboard, then clears. No button takes the focus.
 
+- `page.js`: the page around the engine, doing what the classic page does
+  around xterm.js through the same seams: `window.MerlinTerminal`
+  (`switchSession`, `currentSession`, `currentWindow`, `currentTarget`,
+  `focus`, `notice`, `lastPasteResult`, `probeStats`) for the Sessions panel,
+  the bell, the voice console and the Apps panel; the `merlin:terminal-window`
+  and `merlin:terminal-socket` events; the deep link and the push-tap relay;
+  the window tabs with their agent-state pills, drawn from the bridge's
+  `windows` frames by the rules of `tmux.conf` (`Core.windowPill`: the glyph
+  carries the state, the colour reinforces it, the active window is
+  highlighted), a tap selecting the window; the paste button (the clipboard
+  ladder), a right-click without a selection (with one, it is the browser's
+  menu, so Copy is native; never on a touch screen, where a long press
+  selects), image paste, the upload button and drag and drop typing the
+  uploaded paths, `clipboard_sync` after every paste; a program's copy
+  (merlin-clip, OSC 52, tmux's copy) written to the clipboard on a desktop and
+  offered through the Copy pill on a touch screen (the gesture the clipboard
+  needs); the cd and commits buttons; voice input (the target captured when
+  the recording stops, IndexedDB retry, the 200 fallback typed here); the
+  toolbar toggle; the keyboard suggestions item of the terminal menu; the
+  reconnect with backoff, the ping probe after a suspension, the visibility
+  report; the software keyboard following the visual viewport. What the
+  classic page writes into its screen (a voice or upload error) is a notice
+  over the terminal (`#nt-notice`): this page shows tmux's grid only.
+
 The bridge accepts a key name only if tmux 3.8 parses it
 (`native.valid_key_name`): tmux types a name it cannot parse as literal text
 (measured: `C-Escape`, `C-BSpace`, `C-#`), which would put a key-name-like
@@ -495,4 +541,8 @@ encoder per key, the diff model, the field driven by the event sequences a
 phone produces), `tests/e2e/test_terminal_native.py` (the page in Chromium,
 desktop and phone emulation, and Firefox for copy) and
 `tests/e2e/test_terminal_native_input.py` (the exact bytes a recorder
-program reads, in Chromium and Firefox).
+program reads, in Chromium and Firefox),
+`tests/e2e/test_terminal_native_parity.py` (the switch, the tabs and pills, the
+Sessions panel, paste, copy, uploads, cd, commits, voice, the probe),
+`tests/js/terminal-choice.test.js`, and the native variants of the Apps panel
+(`test_app_terminal.py`) and voice console (`test_voice_console.py`) tests.

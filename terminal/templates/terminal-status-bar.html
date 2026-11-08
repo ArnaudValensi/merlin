@@ -1,0 +1,54 @@
+{#- The terminal's bottom bar, shared by the classic and the native pages. -#}
+<div id="terminal-status">
+    <button id="status-menu" title="Menu">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
+    </button>
+    <span id="status-dot"></span>
+    <span id="status-text">Connecting...</span>
+    <button id="clipboard-perm" title="Click to enable clipboard">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+        <span id="clipboard-perm-badge">?</span>
+    </button>
+    <select id="mic-lang" title="Transcription language">
+        <option value="en">EN</option>
+        <option value="fr">FR</option>
+    </select>
+    <button id="auto-enter-btn" title="Auto-submit voice input (Enter after transcription)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
+    </button>
+    <button id="mic-btn" title="Voice input (tap to record)">
+        <svg id="mic-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+        <span id="mic-warn-badge">!</span>
+    </button>
+    <!-- Voice mode: a hands-free conversation with this window's agent, in a
+         full-screen console or a bar over this status bar
+         (voice/static/voice-console.js). -->
+    <button id="voice-btn" title="Voice mode" aria-label="Voice mode"
+            data-mode="{{ voice_mode | tojson | forceescape }}"
+            data-dictation="{{ 'true' if voice_available else 'false' }}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>
+    </button>
+    <button id="toolbar-toggle" title="Toggle keyboard toolbar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M6 16h12"/></svg>
+    </button>
+    <!-- The terminal menu: Classic or the new terminal, per browser
+         (terminal-choice.js), and the page's own settings. -->
+    <button id="term-menu-btn" title="Terminal settings" aria-label="Terminal settings" aria-haspopup="menu">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="7" y2="7"/><line x1="4" x2="20" y1="17" y2="17"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></svg>
+    </button>
+    <button id="notif-btn" title="Notifications">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+        <span id="notif-dot" hidden></span>
+    </button>
+    {% if app_enabled %}
+    <button id="app-btn" title="Apps running in this window" hidden>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l12 8-12 8z"/></svg>
+        <span id="app-btn-label"></span>
+        <span id="app-btn-count" hidden></span>
+    </button>
+    {% endif %}
+    <button id="sessions-btn" title="Sessions — your parallel agent windows">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+        <span id="sessions-badge" hidden></span>
+    </button>
+</div>

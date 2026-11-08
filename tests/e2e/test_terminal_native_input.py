@@ -292,7 +292,11 @@ def test_toolbar_keys_and_sticky_modifiers(page, tmp_path):
 
 def test_a_held_toolbar_arrow_repeats(page, tmp_path):
     out = record(page, tmp_path)
-    box = page.locator("#nt-toolbar [data-key=ArrowUp]").bounding_box()
+    # The toolbar row scrolls when the terminal column is narrow (the docked
+    # Sessions panel): the arrow on screen first.
+    arrow = page.locator("#nt-toolbar [data-key=ArrowUp]")
+    arrow.scroll_into_view_if_needed()
+    box = arrow.bounding_box()
     page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
     page.mouse.down()
     page.wait_for_timeout(1000)
@@ -310,7 +314,7 @@ def test_toolbar_window_keys(page, tmux_env):
         tmux_env, "list-windows", "-t", session, "-F", "#{window_id}"
     ).split()  # noqa: E731
     before = windows()
-    tool(page, "+")  # no Sessions panel on this page yet: the F2 binding
+    tool(page, "+")  # the Sessions panel's create-and-switch path
     deadline = time.monotonic() + 8
     while len(windows()) != len(before) + 1 and time.monotonic() < deadline:
         time.sleep(0.05)

@@ -1,0 +1,231 @@
+{#- The bottom bar's rules (terminal-status-bar.html), shared by both pages. #}    /* --- Status bar --- */
+    #terminal-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        background: var(--bg-secondary);
+        border-top: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--text-muted);
+        flex-shrink: 0;
+    }
+
+    /* Installed on a phone, the page runs under the home indicator strip and the
+       rounded corners. viewport-fit=cover would expose the real inset through
+       env(), but it changes how iOS scrolls the page when the keyboard opens and
+       the terminal relies on that native behaviour, so the bar is lifted by the
+       fixed height of the strip instead (34pt on every iPhone with a home
+       indicator, a little more than the iPad's 20pt). Nothing changes in a tab. */
+    @media (display-mode: standalone) {
+        #terminal-status { padding-bottom: calc(4px + 34px); }
+        .keyboard-open #terminal-status { padding-bottom: 4px; }
+    }
+
+    #status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--text-muted);
+    }
+
+    #status-dot.connected { background: var(--accent-green); box-shadow: 0 0 4px var(--accent-green); }
+    #status-dot.disconnected { background: var(--accent-red); }
+    #status-dot.connecting { background: var(--accent-yellow); }
+
+    #toolbar-toggle {
+        margin-left: auto;
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-muted);
+        padding: 2px 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        height: 24px;
+    }
+    #toolbar-toggle:hover { color: var(--text-primary); border-color: var(--text-muted); }
+    #toolbar-toggle.active { color: var(--accent-blue); border-color: rgba(74, 158, 255, 0.4); }
+
+    #status-menu {
+        display: none; /* hidden on desktop — sidebar is visible */
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-muted);
+        padding: 2px 6px;
+        cursor: pointer;
+        align-items: center;
+        height: 24px;
+    }
+    #status-menu:hover { color: var(--text-primary); border-color: var(--text-muted); }
+
+    #mic-lang {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-muted);
+        padding: 0 4px;
+        font-size: 11px;
+        line-height: 22px;
+        margin-left: auto;
+        cursor: pointer;
+        -webkit-appearance: none;
+        appearance: none;
+        text-align: center;
+        text-align-last: center;
+        width: 36px;
+        height: 24px;
+    }
+    #mic-lang:focus { outline: none; border-color: var(--text-muted); }
+
+    #auto-enter-btn {
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-muted);
+        padding: 2px 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        height: 24px;
+    }
+    #auto-enter-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+    #auto-enter-btn.active {
+        color: var(--accent-green);
+        border-color: var(--accent-green);
+    }
+
+    #mic-btn {
+        position: relative;
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-muted);
+        padding: 2px 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        height: 24px;
+    }
+    #mic-warn-badge {
+        display: none;
+        font-size: 9px;
+        font-weight: 700;
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        background: var(--accent-yellow);
+        color: var(--bg-secondary);
+        border-radius: 50%;
+        width: 12px;
+        height: 12px;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+    }
+    #mic-btn.voice-unavailable { color: var(--accent-yellow); border-color: var(--accent-yellow); }
+    #mic-btn.voice-unavailable #mic-warn-badge { display: flex; }
+    #mic-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+    #mic-btn.recording {
+        color: var(--accent-red);
+        border-color: var(--accent-red);
+        animation: pulse-mic 1s ease-in-out infinite;
+    }
+    #mic-btn.uploading {
+        position: relative;
+        color: var(--accent-blue, #7aa2f7);
+        border-color: var(--accent-blue, #7aa2f7);
+        overflow: hidden;
+    }
+    #mic-btn.uploading::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: calc(var(--upload-progress, 0) * 100%);
+        background: var(--accent-blue, #7aa2f7);
+        opacity: 0.2;
+        border-radius: inherit;
+        transition: height 0.1s;
+        pointer-events: none;
+    }
+    #mic-btn.upload-done {
+        color: var(--accent-green);
+        border-color: var(--accent-green);
+    }
+    #mic-btn.retry-pending {
+        color: var(--accent-yellow, #e0af68);
+        border-color: var(--accent-yellow, #e0af68);
+        animation: pulse-mic 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse-mic {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+
+    /* Shift toolbar-toggle to not use margin-left auto when mic is present */
+    #toolbar-toggle { margin-left: 4px; }
+
+    #clipboard-perm {
+        display: none;
+        position: relative;
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 2px 6px;
+        cursor: pointer;
+        align-items: center;
+        color: var(--accent-yellow);
+        border-color: var(--accent-yellow);
+    }
+    #clipboard-perm.visible { display: flex; }
+    #clipboard-perm.denied {
+        color: var(--accent-red);
+        border-color: var(--accent-red);
+    }
+    #clipboard-perm:hover { opacity: 0.8; }
+    #clipboard-perm-badge {
+        font-size: 9px;
+        font-weight: 700;
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        background: var(--accent-yellow);
+        color: var(--bg-secondary);
+        border-radius: 50%;
+        width: 12px;
+        height: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+    }
+    #clipboard-perm.denied #clipboard-perm-badge {
+        background: var(--accent-red);
+    }
+
+    #status-text.copied {
+        color: var(--accent-green);
+        transition: color 0.2s;
+    }
+    #status-text.uploading {
+        color: var(--accent-yellow);
+        transition: color 0.2s;
+    }
+
+    /* The text gives way to the buttons on a narrow screen (ellipsis), and
+       the bar tightens, so every button stays on screen on a phone. */
+    #status-text {
+        flex: 0 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+    @media (max-width: 420px) {
+        #terminal-status { gap: 4px; padding-left: 8px; padding-right: 8px; }
+        #terminal-status > button { padding-left: 4px; padding-right: 4px; }
+    }
