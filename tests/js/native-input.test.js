@@ -777,3 +777,60 @@ test('the document: an Option dead key after a mouse selection is Meta, the fiel
   assert.equal(docKey('a', { keyCode: 229 }).defaultPrevented, false);
   assert.equal(docKey('Dead', { altKey: true, code: 'KeyE', isComposing: true }).defaultPrevented, false);
 });
+
+// The edits a browser that keeps a dropped composition still delivers: a
+// composing beforeinput/input pair with the field grown, then its commit.
+function lateComposition(h, value) {
+  h.fire('compositionupdate', { data: value });
+  const b = h.fire('beforeinput', { inputType: 'insertCompositionText', data: value, isComposing: true });
+  assert.equal(b.defaultPrevented, false);
+  h.field.value = S + 'a' + value + S;
+  h.fire('input', { inputType: 'insertCompositionText', isComposing: true });
+  h.fire('compositionend', { data: value });
+  // WebKit's order: the commit's own input after the end.
+  h.field.value = S + 'a' + value + S;
+  h.fire('beforeinput', { inputType: 'insertFromComposition', data: value });
+  h.fire('input', { inputType: 'insertFromComposition' });
+}
+
+test('a dropped composition sends nothing of its late edits, after a toolbar key', () => {
+  const h = harness();
+  const t = h.toolbar();
+  composeOverB(h);
+  t.tapLeft(); // this browser keeps the composition through the blur
+  lateComposition(h, '漢字');
+  assert.deepEqual(h.sent, [['input', 'a'], ['input', 'b'], ['key', 'Left']]);
+  assert.equal(h.field.value, S + S);
+  assert.equal(h.input.preedit && !h.input.preedit.hidden, false);
+  // Fresh typing, then a fresh composition, are sent as usual.
+  h.type('X');
+  h.fire('compositionstart', {});
+  h.field.value = S + 'Xか' + S;
+  h.fire('input', { inputType: 'insertCompositionText', isComposing: true });
+  h.fire('compositionend', { data: 'か' });
+  assert.deepEqual(h.sent.slice(3), [['input', 'X'], ['input', 'か']]);
+  assert.equal(line(h.sent), 'aXかb');
+});
+
+test('a dropped composition sends nothing of its late edits to a new pane', () => {
+  const h = harness();
+  composeOverB(h);
+  h.input.invalidate(); // the displayed pane changed
+  lateComposition(h, '漢字');
+  assert.deepEqual(h.sent, [['input', 'a'], ['input', 'b']]);
+  assert.equal(h.field.value, S + S);
+  h.type('y');
+  assert.deepEqual(h.sent[2], ['input', 'y']);
+});
+
+test('a normal edit ends a dropped composition the browser never closed', () => {
+  const h = harness();
+  composeOverB(h);
+  h.input.invalidate();
+  // The browser left the old text in the field and never ended it.
+  h.field.value = S + 'a漢' + S;
+  h.field.setSelectionRange(S.length + 2, S.length + 2);
+  h.type('z');
+  assert.deepEqual(h.sent, [['input', 'a'], ['input', 'b'], ['input', 'z']]);
+  assert.equal(h.input.cancelled, false);
+});

@@ -69,8 +69,10 @@
       this.sent = '';
       this.composing = false;
       this.resetPending = false;
-      // A composition ended by the page (its context changed): the browser's
-      // own compositionend for it, if it comes, is ignored.
+      // A composition the page dropped (its context changed) that the browser
+      // may still be running: every edit of it (composing input, its commit,
+      // its end) is swallowed until a normal edit, a key or a new
+      // composition.
       this.cancelled = false;
       this.deadMeta = false;
       this.deadNext = null;
@@ -80,9 +82,9 @@
       this.setSuggestions(stored(SUGGESTIONS_KEY) === '1', false);
       this.reset();
       field.addEventListener('beforeinput', (e) => this.onBeforeInput(e));
-      field.addEventListener('input', () => { if (!this.composing) this.diff(); });
+      field.addEventListener('input', () => this.onInput());
       field.addEventListener('compositionstart', () => this.onCompositionStart());
-      field.addEventListener('compositionupdate', (e) => this.showPreedit(e.data));
+      field.addEventListener('compositionupdate', (e) => { if (!this.cancelled) this.showPreedit(e.data); });
       field.addEventListener('compositionend', () => this.onCompositionEnd());
       field.addEventListener('keydown', (e) => this.onKeyDown(e));
       field.addEventListener('paste', (e) => this.onPaste(e));
@@ -193,7 +195,15 @@
 
     onBeforeInput(e) {
       const t = e.inputType;
-      if (this.composing || e.isComposing || t === 'insertCompositionText') return;
+      const composition = e.isComposing || /Composition/.test(t || '');
+      if (this.cancelled) {
+        if (composition) return;
+        // A normal edit: the dropped composition is over, and whatever of
+        // it is still in the field goes before this edit applies.
+        this.cancelled = false;
+        this.reset();
+      }
+      if (this.composing || composition) return;
       let data = e.data;
       if (data == null && e.dataTransfer) data = e.dataTransfer.getData('text/plain');
       const sticky = Core.stickyAction(t, data, this.modifiers.peek());
@@ -201,6 +211,13 @@
       if (!action) return; // the field applies it; the diff reads it on input
       e.preventDefault();
       this.sendKey(action);
+    }
+
+    // Every input event while a dropped composition runs is one of its edits
+    // (a normal edit ends that state in beforeinput first): never read.
+    onInput() {
+      if (this.cancelled) { this.reset(); return; }
+      if (!this.composing) this.diff();
     }
 
     onCompositionStart() {
@@ -211,7 +228,7 @@
 
     onCompositionEnd() {
       if (this.cancelled) {
-        this.cancelled = false;
+        // Its commit may still follow as an input event: still swallowed.
         this.reset();
         return;
       }
@@ -329,6 +346,7 @@
 
     onKeyDown(e) {
       if (e.isComposing) { this.noteDeadNext(e); return; }
+      if (this.cancelled && e.keyCode !== 229) { this.cancelled = false; this.reset(); }
       const dead = this.deadKey(e);
       if (e.keyCode === 229 && !dead) return;
       this.deadMeta = dead;
