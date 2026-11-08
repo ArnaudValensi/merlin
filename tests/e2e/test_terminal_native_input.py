@@ -551,7 +551,18 @@ def test_on_a_phone_a_long_press_reaches_the_field_and_sends_nothing(
     until(out, b"held.png")
     page.keyboard.type("b")
     until(out, b"held.pngb")
+
+    # A long press, then a composition with no key before it: where typing goes.
+    _long_press(page, cdp, hit["x"], hit["y"])
+    cdp.send(
+        "Input.imeSetComposition",
+        {"text": "か", "selectionStart": 1, "selectionEnd": 1},
+    )
+    cdp.send("Input.insertText", {"text": "漢"})
+    until(out, "漢".encode())
     data = finish(page, out)
+    assert data.endswith("-held.pngb漢".encode()), data
+    data = data[: -len("漢".encode())]
     head = b"a\x1b[200~PASTED; C-c\x1b[201~/tmp/merlin-clipboard/"
     assert data.startswith(head), data
     assert data.endswith(b"-held.pngb"), data

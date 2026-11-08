@@ -887,6 +887,60 @@ test('the field: Cut from the system menu deletes nothing', () => {
   assert.equal(h.field.value, S + S);
 });
 
+// What a composition does to the field: written at the actual selection.
+function composeAtSelection(h, text) {
+  h.fire('compositionstart');
+  h.edit('insertCompositionText', text, () => {
+    const a = h.field.selectionStart, b = h.field.selectionEnd;
+    h.field.value = h.field.value.slice(0, a) + text + h.field.value.slice(b);
+    h.field.setSelectionRange(a + text.length, a + text.length);
+  });
+  h.fire('compositionend', { data: text });
+  h.fire('input', { inputType: 'insertCompositionText', data: text });
+}
+
+test('the field: a composition right after a long press starts where typing goes', () => {
+  for (const place of [(f) => f.setSelectionRange(f.value.length, f.value.length), (f) => f.setSelectionRange(0, f.value.length), (f) => f.setSelectionRange(1, 1)]) {
+    const h = harness();
+    for (const ch of 'ab') h.type(ch);
+    h.fire('touchstart');
+    place(h.field);
+    h.selectionchange();
+    h.fire('touchend');
+    composeAtSelection(h, '\u65e5');
+    assert.equal(line(h.sent), 'ab\u65e5');
+    assert.equal(h.sent.filter(([, d]) => String(d).includes('\u00a0')).length, 0);
+  }
+});
+
+test('the field: after a touch the space-bar trackpad moves the cursor, counted from the touched caret', () => {
+  for (const anchored of [(h) => S.length + 3, (h) => h.field.value.length]) {
+    const h = harness();
+    let clock = 1000;
+    h.input.now = () => clock;
+    for (const ch of 'abc') h.type(ch);
+    const n = h.sent.length;
+    h.fire('touchstart');
+    const at = anchored(h);
+    h.field.setSelectionRange(at, at);
+    h.selectionchange();
+    h.fire('touchend');
+    // The system still settling the caret for that touch: nothing sent.
+    h.selectionchange();
+    clock += 100;
+    h.selectionchange();
+    assert.equal(h.sent.length, n);
+    // Later, with no edit and no other touch: the keyboard's trackpad.
+    clock += 1000;
+    h.selectionchange();
+    assert.equal(h.sent.length, n);
+    h.field.setSelectionRange(at - 2, at - 2);
+    h.selectionchange();
+    assert.deepEqual(h.sent.slice(n), [['key', 'Left'], ['key', 'Left']]);
+    assert.equal(h.field.value, S + S);
+  }
+});
+
 test('the field: a touch elsewhere ends the long press, and the trackpad moves the cursor again', () => {
   const h = harness();
   for (const ch of 'abc') h.type(ch);

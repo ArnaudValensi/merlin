@@ -19,6 +19,9 @@
   const Core = root.MerlinNativeCore;
   const SENTINEL = '\u00a0\u00a0\u00a0\u00a0';
   const SUGGESTIONS_KEY = 'merlin.nativeTerminal.suggestions';
+  // After a finger leaves the field, how long a caret change is still the
+  // system placing the caret for that touch.
+  const TOUCH_GRACE = 500;
   const IS_MAC = typeof navigator !== 'undefined'
     && (/Mac/.test(navigator.platform || '') || /Mac/.test(navigator.userAgent || ''));
 
@@ -81,6 +84,9 @@
       // screen): the caret it places is the system's Paste menu's, not a
       // cursor move for the terminal.
       this.touched = false;
+      this.touchEnd = null;
+      this.touchAnchor = 0;
+      this.now = () => Date.now();
       field.setAttribute('autocapitalize', 'off');
       field.setAttribute('enterkeyhint', 'enter');
       this.setSuggestions(stored(SUGGESTIONS_KEY) === '1', false);
@@ -92,7 +98,10 @@
       field.addEventListener('compositionend', () => this.onCompositionEnd());
       field.addEventListener('keydown', (e) => this.onKeyDown(e));
       field.addEventListener('paste', (e) => this.onPaste(e));
-      field.addEventListener('touchstart', () => { this.touched = true; }, { passive: true });
+      field.addEventListener('touchstart', () => { this.touched = true; this.touchEnd = null; }, { passive: true });
+      const released = () => { this.touchEnd = this.now(); this.touchAnchor = field.selectionStart; };
+      field.addEventListener('touchend', released, { passive: true });
+      field.addEventListener('touchcancel', released, { passive: true });
       field.addEventListener('blur', () => this.settleTouch());
       // The system's menu also offers Cut: it would delete the sentinels.
       field.addEventListener('cut', (e) => { e.preventDefault(); this.reset(); });
@@ -232,6 +241,8 @@
     }
 
     onCompositionStart() {
+      // Before it begins: a composition is written at the caret.
+      this.settleTouch();
       this.composing = true;
       this.cancelled = false;
       this.showPreedit('');
@@ -285,13 +296,23 @@
     // trackpad (or a tap in the field). Arrows, one per character, then a
     // fresh field.
     onSelectionChange() {
-      if (this.composing || this.touched || document.activeElement !== this.field) return;
+      if (this.composing || document.activeElement !== this.field) return;
       const f = this.field;
       if (f.value !== this.value() || f.selectionStart !== f.selectionEnd) return;
       const end = SENTINEL.length + this.typed.length;
       const caret = f.selectionStart;
-      if (caret === end) return;
-      const moved = Core.caretMove(f.value.slice(0, end), f.value.slice(0, caret));
+      let from = end;
+      if (this.touched) {
+        // The finger is on the field, or just left it: this caret is the
+        // system's for that touch, and later moves count from it.
+        if (this.touchEnd === null || this.now() - this.touchEnd < TOUCH_GRACE) {
+          this.touchAnchor = caret;
+          return;
+        }
+        from = this.touchAnchor;
+      }
+      if (caret === from) return;
+      const moved = Core.caretMove(f.value.slice(0, from), f.value.slice(0, caret));
       this.modifiers.clear();
       for (const k of Core.caretAction(moved)) this.sink.key(k);
       this.reset();
