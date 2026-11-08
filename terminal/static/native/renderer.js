@@ -140,6 +140,7 @@
       this.live = [];
       this.lastConfirmed = null; // the row element of next - 1
       this.pendings = []; // placeholders, in order: {el, a, b} (rows [a, b))
+      this.deferred = []; // regroupings waiting for a selection to go
       this.screenTop = null;
       this.firstHeld = null; // the oldest row tmux holds
       this.spacerRows = 0;
@@ -195,11 +196,10 @@
       return out;
     }
 
-    newChunk(after, start) {
+    newChunk(after) {
       const c = el('div', 'nt-chunk');
       if (after) after.after(c);
       else this.hist.appendChild(c);
-      c._start = start;
       c._rows = 0;
       c._lines = 0;
       c._gaps = 0;
@@ -279,7 +279,7 @@
       while (i < rows.length) {
         if (!this.tail || this.tailLines >= this.opts.chunk) {
           if (this.tail) this.sizeChunk(this.tail);
-          this.tail = this.newChunk(this.hist.lastElementChild, rows[i].n);
+          this.tail = this.newChunk(this.hist.lastElementChild);
           this.tailLines = 0;
         }
         const b = this.buildRows(rows, i, 0, this.opts.chunk - this.tailLines);
@@ -314,7 +314,7 @@
       while (i < rows.length) {
         if (c._lines >= this.opts.chunk) {
           const full = c;
-          c = this.newChunk(full, rows[i].n);
+          c = this.newChunk(full);
           c.appendChild(p.el);
           this.sizeChunk(full);
         }
@@ -333,7 +333,8 @@
         this.pendings.shift();
         if (!c.firstChild) c.remove();
         else this.sizeChunk(c);
-        // The row after the placeholder may continue the last one filled.
+        // The row after the placeholder may continue the last one filled: the
+        // two lines become one, moving only rows no selection touches.
         if (last && last._w === '1') this.joinNext(last);
       } else {
         p.el.style.height = (p.b - p.a) * this.rowH + 'px';
@@ -353,7 +354,7 @@
         return;
       }
       if (this.tail) this.sizeChunk(this.tail);
-      const c = this.newChunk(this.hist.lastElementChild, a);
+      const c = this.newChunk(this.hist.lastElementChild);
       const p = { el: el('div', 'nt-pending'), a, b };
       p.el.style.height = (b - a) * this.rowH + 'px';
       c.appendChild(p.el);
@@ -441,37 +442,111 @@
       return l && l.classList.contains('l') ? firstRow(l) : null;
     }
 
-    // A row whose wrap flag changed: the logical lines around it are regrouped
-    // (rows move between line elements: their content changed anyway).
+    // Regrouping logical lines (a wrap flag changed, a placeholder completed
+    // a line that continues into rows already shown, rows dropped from the
+    // middle of a line) moves rows between line elements. The DOM collapses a
+    // range whose node is removed, so only the side no selection touches
+    // moves; when a selection touches both, the regrouping waits until it is
+    // gone (``deferred``, retried with every update).
+    selected(node) {
+      const sel = typeof getSelection === 'function' ? getSelection() : null;
+      if (!sel || !sel.rangeCount || sel.isCollapsed) return false;
+      try { return sel.getRangeAt(0).intersectsNode(node); } catch (e) { return false; }
+    }
+
+    // Counters of the chunks rows moved between, read from the DOM.
+    recount(...chunks) {
+      for (const c of new Set(chunks)) {
+        if (!c || !c.classList || !c.classList.contains('nt-chunk')) continue;
+        c._rows = c.querySelectorAll('.r').length;
+        c._lines = 0;
+        c._gaps = 0;
+        for (const k of c.children) {
+          if (k.classList.contains('l')) c._lines++;
+          else if (k.classList.contains('nt-gap')) c._gaps++;
+        }
+        if (c === this.tail) this.tailLines = c._lines;
+        if (!c.firstChild && c !== this.tail) c.remove();
+        else this.sizeChunk(c);
+      }
+    }
+
+    // A row whose wrap flag changed.
     rewrap(r, w) {
       r._w = w;
       if (w === '1') { this.joinNext(r); return; }
-      const rest = [];
-      for (let s = r.nextElementSibling; s; s = s.nextElementSibling) if (s.classList.contains('r')) rest.push(s);
-      if (!rest.length) return;
-      const l2 = el('div', 'l');
-      for (const s of rest) l2.appendChild(s);
-      r.parentNode.after(l2);
-      const c = l2.parentNode;
-      c._lines++;
-      if (c === this.tail) this.tailLines++;
+      const after = this.rowAfterInLine(r);
+      if (after) this.splitBefore(after);
     }
 
-    // ``r`` wraps: the line that starts with the row after it joins r's line.
+    rowAfterInLine(r) {
+      for (let s = r.nextElementSibling; s; s = s.nextElementSibling) if (s.classList.contains('r')) return s;
+      return null;
+    }
+
+    // ``r`` wraps: the line starting with the row after it is the same line.
     joinNext(r) {
       const nx = this.rowAfter(r);
-      if (!nx || nx.parentNode === r.parentNode) return;
-      const l2 = nx.parentNode;
-      if (firstRow(l2) !== nx) return;
-      const c2 = l2.parentNode, c1 = r.parentNode.parentNode;
-      const moved = [];
-      for (const s of Array.from(l2.children)) if (s.classList.contains('r')) moved.push(s);
-      for (const s of moved) r.parentNode.appendChild(s);
-      l2.remove();
-      c2._lines--;
-      if (c2 === this.tail) this.tailLines--;
-      if (c1 !== c2) { c1._rows += moved.length; c2._rows -= moved.length; this.sizeChunk(c2); }
-      this.sizeChunk(c1);
+      if (!nx || nx.parentNode === r.parentNode || firstRow(nx.parentNode) !== nx) return;
+      this.mergeLines(r.parentNode, nx.parentNode);
+    }
+
+    // Lines ``l1`` and ``l2`` (right after it) become one.
+    mergeLines(l1, l2) {
+      if (!l1.parentNode || !l2.parentNode || l1 === l2) return;
+      const c1 = l1.parentNode, c2 = l2.parentNode;
+      if (!this.selected(l1)) {
+        // l1's rows go to the start of l2 (inserted before: nothing in l2 moves).
+        l2.prepend(...rowsOf(l1));
+        l1.remove();
+      } else if (!this.selected(l2)) {
+        l1.append(...rowsOf(l2));
+        l2.remove();
+      } else {
+        this.deferred.push(() => {
+          if (!l1.isConnected || !l2.isConnected) return true;
+          if (this.selected(l1) && this.selected(l2)) return false;
+          this.mergeLines(l1, l2);
+          return true;
+        });
+        return;
+      }
+      this.recount(c1, c2);
+    }
+
+    // The line of ``r`` ends before ``r``: r and the rows after it become a
+    // line of their own (or the rows before it do, whichever no selection
+    // touches).
+    splitBefore(r) {
+      const l = r.parentNode;
+      const rows = rowsOf(l);
+      const at = rows.indexOf(r);
+      if (at <= 0) return;
+      const head = rows.slice(0, at), tail = rows.slice(at);
+      const touches = (list) => list.some((x) => this.selected(x));
+      const l2 = el('div', 'l');
+      if (!touches(tail)) {
+        l2.append(...tail);
+        l.after(l2);
+      } else if (!touches(head)) {
+        l2.append(...head);
+        l.before(l2);
+      } else {
+        this.deferred.push(() => {
+          if (!r.isConnected || r.parentNode !== l) return true;
+          const all = rowsOf(l);
+          if (all.slice(0, all.indexOf(r)).some((x) => this.selected(x)) && all.slice(all.indexOf(r)).some((x) => this.selected(x))) return false;
+          this.splitBefore(r);
+          return true;
+        });
+        return;
+      }
+      this.recount(l2.parentNode);
+    }
+
+    retryDeferred() {
+      if (!this.deferred.length) return;
+      this.deferred = this.deferred.filter((f) => !f());
     }
 
     // -- history -----------------------------------------------------------------------
@@ -535,24 +610,17 @@
         anchor.parentNode._gaps++;
         this.sizeChunk(anchor.parentNode);
         if (first && firstRow(first.parentNode) !== first) {
-          // Rows before it in its line were dropped: it starts a line now.
-          this.rewrapFrom(first);
+          // The rows before it in its line come before the gap: it starts a
+          // line now.
+          this.splitBefore(first);
         }
       } else {
-        if (!this.tail) this.tail = this.newChunk(this.hist.lastElementChild, upTo);
+        if (!this.tail) this.tail = this.newChunk(this.hist.lastElementChild);
         this.tail.appendChild(g);
         this.tail._gaps++;
         this.sizeChunk(this.tail);
         this.endBreak = true;
       }
-    }
-
-    rewrapFrom(r) {
-      const l = r.parentNode;
-      const l2 = el('div', 'l');
-      for (let s = r; s;) { const n = s.nextElementSibling; l2.appendChild(s); s = n; }
-      l.after(l2);
-      l2.parentNode._lines++;
     }
 
     // Older rows ``start``.. (``html.length`` of them, ending where the page's
@@ -572,7 +640,6 @@
         const rows = this.parseRows(rowSpans(html, s, end), start + s, html, texts, wrapped, s);
         firstL.prepend(...rows);
         c._rows += rows.length;
-        c._start = start + s;
         this.sizeChunk(c);
         this.rowCount += rows.length;
         end = s;
@@ -582,7 +649,6 @@
       while (i < end) {
         const c = el('div', 'nt-chunk');
         this.hist.insertBefore(c, before);
-        c._start = start + i;
         c._rows = 0;
         c._lines = 0;
         c._gaps = 0;
@@ -617,18 +683,23 @@
       const sel = typeof getSelection === 'function' ? getSelection() : null;
       while (this.rowCount > this.opts.maxRows) {
         const first = this.hist.firstElementChild;
-        const following = first && first.nextElementSibling;
-        if (!following || following._start > this.next || first === this.tail) break;
+        if (!first || !first.nextElementSibling || first === this.tail) break;
+        // Only confirmed history: its last row comes before ``next``.
+        const rows = first.querySelectorAll('.r');
+        if (rows.length && rows[rows.length - 1]._n >= this.next) break;
         if (this.pendings.some((p) => p.el.parentNode === first)) break;
         if (sel && sel.rangeCount && sel.getRangeAt(0).intersectsNode(first)) break;
         const top = this.spacerHeight() + (first._rows + first._gaps) * this.rowH;
         if (!this.stuck && (first._gaps || top > this.scroller.scrollTop - this.scroller.clientHeight)) break;
         if (this.lastConfirmed && first.contains(this.lastConfirmed)) break;
-        this.rowCount -= first.querySelectorAll('.r').length;
-        this.oldest = following._start;
+        this.rowCount -= rows.length;
+        first.remove();
+        // The oldest row is the first one left (counted, not remembered: lines
+        // regroup across chunks).
+        const head = this.hist.querySelector('.r');
+        this.oldest = head ? head._n : this.next;
         this.spacerRows = this.firstHeld == null ? 0 : Math.max(0, this.oldest - this.firstHeld);
         this.spacer.style.height = this.spacerRows * this.rowH + 'px';
-        first.remove();
       }
     }
 
@@ -650,6 +721,7 @@
         this.screenTop = top;
       }
       this.placeCursor(cursor);
+      this.retryDeferred();
       this.trim();
       if (this.stuck && !this.touching) this.scrollToBottom();
     }
@@ -736,6 +808,12 @@
     const e = document.createElement(tag);
     e.className = cls;
     return e;
+  }
+
+  function rowsOf(l) {
+    const out = [];
+    for (let s = l.firstElementChild; s; s = s.nextElementSibling) if (s.classList.contains('r')) out.push(s);
+    return out;
   }
 
   function firstRow(l) {

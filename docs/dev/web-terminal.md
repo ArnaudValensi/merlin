@@ -397,7 +397,12 @@ module docstring lists every guarantee and its test.
   stay where they are (history now) and new rows are appended; a row's HTML is
   rewritten only when its content changed. That is what keeps a selection
   alive while output streams: the DOM collapses a range whose node is
-  removed, even to be put back elsewhere. Rows the page has no content for yet
+  removed, even to be put back elsewhere. When logical lines must regroup (a
+  wrap flag changed, a placeholder filled the start of a line already shown,
+  rows dropped from the middle of a line), only the side no selection touches
+  moves (filled rows go to the start of the line they continue, as older
+  history does); with a selection on both sides the regrouping waits for it
+  to go. Rows the page has no content for yet
   (the screen moved down by more than its height while history was on its
   way) are a placeholder of their exact height, filled in order; rows tmux
   dropped become a gap marker. Every row is one integer row height, and a

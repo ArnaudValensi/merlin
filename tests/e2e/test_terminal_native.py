@@ -647,8 +647,8 @@ def test_rows_tmux_dropped_show_as_a_gap_and_trimming_passes_it(page, tmux_env):
     wait_text(page, "FLOOD-END", "screen")
     page.wait_for_function("document.querySelector('.nt-gap')")
     gap = page.evaluate(
-        """() => { const g = document.querySelector('.nt-gap');
-            return {rows: +g.dataset.rows, text: g.textContent}; }"""
+        """() => { const gs = [...document.querySelectorAll('.nt-gap')];
+            return {rows: gs.reduce((n, g) => n + +g.dataset.rows, 0), text: gs.map(g => g.textContent).join('')}; }"""
     )
     assert gap["rows"] > 1000 and gap["text"] == ""
     # Trimming down to a few rows removes the chunk with the marker.
@@ -738,3 +738,148 @@ def test_a_selection_survives_the_output_that_scrolls_it(any_page, tmux_env):
     assert page.evaluate("window.__copied") == expected
     if page.engine_name == "chromium":
         assert after["text"].rstrip("\n") == expected
+
+
+# Draw frames one at a time: the page queues them, ``__step()`` draws the next.
+STEPPER = f"""() => {{
+    const e = {ENGINE};
+    e.__drain = e.drain;
+    e.drain = () => {{}};
+    window.__step = () => {{
+        if (!e.queue.length) return false;
+        const rest = e.queue.slice(1);
+        e.queue = e.queue.slice(0, 1);
+        e.__drain();
+        e.queue = rest.concat(e.queue);
+        return true;
+    }};
+    window.__resume = () => {{ e.drain = e.__drain; e.drain(); }};
+}}"""
+
+
+def test_a_selection_survives_history_filling_in_above_it(page, tmux_env):
+    """The screen moved down past history still on its way: its first row
+    continues a long line whose first rows are a placeholder. A selection made
+    from that row keeps its nodes, offsets and text when the placeholder fills
+    and the line becomes one; trimming and loading back later leave the rows
+    numbered one after the other from the first one in the DOM, at the exact
+    height."""
+    cols = page.evaluate(f"{ENGINE}.renderer.cols")
+    rows = page.evaluate(f"{ENGINE}.renderer.rows")
+    long_rows = rows + 3
+    long = ("0123456789" * (cols * long_rows // 10 + 1))[: cols * long_rows - 3] + "END"
+    page.evaluate(STEPPER)
+    run(
+        page,
+        "python3 -c \"import sys; sys.stdout.write(''.join('%d\\n' % i for i in range(30000)));"
+        f" print(('0123456789' * {cols * long_rows // 10 + 1})[:{cols * long_rows - 3}] + 'E' + 'ND');"
+        " print('TAIL' + '-1'); print('TAIL' + '-2')\"",
+    )
+    pane = displayed_pane(page)
+    deadline = time.monotonic() + 20
+    while "TAIL-2" not in tmux(tmux_env, "capture-pane", "-p", "-t", pane):
+        assert time.monotonic() < deadline
+        time.sleep(0.1)
+    time.sleep(0.5)
+    # Draw frames until the screen shows the end while the rows right above it
+    # are still a placeholder.
+    ready_to_select = f"""() => {{ const r = {ENGINE}.renderer;
+        return r.pendings.length > 0 && r.screenText().includes('TAIL-2')
+            && r.rowEl(r.screenTop - 1) == null; }}"""
+    for _ in range(400):
+        if page.evaluate(ready_to_select):
+            break
+        if not page.evaluate("window.__step()"):
+            page.wait_for_timeout(50)
+    assert page.evaluate(ready_to_select), page.evaluate(
+        f"""() => {{ const r = {ENGINE}.renderer;
+            return {{pend: r.pendings.map(p => [p.a, p.b]), top: r.screenTop, next: r.next,
+                     screen: r.screenText().slice(-80), queue: {ENGINE}.queue.length}}; }}"""
+    )
+    before = page.evaluate(
+        f"""() => {{
+            const r = {ENGINE}.renderer;
+            const top = r.rowEl(r.screenTop);
+            const tail = [...document.querySelectorAll('.nt-hist .l')].find(l => l.textContent === 'TAIL-1');
+            const start = top.firstChild, end = tail.querySelector('.r').firstChild;
+            // A selection by hand takes the focus off the input field.
+            document.activeElement.blur();
+            const range = document.createRange();
+            range.setStart(start, 2);
+            range.setEnd(end, 4);
+            const sel = getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            window.__ends = [start, end];
+            return {{text: sel.toString(), lineRows: top.parentNode.querySelectorAll('.r').length}};
+        }}"""
+    )
+    assert before["lineRows"] < long_rows  # the line's first rows are not here yet
+    for _ in range(2000):
+        if not page.evaluate("window.__step()"):
+            if page.evaluate(f"{ENGINE}.renderer.pendings.length === 0"):
+                break
+            page.wait_for_timeout(50)
+    page.evaluate("window.__resume()")
+    page.wait_for_function(f"{ENGINE}.renderer.pendings.length === 0")
+    after = page.evaluate(
+        """() => {
+            const sel = getSelection();
+            const range = sel.rangeCount ? sel.getRangeAt(0) : null;
+            const start = window.__ends[0];
+            const line = start.parentNode.closest('.l');
+            return {
+                same: !!range && range.startContainer === window.__ends[0] && range.endContainer === window.__ends[1]
+                      && range.startOffset === 2 && range.endOffset === 4,
+                connected: window.__ends.every(n => n.isConnected),
+                text: sel.toString(),
+                line: line.textContent,
+                lineRows: line.querySelectorAll('.r').length,
+                index: [...line.querySelectorAll('.r')].indexOf(start.parentNode),
+            };
+        }"""
+    )
+    dbg = page.evaluate("""() => { const sel = getSelection(); const r = sel.rangeCount ? sel.getRangeAt(0) : null;
+        return {n: sel.rangeCount, sc: r && (r.startContainer.nodeName + ':' + (r.startContainer.className || r.startContainer.textContent.slice(0, 20))), so: r && r.startOffset,
+                ec: r && (r.endContainer.nodeName + ':' + (r.endContainer.className || r.endContainer.textContent.slice(0, 20))), eo: r && r.endOffset,
+                c0: window.__ends[0].isConnected, c1: window.__ends[1].isConnected, p0: window.__ends[0].parentNode && window.__ends[0].parentNode.className}; }""")
+    assert after["same"] and after["connected"], (dbg, after)
+    assert after["text"] == before["text"]
+    # One logical line again, its first rows filled in above the selection.
+    assert after["line"] == long and after["lineRows"] == long_rows
+    expected = long[after["index"] * cols + 2 :] + "\nTAIL"
+    assert after["text"].rstrip("\n") == expected
+    page.evaluate(
+        "window.__copied = null; window.addEventListener('copy',"
+        " (e) => { window.__copied = e.clipboardData.getData('text/plain'); }, {once: true});"
+    )
+    page.keyboard.press("Control+c")
+    page.wait_for_function("window.__copied !== null")
+    assert page.evaluate("window.__copied") == expected
+    # Trimming, then loading everything back: rows numbered one after the
+    # other from the first row in the DOM, at the exact height.
+    page.evaluate(
+        f"getSelection().removeAllRanges(); {ENGINE}.renderer.opts.maxRows = 400"
+    )
+    page.click("#nt-container")
+    run(page, "seq 1 50")
+    wait_text(page, "50", "screen")
+    page.wait_for_function(f"{ENGINE}.renderer.rowCount <= 700")
+    assert page.evaluate(CONTIGUOUS)
+    page.evaluate(f"{ENGINE}.renderer.opts.maxRows = 100000")
+    for _ in range(60):
+        if page.evaluate(
+            f"""() => {{ const r = {ENGINE}.renderer, s = r.scroller;
+                s.scrollTop = Math.max(0, r.spacerHeight() - s.clientHeight);
+                return r.spacerRows === 0; }}"""
+        ):
+            break
+        page.wait_for_timeout(150)
+    final = page.evaluate(
+        f"""() => {{ const r = {ENGINE}.renderer;
+            return {{spacer: r.spacerRows, height: r.content.offsetHeight, rows: r.rowCount, rowH: r.rowH,
+                     line: [...document.querySelectorAll('.nt-hist .l')].some(l => l.textContent === {long!r})}}; }}"""
+    )
+    assert final["spacer"] == 0 and final["line"]
+    assert final["height"] == final["rows"] * final["rowH"]
+    assert page.evaluate(CONTIGUOUS)
