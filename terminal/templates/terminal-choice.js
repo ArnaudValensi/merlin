@@ -14,6 +14,10 @@ var MerlinTerminalChoice = (function () {
 
     const KEY = 'merlin-terminal';
     const FALLBACK_KEY = 'merlin-terminal-fallback';
+    // Set by the fall back itself, consumed by the classic page it lands on:
+    // that page says why even when the saved choice is not the native one (a
+    // direct visit to /terminal/native).
+    const FELL_BACK_KEY = 'merlin-terminal-fell-back';
     const PATHS = { classic: '/terminal', native: '/terminal/native' };
 
     function read(store, key) {
@@ -60,11 +64,20 @@ var MerlinTerminalChoice = (function () {
         return out;
     }
 
+    // Whether a page shows the one-line notice: only the classic page, when
+    // this tab fell back (`fallback`), right after the fall back (`fellBack`)
+    // or while the saved choice is the native terminal (each /terminal load
+    // then lands here instead). Pure, for the tests.
+    function showsFallback(page, stored, fallback, fellBack) {
+        return page === 'classic' && !!fallback && (!!fellBack || kind(stored) === 'native');
+    }
+
     const Choice = {
         KEY,
         FALLBACK_KEY,
         PATHS,
         plan,
+        showsFallback,
         leaving: false,
         page: null,
         get() { return kind(read(local(), KEY)) || 'classic'; },
@@ -76,7 +89,7 @@ var MerlinTerminalChoice = (function () {
             this.page = page;
             const p = plan(page, location.search, read(local(), KEY), this.fallback());
             if (p.store) this.set(p.store);
-            if (p.clearFallback) write(session(), FALLBACK_KEY, null);
+            if (p.clearFallback) this.clearFallback();
             if (p.go) {
                 this.leaving = true;
                 document.documentElement.style.visibility = 'hidden';
@@ -93,6 +106,7 @@ var MerlinTerminalChoice = (function () {
         // tab, which shows `why`.
         fallBack(why) {
             write(session(), FALLBACK_KEY, why || 'The new terminal is unavailable here.');
+            write(session(), FELL_BACK_KEY, '1');
             this.leaving = true;
             location.replace(PATHS.classic + location.search + location.hash);
         },
@@ -101,7 +115,7 @@ var MerlinTerminalChoice = (function () {
         switchTo(value) {
             value = kind(value) || 'classic';
             this.set(value);
-            if (value === 'native') write(session(), FALLBACK_KEY, null);
+            if (value === 'native') this.clearFallback();
             if (value === this.page) return;
             this.leaving = true;
             const p = plan(null, location.search, null, '');
@@ -149,12 +163,21 @@ var MerlinTerminalChoice = (function () {
             this.closeMenu = close;
         },
 
+        // The native terminal works here (it attached): an old fall back of
+        // this tab no longer holds.
+        clearFallback() {
+            write(session(), FALLBACK_KEY, null);
+            write(session(), FELL_BACK_KEY, null);
+        },
+
         // On the classic page of a tab the native page sent back: one line
         // saying why, over the terminal.
         showFallback() {
             const why = this.fallback();
+            const fellBack = read(session(), FELL_BACK_KEY);
+            if (this.page === 'classic') write(session(), FELL_BACK_KEY, null);
             const host = document.querySelector('.main-banners');
-            if (!why || !host || this.get() !== 'native') return;
+            if (!host || !showsFallback(this.page, read(local(), KEY), why, fellBack)) return;
             const bar = document.createElement('div');
             bar.className = 'term-fallback';
             bar.setAttribute('role', 'status');

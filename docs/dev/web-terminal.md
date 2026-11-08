@@ -363,7 +363,10 @@ of its URL (a deep link's `?target=`), before any socket opens (the classic
 page's scripts see `MerlinTerminalChoice.leaving` and start nothing);
 `/terminal/native` always opens the native page. When the bridge says tmux is
 too old, the native page sends the tab back to the classic one
-(`sessionStorage`, so that tab stays there), which says why in one line.
+(`sessionStorage`, so that tab stays there), which says why in one line: on
+the landing right after the fall back whatever the saved choice (a direct visit
+to `/terminal/native` keeps a Classic choice), and on every classic load while
+the saved choice is the native one. The native page attaching again clears it.
 
 **Shared chrome.** Both pages include the same partials, so the bars, panels and
 their wiring cannot drift: `terminal-status-bar.html` (the bottom bar) and its

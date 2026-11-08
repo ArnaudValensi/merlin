@@ -58,3 +58,17 @@ test('an unknown value of the parameter changes nothing but is dropped', () => {
     assert.equal(p.go, null);
     assert.equal(p.dropParam, true);
 });
+
+test('the fall back notice shows on the classic page only, right after it or while native is saved', () => {
+    const why = 'tmux 3.4 is older than 3.8';
+    // A direct visit to /terminal/native with Classic (or nothing) saved.
+    assert.equal(Choice.showsFallback('classic', null, why, '1'), true);
+    assert.equal(Choice.showsFallback('classic', 'classic', why, '1'), true);
+    // Later loads of the classic page: only while native is the saved choice.
+    assert.equal(Choice.showsFallback('classic', 'classic', why, null), false);
+    assert.equal(Choice.showsFallback('classic', null, why, null), false);
+    assert.equal(Choice.showsFallback('classic', 'native', why, null), true);
+    // Never on the native page, never without a fall back.
+    assert.equal(Choice.showsFallback('native', 'native', why, '1'), false);
+    assert.equal(Choice.showsFallback('classic', 'native', '', '1'), false);
+});

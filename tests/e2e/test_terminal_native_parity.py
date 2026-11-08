@@ -262,6 +262,38 @@ def test_a_tmux_too_old_sends_the_tab_back_to_the_classic_page(browser, server):
     ctx.close()
 
 
+def test_a_direct_visit_on_an_old_tmux_says_why_without_changing_the_choice(
+    browser, server
+):
+    for saved in (None, "classic"):
+        ctx = browser.new_context(**DESKTOP)
+        if saved:
+            ctx.add_init_script(
+                f"if (!sessionStorage.getItem('seeded')) {{ sessionStorage.setItem('seeded', '1');"
+                f" localStorage.setItem('merlin-terminal', '{saved}'); }}"
+            )
+        pg = ctx.new_page()
+        _native(pg, server)
+        pg.evaluate(
+            f"{ENGINE}.opts.onControl({{type: 'unsupported', version: '3.4', minimum: '3.8'}})"
+        )
+        pg.wait_for_selector(".term-fallback", timeout=20000)
+        assert pg.url.endswith("/terminal")
+        assert "tmux 3.8" in pg.text_content(".term-fallback")
+        assert pg.evaluate("localStorage.getItem('merlin-terminal')") == saved
+        # Said once: the next classic load, with Classic still the choice, is
+        # plain.
+        pg.reload()
+        pg.wait_for_selector(".xterm-screen", timeout=30000)
+        pg.wait_for_timeout(300)
+        assert pg.query_selector(".term-fallback") is None
+        # The native page attaching again clears the old fall back: its
+        # classic page has nothing to say afterwards either.
+        _native(pg, server)
+        assert pg.evaluate("sessionStorage.getItem('merlin-terminal-fallback')") is None
+        ctx.close()
+
+
 # -- windows ----------------------------------------------------------------------------
 
 

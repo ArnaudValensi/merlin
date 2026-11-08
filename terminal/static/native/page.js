@@ -111,6 +111,9 @@
 
   function onSession(msg) {
     if (MerlinSessionIdentity.confirm(msg)) confirmed = true;
+    // Attached: whatever sent this tab back to the classic page before (an
+    // older tmux) no longer holds.
+    if (Choice && Choice.fallback()) Choice.clearFallback();
     current = msg;
     currentSession = msg.name || '';
     currentWindowId = msg.window_id || '';
