@@ -449,13 +449,16 @@
       if (ctrl) return { data: alt ? '\x1b\x08' : '\x08' };
       return alt ? { key: 'M-BSpace' } : { data: '\x7f' };
     }
-    if (!(ctrl || alt) || !oneChar(key)) return null;
+    if (!(ctrl || alt)) return null;
     let ch = key;
     const letter = code ? /^Key([A-Z])$/.exec(code) : null;
     const digit = code ? /^Digit([0-9])$/.exec(code) : null;
+    // From the key's code before anything else: Option on a Mac composes a
+    // character or starts a dead key (Option+e is ``Dead``), and Alt is Meta.
     if (alt && !ctrl && letter) ch = shift ? letter[1] : letter[1].toLowerCase();
     else if (alt && !ctrl && digit && !shift) ch = digit[1];
     if (ctrl && !/^[\x21-\x7e ]$/.test(ch) && letter) ch = letter[1];
+    if (!oneChar(ch)) return null;
     if (ch === ' ') return { key: prefix + 'Space' };
     // A letter with Ctrl is case-insensitive for a terminal.
     if (ctrl && /^[A-Za-z]$/.test(ch)) ch = ch.toLowerCase();
@@ -573,17 +576,36 @@
   }
 
   // A caret move in the field (the iOS space-bar trackpad): arrow keys, one
-  // per character moved.
+  // per character the terminal's cursor moves. ``before`` and ``after``: the
+  // field's text before the caret, where it was and where it is; counted as
+  // the terminal got them (an ellipsis is three characters there).
+  function caretMove(before, after) {
+    return Array.from(typedText(after)).length - Array.from(typedText(before)).length;
+  }
+
   function caretAction(delta) {
     if (!delta) return [];
-    return new Array(Math.min(Math.abs(delta), 200)).fill(delta < 0 ? 'Left' : 'Right');
+    return new Array(Math.abs(delta)).fill(delta < 0 ? 'Left' : 'Right');
+  }
+
+  // What a composition commits after an Option dead key the page already
+  // sent as Meta (Option+e is M-e): the browser may still compose, giving the
+  // accent alone or on the next letter (``´``, ``´x``, ``á``). The accent is
+  // the dead key's, already sent; the rest is what was typed after it.
+  const DEAD_ACCENTS = '\u00b4`\u02c6^\u02dc~\u00a8\u02da\u00b8';
+  function afterDeadKey(text) {
+    const chars = Array.from(text || '');
+    if (!chars.length) return '';
+    if (DEAD_ACCENTS.includes(chars[0])) return chars.slice(1).join('');
+    chars[0] = chars[0].normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    return chars.join('');
   }
 
   return {
     mouseBytes, mouseCode,
     FRAME_UPDATE, FRAME_HISTORY, parseFrame, splitRows, newDecoder, decodeRows, joinSelection, encodeMouse,
     mouseWants, nextHistoryRequest, keyAction, fieldKeyAction, documentKeyAction, inputAction, caretAction,
-    typedText, fieldDiff, diffBytes, stickyAction,
+    typedText, fieldDiff, diffBytes, stickyAction, caretMove, afterDeadKey,
     P256, rowHtml, rowColumns, findLinks, groupRows, rowsHtml, mouseMode, mouseEncoding,
   };
 });

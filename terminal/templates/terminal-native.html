@@ -149,6 +149,8 @@
         onControl: (msg) => {
             if (msg.type === 'session') {
                 if (MerlinSessionIdentity.confirm(msg)) confirmed = true;
+                // Another window: what the field holds was typed elsewhere.
+                if (current && current.window_id !== msg.window_id && input) input.reset();
                 current = msg;
                 document.title = (msg.name || 'term') + (msg.window ? ': ' + msg.window : '');
                 status('connected', msg.name + (msg.window ? ' : ' + msg.window : ''));
@@ -197,12 +199,14 @@
         // Images are uploaded and their path typed by the parity milestone.
         onPasteFiles: () => flash('Image paste: use the classic terminal for now'),
     });
-    const toolbar = new MerlinNativeToolbar(document.getElementById('nt-toolbar'), engine, {
+    // Through the input, so a toolbar key resets the field like a physical one.
+    const toolbar = new MerlinNativeToolbar(document.getElementById('nt-toolbar'), input.keys(), {
         modifiers,
         focus: () => input.focus(),
         // The Sessions panel's create-and-switch path when it is on the page,
         // else the F2 binding.
         newWindow: (btn) => {
+            input.reset();
             const board = window.SessionsBoard;
             if (board && board.openNewWindow && current) {
                 btn.disabled = true;

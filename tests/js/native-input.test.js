@@ -211,11 +211,37 @@ test('stickyAction: the toolbar Ctrl or Alt on the next thing a software keyboar
   assert.equal(Core.stickyAction('insertText', 'c', null), null);
 });
 
-test('caretAction: one arrow per character, bounded', () => {
+test('caretAction: one arrow per character, all of them', () => {
   assert.deepEqual(Core.caretAction(-2), ['Left', 'Left']);
   assert.deepEqual(Core.caretAction(1), ['Right']);
   assert.deepEqual(Core.caretAction(0), []);
-  assert.equal(Core.caretAction(-1000).length, 200);
+  assert.equal(Core.caretAction(-1000).length, 1000);
+});
+
+test('caretMove counts what the terminal got: an ellipsis is three characters', () => {
+  assert.equal(Core.caretMove(S + 'a\u2026', S + 'a'), -3);
+  assert.equal(Core.caretMove(S + 'a\u2014b', S + 'a'), -3);
+  assert.equal(Core.caretMove(S + 'a', S + 'a\u2026'), 3);
+  assert.equal(Core.caretMove(S + '\u65e5', S), -1);
+});
+
+test('keyAction: an Option dead key is Meta with its letter', () => {
+  assert.deepEqual(Core.keyAction('Dead', { alt: true }, 'KeyE'), { key: 'M-e' });
+  assert.deepEqual(Core.keyAction('Dead', { alt: true, shift: true }, 'KeyU'), { key: 'M-U' });
+  assert.deepEqual(Core.fieldKeyAction('Dead', { alt: true }, 'KeyN'), { key: 'M-n' });
+  // A dead key without Alt is the keyboard's composition.
+  assert.equal(Core.keyAction('Dead', {}, 'BracketLeft'), null);
+  assert.equal(Core.fieldKeyAction('Dead', { shift: true }, 'Digit6'), null);
+  assert.equal(Core.keyAction('Dead', { alt: true }, 'Quote'), null);
+});
+
+test('afterDeadKey: the accent was the dead key, the rest is what followed', () => {
+  assert.equal(Core.afterDeadKey('\u00b4'), '');
+  assert.equal(Core.afterDeadKey('\u00b4x'), 'x');
+  assert.equal(Core.afterDeadKey('\u00e1'), 'a');
+  assert.equal(Core.afterDeadKey('\u00f1'), 'n');
+  assert.equal(Core.afterDeadKey('\u02c6'), '');
+  assert.equal(Core.afterDeadKey(''), '');
 });
 
 // -- the field, driven by event sequences ---------------------------------------------
@@ -300,7 +326,40 @@ function harness() {
     return fire('keydown', Object.assign({ key, code: '', ctrlKey: false, altKey: false, shiftKey: false,
       metaKey: false, isComposing: false, keyCode: 0 }, ev || {}));
   }
-  return { field: fieldEl, input, sent, fire, edit, type, rewrite, backspace, selectionchange, keydown, docListeners };
+  // The real toolbar on a fake element: its buttons and their listeners.
+  function toolbar() {
+    delete require.cache[require.resolve('../../terminal/static/native/toolbar.js')];
+    require('../../terminal/static/native/toolbar.js');
+    const button = (dataset) => {
+      const ls = {};
+      return { dataset, ls, classList: { toggle() {} },
+        addEventListener(t, f) { (ls[t] = ls[t] || []).push(f); } };
+    };
+    const buttons = [
+      button({ key: 'ArrowLeft', repeat: '' }), button({ key: 'Enter' }), button({ key: 'F4' }),
+      button({ mod: 'alt' }), button({ action: 'new-window' }),
+    ];
+    const el = {
+      addEventListener() {},
+      querySelectorAll(sel) {
+        if (sel === '[data-mod]') return buttons.filter((b) => 'mod' in b.dataset);
+        if (sel === '[data-key]:not([data-repeat])') return buttons.filter((b) => 'key' in b.dataset && !('repeat' in b.dataset));
+        if (sel === '[data-repeat]') return buttons.filter((b) => 'repeat' in b.dataset);
+        return [];
+      },
+      querySelector(sel) { return sel === '[data-action="new-window"]' ? buttons[4] : null; },
+    };
+    const tb = new globalThis.MerlinNativeToolbar(el, input.keys(), { modifiers: input.modifiers, focus() {} });
+    const ev = () => ({ preventDefault() {}, button: 0 });
+    const run = (b, type) => { for (const f of b.ls[type] || []) f(ev()); };
+    return {
+      tb,
+      tapLeft() { run(buttons[0], 'mousedown'); run(buttons[0], 'mouseup'); },
+      enter() { run(buttons[1], 'click'); },
+      alt() { run(buttons[3], 'click'); },
+    };
+  }
+  return { field: fieldEl, input, sent, fire, edit, type, rewrite, backspace, selectionchange, keydown, docListeners, toolbar };
 }
 
 // The bytes a sequence sent, applied to a line editor (DEL erases before
@@ -314,6 +373,7 @@ function line(sent) {
       continue;
     }
     for (const ch of Array.from(d)) {
+      if (ch === '\r') { l = ''; cur = 0; continue; }
       if (ch === '\x7f') { if (cur > 0) { l = l.slice(0, cur - 1) + l.slice(cur); cur--; } }
       else { l = l.slice(0, cur) + ch + l.slice(cur); cur += ch.length; }
     }
@@ -495,4 +555,126 @@ test('the field: suggestions are off by default and follow the setting', () => {
   assert.equal(h.field.attrs.autocomplete, 'on');
   assert.equal(h.field.attrs.spellcheck, 'true');
   assert.equal(h.field.attrs.autocapitalize, 'off');
+});
+
+test('the toolbar: an arrow resets the field like a physical arrow', () => {
+  const h = harness();
+  const t = h.toolbar();
+  for (const ch of 'abc') h.type(ch);
+  t.tapLeft();
+  assert.deepEqual(h.sent[h.sent.length - 1], ['key', 'Left']);
+  assert.equal(h.field.value, S + S);
+  assert.equal(h.input.typed, '');
+  // What iOS does next (a rewrite, a delete) is about the new position.
+  h.rewrite('X');
+  h.backspace();
+  h.backspace();
+  assert.equal(line(h.sent), 'ac');
+  // The same through a physical arrow gives the same line.
+  const p = harness();
+  for (const ch of 'abc') p.type(ch);
+  p.keydown('ArrowLeft');
+  p.rewrite('X');
+  p.backspace();
+  p.backspace();
+  assert.equal(line(p.sent), line(h.sent));
+});
+
+test('the toolbar: Enter ends the command, the field starts afresh', () => {
+  const h = harness();
+  const t = h.toolbar();
+  for (const ch of 'ls') h.type(ch);
+  t.enter();
+  assert.equal(h.field.value, S + S);
+  h.backspace();
+  // One DEL at the new prompt, nothing of "ls" erased again.
+  assert.deepEqual(h.sent.slice(-2), [['input', '\r'], ['input', '\x7f']]);
+});
+
+test('the toolbar: a held arrow keeps the hold\'s sticky modifier, then it clears', () => {
+  const h = harness();
+  const t = h.toolbar();
+  t.alt();
+  t.tapLeft();
+  assert.deepEqual(h.sent, [['key', 'M-Left']]);
+  assert.equal(h.input.modifiers.peek(), null);
+});
+
+test('the toolbar during a composition: the reset waits for the composition to end', () => {
+  const h = harness();
+  const t = h.toolbar();
+  h.type('a');
+  h.fire('compositionstart', {});
+  h.field.value = S + 'a\u304b' + S;
+  t.tapLeft();
+  assert.equal(h.field.value, S + 'a\u304b' + S); // not cancelled under the IME
+  h.field.value = S + 'a\u6f22' + S;
+  h.fire('compositionend', { data: '\u6f22' });
+  assert.deepEqual(h.sent.slice(-2), [['key', 'Left'], ['input', '\u6f22']]);
+  assert.equal(h.field.value, S + S);
+});
+
+test('the field: a caret move over an ellipsis or a dash moves the terminal by what it got', () => {
+  const h = harness();
+  h.type('a');
+  h.type('\u2026');
+  assert.equal(line(h.sent), 'a...');
+  h.field.setSelectionRange(S.length + 1, S.length + 1);
+  h.selectionchange();
+  h.type('X');
+  assert.equal(line(h.sent), 'aX...');
+  const d = harness();
+  for (const ch of ['a', '\u2014', 'b']) d.type(ch);
+  d.field.setSelectionRange(S.length + 1, S.length + 1);
+  d.selectionchange();
+  d.type('X');
+  assert.equal(line(d.sent), 'aX--b');
+});
+
+test('the field: a caret move longer than 200 characters is sent whole', () => {
+  const h = harness();
+  const long = 'x'.repeat(250);
+  h.type(long);
+  h.field.setSelectionRange(S.length, S.length);
+  h.selectionchange();
+  assert.equal(h.sent.filter(([k, d]) => k === 'key' && d === 'Left').length, 250);
+  h.type('Y');
+  assert.equal(line(h.sent), 'Y' + long);
+});
+
+test('the field: an Option dead key sends Meta once and its accent never', () => {
+  // The browser composes anyway: the accent on the next letter.
+  const h = harness();
+  const e = h.keydown('Dead', { altKey: true, code: 'KeyE', keyCode: 229 });
+  assert.ok(e.defaultPrevented);
+  assert.deepEqual(h.sent, [['key', 'M-e']]);
+  h.fire('compositionstart', {});
+  h.keydown('a', { isComposing: true, code: 'KeyA' });
+  h.field.value = S + '\u00e1' + S;
+  h.fire('compositionend', { data: '\u00e1' });
+  assert.deepEqual(h.sent, [['key', 'M-e'], ['input', 'a']]);
+  assert.equal(h.field.value, S + S);
+  // The accent alone (the dead key then a space): nothing more.
+  const g = harness();
+  g.keydown('Dead', { altKey: true, code: 'KeyU' });
+  g.fire('compositionstart', {});
+  g.field.value = S + '\u00a8' + S;
+  g.fire('compositionend', { data: '\u00a8' });
+  assert.deepEqual(g.sent, [['key', 'M-u']]);
+  // The browser honours the cancelled keydown: the next key is plain text.
+  const c = harness();
+  c.keydown('Dead', { altKey: true, code: 'KeyE' });
+  c.keydown('a', { code: 'KeyA' });
+  c.type('a');
+  assert.deepEqual(c.sent, [['key', 'M-e'], ['input', 'a']]);
+});
+
+test('the field: a dead key without Option is the keyboard\'s composition, sent once', () => {
+  const h = harness();
+  const e = h.keydown('Dead', { code: 'BracketLeft' });
+  assert.equal(e.defaultPrevented, false);
+  h.fire('compositionstart', {});
+  h.field.value = S + '\u00ea' + S;
+  h.fire('compositionend', { data: '\u00ea' });
+  assert.deepEqual(h.sent, [['input', '\u00ea']]);
 });

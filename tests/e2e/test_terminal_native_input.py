@@ -380,3 +380,19 @@ def test_ctrl_shift_c_copies_the_selection(page):
     )
     page.keyboard.press("Control+Shift+C")
     page.wait_for_function("navigator.clipboard.readText().then(t => t === 'COPYTHIS')")
+
+
+def test_a_toolbar_key_resets_the_field_like_a_physical_key(page, tmp_path):
+    """What was typed no longer sits before the terminal's cursor once a
+    toolbar key moved it: the field starts afresh, so a later rewrite or
+    delete is about the new position."""
+    out = record(page, tmp_path)
+    page.keyboard.type("abc")
+    page.locator("#nt-toolbar [data-key=ArrowLeft]").click()
+    page.wait_for_function(
+        "s => document.getElementById('nt-input').value === s", arg=SENTINEL * 2
+    )
+    page.keyboard.press("Backspace")
+    tool(page, "↵")
+    assert field_value(page) == SENTINEL * 2
+    assert finish(page, out) == b"abc\x1b[D\x7f\r"

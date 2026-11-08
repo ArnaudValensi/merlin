@@ -68,6 +68,8 @@
       this.typed = '';
       this.sent = '';
       this.composing = false;
+      this.resetPending = false;
+      this.deadMeta = false;
       this.preedit = null;
       field.setAttribute('autocapitalize', 'off');
       field.setAttribute('enterkeyhint', 'enter');
@@ -88,9 +90,11 @@
     value() { return SENTINEL + this.typed + SENTINEL; }
 
     // The field back to two sentinels with the caret between them. Never
-    // while composing: setting the value would cancel the composition.
+    // while composing (setting the value would cancel the composition): then
+    // once it ends.
     reset() {
-      if (this.composing) return;
+      if (this.composing) { this.resetPending = true; return; }
+      this.resetPending = false;
       this.typed = '';
       this.sent = '';
       this.field.value = this.value();
@@ -131,8 +135,19 @@
       this.reset();
     }
 
-    diff() {
+    // Keys from elsewhere on the page (the toolbar): the same boundary as a
+    // physical key, so the field never keeps text that no longer sits before
+    // the terminal's cursor.
+    keys() {
+      return {
+        key: (name) => this.sendKey({ key: name }),
+        input: (data) => this.sendKey({ data }),
+      };
+    }
+
+    diff(transform) {
       const d = Core.fieldDiff(this.sent, this.field.value, SENTINEL);
+      if (transform) { d.text = transform(d.text); d.reset = true; }
       const bytes = Core.diffBytes(d);
       if (bytes) {
         this.modifiers.clear();
@@ -164,7 +179,12 @@
     onCompositionEnd() {
       this.composing = false;
       this.hidePreedit();
-      this.diff();
+      // After an Option dead key already sent as Meta, the accent it
+      // composed is not sent again.
+      const dead = this.deadMeta;
+      this.deadMeta = false;
+      this.diff(dead ? Core.afterDeadKey : null);
+      if (this.resetPending) this.reset();
     }
 
     // The composition being typed (an IME, an accent held on a key), shown
@@ -202,9 +222,7 @@
       const end = SENTINEL.length + this.typed.length;
       const caret = f.selectionStart;
       if (caret === end) return;
-      const moved = caret < end
-        ? -Array.from(f.value.slice(caret, end)).length
-        : Array.from(f.value.slice(end, caret)).length;
+      const moved = Core.caretMove(f.value.slice(0, end), f.value.slice(0, caret));
       this.modifiers.clear();
       for (const k of Core.caretAction(moved)) this.sink.key(k);
       this.reset();
@@ -255,8 +273,17 @@
       return true;
     }
 
+    // An Option (Alt) dead key: Meta with the key's letter, like any Alt
+    // letter. The browser may still compose its accent (see onCompositionEnd).
+    deadKey(e) {
+      return e.key === 'Dead' && e.altKey && !e.ctrlKey && !e.metaKey && /^Key[A-Z]$/.test(e.code || '');
+    }
+
     onKeyDown(e) {
-      if (e.isComposing || e.keyCode === 229) return;
+      if (e.isComposing) return;
+      const dead = this.deadKey(e);
+      if (e.keyCode === 229 && !dead) return;
+      this.deadMeta = dead;
       if (this.shortcut(e)) return;
       const action = Core.fieldKeyAction(e.key, this.mods(e), e.code);
       if (!action) return;
