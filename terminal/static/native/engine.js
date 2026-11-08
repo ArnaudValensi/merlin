@@ -188,23 +188,24 @@
         r.reset(h.cols, h.rows);
       }
       r.rows = h.rows;
+      // History first (the rows it confirms, in order; a gap before them for
+      // rows tmux dropped), then the screen, whose first row may continue the
+      // last of them: the decoder's rows are only valid until the next decode,
+      // so each capture is drawn before the next is decoded.
       const hist = h.hist;
+      const prefix = (n) => r.prefixFor(n);
       if (hist.count) {
-        const out = this.decode(h.cols, frame.histRows, hist.skip, hist.wrapped, hist.cont, r.lastLineText());
-        r.appendHistory(hist.start, out.html, out.texts, hist.wrapped, hist.cont, hist.gap);
-      } else if (r.oldest == null) {
-        // No history yet: the first rows to come start here.
-        r.oldest = hist.start;
-        r.next = hist.start;
-      } else if (hist.gap) {
-        // Rows tmux dropped and nothing after them yet: the hole shows with
-        // the next rows.
-        r.pendingGap += hist.gap;
-        r.next = hist.start;
+        const p = prefix(hist.start);
+        const out = this.decode(h.cols, frame.histRows, hist.skip, hist.wrapped, !!p, p);
+        r.applyHistory(hist.start, out.html, out.texts, hist.wrapped);
+      } else {
+        r.applyHistory(hist.start, [], [], '');
       }
       r.setFirstHeld(h.history.first);
       const sc = h.screen;
-      const out = this.decode(h.cols, frame.screenRows, sc.skip, sc.wrapped, sc.cont, r.lastLineText());
+      const top = h.history.added;
+      const sp = h.alternate ? '' : prefix(top);
+      const out = this.decode(h.cols, frame.screenRows, sc.skip, sc.wrapped, !!sp, sp);
       const c = h.cursor;
       let ch = ' ', wide = false;
       const line = out.lines[c.y];
@@ -212,8 +213,7 @@
         const cell = line.getCell(c.x);
         if (cell) { ch = cell.getChars() || ' '; wide = cell.getWidth() === 2; }
       }
-      // Decoded lines are only valid until the next decode: read them first.
-      r.setScreen(out.html, sc.wrapped, sc.cont, {
+      r.applyScreen(top, out.html, out.texts, sc.wrapped, {
         x: c.x, y: c.y, visible: c.visible, shape: c.shape, blink: c.blink, ch, wide,
       }, h.alternate);
       this.state = h;
@@ -339,14 +339,19 @@
     }
 
     // Report one mouse event to a program that asked for it; false when it
-    // did not ask for this kind.
+    // did not ask for this kind. ``button``: 0 left, 1 middle, 2 right, 3 none,
+    // 64/65 the wheel. X10 reports are bytes above 127 for columns past 95:
+    // they go as bytes, not text.
     report(kind, button, ev) {
       const m = this.mouse();
       if (!Core.mouseWants(Core.mouseMode(m), kind)) return false;
       const { col, row } = this.cellAt(ev);
-      const b = button + (kind === 'drag' ? 32 : 0) + (ev.shiftKey ? 4 : 0) + (ev.altKey ? 8 : 0) + (ev.ctrlKey ? 16 : 0);
-      const seq = Core.encodeMouse(Core.mouseEncoding(m), b, col, row, kind === 'release');
-      if (seq) this.send({ type: 'input', pane: this.pane, data: seq });
+      const code = Core.mouseCode(kind, button, { shift: ev.shiftKey, alt: ev.altKey, meta: ev.metaKey, ctrl: ev.ctrlKey });
+      const encoding = Core.mouseEncoding(m);
+      const seq = Core.encodeMouse(encoding, code, col, row, kind === 'release');
+      if (!seq) return true;
+      if (encoding === 'DEFAULT') this.send({ type: 'input', pane: this.pane, hex: Core.mouseBytes(seq) });
+      else this.send({ type: 'input', pane: this.pane, data: seq });
       return true;
     }
 
@@ -356,54 +361,72 @@
       if (!this.report('wheel', up ? 64 : 65, ev)) this.send({ type: 'key', pane: this.pane, key: up ? 'Up' : 'Down' });
     }
 
+    // One path for the mouse and the finger in the alternate screen: pointer
+    // events. (Touch also fires compatibility mouse events after a tap; with no
+    // mouse listener here, a tap is reported once.) A mouse: presses, drags,
+    // releases, and motion when the program asked for it (one report per cell
+    // entered); Shift keeps the browser's own selection for the whole gesture.
+    // A finger: a vertical swipe is one wheel step (or arrow key) per row
+    // height, a tap is a click.
     bindAltMouse() {
       const alt = this.alt;
-      let down = -1;
-      // Shift keeps the browser's own selection, as in xterm.
-      alt.addEventListener('mousedown', (ev) => {
-        if (ev.shiftKey) return;
-        if (this.report('press', ev.button, ev)) { down = ev.button; ev.preventDefault(); }
+      let g = null; // the gesture in progress
+      const cellKey = (ev) => { const c = this.cellAt(ev); return c.col + ':' + c.row; };
+      alt.addEventListener('pointerdown', (ev) => {
+        if (g && g.id !== ev.pointerId) return; // one pointer at a time
+        if (ev.pointerType === 'touch') {
+          g = { id: ev.pointerId, touch: true, lastY: ev.clientY, acc: 0, moved: false };
+          return;
+        }
+        if (ev.shiftKey) { g = { id: ev.pointerId, select: true }; return; }
+        if (this.report('press', ev.button, ev)) {
+          g = { id: ev.pointerId, button: ev.button, cell: cellKey(ev) };
+          try { alt.setPointerCapture(ev.pointerId); } catch (e) { /* not capturable */ }
+          ev.preventDefault();
+        }
       });
-      alt.addEventListener('mousemove', (ev) => {
-        if (down >= 0) this.report('drag', down, ev);
-        else this.report('move', 3, ev);
+      alt.addEventListener('pointermove', (ev) => {
+        if (g && g.id !== ev.pointerId) return;
+        if (g && g.touch) {
+          g.acc += ev.clientY - g.lastY;
+          g.lastY = ev.clientY;
+          const step = Math.max(this.renderer.rowH, 12);
+          // A finger moving down pulls earlier lines into view: wheel up.
+          while (Math.abs(g.acc) >= step) {
+            g.moved = true;
+            this.scrollStep(g.acc > 0, ev);
+            g.acc += g.acc > 0 ? -step : step;
+          }
+          return;
+        }
+        if (g && g.select) return;
+        if (ev.pointerType === 'touch') return;
+        const key = cellKey(ev);
+        if (g) {
+          if (key !== g.cell) { g.cell = key; this.report('drag', g.button, ev); }
+        } else if (key !== this.moveCell) {
+          this.moveCell = key;
+          this.report('move', 3, ev);
+        }
       });
-      window.addEventListener('mouseup', (ev) => {
-        if (down >= 0) { this.report('release', down, ev); down = -1; }
-      });
+      const end = (ev, cancelled) => {
+        if (!g || g.id !== ev.pointerId) return;
+        const done = g;
+        g = null;
+        if (done.touch) {
+          if (!done.moved && !cancelled && this.report('press', 0, ev)) this.report('release', 0, ev);
+          return;
+        }
+        if (done.select) return;
+        this.report('release', done.button, ev);
+      };
+      alt.addEventListener('pointerup', (ev) => end(ev, false));
+      alt.addEventListener('pointercancel', (ev) => end(ev, true));
       alt.addEventListener('wheel', (ev) => {
         ev.preventDefault();
         const steps = Math.max(1, Math.round(Math.abs(ev.deltaY) / Math.max(this.renderer.rowH, 1)));
         for (let i = 0; i < Math.min(steps, 5); i++) this.scrollStep(ev.deltaY < 0, ev);
       }, { passive: false });
-      // A vertical swipe: one step per row height moved. A finger moving down
-      // pulls earlier lines into view: wheel up.
-      let lastY = null, acc = 0, moved = false;
-      alt.addEventListener('touchstart', (ev) => {
-        if (ev.touches.length !== 1) { lastY = null; return; }
-        lastY = ev.touches[0].clientY; acc = 0; moved = false;
-      }, { passive: true });
-      alt.addEventListener('touchmove', (ev) => {
-        if (lastY == null) return;
-        const t = ev.touches[0];
-        acc += t.clientY - lastY;
-        lastY = t.clientY;
-        const step = Math.max(this.renderer.rowH, 12);
-        while (Math.abs(acc) >= step) {
-          moved = true;
-          this.scrollStep(acc > 0, t);
-          acc += acc > 0 ? -step : step;
-        }
-        if (moved) ev.preventDefault();
-      }, { passive: false });
-      alt.addEventListener('touchend', (ev) => {
-        // A tap (no swipe) is a click for a program that asked for the mouse.
-        if (lastY != null && !moved && ev.changedTouches.length) {
-          const t = ev.changedTouches[0];
-          if (this.report('press', 0, t)) this.report('release', 0, t);
-        }
-        lastY = null;
-      }, { passive: true });
     }
   }
 

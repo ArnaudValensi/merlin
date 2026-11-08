@@ -808,6 +808,34 @@ async def test_input_reaches_the_pane_exactly_once(server):
 
 @needs_tmux
 @pytest.mark.asyncio
+async def test_bytes_no_text_can_carry_reach_the_pane_exactly(server):
+    # An X10 mouse report past column 95 holds bytes above 127; the page sends
+    # such input as hex. Every byte value, and the reports at columns 95, 96
+    # and 223, arrive exactly once.
+    socket, _, tmp = server
+    bridge, _, task = await _bridge(socket)
+    try:
+        reports = b"".join(
+            b"\x1b[M" + bytes([32, 32 + col, 32 + 3]) for col in (95, 96, 223)
+        )
+        payload = bytes(range(1, 256)) + reports
+        out = tmp / "bytes"
+        await _run(bridge, f"stty raw -echo; head -c {len(payload)} > {out}; stty sane")
+        await asyncio.sleep(0.3)
+        await bridge.handle(
+            {"type": "input", "pane": bridge.pane, "hex": payload.hex()}
+        )
+        # Malformed hex is ignored (nothing sent, the connection lives on).
+        await bridge.handle({"type": "input", "pane": bridge.pane, "hex": "zz1"})
+        assert await _until(lambda: out.exists() and out.stat().st_size >= len(payload))
+        await asyncio.sleep(0.1)
+        assert out.read_bytes() == payload
+    finally:
+        await _stop(bridge, task)
+
+
+@needs_tmux
+@pytest.mark.asyncio
 async def test_paste_is_exact_and_bracketed_when_the_program_asked(server):
     socket, _, tmp = server
     bridge, _, task = await _bridge(socket)

@@ -15,6 +15,7 @@ Requires: chromium + tmux.
 """
 
 import shutil
+import re
 import subprocess
 import sys
 import textwrap
@@ -35,6 +36,17 @@ pytestmark = pytest.mark.skipif(
 )
 
 ENGINE = "window.MerlinNativeTerminalPage.engine"
+
+# Every row the page has, in DOM order, is numbered one more than the row
+# before it (a gap marker aside), from the oldest to the screen's last row.
+CONTIGUOUS = """() => {
+    const r = window.MerlinNativeTerminalPage.engine.renderer;
+    const nums = [...document.querySelectorAll('.nt-hist .r')].map(x => x._n);
+    const gaps = document.querySelectorAll('.nt-hist .nt-gap, .nt-hist .nt-pending').length;
+    const ok = nums.every((n, i) => i === 0 || n === nums[i - 1] + 1);
+    return ok && gaps === 0 && nums[0] === r.oldest && nums.length === r.rowCount
+        && nums[nums.length - 1] === r.screenTop + r.rows - 1;
+}"""
 
 
 @pytest.fixture(scope="module")
@@ -73,7 +85,7 @@ def _open(browser, server, **context):
     # Attached, and the pane at the page's size (a later resize would reflow
     # the pane under a test).
     page.wait_for_function(
-        f"{ENGINE}.pane && document.querySelector('.nt-screen .r')"
+        f"{ENGINE}.pane && document.querySelector('.nt-hist .r')"
         f" && {ENGINE}.size.cols === {ENGINE}.renderer.cols"
         f" && {ENGINE}.size.rows === {ENGINE}.renderer.rows",
         timeout=20000,
@@ -98,8 +110,8 @@ def ready(page) -> None:
     shell reads them may be dropped."""
     page.wait_for_function(
         """() => {
-            const ls = [...document.querySelectorAll('.nt-screen .l')]
-                .map(l => l.textContent.trim()).filter(Boolean);
+            const ls = window.MerlinNativeTerminalPage.engine.renderer.screenText()
+                .split('\\n').map(l => l.trim()).filter(Boolean);
             return ls.length > 0 && ls[ls.length - 1].endsWith('%');
         }""",
         timeout=20000,
@@ -114,13 +126,16 @@ def run(page, command: str) -> None:
 def wait_text(page, text: str, where: str = ".nt-term", timeout: int = 15000) -> None:
     try:
         page.wait_for_function(
-            "([sel, t]) => document.querySelector(sel).textContent.includes(t)",
+            "([sel, t]) => (sel === 'screen'"
+            " ? window.MerlinNativeTerminalPage.engine.renderer.screenText()"
+            " : document.querySelector(sel).textContent).includes(t)",
             arg=[where, text],
             timeout=timeout,
         )
     except Exception:
         shown = page.evaluate(
-            "sel => [...document.querySelectorAll(sel + ' .l')].filter(l => l.textContent.trim()).slice(-12).map(l => l.textContent)",
+            "sel => sel === 'screen' ? window.MerlinNativeTerminalPage.engine.renderer.screenText()"
+            " : [...document.querySelectorAll(sel + ' .l')].filter(l => l.textContent.trim()).slice(-12).map(l => l.textContent)",
             where,
         )
         extra = page.evaluate(
@@ -239,7 +254,7 @@ def test_copy_joins_soft_wraps_and_trims_trailing_blanks(any_page):
 
 def test_a_scrolled_up_view_stays_put_while_output_arrives(page, tmux_env):
     run(page, "seq 1 3000")
-    wait_text(page, "3000", ".nt-screen")
+    wait_text(page, "3000", "screen")
     wait_text(page, "2900", ".nt-hist")
     before = page.evaluate(
         """() => {
@@ -261,7 +276,7 @@ def test_a_scrolled_up_view_stays_put_while_output_arrives(page, tmux_env):
     assert page.is_visible("#nt-jump")
     # Output the page does not type (typing returns to the bottom).
     tmux(tmux_env, "send-keys", "-t", displayed_pane(page), "seq 5001 5400", "Enter")
-    wait_text(page, "5400", ".nt-screen")
+    wait_text(page, "5400", "screen")
     page.wait_for_timeout(300)
     after = page.evaluate(
         """() => {
@@ -291,14 +306,14 @@ def test_history_loads_lazily_without_moving_the_view(browser, server):
     page.click("#nt-container")
     ready(page)
     run(page, "clear; seq 1 6000")
-    wait_text(page, "6000", ".nt-screen")
+    wait_text(page, "6000", "screen")
     page.reload()
     page.wait_for_function(
         f"{ENGINE}.pane && {ENGINE}.renderer.spacerRows > 0", timeout=20000
     )
     state = page.evaluate(
         f"""() => {{ const r = {ENGINE}.renderer;
-            return {{rows: r.histRows, spacer: r.spacerRows, height: r.scroller.scrollHeight}}; }}"""
+            return {{rows: r.next - r.oldest, spacer: r.spacerRows, height: r.scroller.scrollHeight}}; }}"""
     )
     assert state["rows"] == 1000  # a reconnect starts with the last 1000 rows
     # Each step: the view a little above the rows the page has.
@@ -334,25 +349,27 @@ def test_history_loads_lazily_without_moving_the_view(browser, server):
 PROBE = textwrap.dedent(
     """
     import os, sys, termios, tty
-    out, mouse = sys.argv[1], sys.argv[2] == "mouse"
+    out, mode = sys.argv[1], sys.argv[2]
+    modes = {"mouse": "1000;1006", "x10": "1000", "motion": "1003;1006"}
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     tty.setraw(fd)
     w = sys.stdout.write
     w("\\033[?1049h\\033[H")
-    if mouse:
-        w("\\033[?1000h\\033[?1006h")
-    w("ALT " + ("MOUSE" if mouse else "KEYS") + " READY\\r\\n")
+    for m in modes.get(mode, "").split(";"):
+        if m:
+            w("\\033[?" + m + "h")
+    w("ALT " + mode.upper() + " READY\\r\\n")
     sys.stdout.flush()
     try:
         while True:
             data = os.read(fd, 1024)
             with open(out, "ab") as f:
                 f.write(data)
-            if b"q" in data:
+            if b"\\x03" in data:  # Ctrl+C: no mouse report holds it
                 break
     finally:
-        w("\\033[?1000l\\033[?1006l\\033[?1049l")
+        w("\\033[?1000l\\033[?1003l\\033[?1006l\\033[?1049l")
         sys.stdout.flush()
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
     """
@@ -367,10 +384,15 @@ def _probe(page, tmp_path: Path, mode: str) -> Path:
     page.wait_for_function(
         "t => { const a = document.querySelector('.nt-alt');"
         " return !a.hidden && a.textContent.includes(t); }",
-        arg=f"ALT {'MOUSE' if mode == 'mouse' else 'KEYS'} READY",
+        arg=f"ALT {mode.upper()} READY",
         timeout=15000,
     )
     return out
+
+
+def quit_probe(page) -> None:
+    page.keyboard.press("Control+c")
+    page.wait_for_function("document.querySelector('.nt-alt').hidden")
 
 
 def _read_until(path: Path, needle: bytes, timeout: float = 5.0) -> bytes:
@@ -398,10 +420,45 @@ def test_the_alternate_screen_is_a_layer_and_gets_the_mouse_it_asked_for(
     page.mouse.move(box["x"] + 20, box["y"] + 20)
     page.mouse.wheel(0, -60)
     assert b"\x1b[<64;" in _read_until(out, b"\x1b[<64;")
-    page.keyboard.press("q")
-    page.wait_for_function("document.querySelector('.nt-alt').hidden")
+    quit_probe(page)
     # Back on the main screen, what was there before is there again.
     wait_text(page, "MAINMARK", ".nt-content")
+
+
+def _cell_point(page, col: int, row: int) -> tuple[float, float]:
+    """The middle of a cell of the alternate layer (1-based)."""
+    cell = page.evaluate(f"({{w: {ENGINE}.renderer.cellW, h: {ENGINE}.renderer.rowH}})")
+    box = page.locator(".nt-alt").bounding_box()
+    return box["x"] + cell["w"] * (col - 0.5), box["y"] + cell["h"] * (row - 0.5)
+
+
+def test_x10_reports_reach_the_program_as_bytes_past_column_95(page, tmp_path):
+    """Mode 1000 without 1005 or 1006: each value is one byte, 32 + value, so
+    column 100 is byte 0x84, which no text message can carry."""
+    assert page.evaluate(f"{ENGINE}.renderer.cols") > 100
+    out = _probe(page, tmp_path, "x10")
+    page.mouse.click(*_cell_point(page, 100, 3))
+    data = _read_until(out, b"\x1b[M#")
+    assert b"\x1b[M " + bytes([32 + 100, 32 + 3]) in data  # press, left button
+    assert b"\x1b[M#" + bytes([32 + 100, 32 + 3]) in data  # release
+    quit_probe(page)
+
+
+def test_all_motion_is_reported_once_per_cell_with_the_motion_bit(page, tmp_path):
+    """Mode 1003: a move with no button is button code 35 (3 + 32), one
+    report per cell entered."""
+    out = _probe(page, tmp_path, "motion")
+    x, y = _cell_point(page, 5, 3)
+    cell_w = page.evaluate(f"{ENGINE}.renderer.cellW")
+    for dx in (-0.3, 0, 0.3):  # three moves inside column 5
+        page.mouse.move(x + dx * cell_w, y)
+    for dx in (0.8, 1.0, 1.2):  # three inside column 6
+        page.mouse.move(x + dx * cell_w, y)
+    data = _read_until(out, b"\x1b[<35;6;3M")
+    page.wait_for_timeout(300)
+    data = out.read_bytes()
+    assert data.count(b"\x1b[<35;5;3M") == 1 and data.count(b"\x1b[<35;6;3M") == 1, data
+    quit_probe(page)
 
 
 def test_without_the_mouse_a_wheel_in_the_alternate_screen_sends_arrows(page, tmp_path):
@@ -412,17 +469,14 @@ def test_without_the_mouse_a_wheel_in_the_alternate_screen_sends_arrows(page, tm
     page.mouse.wheel(0, 60)
     data = _read_until(out, b"\x1b[B")
     assert b"\x1b[A" in data and b"\x1b[B" in data and b"\x1b[<" not in data
-    page.keyboard.press("q")
-    page.wait_for_function("document.querySelector('.nt-alt').hidden")
+    quit_probe(page)
 
 
 # -- the cursor ---------------------------------------------------------------------
 
 
 def test_the_cursor_is_an_overlay_that_hides_with_the_program_cursor(page):
-    page.wait_for_function(
-        "document.querySelector('.nt-screen .nt-cursor, .nt-hist .nt-cursor')"
-    )
+    page.wait_for_function("document.querySelector('.nt-hist .nt-cursor')")
     shape = page.evaluate("document.querySelector('.nt-cursor').dataset.shape")
     assert shape == "block"
     # The cursor adds no text to its row.
@@ -451,7 +505,7 @@ def test_on_a_phone_the_grid_fits_and_a_tap_focuses_the_field(browser, server):
     )
     fit = page.evaluate(
         f"""() => {{ const r = {ENGINE}.renderer, s = r.scroller;
-            const rows = [...document.querySelectorAll('.nt-screen .r')];
+            const rows = [...document.querySelectorAll('.nt-hist .r')].slice(-20);
             const wide = [...s.querySelectorAll('*')].filter(e => e.getBoundingClientRect().right > s.getBoundingClientRect().right + 1).slice(0, 3).map(e => e.className + ':' + e.getBoundingClientRect().right + ':' + (e.style.cssText || ''));
             return {{wide, client: s.clientWidth, content: r.content.style.minWidth, cellW: r.cellW, overflow: s.scrollWidth - s.clientWidth,
                      heights: [...new Set(rows.map(x => x.getBoundingClientRect().height))],
@@ -464,19 +518,21 @@ def test_on_a_phone_the_grid_fits_and_a_tap_focuses_the_field(browser, server):
     ctx.close()
 
 
-SWIPE = """([dy, steps]) => {
-    const alt = document.querySelector('.nt-alt');
-    const r = alt.getBoundingClientRect();
-    const x = r.left + 40;
-    let y = r.top + r.height / 2;
-    const touch = (yy) => new Touch({identifier: 1, target: alt, clientX: x, clientY: yy});
-    const fire = (type, list) => alt.dispatchEvent(new TouchEvent(type, {
-        touches: type === 'touchend' ? [] : list, changedTouches: list,
-        bubbles: true, cancelable: true}));
-    fire('touchstart', [touch(y)]);
-    for (let i = 0; i < steps; i++) { y += dy; fire('touchmove', [touch(y)]); }
-    fire('touchend', [touch(y)]);
-}"""
+def _touch(page, cdp, points: list[tuple[float, float]]) -> None:
+    """Real touch input (what a phone sends: touch, pointer and, after a tap,
+    compatibility mouse events): down at the first point, moves through the
+    others, up at the last."""
+    (x, y), *rest = points
+    cdp.send(
+        "Input.dispatchTouchEvent",
+        {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]},
+    )
+    for x, y in rest:
+        cdp.send(
+            "Input.dispatchTouchEvent",
+            {"type": "touchMove", "touchPoints": [{"x": x, "y": y}]},
+        )
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
 
 
 @pytest.mark.parametrize("mode", ["mouse", "keys"])
@@ -495,18 +551,38 @@ def test_a_swipe_in_the_alternate_screen_scrolls_the_program(
     page.tap("#nt-container")
     ready(page)
     out = _probe(page, tmp_path, mode)
-    page.evaluate(SWIPE, [10, 6])  # down: earlier lines
-    page.evaluate(SWIPE, [-10, 6])  # up: later lines
+    cdp = page.context.new_cdp_session(page)
+    box = page.locator(".nt-alt").bounding_box()
+    x, y = box["x"] + 60, box["y"] + 300
+    _touch(page, cdp, [(x, y + 10 * i) for i in range(8)])  # down: earlier lines
+    _touch(page, cdp, [(x, y - 10 * i) for i in range(8)])  # up: later lines
     if mode == "mouse":
         data = _read_until(out, b"\x1b[<65;")
         assert b"\x1b[<64;" in data and b"\x1b[<65;" in data
-        page.tap(".nt-alt")
-        assert b"\x1b[<0;" in _read_until(out, b"\x1b[<0;")
+        assert b"\x1b[<0;" not in data  # a swipe is not a click
+        # A tap is one click: one press and one release, although the browser
+        # follows the touch with compatibility mouse events.
+        _touch(page, cdp, [(x, y)])
+        # The compatibility mouse events a phone fires after a tap (headless
+        # Chromium does not generate them from CDP touch): mouse events with no
+        # pointer events.
+        page.evaluate(
+            """([x, y]) => { const alt = document.querySelector('.nt-alt');
+                for (const t of ['mousemove', 'mousedown', 'mouseup', 'click'])
+                    alt.dispatchEvent(new MouseEvent(t, {clientX: x, clientY: y, bubbles: true, button: 0})); }""",
+            [x, y],
+        )
+        data = _read_until(out, b"\x1b[<0;")
+        page.wait_for_timeout(500)
+        data = out.read_bytes()
+        assert data.count(b"\x1b[<0;") == 2, data
+        assert re.search(rb"\x1b\[<0;\d+;\d+M", data) and re.search(
+            rb"\x1b\[<0;\d+;\d+m", data
+        )
     else:
         data = _read_until(out, b"\x1b[B")
         assert b"\x1b[A" in data and b"\x1b[B" in data and b"\x1b[<" not in data
-    page.keyboard.press("q")
-    page.wait_for_function("document.querySelector('.nt-alt').hidden")
+    quit_probe(page)
     assert errors == []
     ctx.close()
 
@@ -516,7 +592,7 @@ def test_old_history_goes_back_to_the_spacer_and_loads_again(page):
     same height), and they load again from tmux when scrolled to."""
     page.evaluate(f"{ENGINE}.renderer.opts.maxRows = 600")
     run(page, "seq 1 3000")
-    wait_text(page, "3000", ".nt-screen")
+    wait_text(page, "3000", "screen")
     page.wait_for_function(
         f"{ENGINE}.renderer.histRows <= 800 && {ENGINE}.renderer.spacerRows > 1500"
     )
@@ -525,7 +601,11 @@ def test_old_history_goes_back_to_the_spacer_and_loads_again(page):
             return {{rows: r.histRows, spacer: r.spacerRows, oldest: r.oldest, next: r.next,
                      height: r.scroller.scrollHeight}}; }}"""
     )
-    assert state["oldest"] + state["rows"] == state["next"]
+    dbg = page.evaluate(f"""() => {{ const r = {ENGINE}.renderer;
+        return {{pend: [...document.querySelectorAll('.nt-pending')].map(p => p.style.height), pendings: r.pendings.map(p => [p.a, p.b]),
+                 gaps: document.querySelectorAll('.nt-gap').length, first: r.firstHeld,
+                 chunks: [...document.querySelectorAll('.nt-chunk')].map(c => [c._rows, c.querySelectorAll('.r').length, c._lines, c.children.length, c.style.containIntrinsicSize, c.offsetHeight]), spacer: r.spacerRows, live: r.live.length, nulls: r.live.filter(x => !x).length}}; }}""")
+    assert page.evaluate(CONTIGUOUS), dbg
     page.evaluate(f"{ENGINE}.renderer.opts.maxRows = 100000")
     for _ in range(40):
         if page.evaluate(
@@ -552,8 +632,9 @@ def test_rows_tmux_dropped_show_as_a_gap_and_trimming_passes_it(page, tmux_env):
     limit gets the rows tmux still has and a marker for the rest (no text to
     copy); trimming later removes a chunk holding such a marker."""
     tmux(tmux_env, "set", "-g", "history-limit", "300")
+    pane_before = displayed_pane(page)
     tmux(tmux_env, "new-window")
-    page.wait_for_function(f"{ENGINE}.renderer.histRows === 0", timeout=10000)
+    page.wait_for_function(f"{ENGINE}.pane !== {pane_before!r}", timeout=10000)
     ready(page)
     page.evaluate(f"window.__drain = {ENGINE}.drain; {ENGINE}.drain = () => {{}}")
     run(page, "seq 1 20000; echo FL''OOD-END")
@@ -563,7 +644,7 @@ def test_rows_tmux_dropped_show_as_a_gap_and_trimming_passes_it(page, tmux_env):
         assert time.monotonic() < deadline
         time.sleep(0.1)
     page.evaluate(f"{ENGINE}.drain = window.__drain; {ENGINE}.drain()")
-    wait_text(page, "FLOOD-END", ".nt-screen")
+    wait_text(page, "FLOOD-END", "screen")
     page.wait_for_function("document.querySelector('.nt-gap')")
     gap = page.evaluate(
         """() => { const g = document.querySelector('.nt-gap');
@@ -575,14 +656,85 @@ def test_rows_tmux_dropped_show_as_a_gap_and_trimming_passes_it(page, tmux_env):
         f"""() => {{ const r = {ENGINE}.renderer; r.opts.maxRows = 50; r.opts.chunk = 50; }}"""
     )
     run(page, "seq 1 400")
-    wait_text(page, "400", ".nt-screen")
+    wait_text(page, "400", "screen")
     page.wait_for_function("!document.querySelector('.nt-gap')", timeout=10000)
     state = page.evaluate(
         f"""() => {{ const r = {ENGINE}.renderer;
             return {{rows: r.histRows, oldest: r.oldest, next: r.next, first: r.firstHeld,
                      spacer: r.spacerRows}}; }}"""
     )
-    assert state["oldest"] + state["rows"] == state["next"]
+    assert page.evaluate(CONTIGUOUS)
     assert state["spacer"] == max(0, state["oldest"] - state["first"])
     tmux(tmux_env, "kill-window")
     tmux(tmux_env, "set", "-g", "history-limit", "50000")
+
+
+def test_a_selection_survives_the_output_that_scrolls_it(any_page, tmux_env):
+    """Rows are never rebuilt or moved when output scrolls them into history,
+    so a selection made on the live screen, across a hard line break and a soft
+    wrap, keeps its nodes, its text and its copy while another writer floods the
+    pane."""
+    page = any_page
+    cols = page.evaluate(f"{ENGINE}.renderer.cols")
+    k = cols // 2 + 3
+    line2 = "KEEP-2 " + "xy" * k + "TAIL"
+    run(
+        page,
+        f"python3 -c \"print('KEEP' + '-1'); print('KEEP' + '-2 ' + 'xy' * {k} + 'TAIL'); print('KEEP' + '-3')\"",
+    )
+    wait_text(page, "KEEP-3", "screen")
+    ready(page)
+    before = page.evaluate(
+        """() => {
+            const r = window.MerlinNativeTerminalPage.engine.renderer;
+            const ls = [...document.querySelectorAll('.nt-hist .l')];
+            const a = ls.find(l => l.textContent === 'KEEP-1');
+            const b = ls.find(l => l.textContent.startsWith('KEEP-2 '));
+            const rows = b.querySelectorAll('.r');
+            const start = a.querySelector('.r').firstChild;
+            const end = rows[1].firstChild;
+            document.activeElement.blur();
+            const range = document.createRange();
+            range.setStart(start, 2);
+            range.setEnd(end, 5);
+            const sel = getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            window.__ends = [start, end];
+            return {rows: rows.length, onScreen: a.querySelector('.r')._n >= r.screenTop,
+                    top: r.screenTop, text: sel.toString()};
+        }"""
+    )
+    assert before["rows"] == 2 and before["onScreen"]
+    tmux(tmux_env, "send-keys", "-t", displayed_pane(page), "seq 1 300", "Enter")
+    wait_text(page, "300", "screen")
+    page.wait_for_timeout(300)
+    after = page.evaluate(
+        """() => {
+            const r = window.MerlinNativeTerminalPage.engine.renderer;
+            const sel = getSelection();
+            const range = sel.rangeCount ? sel.getRangeAt(0) : null;
+            return {top: r.screenTop, count: sel.rangeCount, collapsed: sel.isCollapsed,
+                    connected: window.__ends.every(n => n.isConnected),
+                    same: !!range && range.startContainer === window.__ends[0]
+                          && range.endContainer === window.__ends[1]
+                          && range.startOffset === 2 && range.endOffset === 5,
+                    text: sel.toString()};
+        }"""
+    )
+    # The selected rows left the screen for history (the screen moved down by
+    # more than its height), and nothing about the selection changed.
+    assert after["top"] - before["top"] > page.evaluate(f"{ENGINE}.renderer.rows")
+    assert after["count"] == 1 and not after["collapsed"]
+    assert after["connected"] and after["same"]
+    assert after["text"] == before["text"]
+    expected = "EP-1\n" + line2[: cols + 5]
+    page.evaluate(
+        "window.__copied = null; window.addEventListener('copy',"
+        " (e) => { window.__copied = e.clipboardData.getData('text/plain'); }, {once: true});"
+    )
+    page.keyboard.press("Control+c")
+    page.wait_for_function("window.__copied !== null")
+    assert page.evaluate("window.__copied") == expected
+    if page.engine_name == "chromium":
+        assert after["text"].rstrip("\n") == expected

@@ -171,6 +171,31 @@ test('mouseMode and mouseEncoding from the bridge state', () => {
     assert.equal(Core.mouseEncoding({ utf8: true }), 'UTF8');
     assert.equal(Core.mouseEncoding({}), 'DEFAULT');
     assert.equal(Core.encodeMouse('SGR', 64, 3, 4, false), '\x1b[<64;3;4M');
-    assert.equal(Core.encodeMouse('DEFAULT', 0, 96, 1, false), '');
     assert.equal(Core.encodeMouse('UTF8', 0, 200, 1, false), '\x1b[M ' + String.fromCharCode(232) + '!');
+});
+
+test('X10 reports are bytes up to column and row 223, nothing past it', () => {
+    const bytes = (col, row, release) => Core.mouseBytes(Core.encodeMouse('DEFAULT', 0, col, row, release));
+    assert.equal(bytes(95, 3, false), '1b5b4d207f23');   // 32 + 95 = 0x7f
+    assert.equal(bytes(96, 3, false), '1b5b4d208023');   // past ASCII: a byte, not text
+    assert.equal(bytes(223, 223, false), '1b5b4d20ffff');
+    assert.equal(bytes(223, 3, true), '1b5b4d23ff23');   // release: button 3
+    assert.equal(Core.encodeMouse('DEFAULT', 0, 224, 3, false), '');
+    assert.equal(Core.encodeMouse('DEFAULT', 0, 3, 224, false), '');
+    // A release keeps the modifiers: Shift (4) + release (3).
+    assert.equal(Core.encodeMouse('DEFAULT', 4, 1, 1, true).charCodeAt(3), 32 + 7);
+    // SGR and UTF-8 carry larger values as text.
+    assert.equal(Core.encodeMouse('SGR', 0, 300, 400, false), '\x1b[<0;300;400M');
+    assert.equal(Core.encodeMouse('UTF8', 0, 2015, 1, false).length, 6);
+    assert.equal(Core.encodeMouse('UTF8', 0, 2016, 1, false), '');
+});
+
+test('mouseCode: motion adds 32 to a drag and to a move with no button', () => {
+    assert.equal(Core.mouseCode('press', 0), 0);
+    assert.equal(Core.mouseCode('drag', 0), 32);
+    assert.equal(Core.mouseCode('move', 3), 35);
+    assert.equal(Core.mouseCode('release', 2), 2);
+    assert.equal(Core.mouseCode('wheel', 64, { ctrl: true }), 80);
+    assert.equal(Core.mouseCode('press', 0, { shift: true, alt: true }), 12);
+    assert.equal(Core.encodeMouse('SGR', Core.mouseCode('move', 3), 5, 3, false), '\x1b[<35;5;3M');
 });

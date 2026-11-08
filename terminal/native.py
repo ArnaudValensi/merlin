@@ -997,7 +997,13 @@ class NativeBridge:
         if kind in ("input", "paste", "key"):
             self.typed_at = time.monotonic()
         try:
-            if kind == "input":
+            if kind == "input" and "hex" in msg:
+                # Bytes no text can carry (an X10 mouse report past column 95
+                # holds bytes above 127): hex, sent as they are.
+                await self.send_bytes(
+                    str(msg.get("pane", "")), bytes.fromhex(str(msg["hex"]))
+                )
+            elif kind == "input":
                 await self.send_input(
                     str(msg.get("pane", "")), str(msg.get("data", ""))
                 )
@@ -1036,9 +1042,11 @@ class NativeBridge:
             logger.info("Native terminal command failed: %s", e)
 
     async def send_input(self, pane: str, data: str) -> None:
-        if not _PANE_ID.fullmatch(pane) or not data:
+        await self.send_bytes(pane, data.encode("utf-8"))
+
+    async def send_bytes(self, pane: str, raw: bytes) -> None:
+        if not _PANE_ID.fullmatch(pane) or not raw:
             return
-        raw = data.encode("utf-8")
         commands = [
             f"send-keys -t {pane} -H {hex_keys(raw[i : i + INPUT_CHUNK])}"
             for i in range(0, len(raw), INPUT_CHUNK)

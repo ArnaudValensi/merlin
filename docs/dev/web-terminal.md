@@ -390,22 +390,40 @@ module docstring lists every guarantee and its test.
 - `renderer.js`: the DOM. A logical line is a `div.l`; each visual row in it a
   `span.r`, an inline-block as wide as the pane. The platform's own selection
   then copies a soft-wrapped line joined and breaks hard lines once, with no
-  script (what iOS needs). History lives in chunks of 200 logical lines with
-  `content-visibility: auto`; no row is removed under a selection. Every row
-  is one integer row height, so the spacer above the history (one row height
-  for each row tmux holds that the page has not loaded) shrinks by exactly the
-  height of the rows that replace it: loading older history never moves the
-  view and never sets `scrollTop` (which would stop an iOS momentum scroll).
-  The alternate screen is a layer over the scroller; leaving it shows the main
-  screen where it was. The cursor is an overlay in its row whose character is
-  generated content, so it is never copied.
+  script (what iOS needs). Every row the page has, history then the screen, is
+  one sequence of rows in chunks of 200 logical lines with
+  `content-visibility: auto`; the screen is just its last rows. Rows never
+  move and are never rebuilt: when output scrolls, the rows leaving the screen
+  stay where they are (history now) and new rows are appended; a row's HTML is
+  rewritten only when its content changed. That is what keeps a selection
+  alive while output streams: the DOM collapses a range whose node is
+  removed, even to be put back elsewhere. Rows the page has no content for yet
+  (the screen moved down by more than its height while history was on its
+  way) are a placeholder of their exact height, filled in order; rows tmux
+  dropped become a gap marker. Every row is one integer row height, and a
+  chunk's skipped size is set exactly (no `auto`, whose remembered size would
+  be stale for a chunk filled while off screen), so the spacer above the
+  history (one row height for each row tmux holds that the page has not
+  loaded) and the placeholders shrink by exactly the height of the rows that
+  replace them: loading rows never moves the view and never sets `scrollTop`
+  (which would stop an iOS momentum scroll). The alternate screen is a layer
+  over the scroller; leaving it shows the main screen where it was. The cursor
+  is an overlay in its row whose character is generated content, so it is
+  never copied.
 - `engine.js`: the socket, frames drawn on the next animation frame and then
   acknowledged (a hidden page acknowledges nothing, so the bridge stops), lazy
   history, the size (the terminal font is loaded before the first size is
   sent), the desktop copy handler (Firefox serialises an empty selection over
   `content-visibility`, so the handler builds the text from the rows), and
-  the mouse for programs that ask for it in the alternate screen (a wheel or a
-  swipe is a wheel report then, arrow keys otherwise).
+  the mouse for programs that ask for it in the alternate screen, through
+  pointer events only (a tap is reported once, whatever compatibility mouse
+  events follow it): presses, drags, releases, motion once per cell entered
+  in mode 1003 (button code 35), the wheel; a swipe is one wheel step per row
+  height, arrow keys for a program that did not ask for the mouse; Shift keeps
+  the browser's selection. SGR and UTF-8 reports go as text; X10 reports are
+  bytes (a value past 95 is a byte above 127) and go as `{"type": "input",
+  "hex": ...}`, which the bridge sends as they are, up to 223 (past it the
+  encoding has no value: nothing is sent, as xterm.js does).
 - `native.css`: the classic terminal's theme colours, styles, the cursor.
 - `input.js`: the input field (completed by the epic's input milestone).
 

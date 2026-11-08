@@ -358,16 +358,38 @@
   // Mouse report for a program that asked for the mouse. ``button``: 0 left,
   // 1 middle, 2 right, 3 release (X10 encoding), 64/65 wheel up/down; add 32
   // for motion. ``col``/``row`` are 1-based. ``encoding``: 'SGR' or 'DEFAULT'.
-  // 'UTF8' (mode 1005) writes each value as one character, which the socket
-  // carries as UTF-8: exactly that encoding. 'DEFAULT' (X10) needs raw bytes
-  // above 127, which a text message cannot carry: past column or row 95 the
-  // event is dropped.
+  // 'SGR' (mode 1006) is text. 'UTF8' (mode 1005) writes each value as one
+  // character, which the socket carries as UTF-8: exactly that encoding, up
+  // to 2015. 'DEFAULT' (X10) writes each value as one byte, 32 + value, so up
+  // to 223; the string returned then holds bytes (char codes below 256), to
+  // send as bytes (``mouseBytes``), never as text. Past an encoding's range
+  // there is nothing to send: '' (xterm.js does the same).
   function encodeMouse(encoding, button, col, row, release) {
     if (encoding === 'SGR') return '\x1b[<' + button + ';' + col + ';' + row + (release ? 'm' : 'M');
-    const b = release && button < 64 ? 3 : button;
-    const limit = encoding === 'UTF8' ? 2015 : 95;
-    if (col > limit || row > limit) return '';
+    const b = release && button < 64 ? 3 + (button & ~3) : button;
+    const limit = encoding === 'UTF8' ? 2015 : 223;
+    if (col > limit || row > limit || col < 1 || row < 1) return '';
     return '\x1b[M' + String.fromCharCode(32 + b, 32 + col, 32 + row);
+  }
+
+  // The bytes of an X10 report, as hex for the bridge's byte input.
+  function mouseBytes(report) {
+    let hex = '';
+    for (let i = 0; i < report.length; i++) hex += report.charCodeAt(i).toString(16).padStart(2, '0');
+    return hex;
+  }
+
+  // The button code of a report: ``button`` 0 left, 1 middle, 2 right, 3 none
+  // (a move with no button down), 64/65 wheel up/down; 32 for motion (a drag
+  // or a move), plus the modifiers (Shift 4, Alt/Meta 8, Ctrl 16).
+  function mouseCode(kind, button, mods) {
+    const m = mods || {};
+    let code = button;
+    if (kind === 'drag' || kind === 'move') code += 32;
+    if (m.shift) code += 4;
+    if (m.alt || m.meta) code += 8;
+    if (m.ctrl) code += 16;
+    return code;
   }
 
   // Whether a mouse event of this kind is reported in this tracking mode
@@ -461,6 +483,7 @@
   }
 
   return {
+    mouseBytes, mouseCode,
     FRAME_UPDATE, FRAME_HISTORY, parseFrame, splitRows, newDecoder, decodeRows, joinSelection, encodeMouse,
     mouseWants, nextHistoryRequest, keyAction, inputAction, caretAction,
     P256, rowHtml, rowColumns, findLinks, groupRows, rowsHtml, mouseMode, mouseEncoding,
