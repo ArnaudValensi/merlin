@@ -61,6 +61,11 @@
   // G1 = DEC graphics.
   const G1_GRAPHICS = [0x1b, 0x29, 0x30];
   function decodeRows(term, rows, skip) {
+    // The parser keeps an entry per hyperlink of every capture: only the
+    // current capture's are ever read.
+    const links = term._core._oscLinkService;
+    links._dataByLinkId.clear();
+    links._entriesWithId.clear();
     term.reset();
     if (!rows.length) return [];
     // Every row of the capture must stay in the parser's buffer until read:
@@ -310,6 +315,36 @@
     return per;
   }
 
+  // The web addresses a program attached to a row's text (OSC 8), whatever the
+  // text says: [[from, to, href]]. Other schemes (file:, javascript:) stay text.
+  // ``term``: the decoder the row came from, before its next capture.
+  function attachedLinks(line, cols, term, scratch) {
+    const service = term._core._oscLinkService;
+    const cell = line.getCell(0, scratch);
+    const out = [];
+    let last = null;
+    for (let x = 0; x < cols; x++) {
+      line.getCell(x, cell);
+      const w = cell.getWidth();
+      if (w === 0) continue;
+      const id = cell.hasExtendedAttrs() ? cell.extended.urlId : 0;
+      const data = id ? service.getLinkData(id) : null;
+      const uri = data && /^https?:/i.test(data.uri) ? data.uri : null;
+      if (uri && last && last[1] === x && last[2] === uri) last[1] = x + w;
+      else if (uri) out.push(last = [x, x + w, uri]);
+      else last = null;
+    }
+    return out;
+  }
+
+  // A row's links: the attached ones, then the addresses found in its text
+  // that they do not cover. Sorted, not overlapping.
+  function mergeLinks(found, attached) {
+    if (!attached.length) return found;
+    const free = (found || []).filter((f) => !attached.some((a) => f[0] < a[1] && a[0] < f[1]));
+    return free.concat(attached).sort((a, b) => a[0] - b[0]);
+  }
+
   // Logical lines from wrap flags: ``wrapped[i]`` is '1' when row i continues
   // on row i + 1. Returns [[firstRow, endRow), ...].
   function groupRows(wrapped, count) {
@@ -326,14 +361,16 @@
 
   // The inner HTML of rows decoded from one capture, with the links of each
   // logical line. ``cont``: the first row continues a line drawn before, whose
-  // column text is ``prefix``. Returns {html: [...], texts: [...]}.
-  function rowsHtml(lines, cols, wrapped, cont, prefix, scratch) {
+  // column text is ``prefix``. ``term``: the decoder the rows came from, for the
+  // links programs attached to their text. Returns {html: [...], texts: [...]}.
+  function rowsHtml(lines, cols, wrapped, cont, prefix, scratch, term) {
     const texts = lines.map((l) => rowColumns(l, cols, scratch));
     const html = new Array(lines.length);
     for (const [a, b] of groupRows(wrapped, lines.length)) {
       const links = findLinks(texts.slice(a, b), a === 0 && cont ? prefix : '');
       for (let i = a; i < b; i++) {
-        html[i] = rowHtml(lines[i], cols, { wraps: wrapped[i] === '1', links: links[i - a] }, scratch);
+        const rowLinks = term ? mergeLinks(links[i - a], attachedLinks(lines[i], cols, term, scratch)) : links[i - a];
+        html[i] = rowHtml(lines[i], cols, { wraps: wrapped[i] === '1', links: rowLinks }, scratch);
       }
     }
     return { html, texts };

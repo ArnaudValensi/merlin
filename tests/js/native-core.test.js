@@ -82,6 +82,38 @@ function lines(cols, data, rows) {
     return out;
 }
 
+test('a program can attach a web address to its text, and only a web address', () => {
+    const link = (uri, label) => `\x1b]8;;${uri}\x1b\\${label}\x1b]8;;\x1b\\`;
+    const term = Core.newDecoder(Terminal, Unicode11Addon, 12);
+    const rows = [
+        link('https://e.com/a', 'docs') + ' x',
+        link('file:///etc/x', 'path'),
+        link('javascript:alert(1)', 'bad'),
+        link('https://e.com/b', 'https://x.io'),
+        link('https://e.com/"q', 'esc'),
+        link('https://e.com/w', '日本') + ' y',
+        '\x1b]8;;https://e.com/c\x1b\\abc',
+        'def\x1b]8;;\x1b\\ z',
+    ].map((r) => Buffer.from(r));
+    const ls = Core.decodeRows(term, rows, 0);
+    const out = Core.rowsHtml(ls, 12, '0'.repeat(rows.length), false, '', undefined, term);
+    const anchors = out.html.map((h) => [...h.matchAll(/<a class="nt-link"[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g)].map((m) => [m[1], text(m[2])]));
+    assert.deepEqual(anchors[0], [['https://e.com/a', 'docs']]);
+    assert.deepEqual(anchors[1], []);
+    assert.deepEqual(anchors[2], []);
+    // The attached address wins over the one the text shows.
+    assert.deepEqual(anchors[3], [['https://e.com/b', 'https://x.io']]);
+    assert.deepEqual(anchors[4], [['https://e.com/&quot;q', 'esc']]);
+    assert.deepEqual(anchors[5], [['https://e.com/w', '日本']]);
+    // A link left open carries to the next row of the capture.
+    assert.deepEqual(anchors[6], [['https://e.com/c', 'abc']]);
+    assert.deepEqual(anchors[7], [['https://e.com/c', 'def']]);
+    assert.equal(text(out.html[0]), 'docs x');
+    // The parser's register holds the last capture's links, not every capture's.
+    for (let i = 0; i < 50; i++) Core.decodeRows(term, rows, 0);
+    assert.equal(term._core._oscLinkService._dataByLinkId.size, 7);
+});
+
 // The text a browser copies from a row's HTML: the text nodes, entities
 // decoded. Boxes (span.p) have no text; the markup carries no other text.
 function text(html) {

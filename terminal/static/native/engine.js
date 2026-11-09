@@ -196,9 +196,10 @@
     }
 
     decode(cols, rows, skip, wrapped, cont, prefix) {
-      const lines = Core.decodeRows(this.scratch(cols), rows, skip);
+      const term = this.scratch(cols);
+      const lines = Core.decodeRows(term, rows, skip);
       if (!this.cell && lines.length) this.cell = lines[0].getCell(0);
-      const out = Core.rowsHtml(lines, cols, wrapped, cont, prefix, this.cell);
+      const out = Core.rowsHtml(lines, cols, wrapped, cont, prefix, this.cell, term);
       out.lines = lines;
       return out;
     }

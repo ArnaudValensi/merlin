@@ -196,6 +196,24 @@ def test_styles_wide_characters_and_links_render(page):
     assert row["color"] == "rgb(255, 110, 110)"  # bold red drawn bright
 
 
+def test_text_a_program_links_to_a_web_address_opens_it(page):
+    page.context.route(
+        "https://example.com/**",
+        lambda r: r.fulfill(body="ok", content_type="text/plain"),
+    )
+    run(
+        page,
+        r"printf '\033]8;;https://example.com/att\033\\see docs\033]8;;\033\\ "
+        r"\033]8;;file:///etc/hostname\033\\a path\033]8;;\033\\ END''2\n'",
+    )
+    wait_text(page, "END2", ".nt-content")
+    assert page.locator("a.nt-link", has_text="a path").count() == 0
+    with page.context.expect_page() as opened:
+        page.locator("a.nt-link", has_text="see docs").last.click()
+    assert opened.value.url == "https://example.com/att"
+    opened.value.close()
+
+
 @pytest.fixture(params=["chromium", "firefox"])
 def any_page(request, server):
     b = request.getfixturevalue("browser" if request.param == "chromium" else "firefox")
