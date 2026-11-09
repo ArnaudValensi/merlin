@@ -315,8 +315,22 @@
     return per;
   }
 
-  // The web addresses a program attached to a row's text (OSC 8), whatever the
-  // text says: [[from, to, href]]. Other schemes (file:, javascript:) stay text.
+  // Where an address attached to text leads: a web address as it is, a file of
+  // this machine in the Files page, anything else nowhere. A file on a named
+  // host is not one of ours (a shell over ssh).
+  function linkTarget(uri) {
+    if (/^https?:/i.test(uri)) return uri;
+    if (!/^file:/i.test(uri)) return null;
+    try {
+      const u = new URL(uri);
+      return !u.hostname || u.hostname === 'localhost' ? '/files' + u.pathname : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // The addresses a program attached to a row's text (OSC 8), whatever the
+  // text says: [[from, to, href]], for those that lead somewhere (linkTarget).
   // ``term``: the decoder the row came from, before its next capture.
   function attachedLinks(line, cols, term, scratch) {
     const service = term._core._oscLinkService;
@@ -329,7 +343,7 @@
       if (w === 0) continue;
       const id = cell.hasExtendedAttrs() ? cell.extended.urlId : 0;
       const data = id ? service.getLinkData(id) : null;
-      const uri = data && /^https?:/i.test(data.uri) ? data.uri : null;
+      const uri = data ? linkTarget(data.uri) : null;
       if (uri && last && last[1] === x && last[2] === uri) last[1] = x + w;
       else if (uri) out.push(last = [x, x + w, uri]);
       else last = null;

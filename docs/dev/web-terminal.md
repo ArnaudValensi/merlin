@@ -444,8 +444,9 @@ price of rewinding the page's confirmed rows when the window grows back.
   (attributes carry from row to row). `rowHtml` turns a decoded row into the
   HTML of one visual row; `findLinks` finds URLs over a logical line and
   `attachedLinks` reads the addresses programs attach to text (OSC 8), which
-  tmux keeps in a capture. Only `http` and `https` become links; a `file:`
-  address stays text. `decodeRows` empties xterm.js's link register before
+  tmux keeps in a capture. `linkTarget` keeps `http` and `https`, sends a
+  `file:` address with no host (or `localhost`) to `/files/<path>`, and drops
+  everything else. `decodeRows` empties xterm.js's link register before
   each capture, which otherwise keeps an entry per link of every capture.
 - `renderer.js`: the DOM. A logical line is a `div.l`; each visual row in it a
   `span.r`, an inline-block as wide as the pane. The platform's own selection

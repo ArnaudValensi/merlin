@@ -234,8 +234,9 @@ What is different:
   it has), the text stays where it is, and the system's handles and Copy menu
   appear. Tap the terminal afterwards to bring the keyboard back.
 - **Links** open in a new tab: an address shown in the text, and text a
-  program links to a web address (dashed underline). A dashed link to a
-  local file stays plain text.
+  program links to an address (dashed underline). A web address opens
+  directly; a file on this machine, such as the path Claude Code shows for
+  an edit, opens in the Files page.
 - **The keyboard** is a real text field on a phone: holding delete repeats
   and speeds up to words, a long press on the space bar moves the cursor,
   dictation works. Autocorrect and predictions are off by default; turn
