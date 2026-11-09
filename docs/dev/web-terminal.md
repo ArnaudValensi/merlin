@@ -4,6 +4,10 @@ Implementation reference for the browser-based terminal (the classic page
 below, and the [native terminal](#native-terminal-terminalnative) beside it). The user guide is
 [`docs/terminal.md`](../terminal.md); this doc covers how it is built.
 
+The classic page is deprecated: it is still the default and is kept as a
+fallback for now, and it will be removed later. New terminal work goes to the
+native page.
+
 ## Architecture
 
 ```
@@ -358,7 +362,8 @@ from a pane (`merlin app run`, say) gets none.
 A second terminal, built beside the classic one by the native-terminal epic
 (`epics/cli/native-terminal/` in merlin-saas, journal included), so a phone gets
 native momentum scrolling, native selection and copy, and a real text field for
-its keyboard. The classic page above is unchanged and stays the default.
+its keyboard. It is meant to replace the classic page above, which is
+deprecated but still the default for now.
 
 **The switch** (`terminal/templates/terminal-choice.js`, inlined first on both
 pages): a per-browser choice in `localStorage` (`merlin-terminal`: `classic`,
@@ -410,6 +415,26 @@ input (the echo of a keystroke goes out at once), and only while the page has
 room in its window of unacknowledged bytes. Nothing is ever paused in tmux. The
 module docstring lists every guarantee and its test.
 
+**Window size.** tmux's `window-size latest` follows the last active client, as
+it does for attached terminals, but what a control client sends does not count
+as activity: measured on 3.8, `send-keys`, `display-message`, `refresh-client`
+and `select-pane` leave it where it was, `select-window` and `switch-client` do
+not. So the page reports a gesture (`{"type": "active"}`, at most once a
+second, on a key, tap or scroll) and the bridge runs `select-window -t :` on the
+current window, only when the window's size is not the page's, since selecting a
+window runs its hooks.
+
+**A height change is not a reflow.** It moves rows between the screen and the
+history without touching `history_added` or `history_generation` (measured on
+3.8, 46 rows to 18: `history_size` up by 28, `history_added` unchanged), so no
+reset comes and the bridge never sends the rows that left the screen. They are
+missing from the page while the window is shorter and come back when it grows,
+unless output scrolled meanwhile, which can leave a hole until the page reloads.
+A phone's keyboard does not change the window's height (see `fit` in
+`engine.js`), so this only concerns a desktop window made shorter. Numbering
+rows by `history_collected + history_size` would remove the problem, at the
+price of rewinding the page's confirmed rows when the window grows back.
+
 ### Renderer (`terminal/static/native/`)
 
 - `core.js`: pure helpers, also run by node in `tests/js/native-core.test.js`.
@@ -443,14 +468,22 @@ module docstring lists every guarantee and its test.
   history (one row height for each row tmux holds that the page has not
   loaded) and the placeholders shrink by exactly the height of the rows that
   replace them: loading rows never moves the view and never sets `scrollTop`
-  (which would stop an iOS momentum scroll). The alternate screen is a layer
+  (which would stop an iOS momentum scroll). Rows past the end of a screen
+  that got shorter are removed (`dropBelow`), or they would stay frozen at the
+  bottom of the view. A view that follows the output stands at `followTop`:
+  in a view shorter than the screen, the blank rows under the last used one
+  are not text, so the used rows end at its bottom and, when they all fit,
+  the screen's first row is at its top. The alternate screen is a layer
   over the scroller; leaving it shows the main screen where it was. The cursor
   is an overlay in its row whose character is generated content, so it is
   never copied.
 - `engine.js`: the socket, frames drawn on the next animation frame and then
   acknowledged (a hidden page acknowledges nothing, so the bridge stops), lazy
   history, the size (the terminal font is loaded before the first size is
-  sent), the desktop copy handler (Firefox serialises an empty selection over
+  sent; with a software keyboard up the window keeps its height, so the program
+  is not redrawn each time the keyboard moves, except a full-screen one, which
+  cannot be scrolled and gets the shorter height), the row at the bottom of the
+  view kept there when its height changes, the desktop copy handler (Firefox serialises an empty selection over
   `content-visibility`, so the handler builds the text from the rows), and
   the mouse for programs that ask for it in the alternate screen, through
   pointer events only (a tap is reported once, whatever compatibility mouse
@@ -463,9 +496,9 @@ module docstring lists every guarantee and its test.
   encoding has no value: nothing is sent, as xterm.js does).
 - `native.css`: the classic terminal's theme colours, styles, the cursor.
 - `input.js`: the input, one real `textarea` (invisible: the terminal's own
-  cursor shows where typing goes). On a touch screen it lies over the "Hold
-  to paste" label at the end of the tab row, so a long press there opens the
-  system's Paste menu while a long press on the terminal selects its text; a
+  cursor shows where typing goes). On a touch screen it lies over the
+  toolbar's Paste button, so a tap there pastes and a long press opens the
+  system's Paste menu, while a long press on the terminal selects its text; a
   caret placed by a finger on the field is never sent as arrows (it goes back
   after what was typed before the next edit), and the menu's Cut is cancelled.
   It holds a sentinel of four no-break
@@ -530,13 +563,13 @@ module docstring lists every guarantee and its test.
   the recording stops, IndexedDB retry, the 200 fallback typed here); the
   toolbar toggle; the keyboard suggestions item of the terminal menu; the
   reconnect with backoff, the ping probe after a suspension, the visibility
-  report; the software keyboard following the visual viewport (it shortens the
-  view and keeps the row at its bottom, the blank rows under the last used one
-  not counting as text; only a full-screen program is resized for it). With the keyboard up iOS only selects inside the focused field and
-  does not follow a finger already down when the field lets go, so a finger
-  held on the terminal makes the page select the word itself (a drag extends
-  it), and iOS shows its own handles and Copy menu on that selection. What the
-  classic page writes into its screen (a voice or upload error) is a notice
+  report; the software keyboard following the visual viewport. With the
+  keyboard up iOS only selects inside the focused field and does not follow a
+  finger already down when the field lets go, so a finger held on the terminal
+  makes the page select the word itself (a drag extends it), and iOS shows its
+  own handles and Copy menu on that selection; the keyboard leaves and the
+  layout waits for the selection to end, so the text stays under the finger.
+  What the classic page writes into its screen (a voice or upload error) is a notice
   over the terminal (`#nt-notice`): this page shows tmux's grid only.
 
 The bridge accepts a key name only if tmux 3.8 parses it

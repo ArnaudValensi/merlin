@@ -121,8 +121,9 @@ your phone and your laptop each stay where you left them.
 - The Sessions button badge counts windows **waiting on you across all
   sessions**, so a background session that finishes still reaches you.
 
-The bottom row of window tabs in the terminal is tmux's own status line,
-so it always shows the windows of whichever session you are currently on.
+In the classic terminal, the bottom row of window tabs is tmux's own status
+line, so it always shows the windows of whichever session you are currently
+on. The new terminal has no tab row (see [The new terminal](#the-new-terminal)).
 
 ## Agent-state pills
 
@@ -208,8 +209,9 @@ browser notifications, an app badge and push to your phone. See
 ## The new terminal
 
 A second terminal lives beside the classic one, made to feel native on a
-phone. The classic terminal stays the default. To try the new one, open
-the terminal menu (the sliders button in the bottom bar) and pick **New
+phone. It is the terminal Merlin is moving to: the classic one is deprecated,
+still the default for now and kept as a fallback, and will be removed later.
+To use the new one, open the terminal menu (the sliders button in the bottom bar) and pick **New
 terminal**, or add `?terminal=native` to the address. The choice is
 remembered per browser and `/terminal` follows it; **Classic terminal** in
 the same menu goes back. Both attach to the same tmux sessions and can be
@@ -221,17 +223,23 @@ What is different:
 - **Scrolling** is the platform's own, with momentum, through the whole
   history (older rows load as you get to them). Output arriving while you
   read does not move the view; a **Jump to bottom** button appears, and
-  typing brings you back.
+  typing brings you back. The button leaves the keyboard as it was.
 - **Selecting and copying** is the platform's own too. On a phone, long
   press a word, drag the handles, and tap Copy in the system menu. On a
   desktop, select with the mouse and press Ctrl+C (Cmd+C on a Mac) or
   Ctrl+Shift+C: selecting alone does not copy, and Ctrl+C with nothing
   selected stays SIGINT. Wrapped lines come out joined and trailing blanks
-  are trimmed.
+  are trimmed. With the on-screen keyboard open, hold a finger still on the
+  text: the keyboard closes (iOS only selects outside the input field once
+  it has), the text stays where it is, and the system's handles and Copy menu
+  appear. Tap the terminal afterwards to bring the keyboard back.
 - **The keyboard** is a real text field on a phone: holding delete repeats
   and speeds up to words, a long press on the space bar moves the cursor,
   dictation works. Autocorrect and predictions are off by default; turn
-  them on with **Keyboard suggestions** in the terminal menu.
+  them on with **Keyboard suggestions** in the terminal menu. Opening it
+  shortens the view and resizes nothing: what was at the bottom of the view
+  stays just above the keyboard, and in a new shell the prompt stays at the
+  top. Only a full-screen program gets the shorter height.
 - **Windows** have no tab row: the status bar names the current one, the
   toolbar's arrows move between them, and the Sessions panel lists them with
   their [agent-state pills](#agent-state-pills).
@@ -240,7 +248,9 @@ What is different:
 - **Paste** works as described below, except that a right-click over a
   selection opens the browser's menu (so you can Copy); without a selection
   it pastes. On a phone, tap the **Paste** button at the right of the key
-  toolbar, or long press it for the system's Paste menu.
+  toolbar, or long press it for the system's Paste menu. When a program
+  copies (`merlin-clip`, Claude Code's `/copy`), a green **Copy** pill offers
+  the tap a phone's clipboard requires.
 - A message the classic terminal writes into its screen (a voice or upload
   error) is a line over the terminal: tap it to dismiss it.
 
@@ -248,6 +258,9 @@ In full-screen programs (NeoVim, less, htop), a swipe scrolls the program,
 as wheel events when it asked for the mouse and as arrow keys otherwise.
 
 ## Copy and paste
+
+This section describes the classic terminal; what differs in the new one is
+listed under [The new terminal](#the-new-terminal).
 
 Desktop copy: select with the mouse; on release the selection lands in
 the OS clipboard with a "Copied!" flash. Ctrl+Shift+C copies your
@@ -395,6 +408,9 @@ opens the [commits page](commits.md) for that repo. It flashes "Not a git
 repo" if you are not in one.
 
 ## Mobile notes
+
+These notes are for the classic terminal; the new one uses the phone's own
+scrolling, selection and keyboard (see [The new terminal](#the-new-terminal)).
 
 - Swipe vertically to scroll; tap to click and focus (which opens the
   on-screen keyboard); rotating the phone resizes the terminal.
