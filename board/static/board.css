@@ -91,6 +91,19 @@
 
 /* ---- The list: sessions, each grouping its windows ---------------------- */
 
+/* A thin bar with no track, as on macOS. iOS keeps its own overlay. */
+.board-list::-webkit-scrollbar { width: 8px; height: 8px; }
+.board-list::-webkit-scrollbar-track, .board-list::-webkit-scrollbar-corner { background: transparent; }
+.board-list::-webkit-scrollbar-thumb {
+  min-height: 40px;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background: rgba(248, 248, 242, 0.25) padding-box;
+}
+.board-list::-webkit-scrollbar-thumb:hover { background: rgba(248, 248, 242, 0.5) padding-box; }
+@supports not selector(::-webkit-scrollbar) {
+  .board-list { scrollbar-width: thin; scrollbar-color: rgba(248, 248, 242, 0.25) transparent; }
+}
 .board-list {
   flex: 1 1 auto;
   min-height: 0;

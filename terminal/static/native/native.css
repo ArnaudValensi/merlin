@@ -34,6 +34,19 @@
     /* The renderer keeps the view itself (the spacer, the stuck bottom). */
     overflow-anchor: none;
 }
+/* A thin bar with no track, as on macOS. iOS keeps its own overlay. */
+.nt-scroller::-webkit-scrollbar { width: 8px; height: 8px; }
+.nt-scroller::-webkit-scrollbar-track, .nt-scroller::-webkit-scrollbar-corner { background: transparent; }
+.nt-scroller::-webkit-scrollbar-thumb {
+    min-height: 40px;
+    border: 2px solid transparent;
+    border-radius: 4px;
+    background: rgba(248, 248, 242, 0.25) padding-box;
+}
+.nt-scroller::-webkit-scrollbar-thumb:hover { background: rgba(248, 248, 242, 0.5) padding-box; }
+@supports not selector(::-webkit-scrollbar) {
+    .nt-scroller { scrollbar-width: thin; scrollbar-color: rgba(248, 248, 242, 0.25) transparent; }
+}
 .nt-content { position: relative; }
 .nt-spacer { height: 0; }
 .nt-chunk { content-visibility: auto; }
