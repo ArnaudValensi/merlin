@@ -119,6 +119,32 @@ test('an address attached to text opens the web or the Files page, and nothing e
     assert.equal(term._core._oscLinkService._dataByLinkId.size, 9);
 });
 
+test('the background a row ends in does not spill over the cells the next one leaves out', () => {
+    const term = Core.newDecoder(Terminal, Unicode11Addon, 20);
+    const rows = [
+        '\x1b[42mSTATUS              ',
+        '',
+        '\x1b[100mfull gray           ',
+        '\x1b[49m          ',
+        '\x1b[100m                    ',
+        'carried',
+    ].map((r) => Buffer.from(r));
+    const painted = Core.decodeRows(term, rows, 0).map((l) => {
+        let s = '';
+        for (let x = 0; x < 20; x++) s += l.getCell(x).getBgColorMode() ? '#' : '.';
+        return s;
+    });
+    assert.deepEqual(painted, [
+        '#'.repeat(20),
+        '.'.repeat(20),
+        '#'.repeat(20),
+        '.'.repeat(20),
+        '#'.repeat(20),
+        // The running colour still carries to the text of the next row.
+        '#'.repeat(7) + '.'.repeat(13),
+    ]);
+});
+
 // The text a browser copies from a row's HTML: the text nodes, entities
 // decoded. Boxes (span.p) have no text; the markup carries no other text.
 function text(html) {

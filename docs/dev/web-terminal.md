@@ -441,7 +441,8 @@ price of rewinding the page's confirmed rows when the window grows back.
   Frames are decoded by a scratch xterm.js parser that is never opened
   (`newDecoder`, with the Unicode 11 widths tmux uses:
   `static/vendor/xterm-addon-unicode11.min.js`), one capture as one stream
-  (attributes carry from row to row). `rowHtml` turns a decoded row into the
+  (attributes carry from row to row, but a new row starts blank: tmux sends
+  no reset for the cells a row leaves empty). `rowHtml` turns a decoded row into the
   HTML of one visual row; `findLinks` finds URLs over a logical line and
   `attachedLinks` reads the addresses programs attach to text (OSC 8), which
   tmux keeps in a capture. `linkTarget` keeps `http` and `https`, sends a

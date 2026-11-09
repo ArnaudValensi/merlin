@@ -50,6 +50,12 @@
     const term = new Terminal({ cols, rows: 1, scrollback: 4000, allowProposedApi: true });
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = '11';
+    // A new row is blank. xterm.js would fill it with the running background,
+    // and tmux sends neither a reset nor the cells a row leaves empty: the
+    // colour a row ends in would spill over the next one. A capture holds text
+    // and colours only, so this erase serves nothing but new rows.
+    const parser = term._core._inputHandler;
+    parser._eraseAttrData = () => parser._eraseAttrDataInternal;
     return term;
   }
 
