@@ -62,7 +62,7 @@ def phone(server):
         )
         ctx.add_init_script(FAKE_VIEWPORT)
         page = ctx.new_page()
-        page.goto(f"{server}/terminal")
+        page.goto(f"{server}/terminal?terminal=classic")
         page.wait_for_selector(".xterm-screen", timeout=30000)
         yield page
         ctx.close()

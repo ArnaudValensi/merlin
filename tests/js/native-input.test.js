@@ -546,16 +546,13 @@ test('the field: a paste event sends its text through the paste path, images to 
   assert.equal(h.sent.length, 1);
 });
 
-test('the field: suggestions are off by default and follow the setting', () => {
+test('the field: no suggestions, ever', () => {
   const h = harness();
   assert.equal(h.field.attrs.autocorrect, 'off');
+  assert.equal(h.field.attrs.autocomplete, 'off');
   assert.equal(h.field.attrs.autocapitalize, 'off');
   assert.equal(h.field.attrs.spellcheck, 'false');
-  h.input.setSuggestions(true, false);
-  assert.equal(h.field.attrs.autocorrect, 'on');
-  assert.equal(h.field.attrs.autocomplete, 'on');
-  assert.equal(h.field.attrs.spellcheck, 'true');
-  assert.equal(h.field.attrs.autocapitalize, 'off');
+  assert.equal(h.input.setSuggestions, undefined);
 });
 
 test('the toolbar: an arrow resets the field like a physical arrow', () => {

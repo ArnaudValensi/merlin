@@ -1,13 +1,14 @@
-/* Which terminal this browser uses: the classic one (the default) or the
- * native one (/terminal/native). The choice is per browser, kept in
- * localStorage, and set from the terminal menu or with ?terminal=native (or
- * classic) on either page. /terminal leads to the chosen page, keeping the
- * rest of its URL (a deep link's ?target=). A native page that cannot run
- * here (a tmux older than it needs) sends the tab back to the classic one,
- * which says why.
+/* Which terminal this browser uses: the native one (/terminal/native, the
+ * default) or the legacy one (/terminal), deprecated and kept as a fallback
+ * until it is removed. The choice is per browser, kept in localStorage, and
+ * set from Merlin's settings page (static/settings.js, the same key) or with
+ * ?terminal=classic (or native) on either page. /terminal leads to the chosen
+ * page, keeping the rest of its URL (a deep link's ?target=). A native page
+ * that cannot run here (a tmux older than it needs) sends the tab back to the
+ * legacy one, which says why.
  *
  * Inlined at the top of both pages, before anything opens a socket: a page
- * that is leaving sets `leaving`, and the classic page's scripts then do
+ * that is leaving sets `leaving`, and the legacy page's scripts then do
  * nothing. */
 var MerlinTerminalChoice = (function () {
     'use strict';
@@ -53,7 +54,7 @@ var MerlinTerminalChoice = (function () {
             try { return decodeURIComponent(name) !== 'terminal'; } catch (e) { return true; }
         });
         const query = rest.length ? '?' + rest.join('&') : '';
-        const chosen = asked || kind(stored) || 'classic';
+        const chosen = asked || kind(stored) || 'native';
         const out = { store: asked, clearFallback: asked === 'native', go: null, query, dropParam: hadParam };
         if (page === 'classic') {
             const stayed = !!fallback && asked !== 'native';
@@ -64,12 +65,12 @@ var MerlinTerminalChoice = (function () {
         return out;
     }
 
-    // Whether a page shows the one-line notice: only the classic page, when
+    // Whether a page shows the one-line notice: only the legacy page, when
     // this tab fell back (`fallback`), right after the fall back (`fellBack`)
-    // or while the saved choice is the native terminal (each /terminal load
-    // then lands here instead). Pure, for the tests.
+    // or while the choice is the native terminal (each /terminal load then
+    // lands here instead). Pure, for the tests.
     function showsFallback(page, stored, fallback, fellBack) {
-        return page === 'classic' && !!fallback && (!!fellBack || kind(stored) === 'native');
+        return page === 'classic' && !!fallback && (!!fellBack || (kind(stored) || 'native') === 'native');
     }
 
     const Choice = {
@@ -80,8 +81,8 @@ var MerlinTerminalChoice = (function () {
         showsFallback,
         leaving: false,
         page: null,
-        get() { return kind(read(local(), KEY)) || 'classic'; },
-        set(value) { write(local(), KEY, kind(value) || 'classic'); },
+        get() { return kind(read(local(), KEY)) || 'native'; },
+        set(value) { write(local(), KEY, kind(value) || 'native'); },
         fallback() { return read(session(), FALLBACK_KEY) || ''; },
 
         // Run first on each page. True when the page is leaving.
@@ -102,7 +103,7 @@ var MerlinTerminalChoice = (function () {
             return false;
         },
 
-        // The native page cannot run here: back to the classic page for this
+        // The native page cannot run here: back to the legacy page for this
         // tab, which shows `why`.
         fallBack(why) {
             write(session(), FALLBACK_KEY, why || 'The new terminal is unavailable here.');
@@ -113,54 +114,13 @@ var MerlinTerminalChoice = (function () {
 
         // Remember `value` and open its page, keeping the URL's query.
         switchTo(value) {
-            value = kind(value) || 'classic';
+            value = kind(value) || 'native';
             this.set(value);
             if (value === 'native') this.clearFallback();
             if (value === this.page) return;
             this.leaving = true;
             const p = plan(null, location.search, null, '');
             location.assign(PATHS[value] + p.query + location.hash);
-        },
-
-        // The terminal menu (terminal-panels.html): the two terminals, and
-        // whatever the page adds below them.
-        bindMenu() {
-            const btn = document.getElementById('term-menu-btn');
-            const menu = document.getElementById('term-menu');
-            if (!btn || !menu) return;
-            const items = menu.querySelectorAll('[data-terminal]');
-            const note = document.getElementById('term-menu-note');
-            const render = () => {
-                items.forEach((item) => item.setAttribute('aria-checked', String(item.dataset.terminal === this.page)));
-                if (note) {
-                    const why = this.fallback();
-                    note.textContent = why;
-                    note.hidden = !why;
-                }
-            };
-            const close = () => { menu.hidden = true; btn.classList.remove('active'); };
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (!menu.hidden) { close(); return; }
-                render();
-                // Above its button, its right edge on the button's.
-                const r = btn.getBoundingClientRect();
-                menu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
-                menu.style.bottom = Math.max(8, window.innerHeight - r.top + 6) + 'px';
-                menu.hidden = false;
-                btn.classList.add('active');
-            });
-            // No item takes the focus from the terminal's input.
-            menu.addEventListener('mousedown', (e) => e.preventDefault());
-            items.forEach((item) => item.addEventListener('click', () => {
-                close();
-                this.switchTo(item.dataset.terminal);
-            }));
-            document.addEventListener('click', (e) => {
-                if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) close();
-            });
-            document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !menu.hidden) close(); });
-            this.closeMenu = close;
         },
 
         // The native terminal works here (it attached): an old fall back of
@@ -170,7 +130,7 @@ var MerlinTerminalChoice = (function () {
             write(session(), FELL_BACK_KEY, null);
         },
 
-        // On the classic page of a tab the native page sent back: one line
+        // On the legacy page of a tab the native page sent back: one line
         // saying why, over the terminal.
         showFallback() {
             const why = this.fallback();

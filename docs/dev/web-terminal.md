@@ -4,9 +4,9 @@ Implementation reference for the browser-based terminal (the classic page
 below, and the [native terminal](#native-terminal-terminalnative) beside it). The user guide is
 [`docs/terminal.md`](../terminal.md); this doc covers how it is built.
 
-The classic page is deprecated: it is still the default and is kept as a
-fallback for now, and it will be removed later. New terminal work goes to the
-native page.
+The classic page (**Legacy** in the settings) is deprecated: the native page
+is the default, and the classic one is kept as a fallback for now and will be
+removed later. New terminal work goes to the native page.
 
 ## Architecture
 
@@ -362,32 +362,33 @@ from a pane (`merlin app run`, say) gets none.
 A second terminal, built beside the classic one by the native-terminal epic
 (`epics/cli/native-terminal/` in merlin-saas, journal included), so a phone gets
 native momentum scrolling, native selection and copy, and a real text field for
-its keyboard. It is meant to replace the classic page above, which is
-deprecated but still the default for now.
+its keyboard. It is the default and replaces the classic page above, which is
+deprecated and kept as a fallback for now.
 
 **The switch** (`terminal/templates/terminal-choice.js`, inlined first on both
-pages): a per-browser choice in `localStorage` (`merlin-terminal`: `classic`,
-the default, or `native`), set from the terminal menu (the sliders button of
-the status bar: Classic terminal / New terminal) or with `?terminal=native` (or
-`classic`) on either page. `/terminal` leads to the chosen page with the rest
+pages): a per-browser choice in `localStorage` (`merlin-terminal`: `native`,
+the default when nothing is stored, or `classic`), set from Merlin's settings
+page (**Terminal**: New or Legacy, `static/settings.js`, the same key) or with
+`?terminal=classic` (or `native`) on either page. `/terminal` leads to the chosen page with the rest
 of its URL (a deep link's `?target=`), before any socket opens (the classic
 page's scripts see `MerlinTerminalChoice.leaving` and start nothing);
 `/terminal/native` always opens the native page. When the bridge says tmux is
 too old, the native page sends the tab back to the classic one
 (`sessionStorage`, so that tab stays there), which says why in one line: on
 the landing right after the fall back whatever the saved choice (a direct visit
-to `/terminal/native` keeps a Classic choice), and on every classic load while
-the saved choice is the native one. The native page attaching again clears it.
+to `/terminal/native` keeps a Legacy choice), and on every classic load while
+the choice is the native one (saved, or nothing saved). The native page attaching again clears it.
 
 **Shared chrome.** Both pages include the same partials, so the bars, panels and
 their wiring cannot drift: `terminal-status-bar.html` (the bottom bar) and its
 rules `terminal-status-bar.css`, `terminal-panels.html` (Sessions panel, Apps
-panel, notifications popover, voice console, folder picker, terminal menu),
+panel, notifications popover, voice console, folder picker),
 `terminal-head.html` (their stylesheets and early scripts) and
 `terminal-chrome.html` (board, notifications, Apps, the clipboard ladder, the
 session identity, the Sessions panel wiring). The extraction left the classic
 page's rendered HTML byte for byte the same; what changed it afterwards is the
-switch (its script, the menu button and popover) and a narrow-screen rule of the
+switch (its script; the terminal menu it once added is gone, the choice is in
+the settings) and a narrow-screen rule of the
 bar (the status text gives way with an ellipsis, the buttons tighten below
 420 px) so every button stays on a phone's screen.
 
@@ -543,8 +544,8 @@ price of rewinding the page's confirmed rows when the window grows back.
   where Ctrl+V stays the program's) and Ctrl+Shift+V are the browser's own
   paste, read from the paste event (text through the bridge's paste path,
   images to the page). Suggestions (autocorrect, predictions, spellcheck)
-  are off by default and opt-in per browser (`setSuggestions`, stored in
-  `localStorage`, `?suggestions=1` on the URL).
+  are always off: they rewrite commands, and the setting that turned them
+  on was dropped.
 - `toolbar.js`: the classic toolbar's keys (Esc, Tab, Shift+Tab, Enter, F3
   to F5, the new-window button, the arrows repeating while held) and its
   sticky Ctrl, Alt and Shift, shared with the input (`MerlinNativeInput.Modifiers`):
@@ -567,7 +568,7 @@ price of rewinding the page's confirmed rows when the window grows back.
   offered through the Copy pill on a touch screen (the gesture the clipboard
   needs); the cd and commits buttons; voice input (the target captured when
   the recording stops, IndexedDB retry, the 200 fallback typed here); the
-  toolbar toggle; the keyboard suggestions item of the terminal menu; the
+  toolbar toggle; the
   reconnect with backoff, the ping probe after a suspension, the visibility
   report; the software keyboard following the visual viewport. With the
   keyboard up iOS only selects inside the focused field and does not follow a

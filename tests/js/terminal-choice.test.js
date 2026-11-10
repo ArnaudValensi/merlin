@@ -8,12 +8,13 @@ const Choice = require('../../terminal/templates/terminal-choice.js');
 
 const plan = (page, search, stored = null, fallback = '') => Choice.plan(page, search, stored, fallback);
 
-test('the classic page stays by default', () => {
+test('/terminal leads to the native page by default, the legacy one only when chosen', () => {
     assert.deepEqual(plan('classic', ''), {
-        store: null, clearFallback: false, go: null, query: '', dropParam: false,
+        store: null, clearFallback: false, go: '/terminal/native', query: '', dropParam: false,
     });
+    assert.equal(plan('classic', '', 'something else').go, '/terminal/native');
     assert.equal(plan('classic', '', 'classic').go, null);
-    assert.equal(plan('classic', '', 'something else').go, null);
+    assert.equal(Choice.get(), 'native');
 });
 
 test('a stored native choice sends /terminal to the native page with its query', () => {
@@ -53,7 +54,7 @@ test('the native page stays, whatever is stored, unless asked for the classic on
 });
 
 test('an unknown value of the parameter changes nothing but is dropped', () => {
-    const p = plan('classic', '?terminal=fancy', null);
+    const p = plan('classic', '?terminal=fancy', 'classic');
     assert.equal(p.store, null);
     assert.equal(p.go, null);
     assert.equal(p.dropParam, true);
@@ -61,12 +62,12 @@ test('an unknown value of the parameter changes nothing but is dropped', () => {
 
 test('the fall back notice shows on the classic page only, right after it or while native is saved', () => {
     const why = 'tmux 3.4 is older than 3.8';
-    // A direct visit to /terminal/native with Classic (or nothing) saved.
-    assert.equal(Choice.showsFallback('classic', null, why, '1'), true);
+    // A direct visit to /terminal/native with the legacy terminal saved.
     assert.equal(Choice.showsFallback('classic', 'classic', why, '1'), true);
-    // Later loads of the classic page: only while native is the saved choice.
+    // Later loads of the legacy page: only while native is the choice
+    // (saved, or nothing saved: the default).
     assert.equal(Choice.showsFallback('classic', 'classic', why, null), false);
-    assert.equal(Choice.showsFallback('classic', null, why, null), false);
+    assert.equal(Choice.showsFallback('classic', null, why, null), true);
     assert.equal(Choice.showsFallback('classic', 'native', why, null), true);
     // Never on the native page, never without a fall back.
     assert.equal(Choice.showsFallback('native', 'native', why, '1'), false);

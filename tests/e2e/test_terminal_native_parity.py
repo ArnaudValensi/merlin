@@ -8,10 +8,10 @@ panels): the deep link and the
 push-tap relay, the paste button and a right-click, uploads (picker, drop, a
 pasted image), ``clipboard_sync``, a program's copy (desktop and the phone's
 Copy pill), the cd and commits buttons, voice input and its target, the
-notices, the toolbar toggle, the keyboard suggestions setting, the reconnect
-probe. The switch (``terminal-choice.js``): classic by default, a per-browser
-choice that ``/terminal`` follows without opening a classic socket, the menu,
-the URL parameter, and the fall back to the classic page when tmux is too old.
+notices, the toolbar toggle, the reconnect probe. The switch
+(``terminal-choice.js``): native by default, a per-browser choice set in
+Merlin's settings that ``/terminal`` follows without opening a legacy socket,
+the URL parameter, and the fall back to the legacy page when tmux is too old.
 
 The software keyboard following the visual viewport and the standalone
 padding cannot be produced by Playwright: they are on the founder's iPhone
@@ -188,7 +188,7 @@ def pane_line(env: dict, pane: str) -> str:
 # -- the switch -----------------------------------------------------------------------
 
 
-def test_the_switch_is_classic_by_default_and_follows_the_choice(
+def test_the_switch_is_native_by_default_and_follows_the_choice(
     browser, server, tmux_env
 ):
     ctx = browser.new_context(**DESKTOP)
@@ -196,10 +196,12 @@ def test_the_switch_is_classic_by_default_and_follows_the_choice(
     sockets: list[str] = []
     pg.on("websocket", lambda ws: sockets.append(ws.url))
     pg.goto(f"{server}/terminal")
-    pg.wait_for_selector(".xterm-screen", timeout=30000)
-    pg.wait_for_function("window.MerlinTerminal.currentWindow()", timeout=20000)
-    assert pg.evaluate("!window.MerlinNativeTerminalPage")
+    wait_native(pg)
+    assert pg.url.endswith("/terminal/native")
     assert pg.evaluate("localStorage.getItem('merlin-terminal')") is None
+    assert [
+        u for u in sockets if "/ws/terminal?" in u or u.endswith("/ws/terminal")
+    ] == []
 
     # ?terminal=native: remembered, and the rest of the URL (a deep link)
     # carried to the native page, which follows it.
@@ -224,17 +226,19 @@ def test_the_switch_is_classic_by_default_and_follows_the_choice(
             u for u in sockets if "/ws/terminal?" in u or u.endswith("/ws/terminal")
         ] == []
 
-        # The menu: the current page checked, Classic goes back and is kept.
-        pg.click("#term-menu-btn")
-        checked = pg.evaluate(
-            "[...document.querySelectorAll('#term-menu [data-terminal]')]"
-            ".map(i => i.dataset.terminal + '=' + i.getAttribute('aria-checked'))"
-        )
-        assert checked == ["classic=false", "native=true"]
-        pg.click("#term-menu [data-terminal=classic]")
+        # Merlin's settings: New checked, Legacy is kept and /terminal follows.
+        seg = "#terminal-choice .settings-seg-btn"
+        pg.goto(f"{server}/settings")
+        pg.wait_for_selector(f"{seg}.active")
+        assert pg.get_attribute(f"{seg}.active", "data-mode") == "native"
+        pg.click(f"{seg}[data-mode=classic]")
+        assert pg.evaluate("localStorage.getItem('merlin-terminal')") == "classic"
+        pg.goto(f"{server}/terminal")
         pg.wait_for_selector(".xterm-screen", timeout=30000)
         assert pg.url.endswith("/terminal")
-        assert pg.evaluate("localStorage.getItem('merlin-terminal')") == "classic"
+        pg.goto(f"{server}/settings")
+        pg.wait_for_selector(f"{seg}.active")
+        assert pg.get_attribute(f"{seg}.active", "data-mode") == "classic"
 
         # ?terminal=classic on the native page goes back too.
         pg.goto(f"{server}/terminal?terminal=native")
@@ -266,8 +270,8 @@ def test_a_tmux_too_old_sends_the_tab_back_to_the_classic_page(browser, server):
     pg.wait_for_selector(".xterm-screen", timeout=30000)
     assert pg.url.endswith("/terminal")
     assert pg.evaluate("localStorage.getItem('merlin-terminal')") == "native"
-    pg.click("#term-menu-btn")
-    assert "tmux 3.8" in pg.text_content("#term-menu-note")
+    pg.wait_for_selector(".term-fallback", timeout=20000)
+    assert "tmux 3.8" in pg.text_content(".term-fallback")
     # Asking for the new terminal again tries it again.
     pg.goto(f"{server}/terminal?terminal=native")
     wait_native(pg)
@@ -293,12 +297,13 @@ def test_a_direct_visit_on_an_old_tmux_says_why_without_changing_the_choice(
         assert pg.url.endswith("/terminal")
         assert "tmux 3.8" in pg.text_content(".term-fallback")
         assert pg.evaluate("localStorage.getItem('merlin-terminal')") == saved
-        # Said once: the next classic load, with Classic still the choice, is
-        # plain.
+        # With Legacy chosen, said once: the next legacy load is plain. With
+        # nothing saved the choice is the native terminal, so each load says
+        # why again.
         pg.reload()
         pg.wait_for_selector(".xterm-screen", timeout=30000)
         pg.wait_for_timeout(300)
-        assert pg.query_selector(".term-fallback") is None
+        assert (pg.query_selector(".term-fallback") is None) == (saved == "classic")
         # The native page attaching again clears the old fall back: its
         # classic page has nothing to say afterwards either.
         _native(pg, server)
@@ -612,22 +617,6 @@ def test_the_toolbar_toggle_gives_the_rows_back(page):
     page.click("#toolbar-toggle")
     assert page.is_visible("#nt-toolbar")
     page.wait_for_function(f"{ENGINE}.size.rows === {rows}", timeout=5000)
-
-
-def test_the_menu_turns_the_keyboard_suggestions_on_and_off(page):
-    page.click("#term-menu-btn")
-    item = "#term-menu-suggestions"
-    assert page.get_attribute(item, "aria-checked") == "false"
-    page.click(item)
-    assert page.get_attribute(item, "aria-checked") == "true"
-    assert page.get_attribute("#nt-input", "autocorrect") == "on"
-    assert (
-        page.evaluate("localStorage.getItem(MerlinNativeInput.SUGGESTIONS_KEY)") == "1"
-    )
-    page.click(item)
-    assert page.get_attribute("#nt-input", "autocorrect") == "off"
-    page.keyboard.press("Escape")
-    assert page.is_hidden("#term-menu")
 
 
 # -- voice ---------------------------------------------------------------------------------

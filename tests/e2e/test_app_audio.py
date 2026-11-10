@@ -266,7 +266,7 @@ def test_the_player_starts_muted_and_the_first_tap_brings_the_sound(
 def _terminal(browser, server, **context_args):
     context = browser.new_context(**context_args)
     page = context.new_page()
-    page.goto(f"{server}/terminal")
+    page.goto(f"{server}/terminal?terminal=classic")
     page.wait_for_function(
         "() => window.MerlinTerminal && window.MerlinTerminal.currentWindow()",
         timeout=20000,

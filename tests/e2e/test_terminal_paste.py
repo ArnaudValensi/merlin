@@ -47,7 +47,7 @@ def terminal(server):
             permissions=["clipboard-read", "clipboard-write"],
         )
         page = ctx.new_page()
-        page.goto(f"{server}/terminal")
+        page.goto(f"{server}/terminal?terminal=classic")
         page.wait_for_selector(".xterm-screen", timeout=30000)
         page.wait_for_timeout(3000)  # let tmux draw its first prompt
         yield page

@@ -208,15 +208,15 @@ browser notifications, an app badge and push to your phone. See
 
 ## The new terminal
 
-A second terminal lives beside the classic one, made to feel native on a
-phone. It is the terminal Merlin is moving to: the classic one is deprecated,
-still the default for now and kept as a fallback, and will be removed later.
-To use the new one, open the terminal menu (the sliders button in the bottom bar) and pick **New
-terminal**, or add `?terminal=native` to the address. The choice is
-remembered per browser and `/terminal` follows it; **Classic terminal** in
-the same menu goes back. Both attach to the same tmux sessions and can be
-open at the same time. The new terminal needs tmux 3.8 or newer: on an
-older one the page goes back to the classic terminal and says why.
+The new terminal is the default, made to feel native on a phone. The
+classic one, called **Legacy** in the settings, is deprecated: it is kept as
+a fallback for now and will be removed later. To use it in a browser, pick
+**Legacy** under **Terminal** in Merlin's settings (the gear next to the
+Merlin logo), or add `?terminal=classic` to the address; **New** in the same
+setting, or `?terminal=native`, comes back. The choice is remembered per
+browser and `/terminal` follows it. Both attach to the same tmux sessions and
+can be open at the same time. The new terminal needs tmux 3.8 or newer: on an
+older one the page goes back to the legacy terminal and says why.
 
 What is different:
 
@@ -239,9 +239,8 @@ What is different:
   an edit, opens in the Files page.
 - **The keyboard** is a real text field on a phone: holding delete repeats
   and speeds up to words, a long press on the space bar moves the cursor,
-  dictation works. Autocorrect and predictions are off by default; turn
-  them on with **Keyboard suggestions** in the terminal menu. Opening it
-  shortens the view and resizes nothing: what was at the bottom of the view
+  dictation works. Autocorrect and predictions are always off: they would
+  rewrite commands. Opening it shortens the view and resizes nothing: what was at the bottom of the view
   stays just above the keyboard, and in a new shell the prompt stays at the
   top. Only a full-screen program gets the shorter height.
 - **Windows** have no tab row: the status bar names the current one, the

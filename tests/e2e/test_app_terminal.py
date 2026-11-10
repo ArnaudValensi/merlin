@@ -48,10 +48,11 @@ def _clean(merlin):
 # The classic terminal and the native one (/terminal/native) carry the same
 # Apps button and panel (terminal-status-bar.html, terminal-panels.html), fed by
 # the same merlin:terminal-window event.
-PAGES = pytest.mark.parametrize("path", ["/terminal", "/terminal/native"])
+LEGACY = "/terminal?terminal=classic"
+PAGES = pytest.mark.parametrize("path", [LEGACY, "/terminal/native"])
 
 
-def _terminal(browser, server, path="/terminal", **context_args):
+def _terminal(browser, server, path=LEGACY, **context_args):
     context = browser.new_context(**context_args)
     page = context.new_page()
     page.goto(f"{server}{path}")

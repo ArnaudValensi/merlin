@@ -202,10 +202,11 @@ def quiet_browser(playwright):
 
 # The classic terminal and the native one (/terminal/native) host the same
 # console through window.MerlinTerminal and the same voice frames.
-PAGES = pytest.mark.parametrize("path", ["/terminal", "/terminal/native"])
+LEGACY = "/terminal?terminal=classic"
+PAGES = pytest.mark.parametrize("path", [LEGACY, "/terminal/native"])
 
 
-def _open(browser, server, viewport=None, scale=1, view="full", path="/terminal"):
+def _open(browser, server, viewport=None, scale=1, view="full", path=LEGACY):
     ctx = browser.new_context(
         viewport=viewport or {"width": 1100, "height": 760},
         device_scale_factor=scale,
@@ -245,7 +246,7 @@ def _open(browser, server, viewport=None, scale=1, view="full", path="/terminal"
         })();"""
     )
     page.goto(f"{server}{path}")
-    if path == "/terminal":
+    if path == LEGACY:
         page.wait_for_selector(".xterm-screen", timeout=30000)
     else:
         page.wait_for_function(

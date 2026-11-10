@@ -171,7 +171,7 @@
         case 'unsupported': {
           stopped = true;
           const why = 'The new terminal needs tmux ' + msg.minimum + ' or newer (this server runs '
-            + (msg.version || 'an unknown version') + '): this is the classic terminal.';
+            + (msg.version || 'an unknown version') + '): this is the legacy terminal.';
           if (Choice) Choice.fallBack(why);
           else setStatus('disconnected', why);
           break;
@@ -265,17 +265,6 @@
     },
     onWindowKey: () => setTimeout(refreshBoard, 300),
   });
-
-  // ?suggestions=1 (or 0) turns the keyboard's suggestions on (or off) for
-  // this browser; so does the terminal menu.
-  const wanted = new URLSearchParams(location.search).get('suggestions');
-  if (wanted === '1' || wanted === '0') input.setSuggestions(wanted === '1');
-  const suggestionsItem = $('term-menu-suggestions');
-  if (suggestionsItem) {
-    const paintSuggestions = () => suggestionsItem.setAttribute('aria-checked', String(!!input.suggestions));
-    paintSuggestions();
-    suggestionsItem.addEventListener('click', () => { input.setSuggestions(!input.suggestions); paintSuggestions(); });
-  }
 
   // The keyboard toolbar, shown by default, toggled from the status bar.
   toolbarToggle.classList.add('active');

@@ -38,14 +38,3 @@
         </div>
     </div>
 </div>
-<!-- Terminal menu: opened by the sliders button in the status bar. -->
-<div id="term-menu" class="term-menu" role="menu" aria-label="Terminal" hidden>
-    <div class="term-menu-title">Terminal in this browser</div>
-    <button type="button" class="term-menu-item" role="menuitemradio" data-terminal="classic">Classic terminal</button>
-    <button type="button" class="term-menu-item" role="menuitemradio" data-terminal="native">New terminal</button>
-    <div id="term-menu-note" class="term-menu-note" hidden></div>
-    {%- if native %}
-    <div class="term-menu-sep"></div>
-    <button type="button" class="term-menu-item" role="menuitemcheckbox" id="term-menu-suggestions">Keyboard suggestions</button>
-    {%- endif %}
-</div>

@@ -18,7 +18,6 @@
   'use strict';
   const Core = root.MerlinNativeCore;
   const SENTINEL = '\u00a0\u00a0\u00a0\u00a0';
-  const SUGGESTIONS_KEY = 'merlin.nativeTerminal.suggestions';
   // After a finger leaves the field, how long a caret change is still the
   // system placing the caret for that touch.
   const TOUCH_GRACE = 500;
@@ -29,14 +28,6 @@
     if (!el || el.nodeType !== 1) return false;
     const tag = el.tagName;
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
-  }
-
-  function stored(key) {
-    try { return root.localStorage ? root.localStorage.getItem(key) : null; } catch (e) { return null; }
-  }
-
-  function store(key, value) {
-    try { if (root.localStorage) root.localStorage.setItem(key, value); } catch (e) { /* private mode */ }
   }
 
   // The toolbar's sticky modifiers: Ctrl, Alt and Shift apply to the next key
@@ -89,7 +80,10 @@
       this.now = () => Date.now();
       field.setAttribute('autocapitalize', 'off');
       field.setAttribute('enterkeyhint', 'enter');
-      this.setSuggestions(stored(SUGGESTIONS_KEY) === '1', false);
+      // No autocorrect, predictions or spellcheck: they rewrite commands.
+      field.setAttribute('autocorrect', 'off');
+      field.setAttribute('autocomplete', 'off');
+      field.setAttribute('spellcheck', 'false');
       this.reset();
       field.addEventListener('beforeinput', (e) => this.onBeforeInput(e));
       field.addEventListener('input', () => this.onInput());
@@ -124,22 +118,6 @@
       this.sent = '';
       this.field.value = this.value();
       this.field.setSelectionRange(SENTINEL.length, SENTINEL.length);
-    }
-
-    // Suggestions (autocorrect, predictions, spellcheck) are off by default:
-    // they rewrite commands. The diff model follows them when a user turns
-    // them on. Read by iOS when the field gains the focus.
-    setSuggestions(on, remember = true) {
-      this.suggestions = !!on;
-      const v = on ? 'on' : 'off';
-      this.field.setAttribute('autocorrect', v);
-      this.field.setAttribute('autocomplete', v);
-      this.field.setAttribute('spellcheck', on ? 'true' : 'false');
-      if (remember) store(SUGGESTIONS_KEY, on ? '1' : '0');
-      if (remember && document.activeElement === this.field) {
-        this.field.blur();
-        setTimeout(() => this.focus(), 50);
-      }
     }
 
     // -- sending ---------------------------------------------------------------
@@ -449,5 +427,4 @@
   root.MerlinNativeInput = NativeInput;
   root.MerlinNativeInput.Modifiers = Modifiers;
   root.MerlinNativeInput.SENTINEL = SENTINEL;
-  root.MerlinNativeInput.SUGGESTIONS_KEY = SUGGESTIONS_KEY;
 })(typeof window !== 'undefined' ? window : globalThis);

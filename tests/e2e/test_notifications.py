@@ -87,7 +87,7 @@ def page(browser, server):
 
 
 def open_terminal(page, server, query=""):
-    page.goto(f"{server}/terminal{query}")
+    page.goto(f"{server}/terminal?terminal=classic{query.replace('?', '&', 1)}")
     page.wait_for_selector(".xterm-screen", timeout=30000)
     # The first session frame proves the tmux client is attached.
     page.wait_for_function(
@@ -349,7 +349,7 @@ def test_deep_link_is_kept_until_the_socket_is_confirmed(
     ctx.add_init_script(HOLD_FIRST_FRAME)
     pg = ctx.new_page()
     try:
-        pg.goto(f"{server}/terminal?target={SESSION}:{wid}")
+        pg.goto(f"{server}/terminal?terminal=classic&target={SESSION}:{wid}")
         pg.wait_for_function("window.__frameHeld === true", timeout=30000)
         pg.wait_for_timeout(500)
         # No confirmed session yet: the target must still be in the URL.

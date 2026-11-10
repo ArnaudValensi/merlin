@@ -140,6 +140,26 @@
 </div>
 
 <div class="settings-section">
+    <div class="settings-section-title">Terminal</div>
+    <div class="settings-card">
+        <div class="settings-field">
+            <label class="settings-label" id="terminal-choice-label">Terminal in this browser</label>
+            <div class="settings-segmented" id="terminal-choice" role="group" aria-labelledby="terminal-choice-label">
+                <button class="settings-seg-btn" type="button" data-mode="native" onclick="Settings.setTerminal('native')">New</button>
+                <button class="settings-seg-btn" type="button" data-mode="classic" onclick="Settings.setTerminal('classic')">Legacy</button>
+            </div>
+            <span class="settings-toast" id="toast-terminal"></span>
+            <div class="settings-help">
+                <strong>New</strong> is the default: the phone's own scrolling, selection and
+                keyboard. <strong>Legacy</strong> is the previous terminal, deprecated: it stays
+                as a fallback for now and will be removed. The choice is kept in this browser
+                only.
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="settings-section">
     <div class="settings-section-title">Agent-state pills</div>
     <div class="settings-card">
         <div class="settings-field">

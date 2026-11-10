@@ -36,7 +36,6 @@ SHARED_IDS = [
     "auto-enter-btn",
     "voice-btn",
     "toolbar-toggle",
-    "term-menu-btn",
     "notif-btn",
     "sessions-btn",
     "sessions-panel",
@@ -44,7 +43,6 @@ SHARED_IDS = [
     "notif-popover",
     "voice-console",
     "folder-picker-modal",
-    "term-menu",
     "paste-btn",
     "upload-btn",
     "cd-btn",
@@ -79,11 +77,13 @@ def test_the_switch_runs_before_anything_else(path, kind):
     assert route < html.index("board/board.js")
 
 
-def test_only_the_native_page_has_the_suggestions_item_and_its_config():
+def test_no_page_has_a_terminal_menu_and_the_native_one_has_its_config():
     classic = _get("/terminal")
     native = _get("/terminal/native")
-    assert 'id="term-menu-suggestions"' not in classic
-    assert 'id="term-menu-suggestions"' in native
+    # The choice lives in Merlin's settings; no keyboard suggestions setting.
+    for html in (classic, native):
+        assert "term-menu" not in html
+        assert "suggestions" not in html.lower()
     config = re.search(
         r'<script type="application/json" id="nt-config">(.*?)</script>', native, re.S
     )

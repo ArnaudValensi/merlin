@@ -57,7 +57,7 @@ def test_recording_sends_the_stopped_window_as_target(server):
                 ),
             )
 
-            page.goto(f"{server}/terminal")
+            page.goto(f"{server}/terminal?terminal=classic")
             page.wait_for_selector(".xterm-screen", timeout=30000)
             # The page learns its window from the first session control frame.
             page.wait_for_function(

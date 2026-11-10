@@ -175,7 +175,7 @@ def test_missing_prerequisites(tmp_path_factory, browser, no_xvfb_path):
         assert result.returncode == 1
         assert "Missing Xvfb" in result.stderr
 
-        page.goto(f"{server.url}/terminal")
+        page.goto(f"{server.url}/terminal?terminal=classic")
         page.wait_for_function(
             "() => window.MerlinTerminal && window.MerlinTerminal.currentWindow()",
             timeout=20000,
