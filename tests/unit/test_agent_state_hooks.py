@@ -11,6 +11,7 @@ environment variable (socket_path,pid,session), exactly as tmux itself sets it
 inside a run-shell hook. Skips cleanly when tmux is not installed.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -516,6 +517,184 @@ class TestWindowFallback:
                 break
             time.sleep(0.1)
         assert s.tmux("show-option", "-wv", "-t", "t:c", "@agent_state") == ""
+
+
+class TestNestedAgent:
+    """agent-window.sh: an agent the window's agent started (a `claude -p` run
+    from its shell tool) inherits the pane and descends from it, but binds no
+    window. On 2026-11-10 a test run of Claude Code from an agent's shell took
+    the window's transcript, and the voice session read it instead of the
+    agent's answers. Agents are found by name; a script named after one is a
+    wrapper, not an agent."""
+
+    INIT_SH = HOOKS / "agent-session-init.sh"
+
+    @pytest.fixture
+    def pane(self, tmp_path):
+        import tempfile
+
+        timeout = shutil.which("timeout")
+        if not timeout:
+            pytest.skip("no timeout binary for the agent stand-ins")
+        tmpdir = Path(tempfile.mkdtemp(prefix="mhn-"))
+        sock_dir = tmpdir / f"tmux-{os.getuid()}"
+        sock_dir.mkdir(mode=0o700)
+        (tmp_path / "home").mkdir()
+        s = Server(sock_dir / "default", tmp_path / "home")
+        s.tmpdir = str(tmpdir)
+        # Stand-ins for the agents: real binaries under their names (a copy of
+        # timeout, which runs its command as a child and waits for it), and a
+        # wrapper script named claude.
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        for name in ("claude", "codex"):
+            shutil.copy(timeout, bin_dir / name)
+        wrap_dir = tmp_path / "wrap"
+        wrap_dir.mkdir()
+        wrapper = wrap_dir / "claude"
+        wrapper.write_text('#!/bin/bash\n"$@"\nexit $?\n')
+        wrapper.chmod(0o755)
+        # A wrapper whose interpreter is replaced while it runs (an upgrade):
+        # its /proc/<pid>/exe then ends in " (deleted)".
+        interp = tmp_path / "interp"
+        interp.mkdir()
+        bash = shutil.which("bash") or "/bin/bash"
+        s.reset_stale = lambda: shutil.copy(bash, interp / "bash")
+        s.reset_stale()
+        stale = tmp_path / "stale" / "claude"
+        stale.parent.mkdir()
+        stale.write_text(f'#!{interp}/bash\nrm -f {interp}/bash\n"$@"\nexit $?\n')
+        stale.chmod(0o755)
+        s.names = {
+            "claude": f"{bin_dir}/claude 60",
+            "codex": f"{bin_dir}/codex 60",
+            "wrap": str(wrapper),
+            "stale": str(stale),
+        }
+        s.tmux("new-session", "-d", "-s", "t", "-n", "a", "sleep 300")
+        s.tmux("new-window", "-d", "-t", "t", "-n", "c", "bash --norc --noprofile")
+        # A window whose pane process is the agent itself, as a job's can be.
+        s.tmux(
+            "new-window", "-d", "-t", "t", "-n", "j",
+            f"{bin_dir}/claude 300 bash --norc --noprofile",
+        )  # fmt: skip
+        for w in ("c", "j"):
+            for _ in range(50):
+                if (
+                    s.tmux(
+                        "display-message",
+                        "-p",
+                        "-t",
+                        f"t:{w}",
+                        "#{pane_current_command}",
+                    )
+                    == "bash"
+                ):
+                    break
+                time.sleep(0.1)
+        yield s
+        s.kill()
+
+    def _run(self, s, command, env="", window="c", hook=None):
+        """Type ``command`` in ``window``, ``{hook}`` standing for the state
+        hook (or ``hook``) and ``{claude}``, ``{codex}``, ``{wrap}`` for the
+        stand-ins, then a probe on that window, and wait for it: the hook has
+        run. Returns the window's @agent_state."""
+        hook = hook or f"bash {STATE_SH} busy < /dev/null"
+        line = command.format(hook=f"{env} {hook}", **s.names)
+        for opt in ("@probe", "@agent_state"):
+            s.tmux("set-option", "-wu", "-t", f"t:{window}", opt)
+        # The probe carries the line's exit status: a line that failed (a bad
+        # interpreter) would otherwise pass for a hook that bound nothing.
+        probe = 'tmux set-option -w -t "$TMUX_PANE" @probe "ran $?"'
+        s.tmux("send-keys", "-t", f"t:{window}", f"{line}; {probe}", "Enter")
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            ran = s.tmux("show-option", "-wv", "-t", f"t:{window}", "@probe")
+            if ran.startswith("ran"):
+                assert ran == "ran 0", s.tmux("capture-pane", "-p", "-t", f"t:{window}")
+                return s.tmux("show-option", "-wv", "-t", f"t:{window}", "@agent_state")
+            time.sleep(0.1)
+        raise AssertionError(s.tmux("capture-pane", "-p", "-t", f"t:{window}"))
+
+    def test_the_windows_agent_binds_its_window(self, pane):
+        assert self._run(pane, "{claude} {hook}") == "busy"
+
+    @pytest.mark.skipif(
+        not Path("/proc/self/exe").exists(), reason="wrappers are told by /proc"
+    )
+    @pytest.mark.parametrize("wrap", ["wrap", "stale"])
+    def test_a_wrapper_script_named_claude_is_not_an_agent(self, pane, wrap):
+        cmd = "{%s} {claude} {hook}" % wrap
+        assert self._run(pane, cmd) == "busy"
+        # and does not hide an agent nested under it
+        pane.reset_stale()
+        cmd = "{%s} {claude} bash -c '{claude} {hook}; true'" % wrap
+        assert self._run(pane, cmd) == ""
+
+    @pytest.mark.parametrize(
+        "outer,inner", [("claude", "claude"), ("claude", "codex"), ("codex", "claude")]
+    )
+    def test_an_agent_started_from_the_agents_shell_binds_nothing(
+        self, pane, outer, inner
+    ):
+        # The outer agent's tool shell sits between the two.
+        cmd = "{%s} bash -c '{%s} {hook}; true'" % (outer, inner)
+        assert self._run(pane, cmd) == ""
+
+    def test_nor_when_the_shell_execed_itself_away(self, pane):
+        # A shell that execs its last command (`sh -c 'claude -p ...'` often
+        # does) leaves the two agents next to each other.
+        assert self._run(pane, "{claude} bash -c 'exec {codex} {hook}'") == ""
+        assert self._run(pane, "{claude} bash -c 'exec {claude} {hook}'") == ""
+
+    def test_nor_through_the_ancestor_walk(self, pane):
+        env = (
+            f"env -u TMUX -u TMUX_PANE TMUX_TMPDIR={pane.tmpdir} "
+            "MERLIN_TERMINAL_HOOKS=1"
+        )
+        cmd = "{claude} bash -c '{claude} {hook}; true'"
+        assert self._run(pane, cmd, env=env) == ""
+        # The same walk still binds a lone agent.
+        assert self._run(pane, "{claude} {hook}", env=env) == "busy"
+
+    def test_the_panes_own_process_counts(self, pane):
+        # In window j the pane's process is the agent: its hook binds, an
+        # agent it starts does not.
+        assert self._run(pane, "{hook}", window="j") == "busy"
+        assert self._run(pane, "{claude} {hook}", window="j") == ""
+
+    @pytest.mark.parametrize("conv", ["inner-run", "outer-conv"])
+    def test_a_nested_session_start_leaves_the_conversation(self, pane, tmp_path, conv):
+        """The bug itself: the inner run's SessionStart must not take the
+        window's conversation and transcript, even with a payload naming the
+        window's own conversation (the fallback by session id)."""
+        s = pane
+        s.tmux("set-option", "-w", "-t", "t:c", "@agent_conv", "outer-conv")
+        s.tmux("set-option", "-w", "-t", "t:c", "@agent_transcript", "/outer.jsonl")
+        payload = tmp_path / "payload.json"
+        payload.write_text(
+            json.dumps(
+                {
+                    "session_id": conv,
+                    "transcript_path": "/inner.jsonl",
+                    "cwd": str(tmp_path),
+                }
+            )
+        )
+        hook = f"bash {self.INIT_SH} claude < {payload}"
+        self._run(s, "{claude} bash -c '{claude} {hook}; true'", hook=hook)
+        assert s.tmux("show-option", "-wv", "-t", "t:c", "@agent_conv") == "outer-conv"
+        assert (
+            s.tmux("show-option", "-wv", "-t", "t:c", "@agent_transcript")
+            == "/outer.jsonl"
+        )
+        # The same hook run by the window's agent takes them: the test sees it.
+        self._run(s, "{claude} {hook}", hook=hook)
+        assert (
+            s.tmux("show-option", "-wv", "-t", "t:c", "@agent_transcript")
+            == "/inner.jsonl"
+        )
 
 
 class TestDaemonRunHooks:

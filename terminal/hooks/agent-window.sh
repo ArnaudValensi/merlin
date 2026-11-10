@@ -42,6 +42,24 @@
 #
 # TMUX_PANE as given is the last resort for a hook with no payload at all;
 # with a payload it is never reinstated once its ancestry check failed.
+#
+# An agent started by the window's agent (a `claude -p` run from its shell
+# tool, a test, an eval script) inherits the pane and descends from it, but
+# the window is not its own: binding it would give the window that run's
+# conversation (the voice session and the workspace restore follow it) and
+# its states. So a hook that finds two agent processes on its way up to the
+# pane's process binds no window at all. Claude Code 2.1.322 runs a hook as
+# its own direct child (measured), so the outer agent is a second agent
+# process, whether a shell stands between the two or execed itself away
+# (`sh -c 'claude -p ...'`). A script named after an agent (a wrapper that
+# runs the real binary without exec) is not one, on Linux, where
+# /proc/<pid>/exe shows its interpreter. An agent started under another name
+# (its versioned path, `node cli.js`) is not seen: that only misses nesting.
+# The limits: measured on Claude Code 2.1.322 only. A Codex running hooks from
+# its pane (not 0.167, whose daemon runs them, so the check never applies)
+# would need its hook's parent not to be a second codex process; a launcher
+# binary named after an agent that stays alive (a spawning shim) reads as
+# nesting.
 
 # Dropped at source time, in the hook's own shell, so every tmux call of the
 # hook benefits (agent_window runs in a command substitution).
@@ -50,13 +68,14 @@ if [ -n "$TMUX" ] && [ ! -S "${TMUX%%,*}" ]; then
 fi
 
 agent_window() {
-  local conv="$1" cwd="$2" event="$3" job="$4" win="" p pid_line pane_pid pane_win
+  local conv="$1" cwd="$2" event="$3" job="$4" win="" p pid_line pane_pid pane_win anchor=""
   if [ -n "$TMUX_PANE" ]; then
     pane_win=$(tmux display-message -p -t "$TMUX_PANE" '#{window_id} #{pane_pid}' 2>/dev/null)
     pane_pid="${pane_win#* }"
     pane_win="${pane_win%% *}"
     if [ -n "$pane_win" ] && _agent_descends_from "$pane_pid"; then
       win="$pane_win"
+      anchor="$pane_pid"
     fi
   fi
   if [ -z "$win" ] && [ -n "$MERLIN_TERMINAL_HOOKS" ]; then
@@ -65,9 +84,13 @@ agent_window() {
     p=$$
     while [ -n "$p" ] && [ "$p" != "1" ] && [ "$p" != "0" ]; do
       pid_line=$(printf '%s\n' "$panes" | awk -v pid="$p" '$1 == pid { print $2; exit }')
-      if [ -n "$pid_line" ]; then win=$pid_line; break; fi
+      if [ -n "$pid_line" ]; then win=$pid_line; anchor=$p; break; fi
       p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
     done
+  fi
+  # A nested agent binds nothing, not even through the fallbacks below.
+  if [ -n "$anchor" ] && _agent_nested "$anchor"; then
+    return 0
   fi
   if [ -z "$win" ] && [ -n "$conv" ]; then
     win=$(tmux list-windows -a -F '#{window_id}	#{@agent_conv}' 2>/dev/null \
@@ -90,6 +113,32 @@ _agent_descends_from() {
   while [ -n "$p" ] && [ "$p" != "1" ] && [ "$p" != "0" ]; do
     [ "$p" = "$target" ] && return 0
     p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+  done
+  return 1
+}
+
+# True when another agent started the one this hook runs for: two agent
+# processes (claude, codex) from this hook up to the pane's process $1
+# (included). A process named after an agent whose executable is an
+# interpreter is a wrapper script, not an agent.
+_agent_nested() {
+  local pane="$1" p=$$ ppid comm exe agents=0
+  while [ -n "$p" ] && [ "$p" != "1" ] && [ "$p" != "0" ]; do
+    ppid="" comm=""
+    read -r ppid comm < <(ps -o ppid=,comm= -p "$p" 2>/dev/null)
+    case "${comm##*/}" in
+      claude | codex)
+        exe=$(readlink "/proc/$p/exe" 2>/dev/null)
+        exe=${exe% (deleted)} # an interpreter upgraded under a running script
+        case "${exe##*/}" in
+          bash | sh | dash | zsh | ksh | mksh | fish | node | bun | deno | python* | perl | ruby) ;;
+          *) agents=$((agents + 1)) ;;
+        esac
+        ;;
+    esac
+    [ "$agents" -ge 2 ] && return 0
+    [ "$p" = "$pane" ] && break
+    p=$ppid
   done
   return 1
 }
