@@ -300,16 +300,21 @@ binds nothing: on its way up to the pane's process the hook meets two agent
 processes (`claude`, `codex`), whether the outer agent's tool shell stands
 between them or execed itself away (Claude Code 2.1.322 runs a hook as its
 own direct child, so the agent a hook runs for is always one of them). A
-script named after an agent is a wrapper, not an agent, on Linux, where
-`/proc/<pid>/exe` shows its interpreter; an agent started under another name
-(its versioned path, `node cli.js`) is not seen, which only misses nesting.
+script named after an agent is a wrapper, not an agent: on Linux it bears
+the script's name and `/proc/<pid>/exe` shows its interpreter; macOS `ps`
+names it by its interpreter already, so it never matches (from Apple's
+sources, not run on a Mac). An agent started under another name (its
+versioned path, `node cli.js`) is not seen, which only misses nesting.
 Measured on Claude Code 2.1.322 only; a Codex that ran hooks from its pane
 (0.167 runs them in its daemon, where the rule never applies) or a spawning
 launcher binary named after an agent would read as nesting.
 Before this rule, such a run took the window's `@agent_transcript` and
 `@agent_conv`, so the voice session read the run's conversation instead of
-the agent's, and the workspace restore would have resumed it. Pinned by
-`tests/unit/test_agent_state_hooks.py`.
+the agent's, and the workspace restore would have resumed it. The
+Timeline's hook (`timeline/hook_runtime.py`) applies the same rule and
+records nothing for such a run. Pinned by
+`tests/unit/test_agent_state_hooks.py` and
+`tests/unit/test_timeline_hook_runtime.py`.
 
 The same `@agent_state` feeds the notifications feature: a server-side watcher
 sweeps it every two seconds and turns transitions into browser notifications

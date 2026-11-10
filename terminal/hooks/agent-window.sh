@@ -52,8 +52,11 @@
 # its own direct child (measured), so the outer agent is a second agent
 # process, whether a shell stands between the two or execed itself away
 # (`sh -c 'claude -p ...'`). A script named after an agent (a wrapper that
-# runs the real binary without exec) is not one, on Linux, where
-# /proc/<pid>/exe shows its interpreter. An agent started under another name
+# runs the real binary without exec) is not one. On Linux its name is the
+# script's and /proc/<pid>/exe shows its interpreter; macOS ps names it by its
+# interpreter already, so it never matches (from Apple's sources, not run on
+# a Mac). The same rule guards the Timeline's hook (timeline/hook_runtime.py,
+# keep both in sync). An agent started under another name
 # (its versioned path, `node cli.js`) is not seen: that only misses nesting.
 # The limits: measured on Claude Code 2.1.322 only. A Codex running hooks from
 # its pane (not 0.167, whose daemon runs them, so the check never applies)

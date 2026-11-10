@@ -620,9 +620,6 @@ class TestNestedAgent:
     def test_the_windows_agent_binds_its_window(self, pane):
         assert self._run(pane, "{claude} {hook}") == "busy"
 
-    @pytest.mark.skipif(
-        not Path("/proc/self/exe").exists(), reason="wrappers are told by /proc"
-    )
     @pytest.mark.parametrize("wrap", ["wrap", "stale"])
     def test_a_wrapper_script_named_claude_is_not_an_agent(self, pane, wrap):
         cmd = "{%s} {claude} {hook}" % wrap

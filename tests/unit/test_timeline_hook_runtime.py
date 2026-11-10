@@ -155,6 +155,102 @@ def test_prompt_stop_flow_ignores_tools_and_uses_stable_tmux_identity(
     assert "secret" not in serialized
 
 
+@pytest.fixture
+def agents(private_tmux, tmp_path):
+    """Stand-ins for claude and codex: copies of timeout, which stays alive
+    as its command's parent, plus a wrapper script named claude."""
+    timeout = shutil.which("timeout")
+    if timeout is None:
+        pytest.skip("timeout not installed")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("claude", "codex"):
+        shutil.copy(timeout, bin_dir / name)
+    server, _ = private_tmux
+    pane = server.command(
+        "new-window",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-t",
+        "activity",
+        "bash --norc --noprofile",
+    ).stdout.strip()
+    wrap = tmp_path / "wrap"
+    wrap.mkdir()
+    (wrap / "claude").write_text(f'#!/bin/bash\n"{bin_dir}/claude" "$@"\n')
+    (wrap / "claude").chmod(0o755)
+    return server, pane, bin_dir, wrap
+
+
+def run_in_pane(server, pane, tmp_path, command: str) -> None:
+    """Type `command` in the pane, with the hook as `HOOK`, and wait for it."""
+    payload = tmp_path / "payload.json"
+    payload.write_text(
+        json.dumps(
+            {"hook_event_name": "UserPromptSubmit", "session_id": "s", "turn_id": "t"}
+        )
+    )
+    hook = f"{sys.executable} {HOOK} claude < {payload}"
+    line = (
+        f"export MERLIN_HOME={tmp_path}/.merlin MERLIN_ACTIVITY_HOOKS=auto; "
+        f"{command.replace('HOOK', hook)}; tmux wait-for -S hook-done"
+    )
+    server.command("send-keys", "-t", pane, line, "Enter")
+    subprocess.run(
+        ["tmux", "-S", server.socket, "wait-for", "hook-done"], timeout=20, check=True
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["{bin}/claude 60 HOOK", "{wrap}/claude 60 HOOK"],
+    ids=["agent", "wrapper"],
+)
+def test_lone_agent_in_its_pane_is_recorded(agents, tmp_path, command):
+    server, pane, bin_dir, wrap = agents
+    run_in_pane(server, pane, tmp_path, command.format(bin=bin_dir, wrap=wrap))
+    assert records(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "{bin}/claude 60 bash -c '{bin}/claude 60 HOOK; true'",
+        "{bin}/codex 60 bash -c '{bin}/claude 60 HOOK; true'",
+        "{wrap}/claude 60 bash -c '{bin}/codex 60 HOOK; true'",
+    ],
+    ids=["claude-claude", "codex-claude", "wrapper-codex"],
+)
+def test_agent_started_by_the_windows_agent_is_not_recorded(agents, tmp_path, command):
+    server, pane, bin_dir, wrap = agents
+    run_in_pane(server, pane, tmp_path, command.format(bin=bin_dir, wrap=wrap))
+    assert records(tmp_path) == []
+    # Positive control: the same pane records the outer agent's own hook.
+    run_in_pane(server, pane, tmp_path, f"{bin_dir}/claude 60 HOOK")
+    assert records(tmp_path)
+
+
+def test_process_reads_the_same_without_proc(monkeypatch):
+    """Without /proc (macOS), each ancestor comes from ps."""
+    from timeline import hook_runtime
+
+    with_proc = hook_runtime._process(os.getpid())
+    real_exists = hook_runtime.Path.exists
+
+    def read_text(_self, *_args, **_kwargs):
+        raise OSError("no /proc")
+
+    monkeypatch.setattr(hook_runtime.Path, "read_text", read_text)
+    monkeypatch.setattr(
+        hook_runtime.Path,
+        "exists",
+        lambda path: str(path) != "/proc/self" and real_exists(path),
+    )
+    assert with_proc is not None and with_proc[0] == os.getppid()
+    assert hook_runtime._process(os.getpid()) == with_proc
+
+
 def test_resume_keeps_identity_after_window_rename(private_tmux, tmp_path):
     server, pane = private_tmux
     server.command("set-option", "-w", "-t", pane, "@agent_sid", "core-agent")
@@ -236,6 +332,7 @@ def test_missing_core_sid_uses_stable_fallback_without_mutating_tmux(monkeypatch
             "",
             "",
             "",
+            "",
         )
     )
     calls = []
@@ -270,6 +367,7 @@ def test_timeline_never_pins_core_owned_agent_cwd(monkeypatch):
             "",
             "/workspace/current-subdir",
             "Agent",
+            "",
             "",
             "",
             "",

@@ -26,7 +26,16 @@ _TMUX_FORMAT = "\x1f".join(
         "#{@agent_provider}",
         "#{@agent_model}",
         "#{@agent_effort}",
+        "#{pane_pid}",
     )
+)
+
+_AGENTS = frozenset({"claude", "codex"})
+# A process named after an agent but running one of these is a wrapper
+# script, not an agent. The list of `_agent_nested` in
+# terminal/hooks/agent-window.sh: keep both in sync.
+_INTERPRETERS = frozenset(
+    "bash sh dash zsh ksh mksh fish node bun deno perl ruby".split()
 )
 
 
@@ -43,6 +52,67 @@ def _tmux(*args: str) -> subprocess.CompletedProcess[str] | None:
         return None
 
 
+def _process(pid: int) -> tuple[int, str] | None:
+    """The parent and name of process `pid`, from /proc or else ps."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        if Path("/proc/self").exists():
+            return None
+        try:
+            result = subprocess.run(
+                ["ps", "-o", "ppid=,comm=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=0.5,
+                check=False,
+            )
+            ppid, _, comm = result.stdout.strip().partition(" ")
+            return int(ppid), comm.strip().rsplit("/", 1)[-1]
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return None
+    head, _, tail = stat.rpartition(")")
+    try:
+        return int(tail.split()[1]), head.partition("(")[2]
+    except (IndexError, ValueError):
+        return None
+
+
+def _is_agent(pid: int, name: str) -> bool:
+    if name not in _AGENTS:
+        return False
+    try:
+        exe = os.readlink(f"/proc/{pid}/exe")
+    except OSError:
+        # Without /proc (macOS), ps names a script by its interpreter, so a
+        # process named after an agent there is the binary.
+        return True
+    exe = exe.removesuffix(" (deleted)")  # an interpreter upgraded under a script
+    base = exe.rsplit("/", 1)[-1]
+    return not (base in _INTERPRETERS or base.startswith("python"))
+
+
+def nested_agent(pane_pid: int) -> bool:
+    """True when another agent started the one this hook runs for.
+
+    The same rule as `_agent_nested` in terminal/hooks/agent-window.sh: two
+    agent processes from this hook up to the pane's process (included). A
+    hook that does not descend from the pane gives no verdict.
+    """
+    pid, agents = os.getpid(), 0
+    while pid > 1:
+        entry = _process(pid)
+        if entry is None:
+            return False
+        ppid, name = entry
+        if _is_agent(pid, name):
+            agents += 1
+        if pid == pane_pid:
+            return agents >= 2
+        pid = ppid
+    return False
+
+
 def tmux_metadata(payload: dict) -> dict | None:
     pane = os.environ.get("TMUX_PANE")
     if not pane:
@@ -51,7 +121,7 @@ def tmux_metadata(payload: dict) -> dict | None:
     if result is None or result.returncode != 0:
         return None
     fields = result.stdout.rstrip("\n").split("\x1f")
-    if len(fields) != 11:
+    if len(fields) != 12:
         return None
     (
         session,
@@ -65,7 +135,10 @@ def tmux_metadata(payload: dict) -> dict | None:
         provider,
         model,
         effort,
+        pane_pid,
     ) = fields
+    if pane_pid.isdigit() and nested_agent(int(pane_pid)):
+        return None
     session_id = payload.get("session_id")
     fallback_seed = session_id if isinstance(session_id, str) else actual_pane or pane
     fallback_digest = hashlib.sha256(

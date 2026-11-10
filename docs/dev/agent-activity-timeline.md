@@ -166,6 +166,13 @@ the separately consented state pills are off. Outside tmux, with a dead/moved
 pane, malformed input, or a slow/unavailable tmux server, the hook quietly
 records nothing and exits successfully.
 
+An agent the window's agent started (a `claude -p` from its shell tool)
+inherits the pane but is not the window's: when the hook finds two agent
+processes on its way up to the pane's process, it records nothing. This is
+the rule of the agent hooks (`terminal/hooks/agent-window.sh`, described in
+`docs/dev/web-terminal.md`), read from `/proc` without a fork per event, or
+through `ps` where there is no `/proc` (macOS).
+
 ## Generic emitter
 
 Scripts use the extension command rather than importing its schema:
