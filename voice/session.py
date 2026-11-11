@@ -283,6 +283,22 @@ class _Turn:
 # Queued after a turn's last piece: (turn, _END).
 _END = object()
 
+# The messages a session remembers by id, so a say retried after its answer
+# was lost is not typed again.
+MAX_MESSAGES = 32
+
+
+@dataclass
+class Message:
+    """A message the page sent to the window, by the id it gave it. The lock
+    makes a retry that arrives while the first request still types wait for
+    it; ``typed`` and ``entered`` say how far it got, so a retry finishes the
+    job instead of doing it again."""
+
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    typed: bool = False
+    entered: bool = False
+
 
 class VoiceSession:
     def __init__(
@@ -338,6 +354,7 @@ class VoiceSession:
         # before clearing it, or the clear could run first.
         self._marking: asyncio.Future | None = None
         self._stopped = False
+        self._messages: OrderedDict[str, Message] = OrderedDict()
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -482,6 +499,21 @@ class VoiceSession:
             if not turn.skipped:
                 self._drop_turn(turn)
         self._drop_clips(lambda c: True)
+
+    def message(self, message_id: str | None) -> Message:
+        """The record of the message with this id, made on first sight; the
+        last ``MAX_MESSAGES`` ids are remembered. Without an id (an older
+        page), a fresh record every time."""
+        if not message_id:
+            return Message()
+        found = self._messages.get(message_id)
+        if found is None:
+            found = self._messages[message_id] = Message()
+            while len(self._messages) > MAX_MESSAGES:
+                self._messages.popitem(last=False)
+        else:
+            self._messages.move_to_end(message_id)
+        return found
 
     async def note_dictation(self, text: str | None, error: str | None) -> None:
         """The voice utterance this session's page uploaded was transcribed."""

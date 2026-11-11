@@ -42,8 +42,19 @@ function initVoiceConsole() {
     const REDEMPTION_MS = 1200;
     // A message held this long without its end word: one soft reminder.
     const REMIND_MS = 7000;
+    // The e2e tests shorten the deadlines below (window.MerlinVoiceTimings,
+    // set before the page loads) rather than wait them out.
+    const TIMINGS = window.MerlinVoiceTimings || {};
     // A piece whose transcription failed is tried again after these waits.
     const PIECE_RETRY_MS = [1000, 2000];
+    // Every request of a turn has a deadline: on a mobile network that does
+    // not answer, a fetch can hang for minutes. A transcription attempt past
+    // it counts as failed (and is tried again); a say past it is an error a
+    // tap retries, with the same message id, so it is never typed twice.
+    const TRANSCRIBE_TIMEOUT_MS = TIMINGS.TRANSCRIBE_TIMEOUT_MS || 20000;
+    const SAY_TIMEOUT_MS = TIMINGS.SAY_TIMEOUT_MS || 15000;
+    // A send asked this long ago and still not gone: say it is the network.
+    const SEND_SLOW_MS = 3000;
     // An open mic puts iOS in call mode, which turns the answer down: Safari
     // (navigator.audioSession) plays louder, with a limiter against clipping.
     const OUT_GAIN = navigator.audioSession ? 2.5 : 1;
@@ -90,15 +101,15 @@ function initVoiceConsole() {
     let windowName = "";       // the name of the window the page is on
     let lastMode = "";
     let modeSince = 0;
-    let retry = null;          // what a tap does in a local error: start | vad | upload
-    let retryPiece = null;     // {blob, forced}: the piece a tap transcribes again
-    let retryText = "";        // the message a tap sends again
-    let held = [];             // the pieces of the message said so far
-    let inflight = 0;          // pieces being transcribed
-    let pieces = Promise.resolve();   // their handling, in the order said
+    let retry = null;          // what a tap does in a local error: start | vad | pieces | say | sync | clip
+    let saying = null;         // {text, id, inflight}: the message given to say, until it answered ok
+    let acked = false;         // the send earcon was played for the message on its way
+    let sendingSince = 0;
+    let slowTimer = null;
     let remindTimer = null;
-    let sendNow = false;
+    let cutIntent = null;      // "send": the speech a pause is cutting goes with the message
     let listening = false;     // the VAD is running for us
+    const earcons = [];        // the last earcons played, for the tests
     let waitTimer = null;
     let noticeTimer = null;
     let wakeLock = null;
@@ -236,20 +247,31 @@ function initVoiceConsole() {
 
     // -- requests -------------------------------------------------------------
 
-    async function api(method, path, body) {
+    /** One request and its JSON body: {ok, status, data}, status 0 when it
+     *  could not be made or ``ms`` passed first (aborted, body included). */
+    async function request(url, options, ms) {
+        const ctl = ms && typeof AbortController !== "undefined" ? new AbortController() : null;
+        const timer = ctl ? setTimeout(function () { ctl.abort(); }, ms) : null;
         try {
-            const res = await fetch("/api/voice/" + path, {
-                method: method,
-                headers: body ? { "Content-Type": "application/json" } : undefined,
-                body: body ? JSON.stringify(body) : undefined,
-                cache: "no-store",
-            });
+            const res = await fetch(url, ctl ? Object.assign({ signal: ctl.signal }, options) : options);
             let data = {};
             try { data = await res.json(); } catch (_) { /* empty body */ }
+            if (ctl && ctl.signal.aborted) throw new Error("timed out");
             return { ok: res.ok, status: res.status, data: data };
         } catch (e) {
             return { ok: false, status: 0, data: { error: "Merlin is unreachable" } };
+        } finally {
+            clearTimeout(timer);
         }
+    }
+
+    function api(method, path, body, ms) {
+        return request("/api/voice/" + path, {
+            method: method,
+            headers: body ? { "Content-Type": "application/json" } : undefined,
+            body: body ? JSON.stringify(body) : undefined,
+            cache: "no-store",
+        }, ms);
     }
 
     function lang() {
@@ -379,6 +401,8 @@ function initVoiceConsole() {
     /** Nova's earcons, plus an alert for the ask state. Returns their length in s. */
     function earcon(kind) {
         if (!audio.ctx || audio.ctx.state !== "running") return 0;
+        earcons.push(kind);
+        if (earcons.length > 32) earcons.shift();
         const t = audio.ctx.currentTime + 0.02;
         switch (kind) {
             case "listen": tone([660, 990], 0.07, t); tone([990, 1480], 0.11, t + 0.085); return 0.2;
@@ -606,42 +630,58 @@ function initVoiceConsole() {
         if (vad) vad.pause();   // a pause mid-speech hands the audio to onUtterance
     }
 
+    /** Pause the VAD and keep the speech in progress for the message: the
+     *  pause hands it to onUtterance after a microtask (vad-web awaits
+     *  pauseStream first), so the intent waits for it. Resolves to whether a
+     *  piece came of it. */
+    function cutForSend() {
+        listening = false;
+        cutIntent = "send";
+        return Promise.resolve(vad ? vad.pause() : null).catch(function () {}).then(function () {
+            const cut = cutIntent === null;
+            cutIntent = null;
+            return cut;
+        });
+    }
+
     function onUtterance(samples) {
-        const forced = sendNow;
-        sendNow = false;
-        if (!m || phase !== "live" || (!listening && !forced)) return;   // not ours to send
+        const intent = cutIntent;
+        cutIntent = null;
+        if (!m || phase !== "live") return;
+        const blob = function () { return new Blob([Core.encodeWav(samples, 16000)], { type: "audio/wav" }); };
+        // The speech a Send tap cut: it ends the message.
+        if (intent === "send") { piece(blob(), true); return; }
+        if (!listening) return;   // not ours to send
         if (m.syncing) return;   // the agent may be busy: its frames are held back
         if (m.local !== "idle" && m.local !== "hearing") return;
         m.local = "idle";
-        piece(new Blob([Core.encodeWav(samples, 16000)], { type: "audio/wav" }), forced);
+        piece(blob(), false);
     }
 
     /** One piece of what is said, cut at a pause: transcribe it now, while
-     *  the user goes on, and handle the pieces in the order said. The message
-     *  goes when a piece ends with the end word, or when a tap asked for it. */
-    function piece(blob, forced) {
-        const g = gen;
-        inflight++;
-        m.held = true;
+     *  the user goes on. The model keeps the pieces in the order said. */
+    function piece(blob, send) {
+        const p = Core.pieceCut(m, send);
+        p.blob = blob;
         clearTimeout(remindTimer);
         render();
-        const result = transcribePiece(blob);
-        pieces = pieces.then(function () { return result; }).then(function (r) {
-            if (g !== gen || !m) return;
-            inflight--;
-            if (r.error) {
-                if (r.retry) retryPiece = { blob: blob, forced: forced };
-                else held = [];
-                m.held = held.length > 0 || inflight > 0;
-                fail(r.error, r.retry ? "piece" : null);
+        transcribe(p);
+    }
+
+    function transcribe(p) {
+        const g = gen;
+        const model = m;
+        transcribePiece(p.blob).then(function (r) {
+            if (g !== gen || m !== model) return;
+            if (r.error && !r.retry) {
+                // Refused (quota, too long): the message cannot be made whole.
+                Core.dropMessage(m);
+                if (m.local === "sending") unack();
+                fail(r.error, null);
                 return;
             }
-            const said = Core.endWord(r.text);
-            if (said.text) held.push(said.text);
-            if (said.end || forced) { sendHeld(); return; }
-            m.held = held.length > 0 || inflight > 0;
-            armRemind();
-            render();
+            if (r.error) Core.pieceLost(m, p); else Core.pieceHeard(m, p, r.text);
+            advance();
         });
     }
 
@@ -652,16 +692,13 @@ function initVoiceConsole() {
             const form = new FormData();
             form.append("file", blob, "piece.wav");
             form.append("language", lang());
-            let status = 0;
-            let data = {};
-            try {
-                const res = await fetch("/api/terminal/transcribe", { method: "POST", body: form, cache: "no-store" });
-                status = res.status;
-                try { data = await res.json(); } catch (_) { /* empty body */ }
-            } catch (_) { /* unreachable: tried again */ }
-            if (status === 200) return { text: String(data.text || "") };
-            if (status === 422) return { text: "" };   // unreadable or empty audio: nothing said
-            if (status === 402 || status === 413) return { error: data.error || "The transcription was refused", retry: false };
+            // Past its deadline, an attempt counts as failed: tried again.
+            const res = await request("/api/terminal/transcribe",
+                { method: "POST", body: form, cache: "no-store" }, TRANSCRIBE_TIMEOUT_MS);
+            const data = res.data || {};
+            if (res.status === 200) return { text: String(data.text || "") };
+            if (res.status === 422) return { text: "" };   // unreadable or empty audio: nothing said
+            if (res.status === 402 || res.status === 413) return { error: data.error || "The transcription was refused", retry: false };
             if (attempt >= PIECE_RETRY_MS.length) {
                 return { error: "Could not reach Merlin to send what you said", retry: true };
             }
@@ -669,49 +706,121 @@ function initVoiceConsole() {
         }
     }
 
-    /** After the pieces in flight, send what was said, end word or not (a tap). */
-    function sendWhenTranscribed() {
-        const g = gen;
-        pieces = pieces.then(function () { if (g === gen && m) sendHeld(); });
-    }
-
-    function sendHeld() {
-        clearTimeout(remindTimer);
-        const text = held.join(" ").trim();
-        held = [];
-        m.held = inflight > 0;
-        if (!text || (m.local !== "idle" && m.local !== "hearing")) { render(); return; }
-        m.local = "sending";
-        earcon("send");
-        render();
-        say(text);
-    }
-
-    async function say(text) {
-        const g = gen;
-        retryText = "";
-        const res = await api("POST", "say", { target: target, text: text });
-        if (g !== gen || !m || m.local !== "sending") return;
-        if (res.ok) {
-            // A frame that arrived during the request already answered it.
-            m.local = m.server === "listening" ? "waiting" : "idle";
-            if (m.local === "waiting") armWait();
-        } else if (res.status === 0 || res.status >= 500) {
-            retryText = text;
-            fail(res.data.error || "Could not reach Merlin to send what you said", "say");
-        } else {
-            fail(res.data.error || "The message was refused", null);
+    /** Fold in what was transcribed, in the order said, and act on it: send a
+     *  whole message, show a piece that failed, or wait. One message at a
+     *  time: the next waits until say answered for this one. */
+    function advance() {
+        if (!m || phase === "off") return;
+        if (saying || m.local === "error") { render(); return; }
+        const next = Core.nextMessage(m);
+        if (next && next.failed) {
+            fail("Could not reach Merlin to send what you said", "pieces");
+            return;
         }
+        if (next) {
+            if (next.send) { sendMessage(next.send); return; }
+            if (m.local === "sending") unack();   // nothing was said after all
+        } else if (Core.sendAsked(m) && m.local === "idle") {
+            // The end word was heard, earlier pieces are still on their way.
+            ack();
+        }
+        armRemind();
         render();
+    }
+
+    /** A send was asked: say so at once (the earcon, "Sending"), before any
+     *  transcription lands. The earcon plays once per message. */
+    function ack() {
+        clearTimeout(remindTimer);
+        m.local = "sending";
+        if (!acked) { acked = true; earcon("send"); }
+        sendingSince = Date.now();
+        clearTimeout(slowTimer);
+        const g = gen;
+        slowTimer = setTimeout(function () { if (g === gen && m) render(); }, SEND_SLOW_MS + 20);
+        render();
+    }
+
+    function unack() {
+        acked = false;
+        clearTimeout(slowTimer);
+        if (m && m.local === "sending") m.local = "idle";
+    }
+
+    /** A tap in TX: send what was said so far, the speech in progress and
+     *  the pieces still being transcribed included. A tap while a send is
+     *  asked does nothing more. */
+    function tapSend() {
+        if (m.local === "sending" || m.local === "waiting") return;
+        if (m.local === "hearing") {
+            const g = gen;
+            const model = m;
+            cutForSend().then(function (cut) {
+                if (g !== gen || m !== model) return;
+                // A misfire (too short to be speech): what was said before goes.
+                if (!cut && !Core.sendAsked(m) && !Core.askSend(m)) { unack(); render(); return; }
+                advance();
+            });
+            ack();
+            return;
+        }
+        if (!Core.sendAsked(m) && !Core.askSend(m)) return;   // nothing said
+        ack();
+        advance();
+    }
+
+    function newMessageId() {
+        const bytes = new Uint8Array(12);
+        if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(bytes);
+        else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+        return Array.prototype.map.call(bytes, function (b) { return (b + 256).toString(16).slice(1); }).join("");
+    }
+
+    /** A whole message: its id is made now, and a retry sends the same one. */
+    function sendMessage(text) {
+        if (m.local !== "sending") ack();
+        say({ text: text, id: newMessageId(), inflight: false });
+    }
+
+    async function say(msg) {
+        const g = gen;
+        const model = m;
+        saying = msg;
+        msg.inflight = true;
+        const res = await api("POST", "say", { target: target, text: msg.text, id: msg.id }, SAY_TIMEOUT_MS);
+        msg.inflight = false;
+        if (g !== gen || m !== model) return;
+        if (res.ok) {
+            saying = null;
+            acked = false;
+            clearTimeout(slowTimer);
+            if (m.local === "sending") {
+                // A frame that arrived during the request already answered it.
+                m.local = m.server === "listening" ? "waiting" : "idle";
+                if (m.local === "waiting") armWait();
+            }
+            advance();   // a next message may be ready behind this one
+            return;
+        }
+        if (res.status === 0 || res.status >= 500) {
+            // Kept: a tap sends it again, same id, and what follows waits.
+            fail(res.status === 0 ? "Could not reach Merlin to send what you said"
+                : res.data.error || "Could not reach Merlin to send what you said", "say");
+            return;
+        }
+        saying = null;
+        acked = false;
+        clearTimeout(slowTimer);
+        fail(res.data.error || "The message was refused", null);
     }
 
     /** A message said but not ended: one soft reminder of the end word. */
     function armRemind() {
         clearTimeout(remindTimer);
-        if (!held.length) return;
+        if (!m || !m.held || Core.sendAsked(m)) return;
         const g = gen;
         remindTimer = setTimeout(function () {
-            if (g === gen && m && held.length && m.local === "idle" && Core.mode(m) === "tx") earcon("remind");
+            if (g === gen && m && m.held && !Core.sendAsked(m) && m.local === "idle" && Core.mode(m) === "tx") earcon("remind");
         }, REMIND_MS);
     }
 
@@ -834,11 +943,10 @@ function initVoiceConsole() {
         m = null;
         lastMode = "";
         retry = null;
-        retryPiece = null;
-        retryText = "";
-        held = [];
-        inflight = 0;
-        pieces = Promise.resolve();
+        saying = null;
+        acked = false;
+        cutIntent = null;
+        clearTimeout(slowTimer);
         clearTimeout(remindTimer);
         // The keys were on the console: they do not fall to the page.
         const hadKeys = root.contains(document.activeElement) && root.dataset.view === "dock";
@@ -910,17 +1018,7 @@ function initVoiceConsole() {
         if (audio.ctx && audio.ctx.state === "suspended") audio.ctx.resume().catch(function () {});
         const mode = Core.mode(m);
         if (mode === "tx" && vad) {
-            // Send now, without the end word: the speech in progress, if
-            // any, then everything said so far.
-            if (m.local === "hearing") {
-                sendNow = true;
-                listening = false;
-                vad.pause();
-                sendNow = false;
-                if (m.local === "hearing") m.local = "idle";
-            }
-            sendWhenTranscribed();
-            render();
+            tapSend();
         } else if (mode === "rx") {
             const turn = Core.skip(m);
             if (speech && speech.kind === "answer") stopSpeech();
@@ -933,13 +1031,19 @@ function initVoiceConsole() {
             retry = null;
             m.local = "idle";
             m.error = "";
-            render();
             if (kind === "start") { phase = "tune"; render(); connectSession(true); }
             else if (kind === "vad") { phase = "tune"; render(); connectSession(false); }
-            else if (kind === "piece" && retryPiece) { const p = retryPiece; retryPiece = null; piece(p.blob, p.forced); }
-            else if (kind === "say" && retryText) { m.local = "sending"; render(); say(retryText); }
             else if (kind === "sync") resync();
             else if (kind === "clip") { Core.retryStalled(m); pump(); }
+            // Whatever the error was, what the network left behind goes
+            // again: the pieces that failed, in the order said, and a
+            // message whose say got no answer (the same id: typed once).
+            const again = Core.retryPieces(m);
+            if (saying && !saying.inflight) { ack(); say(saying); }
+            else if (Core.sendAsked(m)) ack();
+            again.forEach(transcribe);
+            advance();
+            render();
         }
     }
 
@@ -1072,6 +1176,7 @@ function initVoiceConsole() {
         model: function () { return m; },
         speaking: function () { return speech ? speech.kind : null; },
         listening: function () { return listening; },
+        earcons: function () { return earcons.slice(); },
         target: function () { return target; },
     };
     renderButton();
@@ -1116,11 +1221,18 @@ function initVoiceConsole() {
         }, NOTICE_MS);
     }
 
+    function slowSend(mode) {
+        return mode === "proc" && m.local === "sending" && !m.syncing && Date.now() - sendingSince >= SEND_SLOW_MS;
+    }
+
     function hintFor(mode, docked) {
         const endWord = lang() === "fr" ? "terminé" : "over";
         if (mode === "listen") return "Speak, then say \u201c" + endWord + "\u201d";
         if (mode === "tx") return "Say \u201c" + endWord + "\u201d to send" + (docked ? "" : ", or tap");
         if (mode === "proc" && m.syncing) return "Reconnecting";
+        // The message has not left yet: the pieces or the say are still on
+        // their way. Said in the bar too, where it is the only sign of it.
+        if (slowSend(mode)) return "Waiting for the connection";
         if (mode === "tune") return "Loading voice detection";
         // An error from the server has nothing to retry, here or anywhere.
         if (mode === "error" && m.local !== "error") return "Exit to start again";
@@ -1152,6 +1264,9 @@ function initVoiceConsole() {
         const docked = root.dataset.view === "dock";
         el.name.textContent = mode === "proc" && m.local === "sending" ? "Sending" : spec.name;
         el.hint.textContent = hintFor(mode, docked);
+        el.hint.title = el.hint.textContent;   // the bar may cut it short
+        // A hint the bar shows even where it has no room for hints.
+        root.toggleAttribute("data-hint-shown", slowSend(mode));
 
         // No conversation text in the console: full screen reads as a voice
         // call, not something to read while driving, and the bar leaves the

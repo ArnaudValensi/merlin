@@ -357,3 +357,76 @@ test("a message held between two pieces keeps the console in TX", () => {
     m.local = "sending";
     assert.equal(Core.mode(m), "proc");
 });
+
+test("pieces fold into the message in the order said, whatever order they land in", () => {
+    const m = Core.createModel(T);
+    const a = Core.pieceCut(m, false);
+    const b = Core.pieceCut(m, false);
+    assert.equal(m.held, true);
+    assert.equal(Core.mode(m), "tx");
+    // The second lands first, with the end word: it waits for the first.
+    Core.pieceHeard(m, b, "puis le lint, terminé");
+    assert.equal(Core.nextMessage(m), null);
+    assert.equal(Core.sendAsked(m), true);
+    Core.pieceHeard(m, a, "Lance les tests");
+    assert.deepEqual(Core.nextMessage(m), { send: "Lance les tests puis le lint" });
+    assert.equal(m.held, false);
+    assert.equal(Core.holding(m), false);
+});
+
+test("a failed piece holds back the rest until it is retried, nothing lost", () => {
+    const m = Core.createModel(T);
+    const a = Core.pieceCut(m, false);
+    const b = Core.pieceCut(m, false);
+    const c = Core.pieceCut(m, false);
+    Core.pieceLost(m, a);
+    Core.pieceHeard(m, b, "deux");
+    Core.pieceLost(m, c);
+    assert.deepEqual(Core.nextMessage(m), { failed: true });
+    assert.equal(m.held, true);
+    // The retry takes every failed piece, in order.
+    assert.deepEqual(Core.retryPieces(m), [a, c]);
+    assert.equal(Core.nextMessage(m), null);
+    Core.pieceHeard(m, c, "trois. Over.");
+    Core.pieceHeard(m, a, "un");
+    assert.deepEqual(Core.nextMessage(m), { send: "un deux trois." });
+    assert.deepEqual(m.pieces, []);
+});
+
+test("a tap asks to send the pieces said so far, those in flight included", () => {
+    const m = Core.createModel(T);
+    assert.equal(Core.askSend(m), false);   // nothing said: nothing to send
+    const a = Core.pieceCut(m, false);
+    assert.equal(Core.askSend(m), true);
+    assert.equal(Core.sendAsked(m), true);
+    // A piece cut after the tap is the next message's.
+    const b = Core.pieceCut(m, false);
+    Core.pieceHeard(m, b, "later");
+    Core.pieceHeard(m, a, "now");
+    assert.deepEqual(Core.nextMessage(m), { send: "now" });
+    assert.equal(Core.sendAsked(m), false);
+    assert.equal(Core.nextMessage(m), null);
+    assert.deepEqual(m.words, ["later"]);
+    assert.equal(m.held, true);
+    // A tap with every piece folded in sends the words held.
+    assert.equal(Core.askSend(m), true);
+    assert.deepEqual(Core.nextMessage(m), { send: "later" });
+});
+
+test("a send asked over pieces that said nothing gives an empty message", () => {
+    const m = Core.createModel(T);
+    const a = Core.pieceCut(m, true);
+    Core.pieceHeard(m, a, "");
+    assert.deepEqual(Core.nextMessage(m), { send: "" });
+    assert.equal(m.held, false);
+});
+
+test("a dropped message ignores the transcriptions that land after", () => {
+    const m = Core.createModel(T);
+    const a = Core.pieceCut(m, false);
+    Core.dropMessage(m);
+    assert.equal(Core.pieceHeard(m, a, "late"), false);
+    assert.equal(Core.pieceLost(m, a), false);
+    assert.equal(Core.nextMessage(m), null);
+    assert.equal(m.held, false);
+});

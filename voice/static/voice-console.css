@@ -357,7 +357,8 @@ body.voice-console-open { overflow: hidden; }
 #voice-console[data-view="dock"] .vc-hint { flex: 1 1 0; min-width: 0; min-height: 0; text-align: left; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The state's word says enough on a phone's row, unless there is an error to get out of. */
 #voice-console[data-view="dock"] .vc-hint { display: none; }
-#voice-console[data-view="dock"][data-mode="error"] .vc-hint:not(:empty) { display: block; }
+#voice-console[data-view="dock"][data-mode="error"] .vc-hint:not(:empty),
+#voice-console[data-view="dock"][data-hint-shown] .vc-hint:not(:empty) { display: block; }
 /* The question keeps one line, and offers the rest when it does not fit: its
    button spreads over the whole of it. */
 #voice-console[data-view="dock"] .vc-ask { position: relative; flex: 1 1 0; flex-direction: row; align-items: center; gap: 4px; min-width: 0; min-height: var(--vc-ctl); padding: 0; border: 0; background: none; }

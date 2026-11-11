@@ -206,13 +206,19 @@ LEGACY = "/terminal?terminal=classic"
 PAGES = pytest.mark.parametrize("path", [LEGACY, "/terminal/native"])
 
 
-def _open(browser, server, viewport=None, scale=1, view="full", path=LEGACY):
+def _open(
+    browser, server, viewport=None, scale=1, view="full", path=LEGACY, timings=None
+):
     ctx = browser.new_context(
         viewport=viewport or {"width": 1100, "height": 760},
         device_scale_factor=scale,
         permissions=["microphone"],
     )
     page = ctx.new_page()
+    # Shorter request deadlines, read by the console as it loads: a test
+    # never waits out the real ones.
+    if timings:
+        page.add_init_script(f"window.MerlinVoiceTimings = {json.dumps(timings)}")
     # Most scenarios tap the full-screen console; a wide screen opens the bar.
     if view:
         page.add_init_script(f"localStorage.setItem('voice-view', '{view}')")
@@ -294,6 +300,39 @@ def _wait_mode(page, modes, timeout=30000):
     page.wait_for_function(
         f"() => {json.dumps(list(modes))}.includes(window.MerlinVoice.mode())",
         timeout=timeout,
+    )
+
+
+def _pump(page, predicate, message, timeout=30):
+    """Wait for ``predicate`` through the page, not with sleep: a route
+    handler runs only while Playwright has control."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        page.wait_for_timeout(100)
+    raise AssertionError(message)
+
+
+def _wav_of(route) -> bytes:
+    """The piece's WAV in a transcription upload (the multipart boundary
+    changes from one attempt to the next, the audio does not)."""
+    body = route.request.post_data_buffer or b""
+    at = body.find(b"RIFF")
+    size = int.from_bytes(body[at + 40 : at + 44], "little")
+    return body[at : at + 44 + size]
+
+
+def _console(page):
+    """What the console shows: its mode, the state's word, the hint, and how
+    many times the send earcon played."""
+    return page.evaluate(
+        """() => [
+            window.MerlinVoice.mode(),
+            document.querySelector('#voice-console .vc-mode-name').textContent,
+            document.querySelector('#voice-console .vc-hint').textContent,
+            window.MerlinVoice.earcons().filter((e) => e === 'send').length,
+        ]"""
     )
 
 
@@ -415,13 +454,7 @@ def test_a_message_waits_for_its_end_word(browser, server, tmux_env, tts, tmp_pa
             route.fulfill(json={"text": text})
 
         def pump_until(predicate, message):
-            # The route handler runs only while Playwright has control: wait
-            # through the page, not with sleep.
-            for _ in range(150):
-                if predicate():
-                    return
-                page.wait_for_timeout(200)
-            raise AssertionError(message)
+            _pump(page, predicate, message)
 
         page.route("**/api/terminal/transcribe", transcribe)
         _start_voice(page, target)
@@ -436,6 +469,180 @@ def test_a_message_waits_for_its_end_word(browser, server, tmux_env, tts, tmp_pa
             "the message never landed",
         )
         assert "Terminé" not in _capture(tmux_env, target)
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+        _tmux(tmux_env, "kill-window", "-t", target)
+    finally:
+        ctx.close()
+
+
+def test_a_send_tap_answers_at_once_and_the_message_goes_once_transcribed(
+    browser, server, tmux_env, tts, tmp_path
+):
+    """A tap on Send acknowledges before any transcription lands (the earcon,
+    "Sending"), a second tap changes nothing, a slow network is named after
+    3 s, and the message goes by itself once the pieces are transcribed."""
+    ctx, page, _ = _open(browser, server)
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        held = []
+        released = []
+
+        def transcribe(route):
+            if released:
+                route.fulfill(json={"text": ""})
+            else:
+                held.append(route)
+
+        says = []
+        page.on(
+            "request",
+            lambda r: says.append(r.post_data) if "/api/voice/say" in r.url else None,
+        )
+        page.route("**/api/terminal/transcribe", transcribe)
+        _start_voice(page, target)
+        _pump(page, lambda: held and _mode(page) == "tx", "no piece was held")
+
+        page.click("#voice-console .vc-mode")
+        mode, name, hint, sends = _console(page)
+        assert (mode, name, sends) == ("proc", "Sending", 1)
+        assert hint == ""
+        pieces = page.evaluate("() => window.MerlinVoice.model().pieces.length")
+
+        # A second tap: no second send, no second earcon, no state change.
+        page.click("#voice-console .vc-mode")
+        assert _console(page) == ["proc", "Sending", "", 1]
+        assert page.evaluate("() => window.MerlinVoice.model().pieces.length") == pieces
+
+        # Still held after 3 s: the console says it is the network.
+        page.wait_for_function(
+            "() => document.querySelector('#voice-console .vc-hint').textContent"
+            " === 'Waiting for the connection'",
+            timeout=6000,
+        )
+        assert says == [] and "Lance les tests" not in _capture(tmux_env, target)
+
+        # The transcriptions land: the message goes without another tap.
+        released.append(True)
+        for i, route in enumerate(held):
+            route.fulfill(json={"text": "Lance les tests" if i == 0 else ""})
+        _pump(
+            page,
+            lambda: "Lance les tests" in _capture(tmux_env, target),
+            "the message never landed",
+        )
+        assert len(says) == 1
+        assert json.loads(says[0])["text"] == "Lance les tests"
+        assert _console(page)[3] == 1  # the earcon did not play again
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+        _tmux(tmux_env, "kill-window", "-t", target)
+    finally:
+        ctx.close()
+
+
+def test_a_transcription_that_never_answers_ends_in_a_retry_that_keeps_every_piece(
+    browser, server, tmux_env, tts, tmp_path
+):
+    """The first piece's transcription never answers: each attempt is cut at
+    its deadline, then the error offers a retry. The second piece, with the
+    end word, waits behind it; the retry sends the whole message, in order."""
+    deadline_ms = 4000
+    ctx, page, _ = _open(
+        browser, server, timings={"TRANSCRIBE_TIMEOUT_MS": deadline_ms}
+    )
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        first = []  # the first piece's audio, and when it first went up
+        hung = []
+        released = []
+
+        def transcribe(route):
+            wav = _wav_of(route)
+            if not first:
+                first.extend([wav, time.monotonic()])
+            if wav != first[0]:
+                route.fulfill(
+                    json={"text": "" if released else "puis le lint. Terminé."}
+                )
+            elif released:
+                route.fulfill(json={"text": "Lance les tests"})
+            else:
+                hung.append(route)  # never answered: the page gives up on it
+
+        page.route("**/api/terminal/transcribe", transcribe)
+        _start_voice(page, target)
+        _pump(page, lambda: _mode(page) == "error", "the error never came", timeout=40)
+        assert time.monotonic() - first[1] < 3 * deadline_ms / 1000 + 3 + 4
+        assert len(hung) == 3  # the first try and its two retries
+        assert page.inner_text("#voice-console .vc-error") == (
+            "Could not reach Merlin to send what you said"
+        )
+        # The second piece was heard, end word included, and waits: nothing sent.
+        assert page.evaluate(
+            "() => window.MerlinVoice.model().pieces.map((p) => [p.status, p.send])"
+        ) == [["failed", False], ["done", True]]
+        assert "lint" not in _capture(tmux_env, target)
+
+        released.append(True)
+        page.click("#voice-console .vc-mode")
+        assert _console(page)[:2] == ["proc", "Sending"]
+        _pump(
+            page,
+            lambda: "Lance les tests puis le lint." in _capture(tmux_env, target),
+            "the message never landed whole",
+        )
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+        _tmux(tmux_env, "kill-window", "-t", target)
+    finally:
+        ctx.close()
+
+
+def test_a_say_whose_answer_is_lost_is_retried_and_typed_once(
+    browser, server, tmux_env, tts, tmp_path
+):
+    """The first say reaches the server, which types the message, but its
+    answer never comes back: the page gives up at its deadline, says so
+    honestly, and the retry (same id) is answered without typing again."""
+    ctx, page, _ = _open(browser, server, timings={"SAY_TIMEOUT_MS": 1500})
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        texts = ["SAYONCE88, terminé"]
+        page.route(
+            "**/api/terminal/transcribe",
+            lambda r: r.fulfill(json={"text": texts.pop(0) if texts else ""}),
+        )
+        bodies = []
+        dropped = []
+
+        def say(route):
+            bodies.append(json.loads(route.request.post_data))
+            if dropped:
+                route.continue_()
+            else:
+                dropped.append(route.fetch())  # reached the server, answer lost
+
+        page.route("**/api/voice/say", say)
+        _start_voice(page, target)
+        _pump(page, lambda: dropped, "the message never went")
+        # Typed, but the page has no answer: it does not claim it arrived.
+        assert _console(page)[:2] == ["proc", "Sending"]
+        _wait_mode(page, ["error"], timeout=10000)
+        assert page.inner_text("#voice-console .vc-error") == (
+            "Could not reach Merlin to send what you said"
+        )
+        assert _capture(tmux_env, target).count("SAYONCE88") == 1
+
+        with page.expect_response("**/api/voice/say") as answered:
+            page.click("#voice-console .vc-mode")
+        assert answered.value.json() == {"ok": True}
+        assert len(bodies) == 2 and bodies[0]["id"] and bodies[0] == bodies[1]
+        assert _capture(tmux_env, target).count("SAYONCE88") == 1
+        assert _console(page)[3] == 1  # one earcon for the one message
         page.click("#voice-console [data-act=exit]")
         page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
         _tmux(tmux_env, "kill-window", "-t", target)

@@ -845,6 +845,9 @@ class TestRoutes:
             async def note_dictation(self, text, error):
                 calls.append(("noted", text, error))
 
+            def message(self, message_id):
+                return session.Message()
+
             def snapshot(self):
                 return {"active": True, "target": target}
 

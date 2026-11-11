@@ -107,8 +107,10 @@ const MerlinVoiceCore = (function () {
     /**
      * server: the last state frame (listening, thinking, speaking, ask, error, off).
      * local:  what the page itself is doing: idle, hearing (speech detected),
-     *         sending (uploading the utterance), waiting (uploaded, the server
-     *         has not answered yet), error (a local failure, tap to retry).
+     *         sending (a send was asked: from then until the say request
+     *         answered, its pieces still being transcribed included),
+     *         waiting (the message reached the window, the server has not
+     *         answered yet), error (a local failure, tap to retry).
      */
     function createModel(target) {
         return {
@@ -131,7 +133,99 @@ const MerlinVoiceCore = (function () {
             played: [],         // ids heard (bounded), never queued again
             skipped: [],        // turns skipped here (bounded)
             captions: [],       // [{who: 'you' | 'agent', text}]
+            pieces: [],         // the message's pieces not folded in yet, in the order said
+            words: [],          // the text of the pieces folded in, not sent yet
         };
+    }
+
+    // -- the message: its pieces, in the order said ---------------------------
+    //
+    // Each piece of speech is transcribed as soon as it is cut, while the user
+    // goes on, so transcriptions can land in any order and fail. The pieces
+    // wait here in the order said: a piece is folded into the message only once
+    // every piece before it is, and a failed one holds the rest back until it
+    // is retried, so nothing said is lost or reordered by the network.
+    //
+    // A piece carries `send` when the message ends with it: its text ended with
+    // the end word, or a tap asked to send what was said up to it.
+
+    function holding(m) {
+        return m.words.length > 0 || m.pieces.length > 0;
+    }
+
+    /** A piece was cut: {status: up | done | failed, text, send}. */
+    function pieceCut(m, send) {
+        const p = { status: "up", text: "", send: !!send };
+        m.pieces.push(p);
+        m.held = true;
+        return p;
+    }
+
+    /** Its transcription landed. False when the piece was dropped meanwhile. */
+    function pieceHeard(m, p, text) {
+        if (m.pieces.indexOf(p) < 0) return false;
+        const said = endWord(text);
+        p.status = "done";
+        p.text = said.text;
+        if (said.end) p.send = true;
+        return true;
+    }
+
+    /** Its transcription failed, retries spent: it waits for a retry. */
+    function pieceLost(m, p) {
+        if (m.pieces.indexOf(p) < 0) return false;
+        p.status = "failed";
+        return true;
+    }
+
+    /** The failed pieces, in order, set to be transcribed again. */
+    function retryPieces(m) {
+        const again = m.pieces.filter(function (p) { return p.status === "failed"; });
+        again.forEach(function (p) { p.status = "up"; });
+        return again;
+    }
+
+    /** Whether the message is to go once its pieces are transcribed. */
+    function sendAsked(m) {
+        return m.pieces.some(function (p) { return p.send; });
+    }
+
+    /** A tap: send what was said so far, the pieces still in flight included.
+     *  False when nothing was said. */
+    function askSend(m) {
+        if (m.pieces.length) {
+            m.pieces[m.pieces.length - 1].send = true;
+            return true;
+        }
+        if (!m.words.length) return false;
+        m.pieces.push({ status: "done", text: "", send: true });
+        return true;
+    }
+
+    /** Fold the transcribed pieces in, in order. Returns {send: text} when a
+     *  message is complete (text may be empty: nothing was said), {failed:
+     *  true} when the next piece failed, else null (waiting, or nothing). */
+    function nextMessage(m) {
+        let out = null;
+        while (m.pieces.length && m.pieces[0].status === "done") {
+            const p = m.pieces.shift();
+            if (p.text) m.words.push(p.text);
+            if (p.send) {
+                out = { send: m.words.join(" ").trim() };
+                m.words = [];
+                break;
+            }
+        }
+        m.held = holding(m);
+        if (!out && m.pieces.length && m.pieces[0].status === "failed") out = { failed: true };
+        return out;
+    }
+
+    /** Forget the message (its transcription was refused). */
+    function dropMessage(m) {
+        m.pieces = [];
+        m.words = [];
+        m.held = false;
     }
 
     function remember(list, value, max) {
@@ -377,6 +471,15 @@ const MerlinVoiceCore = (function () {
         encodeWav: encodeWav,
         endWord: endWord,
         createModel: createModel,
+        holding: holding,
+        pieceCut: pieceCut,
+        pieceHeard: pieceHeard,
+        pieceLost: pieceLost,
+        retryPieces: retryPieces,
+        sendAsked: sendAsked,
+        askSend: askSend,
+        nextMessage: nextMessage,
+        dropMessage: dropMessage,
         applyFrame: applyFrame,
         beginSync: beginSync,
         applySnapshot: applySnapshot,

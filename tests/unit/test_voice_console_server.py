@@ -2,6 +2,8 @@
 button, the console's assets (the vendored VAD cached for good, the rest
 never), and the button on the terminal page."""
 
+import asyncio
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -167,3 +169,152 @@ class TestTerminalPage:
             html = c.get("/terminal").text
         assert "&#34;available&#34;: false" in html
         assert "No voice server configured" in html
+
+
+class TestSay:
+    """POST /api/voice/say types a message into the window at most once: a
+    retry with the same id after a lost answer is answered without typing."""
+
+    TARGET = "s:@1"
+
+    @pytest.fixture
+    def keys(self, monkeypatch):
+        """The keys sent to the window, and switches to make them fail."""
+        sent: list[tuple] = []
+        fail = {"literal": False, "enter": False}
+
+        def literal(target, text):
+            if fail["literal"]:
+                return False
+            sent.append(("text", text))
+            return True
+
+        def enter(target):
+            if fail["enter"]:
+                return False
+            sent.append(("enter",))
+            return True
+
+        monkeypatch.setattr(sweep, "exit_copy_mode", lambda t: None)
+        monkeypatch.setattr(sweep, "send_literal", literal)
+        monkeypatch.setattr(sweep, "send_enter", enter)
+        return sent, fail
+
+    @pytest.fixture
+    def running(self, monkeypatch):
+        config = routes.tts.TtsConfig(
+            url="http://127.0.0.1:9/v1",
+            api_key="",
+            model="kokoro",
+            voice_fr="ff_siwis",
+            voice_en="af_heart",
+            speed=1.0,
+            format="wav",
+        )
+        voice = session.VoiceSession(
+            self.TARGET, "en", config=config, provider="claude"
+        )
+        noted: list[str | None] = []
+
+        async def note(text, error):
+            noted.append(text)
+
+        monkeypatch.setattr(voice, "note_dictation", note)
+        monkeypatch.setattr(session, "_sessions", {self.TARGET: voice})
+        voice.noted = noted
+        return voice
+
+    @pytest.fixture
+    def client(self, running):
+        app = FastAPI()
+        app.include_router(routes.api_router, prefix="/api/voice")
+        return TestClient(app)
+
+    def say(self, client, text="Run the tests", **extra):
+        return client.post(
+            "/api/voice/say", json={"target": self.TARGET, "text": text, **extra}
+        )
+
+    def test_a_repeated_id_is_answered_without_typing_again(
+        self, client, keys, running
+    ):
+        sent, _ = keys
+        assert self.say(client, id="m1").json() == {"ok": True}
+        assert self.say(client, id="m1").json() == {"ok": True}
+        assert sent == [("text", "Run the tests"), ("enter",)]
+        assert running.noted == ["Run the tests"]
+        # Another message is typed.
+        assert self.say(client, "Then the lint", id="m2").json() == {"ok": True}
+        assert sent[-2:] == [("text", "Then the lint"), ("enter",)]
+
+    def test_without_an_id_every_request_types_as_before(self, client, keys):
+        sent, _ = keys
+        assert self.say(client).json() == {"ok": True}
+        assert self.say(client).json() == {"ok": True}
+        assert sent.count(("text", "Run the tests")) == 2
+
+    def test_a_message_the_window_refused_is_typed_by_its_retry(self, client, keys):
+        sent, fail = keys
+        fail["literal"] = True
+        assert self.say(client, id="m1").status_code == 502
+        fail["literal"] = False
+        assert self.say(client, id="m1").json() == {"ok": True}
+        assert sent == [("text", "Run the tests"), ("enter",)]
+
+    def test_a_retry_after_the_text_went_but_not_its_enter_sends_only_enter(
+        self, client, keys
+    ):
+        sent, fail = keys
+        fail["enter"] = True
+        assert self.say(client, id="m1").status_code == 502
+        fail["enter"] = False
+        assert self.say(client, id="m1").json() == {"ok": True}
+        assert sent == [("text", "Run the tests"), ("enter",)]
+
+    def test_a_retry_while_the_first_still_types_waits_and_does_not_type(
+        self, keys, running, monkeypatch
+    ):
+        sent, _ = keys
+        started = None
+        release = None
+
+        async def go():
+            nonlocal started, release
+            started, release = asyncio.Event(), asyncio.Event()
+            loop = asyncio.get_running_loop()
+
+            async def slow_thread(fn, *args):
+                # The first literal blocks until the retry is waiting on it.
+                if fn is sweep.send_literal and not started.is_set():
+                    started.set()
+                    await release.wait()
+                return fn(*args)
+
+            monkeypatch.setattr(routes.asyncio, "to_thread", slow_thread)
+            body = routes.SayBody(target=self.TARGET, text="Run the tests", id="m1")
+            first = loop.create_task(routes.api_say(body))
+            await started.wait()
+            second = loop.create_task(routes.api_say(body))
+            await asyncio.sleep(0.05)
+            assert not second.done()
+            release.set()
+            return await first, await second
+
+        first, second = asyncio.run(go())
+        assert first == {"ok": True} and second == {"ok": True}
+        assert sent == [("text", "Run the tests"), ("enter",)]
+        assert running.noted == ["Run the tests"]
+
+    def test_the_session_remembers_its_last_ids_only(self, running):
+        first = running.message("m0")
+        for i in range(1, session.MAX_MESSAGES + 1):
+            running.message(f"m{i}")
+        assert running.message("m0") is not first
+        assert running.message(f"m{session.MAX_MESSAGES}") is running.message(
+            f"m{session.MAX_MESSAGES}"
+        )
+
+    def test_an_overlong_id_is_refused(self, client, keys):
+        sent, _ = keys
+        assert self.say(client, id="x" * 65).status_code == 422
+        assert sent == []

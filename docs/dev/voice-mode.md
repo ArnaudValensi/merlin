@@ -17,7 +17,7 @@ tap Voice → POST /api/voice/start ──────→  @voice=on on the wind
 VAD: a piece of speech ... 1.2 s of silence
 POST /api/terminal/transcribe (no target) → the piece's text, back to the page
   ... pieces held until one ends with the end word ("terminé", "over")
-POST /api/voice/say {target, text} ──────→  send-keys the message, Enter
+POST /api/voice/say {target, text, id} ──→  send-keys the message, Enter (once per id)
                                             Claude's UserPromptSubmit hook
                                               → voice instructions in context
                                             tail the window's transcript:
@@ -195,6 +195,15 @@ the pieces, and sends the whole message with `POST /api/voice/say`, which types
 it into the window like dictation's injection (copy-mode cancelled, the text,
 Enter apart) and tells the session (`note_dictation`). See "The end word".
 
+**A message is typed at most once.** The page gives each message an `id` when it
+forms it (random, 96 bits) and a retry sends the same one. The session remembers
+the last 32 ids (`VoiceSession.message()`, a `Message` record each): a request
+whose id was typed answers `{"ok": true}` without typing, one whose text went but
+not its Enter sends only the Enter, and one that arrives while the first still
+types waits on the record's lock, then finds it done. A request without an id (a
+page older than this rule) types every time. Tested on the route in
+`tests/unit/test_voice_console_server.py`.
+
 ### Control frames
 
 Every frame is a terminal WebSocket text frame `\x00` + JSON, sent to every
@@ -225,7 +234,7 @@ outbox, so a stalled page never blocks the others); the page filters by
 | `GET /api/voice/session?target=` | The snapshot for a reconnecting page |
 | `POST /api/voice/lang` `{target, lang}` | Switch the voice language |
 | `POST /api/voice/skip` `{target, turn}` | Drop the rest of that answer |
-| `POST /api/voice/say` `{target, text}` | Type the message into the window, then Enter |
+| `POST /api/voice/say` `{target, text, id}` | Type the message into the window, then Enter; an `id` already typed is answered `ok` without typing |
 | `POST /api/voice/answer` `{target, yes}` | Yes sends Enter, No sends Escape (and writes `idle`) |
 | `POST /api/voice/interrupt` `{target}` | Stop agent: drop every answer waiting, send Escape |
 | `GET /api/voice/audio/{id}` | A clip's audio |
@@ -327,15 +336,49 @@ word counts only as a clause of its own at the end of a piece ("..., terminé",
 "Terminé."), so "c'est terminé" inside a sentence never sends
 (`MerlinVoiceCore.endWord`, unit-tested). It is stripped from the message.
 While pieces are held the mode stays `TX`, the hint names the end word, and
-after 7 s without it a soft double tone reminds the user once. A piece whose
-transcription fails is tried twice more, then shown as an error a tap retries.
-The e2e test `test_a_message_waits_for_its_end_word` holds two pieces, checks
-nothing reached the window, then releases the end word.
+after 7 s without it a soft double tone reminds the user once.
+
+The pieces wait in the model in the order said (`m.pieces`, then `m.words` once
+folded in; `MerlinVoiceCore.pieceCut`, `pieceHeard`, `nextMessage`, unit-tested),
+whatever order their transcriptions land in. A piece is folded in only once every
+piece before it is, and it carries `send` when the message ends with it: its text
+ended with the end word, or a tap asked to send what was said up to it. One
+message is on its way at a time: the next waits until `say` answered for this one.
+
+**Send answers at once.** A tap in `TX` (or an end word heard while earlier pieces
+are still on their way) plays the `send` earcon and shows "Sending" (`proc`) right
+away, before any transcription lands; the speech in progress is cut and goes with
+the message (vad-web hands it over a microtask after `pause()`, hence
+`cutForSend`). The message goes by itself once its pieces are transcribed, and
+the earcon is not played again then. A tap while a send is asked does nothing
+more. After 3 s (`SEND_SLOW_MS`) still sending, the hint says "Waiting for the
+connection", in the bar too (`data-hint-shown`). Nothing claims the message
+reached the agent before `say` answered `ok`: until then it is "Sending", then
+"Working".
+
+**Every request of a turn has a deadline** (`AbortController`, the constants at
+the top of `voice-console.js`): a transcription attempt is cut after 20 s
+(`TRANSCRIBE_TIMEOUT_MS`) and counts as failed, tried twice more (`PIECE_RETRY_MS`,
+1 s and 2 s), then the piece is marked failed and the error "Could not reach
+Merlin to send what you said" offers a tap to retry. A failed piece holds back
+the ones after it, never dropped: the retry transcribes every failed piece again,
+in order, and a send asked before (by a tap, or by the end word in a later piece)
+goes once they are all transcribed, without another tap. `say` is cut after 15 s
+(`SAY_TIMEOUT_MS`) into the same error; its retry sends the same id. The e2e tests
+lower the deadlines through `window.MerlinVoiceTimings`, set before the page
+loads. A refused transcription (402, 413) drops the message with its error.
+
+The e2e tests: `test_a_message_waits_for_its_end_word` holds two pieces, checks
+nothing reached the window, then releases the end word;
+`test_a_send_tap_answers_at_once_and_the_message_goes_once_transcribed` taps while
+the transcription is held; `test_a_transcription_that_never_answers_ends_in_a_retry_that_keeps_every_piece`
+and `test_a_say_whose_answer_is_lost_is_retried_and_typed_once` cover the two
+deadlines.
 
 Modes (`MerlinVoice.mode()`, shown name): `tune` (Connecting), `listen`
 (Listening), `tx` (Hearing you, speech detected or a message held), `proc`
-(Working, also while resyncing; Sending while the message goes), `rx` (Speaking,
-the answer plays), `ask` (Your answer: Yes / No / Exit), `error` (Error, tap to
+(Working, also while resyncing; Sending from the Send tap or the end word until
+`say` answered), `rx` (Speaking, the answer plays), `ask` (Your answer: Yes / No / Exit), `error` (Error, tap to
 retry), `resume` (Paused, after a reload a tap unlocks audio). The VAD runs only
 in `listen` and `tx` with nothing playing: no listening while the agent is busy
 or the answer plays (no voice barge-in).

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from board import sweep
 
@@ -159,6 +159,9 @@ async def api_skip(body: SkipBody):
 
 class SayBody(Target):
     text: str
+    # Given by the page when it forms the message, the same on a retry. An
+    # older page sends none.
+    id: str | None = Field(default=None, max_length=64)
 
 
 @api_router.post("/say")
@@ -166,25 +169,36 @@ async def api_say(body: SayBody):
     """Type the message the user said into the window, then Enter. The page
     transcribes what is said piece by piece (cut at each pause) and sends the
     whole message here once it heard the end word. Same keys as dictation's
-    injection: copy-mode cancelled first, the text, then Enter on its own."""
+    injection: copy-mode cancelled first, the text, then Enter on its own.
+
+    A message is typed at most once: the page retries a say whose answer it
+    never got with the same id, and an id already typed is answered ``ok``
+    without typing again (one whose text went but not its Enter gets only the
+    Enter)."""
     running = session.get(body.target)
     if running is None:
         return _no_session()
     text = body.text.strip()
     if not text:
         return JSONResponse({"error": "Nothing to send"}, status_code=400)
-    await asyncio.to_thread(sweep.exit_copy_mode, body.target)
-    if not await asyncio.to_thread(sweep.send_literal, body.target, text):
-        return JSONResponse(
+    message = running.message(body.id)
+    async with message.lock:
+        if message.entered:
+            return {"ok": True}
+        refused = JSONResponse(
             {"error": "The window did not take the message"}, status_code=502
         )
-    # Enter apart, after a brief gap: in one send, a TUI reads it as a
-    # newline inside the paste instead of a submit.
-    await asyncio.sleep(0.15)
-    if not await asyncio.to_thread(sweep.send_enter, body.target):
-        return JSONResponse(
-            {"error": "The window did not take the message"}, status_code=502
-        )
+        if not message.typed:
+            await asyncio.to_thread(sweep.exit_copy_mode, body.target)
+            if not await asyncio.to_thread(sweep.send_literal, body.target, text):
+                return refused
+            message.typed = True
+            # Enter apart, after a brief gap: in one send, a TUI reads it as
+            # a newline inside the paste instead of a submit.
+            await asyncio.sleep(0.15)
+        if not await asyncio.to_thread(sweep.send_enter, body.target):
+            return refused
+        message.entered = True
     await running.note_dictation(text, None)
     return {"ok": True}
 
