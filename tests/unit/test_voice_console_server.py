@@ -296,6 +296,8 @@ class TestSay:
             await started.wait()
             second = loop.create_task(routes.api_say(body))
             await asyncio.sleep(0.05)
+            # The first holds the message while the second waits on it.
+            assert running.message("m1").lock.locked()
             assert not second.done()
             release.set()
             return await first, await second

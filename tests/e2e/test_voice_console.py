@@ -542,6 +542,71 @@ def test_a_send_tap_answers_at_once_and_the_message_goes_once_transcribed(
         ctx.close()
 
 
+def test_a_send_tap_while_speaking_sends_the_speech_in_progress_too(
+    browser, server, tmux_env, tts, tmp_path
+):
+    """The common tap: the last words are still being said. The tap acks at
+    once, the speech in progress is cut and becomes the message's last piece,
+    uploaded then, and the message typed in the window ends with it, once."""
+    ctx, page, _ = _open(browser, server)
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        tapped = []
+        served = []
+        held = []
+
+        def transcribe(route):
+            if tapped:
+                held.append(route)  # the piece the tap cut, answered below
+            else:
+                served.append(route)
+                route.fulfill(
+                    json={"text": "Lance les tests" if len(served) == 1 else ""}
+                )
+
+        says = []
+        page.on(
+            "request",
+            lambda r: says.append(r.post_data) if "/api/voice/say" in r.url else None,
+        )
+        page.route("**/api/terminal/transcribe", transcribe)
+        _start_voice(page, target)
+        # The first piece is in, then the loop speaks again: tap mid-speech.
+        page.wait_for_function(
+            "() => window.MerlinVoice.model().words.length === 1", timeout=30000
+        )
+        page.wait_for_function(
+            "() => window.MerlinVoice.model().local === 'hearing'", timeout=20000
+        )
+        tapped.append(True)
+        page.click("#voice-console .vc-mode")
+        assert _console(page)[:2] == ["proc", "Sending"]
+        assert _console(page)[3] == 1
+        # The speech in progress was cut: the message's last piece, going up.
+        _pump(page, lambda: held, "the speech in progress was never uploaded")
+        assert len(served) == 1
+        assert page.evaluate(
+            "() => window.MerlinVoice.model().pieces.map((p) => [p.status, p.send])"
+        ) == [["up", True]]
+        assert says == []
+        held[0].fulfill(json={"text": "puis le lint"})
+        _pump(
+            page,
+            lambda: "Lance les tests puis le lint" in _capture(tmux_env, target),
+            "the message never landed whole",
+        )
+        assert len(says) == 1
+        assert json.loads(says[0])["text"] == "Lance les tests puis le lint"
+        assert _capture(tmux_env, target).count("Lance les tests") == 1
+        assert _console(page)[3] == 1
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+        _tmux(tmux_env, "kill-window", "-t", target)
+    finally:
+        ctx.close()
+
+
 def test_a_transcription_that_never_answers_ends_in_a_retry_that_keeps_every_piece(
     browser, server, tmux_env, tts, tmp_path
 ):

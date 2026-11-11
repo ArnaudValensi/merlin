@@ -104,6 +104,7 @@ function initVoiceConsole() {
     let retry = null;          // what a tap does in a local error: start | vad | pieces | say | sync | clip
     let saying = null;         // {text, id, inflight}: the message given to say, until it answered ok
     let acked = false;         // the send earcon was played for the message on its way
+    let unsent = false;        // a send that had nothing to send: no "done" earcon after it
     let sendingSince = 0;
     let slowTimer = null;
     let remindTimer = null;
@@ -676,7 +677,7 @@ function initVoiceConsole() {
             if (r.error && !r.retry) {
                 // Refused (quota, too long): the message cannot be made whole.
                 Core.dropMessage(m);
-                if (m.local === "sending") unack();
+                unack();   // whatever the console shows: the message is gone
                 fail(r.error, null);
                 return;
             }
@@ -733,6 +734,7 @@ function initVoiceConsole() {
     function ack() {
         clearTimeout(remindTimer);
         m.local = "sending";
+        unsent = false;
         if (!acked) { acked = true; earcon("send"); }
         sendingSince = Date.now();
         clearTimeout(slowTimer);
@@ -744,7 +746,7 @@ function initVoiceConsole() {
     function unack() {
         acked = false;
         clearTimeout(slowTimer);
-        if (m && m.local === "sending") m.local = "idle";
+        if (m && m.local === "sending") { m.local = "idle"; unsent = true; }
     }
 
     /** A tap in TX: send what was said so far, the speech in progress and
@@ -945,6 +947,7 @@ function initVoiceConsole() {
         retry = null;
         saying = null;
         acked = false;
+        unsent = false;
         cutIntent = null;
         clearTimeout(slowTimer);
         clearTimeout(remindTimer);
@@ -1039,8 +1042,11 @@ function initVoiceConsole() {
             // again: the pieces that failed, in the order said, and a
             // message whose say got no answer (the same id: typed once).
             const again = Core.retryPieces(m);
-            if (saying && !saying.inflight) { ack(); say(saying); }
-            else if (Core.sendAsked(m)) ack();
+            if (saying) {
+                // Still out (the error was another's): it stays "Sending".
+                ack();
+                if (!saying.inflight) say(saying);
+            } else if (Core.sendAsked(m)) ack();
             again.forEach(transcribe);
             advance();
             render();
@@ -1197,6 +1203,11 @@ function initVoiceConsole() {
     function onModeChange(mode, prev) {
         modeSince = Date.now();
         if (prev === "ask") { cancelAskSpeech(); askFor = null; }
+        // Back from a Send that had nothing to send: no answer came, so not
+        // the earcons of one.
+        const quiet = unsent && (mode === "listen" || mode === "tx");
+        unsent = false;
+        if (quiet) return;
         if (mode === "listen" && (prev === "rx" || prev === "proc")) {
             const wait = earcon("done");
             setTimeout(function () { if (m && currentMode() === "listen") earcon("listen"); }, wait * 1000 + 120);
