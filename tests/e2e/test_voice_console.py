@@ -864,6 +864,84 @@ def test_the_mute_lasts_through_a_turn_and_send_still_sends(
         ctx.close()
 
 
+# Put the console in a mode by hand, as the layout tests do: what is under
+# test is the mute, not how the turn got there.
+FORCE = """([state, words]) => {
+    const v = window.MerlinVoice, m = v.model();
+    m.words = words; m.held = words.length > 0;
+    m.playing = state === "rx" ? {id: "x", status: "playing", answer: "x"} : null;
+    m.queue = [];
+    const server = {proc: "thinking"}[state] || "listening";
+    v.onFrame({type: "voice", event: "state", state: server, target: m.target,
+               session: m.session, rev: m.rev + 1});
+    return v.mode();
+}"""
+
+
+def test_unmuting_listens_again_only_where_the_console_listens(
+    quiet_browser, server, tmux_env, tts, tmp_path
+):
+    """While the agent works or the answer plays, an unmute leaves the VAD
+    off: it comes back with the mode that listens."""
+    ctx, page, _ = _open(quiet_browser, server)
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        _start_voice(page, target)
+        for state in ("proc", "rx"):
+            assert page.evaluate(FORCE, [state, []]) == state
+            assert page.evaluate("() => window.MerlinVoice.listening()") is False
+            starts = page.evaluate("() => window.MerlinVoice.vadStarts()")
+            page.click("#voice-console .vc-mic")
+            page.click("#voice-console .vc-mic")
+            assert _mic(page) == ["false", "Mute microphone", False, False]
+            # Not even started and paused again: the VAD was left alone.
+            assert page.evaluate("() => window.MerlinVoice.vadStarts()") == starts
+            assert page.evaluate(FORCE, ["listen", []]) == "listen"
+            assert page.evaluate("() => window.MerlinVoice.listening()") is True
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+        _tmux(tmux_env, "kill-window", "-t", target)
+    finally:
+        ctx.close()
+
+
+def test_no_end_word_reminder_while_muted(
+    quiet_browser, server, tmux_env, tts, tmp_path
+):
+    """Words held, the reminder pending: the mute stops it, and it comes
+    again with the unmute."""
+    remind_ms = 800
+    ctx, page, _ = _open(quiet_browser, server, timings={"REMIND_MS": remind_ms})
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        _start_voice(page, target)
+        reminders = (
+            "() => window.MerlinVoice.earcons().filter((e) => e === 'remind').length"
+        )
+        assert page.evaluate(FORCE, ["tx", ["Lance les tests"]]) == "tx"
+        # Unmute arms the reminder, the mute that follows at once stops it.
+        page.evaluate(
+            """() => {
+                const b = document.querySelector('#voice-console .vc-mic');
+                b.click(); b.click(); b.click();
+            }"""
+        )
+        assert _mic(page)[2] is True
+        page.wait_for_timeout(remind_ms * 3)  # an absence: nothing to wait on
+        assert page.evaluate(reminders) == 0
+        assert _console(page)[:3] == ["tx", "Hearing you", "Microphone off"]
+        # The positive control: unmuted with the words still held, it comes.
+        page.click("#voice-console .vc-mic")
+        page.wait_for_function(f"() => ({reminders})() === 1", timeout=remind_ms * 4)
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+        _tmux(tmux_env, "kill-window", "-t", target)
+    finally:
+        ctx.close()
+
+
 @pytest.mark.parametrize("width", [390, 1280], ids=["phone", "desk"])
 def test_the_bar_has_the_mic_button_and_says_the_mic_is_off(
     quiet_browser, server, tmux_env, tts, tmp_path, width

@@ -40,11 +40,11 @@ function initVoiceConsole() {
     // A piece of what is said ends after this much silence (the message
     // itself ends with the end word).
     const REDEMPTION_MS = 1200;
-    // A message held this long without its end word: one soft reminder.
-    const REMIND_MS = 7000;
-    // The e2e tests shorten the deadlines below (window.MerlinVoiceTimings,
-    // set before the page loads) rather than wait them out.
+    // The e2e tests shorten the delays below (window.MerlinVoiceTimings, set
+    // before the page loads) rather than wait them out.
     const TIMINGS = window.MerlinVoiceTimings || {};
+    // A message held this long without its end word: one soft reminder.
+    const REMIND_MS = TIMINGS.REMIND_MS || 7000;
     // A piece whose transcription failed is tried again after these waits.
     const PIECE_RETRY_MS = [1000, 2000];
     // Every request of a turn has a deadline: on a mobile network that does
@@ -112,6 +112,7 @@ function initVoiceConsole() {
     let listening = false;     // the VAD is running for us
     let muted = false;         // the user muted the mic: the VAD does not run (never stored)
     const earcons = [];        // the last earcons played, for the tests
+    let vadStarts = 0;         // how many times the VAD was started, for the tests
     let waitTimer = null;
     let noticeTimer = null;
     let wakeLock = null;
@@ -633,6 +634,7 @@ function initVoiceConsole() {
     function startListening() {
         if (listening || !vad || speech) return;
         listening = true;
+        vadStarts++;
         const g = gen;
         vad.start().catch(function (e) {   // the mic could not be reopened
             if (g !== gen || !listening) return;
@@ -1228,6 +1230,7 @@ function initVoiceConsole() {
         listening: function () { return listening; },
         earcons: function () { return earcons.slice(); },
         muted: function () { return muted; },
+        vadStarts: function () { return vadStarts; },
         target: function () { return target; },
     };
     renderButton();

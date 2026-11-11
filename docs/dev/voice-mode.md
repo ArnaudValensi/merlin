@@ -454,7 +454,12 @@ the answer down, and the paused VAD already hears nothing. The e2e tests
 `test_the_mute_drops_what_is_being_said_and_keeps_what_was_said`,
 `test_the_mute_lasts_through_a_turn_and_send_still_sends` and
 `test_the_bar_has_the_mic_button_and_says_the_mic_is_off` assert no transcription
-request while muted, one live and enabled track, and the audio session kept.
+request while muted, one live and enabled track, and the audio session kept;
+`test_unmuting_listens_again_only_where_the_console_listens` counts VAD starts
+(`MerlinVoice.vadStarts()`) through an unmute in `proc` and `rx`, and
+`test_no_end_word_reminder_while_muted` lowers `REMIND_MS` through
+`window.MerlinVoiceTimings` and checks the reminder stays quiet muted and comes
+back unmuted.
 
 ## The reference server
 

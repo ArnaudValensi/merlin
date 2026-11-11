@@ -356,7 +356,8 @@ long output stay in the terminal: the voice says so instead of reading them.
   there is no need to tap again. On a weak network the console says **Waiting for
   the connection** after a few seconds; if the network does not come back, an
   error offers to retry, and nothing you said is lost or sent twice.
-- **The microphone button** (next to the language) mutes the microphone, for
+- **The microphone button** (top right in full screen, next to the full-screen
+  switch in the bar) mutes the microphone, for
   when children shout or someone talks nearby: the console stops hearing, what
   was being said at that moment is dropped, and the hint says **Microphone
   off**. What you said before stays: a tap still sends it, or unmute and go on
