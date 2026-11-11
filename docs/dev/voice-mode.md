@@ -427,6 +427,35 @@ bar leaves the terminal in view, which already shows everything. The `heard`,
 which is bounded and tested, so captions can come back as an option without
 touching the server.
 
+### The mute
+
+The mic button (`.vc-mic`, `data-mic`, in the header tools so both views have it)
+is a real `<button>` with `aria-pressed` and the labels "Mute microphone" /
+"Unmute microphone", a mic or a struck-through mic icon. It is outside the
+`data-act` buttons: a full-screen tap on it only toggles the mute, never the main
+action, and in the bar a mouse click hands the keys back like the other buttons.
+
+Muted (`setMuted`), `syncListening` keeps the VAD paused on the open stream, so
+no piece is cut, uploaded or transcribed. The speech in progress is dropped: the
+pause hands it to `onUtterance`, which drops what is not listened for and no
+Send asked (`hearing` goes back to `idle`). The pieces held are kept, a Send tap
+still sends them, and after unmuting the message can go on to its end word. The
+session is not told: the server state, the answer and its level are unchanged.
+The mute lasts across turns and is not stored: a new console starts unmuted.
+The hint says "Microphone off" in `listen` and `tx` (in the bar too, through
+`data-hint-shown`), the trace is a flat line, the end-word reminder does not
+fire, and soft glides (`mute`, `unmute` earcons) mark the change.
+
+The iOS constraints hold: one stream, never closed or reopened by the mute, no
+`getUserMedia`, no change to `navigator.audioSession`; unmute restarts the VAD
+only where it runs (`listen`, or `tx`, with nothing playing). The track's
+`enabled` is left alone: the table above shows it does not keep iOS from turning
+the answer down, and the paused VAD already hears nothing. The e2e tests
+`test_the_mute_drops_what_is_being_said_and_keeps_what_was_said`,
+`test_the_mute_lasts_through_a_turn_and_send_still_sends` and
+`test_the_bar_has_the_mic_button_and_says_the_mic_is_off` assert no transcription
+request while muted, one live and enabled track, and the audio session kept.
+
 ## The reference server
 
 `tools/kokoro-tts-server.py` is a PEP 723 script (`uv run --script`), stdlib

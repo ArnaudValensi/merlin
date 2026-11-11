@@ -351,6 +351,17 @@ long output stay in the terminal: the voice says so instead of reading them.
 - **Tap anywhere** while you talk to send now, without the end word; while the answer plays, to skip
   the rest of it; on an error, to try again. In the bar, a button does the same:
   **Send**, **Skip** or **Retry**.
+- A Send answers at once: a short tone and **Sending**, even when what you said
+  is still being transcribed. The message goes by itself as soon as it is, so
+  there is no need to tap again. On a weak network the console says **Waiting for
+  the connection** after a few seconds; if the network does not come back, an
+  error offers to retry, and nothing you said is lost or sent twice.
+- **The microphone button** (next to the language) mutes the microphone, for
+  when children shout or someone talks nearby: the console stops hearing, what
+  was being said at that moment is dropped, and the hint says **Microphone
+  off**. What you said before stays: a tap still sends it, or unmute and go on
+  to the end word. The mute lasts through the agent's answers until you tap the
+  button again; the answer still plays. A new console starts unmuted.
 - **Show terminal** and **Full screen** switch between the two, and Merlin
   remembers your choice. With the terminal in view, the agent writes as usual
   (lists, tables, code) and only its prose is read aloud; full screen, it writes

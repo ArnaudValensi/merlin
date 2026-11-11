@@ -104,6 +104,31 @@ body.voice-console-open { overflow: hidden; }
 .vc-view[hidden] { display: none; }
 .vc-view svg { display: none; }
 
+/* The mic: an icon, struck through while muted, red as a mic that is off. */
+.vc-mic {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    box-sizing: border-box;
+    padding: 0;
+    color: var(--text-secondary);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--vc-r);
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.vc-mic:hover { color: var(--text-primary); background: var(--bg-hover); border-color: var(--text-muted); }
+.vc-mic[aria-pressed="true"] {
+    color: var(--accent-red);
+    background: color-mix(in srgb, var(--accent-red) 12%, var(--bg-card));
+    border-color: color-mix(in srgb, var(--accent-red) 45%, var(--border));
+}
+.vc-mic[aria-pressed="true"] .vc-mic-on,
+.vc-mic:not([aria-pressed="true"]) .vc-mic-off { display: none; }
+
 .vc-lang {
     display: flex;
     gap: 2px;
@@ -129,6 +154,7 @@ body.voice-console-open { overflow: hidden; }
 /* A thumb on a mount or a walk. */
 @media (pointer: coarse) {
     .vc-view { min-height: 44px; }
+    .vc-mic { width: 44px; height: 44px; }
     .vc-lang button { position: relative; min-height: 38px; }
     .vc-lang button::after { content: ""; position: absolute; inset: -3px 0; }
 }
@@ -390,15 +416,18 @@ body.voice-console-open { overflow: hidden; }
 #voice-console[data-view="dock"] .vc-view { width: var(--vc-ctl); height: var(--vc-ctl); min-height: 0; box-sizing: border-box; padding: 0; font-size: 13px; }
 #voice-console[data-view="dock"] .vc-view svg { display: block; }
 #voice-console[data-view="dock"] .vc-view-label { display: none; }
+#voice-console[data-view="dock"] .vc-mic { width: var(--vc-ctl); height: var(--vc-ctl); }
 
 /* A finger's 44 px, in the gaps around each control and never into its neighbour. */
 @media (pointer: coarse) {
     #voice-console[data-view="dock"] .vc-buttons,
     #voice-console[data-view="dock"] .vc-tools { gap: 8px; }
     #voice-console[data-view="dock"] .vc-btn,
-    #voice-console[data-view="dock"] .vc-view { position: relative; }
+    #voice-console[data-view="dock"] .vc-view,
+    #voice-console[data-view="dock"] .vc-mic { position: relative; }
     #voice-console[data-view="dock"] .vc-btn::after,
-    #voice-console[data-view="dock"] .vc-view::after { content: ""; position: absolute; inset: -4px; }
+    #voice-console[data-view="dock"] .vc-view::after,
+    #voice-console[data-view="dock"] .vc-mic::after { content: ""; position: absolute; inset: -4px; }
     #voice-console[data-view="dock"] .vc-ask-more::after { inset: -4px 0; }
 }
 

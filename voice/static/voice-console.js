@@ -110,6 +110,7 @@ function initVoiceConsole() {
     let remindTimer = null;
     let cutIntent = null;      // "send": the speech a pause is cutting goes with the message
     let listening = false;     // the VAD is running for us
+    let muted = false;         // the user muted the mic: the VAD does not run (never stored)
     const earcons = [];        // the last earcons played, for the tests
     let waitTimer = null;
     let noticeTimer = null;
@@ -137,6 +138,10 @@ function initVoiceConsole() {
         '  <header class="vc-head">',
         '    <div class="vc-brand"><span class="vc-window" data-el="window"></span></div>',
         '    <div class="vc-tools">',
+        '      <button type="button" class="vc-mic" data-el="mic" data-mic aria-pressed="false" aria-label="Mute microphone" title="Mute microphone">',
+        '        <svg class="vc-mic-on" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>',
+        '        <svg class="vc-mic-off" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 2 20 20"/><path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2"/><path d="M5 10v2a7 7 0 0 0 12 5"/><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12"/><path d="M12 19v3"/></svg>',
+        '      </button>',
         '      <div class="vc-lang" role="group" aria-label="Voice language">',
         '        <button type="button" data-lang="en">EN</button><button type="button" data-lang="fr">FR</button>',
         '      </div>',
@@ -294,6 +299,13 @@ function initVoiceConsole() {
         if (m && phase !== "off") api("POST", "lang", { target: target, lang: lang() });
     }
 
+    function renderMic() {
+        const label = muted ? "Unmute microphone" : "Mute microphone";
+        el.mic.setAttribute("aria-pressed", muted ? "true" : "false");
+        el.mic.setAttribute("aria-label", label);
+        el.mic.title = label;
+    }
+
     function renderLang() {
         root.querySelectorAll("[data-lang]").forEach(function (b) {
             b.classList.toggle("active", b.dataset.lang === lang());
@@ -411,6 +423,9 @@ function initVoiceConsole() {
             case "done":   tone([784], 0.08, t, 0.1); tone([1175], 0.16, t + 0.08, 0.08); return 0.24;
             case "error":  tone([330], 0.1, t); tone([247], 0.18, t + 0.13); return 0.31;
             case "remind": tone([523], 0.08, t, 0.07); tone([523], 0.08, t + 0.16, 0.07); return 0.3;
+            // Soft glides, down to close the mic, up to open it again.
+            case "mute":   tone([660, 440], 0.14, t, 0.08); return 0.2;
+            case "unmute": tone([440, 660], 0.14, t, 0.08); return 0.2;
             case "alert":
                 tone([880, 1175], 0.08, t); tone([880, 1175], 0.08, t + 0.14); tone([1568], 0.2, t + 0.28);
                 return 0.5;
@@ -608,9 +623,10 @@ function initVoiceConsole() {
         return vad;
     }
 
-    /** Listen only in MON or TX, with the VAD loaded and no speech playing. */
+    /** Listen only in MON or TX, with the VAD loaded, no speech playing, and
+     *  the mic not muted. */
     function syncListening(mode) {
-        const want = phase === "live" && !!vad && !speech && (mode === "listen" || mode === "tx");
+        const want = phase === "live" && !!vad && !speech && !muted && (mode === "listen" || mode === "tx");
         if (want) startListening(); else stopListening();
     }
 
@@ -819,11 +835,32 @@ function initVoiceConsole() {
     /** A message said but not ended: one soft reminder of the end word. */
     function armRemind() {
         clearTimeout(remindTimer);
-        if (!m || !m.held || Core.sendAsked(m)) return;
+        if (!m || !m.held || Core.sendAsked(m) || muted) return;
         const g = gen;
         remindTimer = setTimeout(function () {
-            if (g === gen && m && m.held && !Core.sendAsked(m) && m.local === "idle" && Core.mode(m) === "tx") earcon("remind");
+            if (g === gen && m && m.held && !muted && !Core.sendAsked(m) && m.local === "idle" && Core.mode(m) === "tx") earcon("remind");
         }, REMIND_MS);
+    }
+
+    /** Mute or unmute the mic. Muted, the VAD is paused on the open stream
+     *  (never closed: a reopen asks iOS's permission again), so nothing is
+     *  cut, uploaded or transcribed. The speech in progress is dropped (a
+     *  pause hands it to onUtterance, which drops what is not listened for),
+     *  the pieces held are kept. The session is not told: the answer plays as
+     *  usual. It lasts until the user unmutes, across turns, and a new
+     *  console starts unmuted. */
+    function setMuted(on) {
+        if (!m || muted === on) return;
+        muted = on;
+        earcon(on ? "mute" : "unmute");
+        if (on) {
+            clearTimeout(remindTimer);
+            if (m.local === "hearing") m.local = "idle";
+            stopListening();
+        } else {
+            armRemind();
+        }
+        render();   // an unmute listens again where the mode listens
     }
 
     function armWait() {
@@ -948,6 +985,7 @@ function initVoiceConsole() {
         saying = null;
         acked = false;
         unsent = false;
+        muted = false;
         cutIntent = null;
         clearTimeout(slowTimer);
         clearTimeout(remindTimer);
@@ -1061,6 +1099,12 @@ function initVoiceConsole() {
             return;
         }
         if (b === el.askMore) { askOpen = !askOpen; render(); return; }
+        // Only the mute, never the tap: in full screen a tap anywhere sends.
+        if ("mic" in b.dataset) {
+            if (docked && e.detail > 0 && finePointer.matches && T.focus) setTimeout(T.focus, 0);
+            setMuted(!muted);
+            return;
+        }
         // A button of the bar clicked with the mouse hands the keys back to the
         // terminal. From the keyboard (no click count), they stay on the bar.
         if (docked && e.detail > 0 && finePointer.matches && T.focus && !("viewToggle" in b.dataset)) setTimeout(T.focus, 0);
@@ -1183,6 +1227,7 @@ function initVoiceConsole() {
         speaking: function () { return speech ? speech.kind : null; },
         listening: function () { return listening; },
         earcons: function () { return earcons.slice(); },
+        muted: function () { return muted; },
         target: function () { return target; },
     };
     renderButton();
@@ -1236,8 +1281,13 @@ function initVoiceConsole() {
         return mode === "proc" && m.local === "sending" && !m.syncing && Date.now() - sendingSince >= SEND_SLOW_MS;
     }
 
+    function micOff(mode) {
+        return muted && (mode === "listen" || mode === "tx");
+    }
+
     function hintFor(mode, docked) {
         const endWord = lang() === "fr" ? "terminé" : "over";
+        if (micOff(mode)) return "Microphone off";
         if (mode === "listen") return "Speak, then say \u201c" + endWord + "\u201d";
         if (mode === "tx") return "Say \u201c" + endWord + "\u201d to send" + (docked ? "" : ", or tap");
         if (mode === "proc" && m.syncing) return "Reconnecting";
@@ -1277,7 +1327,8 @@ function initVoiceConsole() {
         el.hint.textContent = hintFor(mode, docked);
         el.hint.title = el.hint.textContent;   // the bar may cut it short
         // A hint the bar shows even where it has no room for hints.
-        root.toggleAttribute("data-hint-shown", slowSend(mode));
+        root.toggleAttribute("data-hint-shown", slowSend(mode) || micOff(mode));
+        renderMic();
 
         // No conversation text in the console: full screen reads as a voice
         // call, not something to read while driving, and the bar leaves the
@@ -1307,6 +1358,8 @@ function initVoiceConsole() {
             const prev = lastMode;
             lastMode = mode;
             onModeChange(mode, prev);
+        } else {
+            unsent = false;   // no way back to listening came of it: it is spent
         }
         // The dialog's sentence, once per dialog (a new dialog plays its own).
         if (mode === "ask" && m.ask && askFor !== (m.ask.audio || "")) playAsk(m.ask.audio);
@@ -1364,7 +1417,7 @@ function initVoiceConsole() {
 
         const analyser = still ? null
             : (mode === "rx" || mode === "ask") ? audio.outAnalyser
-            : (mode === "listen" || mode === "tx") ? audio.micAnalyser : null;
+            : (mode === "listen" || mode === "tx") && !muted ? audio.micAnalyser : null;
         let points = null;
         if (analyser) {
             if (!samples || samples.length !== analyser.fftSize) samples = new Float32Array(analyser.fftSize);
@@ -1398,8 +1451,8 @@ function initVoiceConsole() {
                 for (let k = from; k < Math.min(from + span, points.length); k++) v += points[k];
                 v /= span;
                 y = Math.max(2, Math.min(h - 2, mid - v * gain * mid * 0.5));
-            } else if (still) {
-                y = mid;
+            } else if (still || micOff(mode)) {
+                y = mid;   // muted: a flat line, nothing is heard
             } else if (mode === "proc" || mode === "tune") {
                 // A pulse sweeping across: the agent is working.
                 const p = ((now * 0.45) % 1.2) - 0.1;

@@ -715,6 +715,192 @@ def test_a_say_whose_answer_is_lost_is_retried_and_typed_once(
         ctx.close()
 
 
+def _mic(page):
+    """The mic button: pressed, label, and whether the console listens."""
+    return page.evaluate(
+        """() => {
+            const b = document.querySelector('#voice-console .vc-mic');
+            return [b.getAttribute('aria-pressed'), b.getAttribute('aria-label'),
+                    window.MerlinVoice.muted(), window.MerlinVoice.listening()];
+        }"""
+    )
+
+
+# Longer than one loop of the fake mic's sentence (7.8 s): a mic that still
+# listened would have cut and uploaded a piece in that time.
+LOOP_S = 9
+
+
+def test_the_mute_drops_what_is_being_said_and_keeps_what_was_said(
+    browser, server, tmux_env, tts, tmp_path
+):
+    """Muted mid-speech: that speech is dropped, nothing is uploaded while
+    muted, the pieces held stay. Unmuted, the mic is heard again and the
+    message ends with its end word."""
+    ctx, page, _ = _open(browser, server)
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        texts = ["Lance les tests", "puis le lint, terminé"]
+        served = []
+
+        def transcribe(route):
+            served.append(texts[0] if texts else "")
+            route.fulfill(json={"text": texts.pop(0) if texts else ""})
+
+        voice_calls = []
+        page.on(
+            "request",
+            lambda r: (
+                voice_calls.append(r.url)
+                if "/api/voice/" in r.url and "/api/voice/audio/" not in r.url
+                else None
+            ),
+        )
+        page.route("**/api/terminal/transcribe", transcribe)
+        _start_voice(page, target)
+        assert _mic(page) == ["false", "Mute microphone", False, True]
+        page.wait_for_function(
+            "() => window.MerlinVoice.model().words.length === 1", timeout=30000
+        )
+        page.wait_for_function(
+            "() => window.MerlinVoice.model().local === 'hearing'", timeout=20000
+        )
+        before = len(voice_calls)
+        # In full screen a tap anywhere sends: the mic button only mutes.
+        page.click("#voice-console .vc-mic")
+        assert _mic(page) == ["true", "Unmute microphone", True, False]
+        assert _console(page)[:3] == ["tx", "Hearing you", "Microphone off"]
+        assert page.evaluate("() => window.MerlinVoice.model().local") == "idle"
+        assert page.evaluate("() => window.MerlinVoice.earcons().at(-1)") == "mute"
+        page.wait_for_timeout(LOOP_S * 1000)
+        assert (
+            len(served) == 1
+        )  # the speech cut by the mute, and the next, never went up
+        assert page.evaluate("() => window.MerlinVoice.model().words") == [
+            "Lance les tests"
+        ]
+        # The server was not told, and nothing was sent.
+        assert voice_calls[before:] == []
+        assert "Lance les tests" not in _capture(tmux_env, target)
+
+        page.click("#voice-console .vc-mic")
+        assert _mic(page) == ["false", "Mute microphone", False, True]
+        assert page.evaluate("() => window.MerlinVoice.earcons().at(-1)") == "unmute"
+        _pump(
+            page,
+            lambda: "Lance les tests puis le lint" in _capture(tmux_env, target),
+            "the message never landed after the unmute",
+        )
+        assert len(served) == 2
+        # One mic stream, never closed by the mute, the audio session kept.
+        assert page.evaluate(
+            """() => [window.__mics.length,
+                      window.__mics[0].getAudioTracks().every((t) => t.readyState === 'live' && t.enabled),
+                      navigator.audioSession.type]"""
+        ) == [1, True, "play-and-record"]
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+        _tmux(tmux_env, "kill-window", "-t", target)
+    finally:
+        ctx.close()
+
+
+def test_the_mute_lasts_through_a_turn_and_send_still_sends(
+    browser, server, tmux_env, tts, tmp_path
+):
+    """Muted with a piece held: a tap sends it, the agent answers as usual,
+    and the console comes back to listen still muted. A new console starts
+    unmuted."""
+    ctx, page, _ = _open(browser, server)
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        texts = ["MUTEDTURN42"]
+        served = []
+
+        def transcribe(route):
+            served.append(True)
+            route.fulfill(json={"text": texts.pop(0) if texts else ""})
+
+        page.route("**/api/terminal/transcribe", transcribe)
+        _start_voice(page, target)
+        page.wait_for_function(
+            "() => window.MerlinVoice.model().words.length === 1", timeout=30000
+        )
+        page.click("#voice-console .vc-mic")
+        assert _console(page)[:3] == ["tx", "Hearing you", "Microphone off"]
+
+        # The held piece goes on a tap, muted or not.
+        page.click("#voice-console .vc-mode")
+        _pump(
+            page,
+            lambda: "MUTEDTURN42" in _capture(tmux_env, target),
+            "the held message never landed",
+        )
+        # The answer plays as usual, then the console listens again, muted.
+        page.wait_for_function(
+            "() => window.__frames.some((f) => f.event === 'turn_end')", timeout=30000
+        )
+        page.wait_for_function("() => window.__answerSeen", timeout=30000)
+        _wait_mode(page, ["listen"], timeout=30000)
+        assert _mic(page) == ["true", "Unmute microphone", True, False]
+        assert _console(page)[2] == "Microphone off"
+        heard = len(served)
+        page.wait_for_timeout(LOOP_S * 1000)
+        assert len(served) == heard
+        assert "remind" not in page.evaluate("() => window.MerlinVoice.earcons()")
+
+        # A new console starts unmuted.
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+        _start_voice(page, target)
+        assert _mic(page) == ["false", "Mute microphone", False, True]
+        assert page.evaluate("() => window.__mics.length") == 2  # one per session
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+        _tmux(tmux_env, "kill-window", "-t", target)
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("width", [390, 1280], ids=["phone", "desk"])
+def test_the_bar_has_the_mic_button_and_says_the_mic_is_off(
+    quiet_browser, server, tmux_env, tts, tmp_path, width
+):
+    ctx, page, _ = _open(
+        quiet_browser, server, viewport={"width": width, "height": 800}, view="dock"
+    )
+    try:
+        session = page.evaluate("() => window.MerlinTerminal.currentSession()")
+        target, _ = _agent_window(tmux_env, session, tmp_path)
+        _start_voice(page, target)
+        bar = "() => document.getElementById('voice-console').getBoundingClientRect().height"
+        height = page.evaluate(bar)
+        assert page.is_visible("#voice-console .vc-mic")
+        page.click("#voice-console .vc-mic")
+        assert _mic(page)[:3] == ["true", "Unmute microphone", True]
+        # Said in the bar too, even where it shows no hint otherwise, on one row.
+        assert page.is_visible("#voice-console .vc-hint")
+        assert page.inner_text("#voice-console .vc-hint") == "Microphone off"
+        assert page.evaluate(bar) == height
+        # Like the bar's other buttons, a click hands the keys back.
+        page.wait_for_function(
+            "() => document.activeElement.classList.contains('xterm-helper-textarea')",
+            timeout=3000,
+        )
+        page.click("#voice-console .vc-mic")
+        assert _mic(page)[:3] == ["false", "Mute microphone", False]
+        assert not page.is_visible("#voice-console .vc-hint") or (
+            page.inner_text("#voice-console .vc-hint") != "Microphone off"
+        )
+        page.click("#voice-console [data-act=exit]")
+        page.wait_for_selector("#voice-console", state="hidden", timeout=5000)
+        _tmux(tmux_env, "kill-window", "-t", target)
+    finally:
+        ctx.close()
+
+
 @pytest.mark.parametrize(
     "viewport,scale",
     [({"width": 1600, "height": 980}, 2), ({"width": 390, "height": 844}, 3)],
