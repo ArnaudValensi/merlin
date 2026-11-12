@@ -168,8 +168,9 @@ first request in 8 to 10 s (measured on 2026-11-12); a default voice does not.
 So when a session starts, and when its language changes, the session sends one
 short synthesis in that language ("OK.", "D'accord.") and throws the audio
 away (`_start_warm_up()`). It runs in the background: start never waits for
-it, a failure is only logged, stop cancels it. It runs for ElevenLabs and Merlin Cloud and not for an OpenAI-compatible
-server (`WARM_UP_PROVIDERS`), which has no cold cloud voice to wake.
+it, a failure is only logged, stop cancels it. It runs for ElevenLabs and
+Merlin Cloud and not for an OpenAI-compatible server (`WARM_UP_PROVIDERS`),
+which has no cold cloud voice to wake.
 
 The e2e servers never reach Merlin Cloud: `tests/e2e/conftest.py` drops any
 ambient `MERLIN_TTS_*` and, for a server started with a token and no
