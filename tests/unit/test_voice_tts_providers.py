@@ -284,6 +284,15 @@ def _detail(status, message):
     return {"detail": {"status": status, "message": message}}
 
 
+class TestRequestLog:
+    def test_the_server_never_logs_the_request_url(self, caplog):
+        import main  # noqa: F401  (configures the server's logging)
+
+        with caplog.at_level("DEBUG"):
+            _say("Hi.", "en", _eleven(url="https://tts.example/v1"), Recorder())
+        assert not any("tts.example" in r.getMessage() for r in caplog.records)
+
+
 class TestElevenLabsRefusals:
     @pytest.mark.parametrize(
         "status, body, public",

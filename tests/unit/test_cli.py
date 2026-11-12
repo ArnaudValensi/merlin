@@ -801,7 +801,7 @@ class TestTtsUrlConfig:
         run_config("tts-url", "http://127.0.0.1:8880/v1")
         run_config("tts-url", "")
         assert "MERLIN_TTS_URL=\n" in (home / "config.env").read_text()
-        assert "(off)" in capsys.readouterr().out
+        assert "(cleared)" in capsys.readouterr().out
 
     def test_rejects_a_non_url(self, home):
         with pytest.raises(SystemExit) as exc_info:
@@ -833,6 +833,29 @@ class TestTtsProviderConfig:
         assert (home / "config.env").read_text() == (
             "DASHBOARD_PASS=keep-me\nMERLIN_TTS_PROVIDER=elevenlabs\n"
         )
+
+    def test_a_clean_switch_has_no_note(self, home, capsys):
+        run_config("tts-provider", "elevenlabs")
+        assert "Note:" not in capsys.readouterr().out
+
+    def test_a_switch_names_what_carries_over_from_another_server(
+        self, home, capsys, monkeypatch
+    ):
+        (home / "config.env").write_text(
+            "MERLIN_TTS_URL=http://127.0.0.1:8880/v1\n"
+            "MERLIN_TTS_VOICE_FR=ff_siwis\n"
+            "MERLIN_TTS_MODEL=\n"
+        )
+        monkeypatch.setenv("MERLIN_TTS_SPEED", "1.05")
+        run_config("tts-provider", "elevenlabs")
+        out = capsys.readouterr().out
+        assert 'merlin config tts-url ""' in out
+        assert "MERLIN_TTS_SPEED, MERLIN_TTS_VOICE_FR also apply" in out
+        # An empty key is not an override.
+        assert "MERLIN_TTS_MODEL" not in out
+        # Back to the default provider: nothing to warn about.
+        run_config("tts-provider", "openai")
+        assert "Note:" not in capsys.readouterr().out
 
     def test_empty_clears_the_provider(self, home, capsys):
         run_config("tts-provider", "elevenlabs")

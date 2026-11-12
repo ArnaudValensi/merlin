@@ -89,6 +89,15 @@ tts-api-key <key|->` set the two new keys (validated, one line each; the key is
 never printed back, `merlin config` shows it as `(set)`, and `-` reads it from
 stdin).
 
+**Switching an existing setup.** The keys are shared, not per provider: with
+`elevenlabs`, a `MERLIN_TTS_URL` left from an OpenAI-compatible server becomes
+ElevenLabs' API root (the key is sent there and every request fails), and
+`MERLIN_TTS_MODEL`, `MERLIN_TTS_VOICE_*` and `MERLIN_TTS_SPEED` written for
+that server override the ElevenLabs defaults. `merlin config tts-provider
+elevenlabs` prints a note naming each of these it finds; clear the URL
+(`merlin config tts-url ""`) unless it is an ElevenLabs endpoint, and remove
+the overrides meant for the other server.
+
 ### Defaults per provider
 
 | Key | OpenAI-compatible | ElevenLabs |
@@ -133,6 +142,9 @@ detail (what the service said, OpenAI's `error.message` or ElevenLabs'
 | ElevenLabs | other | The voice service refused the request (`<status>`) |
 
 ### Warm-up
+
+A model other than Flash v2.5 takes `language_code` too (Multilingual v2 and
+Turbo v2.5 answered 200 with it on 2026-11-12).
 
 An ElevenLabs library voice that has not been used for a while answers its
 first request in 8 to 10 s (measured on 2026-11-12); a default voice does not.
@@ -292,7 +304,7 @@ outbox, so a stalled page never blocks the others); the page filters by
 
 | Route | Does |
 |---|---|
-| `GET /api/voice/status` | Whether a TTS URL is configured (never the URL) |
+| `GET /api/voice/status` | Whether a voice provider is configured, why not, the voice names (never the URL or key) |
 | `GET /api/voice/check?target=` | Whether this window can start, and why not |
 | `POST /api/voice/start` `{target, lang, view}` | Start, or return the running session's snapshot |
 | `POST /api/voice/view` `{target, view}` | What the page shows (`full`, `dock`): the agent's next prompt follows |

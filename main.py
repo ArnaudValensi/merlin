@@ -80,6 +80,9 @@ CWD = Path.cwd().resolve()
 os.environ.setdefault("MERLIN_LAUNCH_CWD", str(CWD))
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
+# httpx logs every request's full URL at INFO: a voice provider's URL (and
+# the portal's) has no place in the server's output. Its warnings still show.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger("merlin")
 
 

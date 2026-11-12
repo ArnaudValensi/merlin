@@ -608,8 +608,9 @@ Settable keys:
   agent-state-hooks   Consent for installing the tmux agent-state pill hook
                       into ~/.claude/settings.json: auto | ask | off (default ask)
   tts-url             Voice mode text-to-speech server, the root of an
-                      OpenAI-compatible API (POST <url>/audio/speech);
-                      an empty value turns voice mode off
+                      OpenAI-compatible API (POST <url>/audio/speech), or
+                      of ElevenLabs' API with tts-provider elevenlabs;
+                      an empty value clears it
   tts-provider        Voice mode provider: openai (an OpenAI-compatible
                       server at tts-url, the default) or elevenlabs (your
                       own ElevenLabs key); an empty value clears it
@@ -783,7 +784,7 @@ def _set_config(key: str | None, value: str) -> None:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
         skills._config_env_write(tts.URL_KEY, url)
-        print(f"tts-url = {url or '(off)'}")
+        print(f"tts-url = {url or '(cleared)'}")
         print("Restart Merlin to apply it (merlin restart).")
     elif key == "tts-provider":
         from voice import tts
@@ -795,6 +796,9 @@ def _set_config(key: str | None, value: str) -> None:
             sys.exit(1)
         skills._config_env_write(tts.PROVIDER_KEY, provider)
         print(f"tts-provider = {provider or '(default: openai)'}")
+        if provider == tts.ELEVENLABS:
+            for note in _elevenlabs_carry_over():
+                print(note)
         print("Restart Merlin to apply it (merlin restart).")
     elif key == "tts-api-key":
         from voice import tts
@@ -807,8 +811,38 @@ def _set_config(key: str | None, value: str) -> None:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
         skills._config_env_write(tts.API_KEY_KEY, api_key)
-        print(f"tts-api-key = {'(set)' if api_key else '(off)'}")
+        print(f"tts-api-key = {'(set)' if api_key else '(cleared)'}")
         print("Restart Merlin to apply it (merlin restart).")
+
+
+def _elevenlabs_carry_over() -> list[str]:
+    """What a switch to ElevenLabs keeps from a setup made for another server:
+    the URL becomes ElevenLabs' API root (the key goes there), and the model,
+    voice and speed keys apply to whichever provider runs."""
+    current = {**paths.read_config_env(), **os.environ}
+    notes = []
+    if current.get("MERLIN_TTS_URL", "").strip():
+        notes.append(
+            "Note: tts-url is set, and ElevenLabs takes it as its API root (your "
+            "key is sent there). Clear it unless it is an ElevenLabs endpoint: "
+            'merlin config tts-url ""'
+        )
+    overrides = sorted(
+        key
+        for key, value in current.items()
+        if value.strip()
+        and (
+            key in ("MERLIN_TTS_MODEL", "MERLIN_TTS_SPEED")
+            or key.startswith("MERLIN_TTS_VOICE_")
+        )
+    )
+    if overrides:
+        notes.append(
+            f"Note: {', '.join(overrides)} also apply to ElevenLabs (voices are "
+            "ElevenLabs voice ids there). Remove the ones set for another server "
+            "from config.env to get the ElevenLabs defaults."
+        )
+    return notes
 
 
 def _skills_use_color() -> bool:

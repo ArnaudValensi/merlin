@@ -400,6 +400,12 @@ Voice mode needs three things, and the button, dimmed, says which is missing:
    merlin config tts-provider elevenlabs
    ```
 
+   Coming from another server (a local Kokoro)? Clear its URL first,
+   `merlin config tts-url ""`, or Merlin sends your ElevenLabs key there; and
+   remove the `MERLIN_TTS_MODEL`, `MERLIN_TTS_VOICE_*` and `MERLIN_TTS_SPEED`
+   lines you wrote for it, which apply to ElevenLabs too. `tts-provider
+   elevenlabs` names the ones it finds.
+
    Merlin uses the Flash v2.5 model, Lucie for French and Sarah for English.
    Lucie is a library voice, which needs a paid ElevenLabs plan (Starter is
    enough); on the free plan, set your own French voice with

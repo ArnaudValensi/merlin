@@ -1840,7 +1840,6 @@ class TestWarmUp:
         async def go():
             running = await session.start_session(target, "en", broadcast=pages)
             running.set_lang("fr")
-            await asyncio.sleep(0.05)
             assert running._warm_up is None
             await session.stop_session(target)
 
