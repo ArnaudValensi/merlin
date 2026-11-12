@@ -6,6 +6,9 @@
   ``tools/kokoro-tts-server.py``; nothing here knows which server answers.
 - **elevenlabs**: ElevenLabs' own ``text-to-speech`` endpoint with the user's
   key (``MERLIN_TTS_PROVIDER=elevenlabs``, ``MERLIN_TTS_API_KEY``).
+- **cloud**: Merlin Cloud's relay, ``POST {MERLIN_SAAS_API}/api/tts`` with the
+  environment's token, when nothing else is configured. The portal chooses
+  the model and the voices.
 
 Explicit configuration wins: see ``tts_config()`` for the order. Every
 provider answers through the same typed errors, whose ``public`` sentence is
@@ -25,6 +28,9 @@ import httpx
 
 OPENAI = "openai"
 ELEVENLABS = "elevenlabs"
+CLOUD = "cloud"
+# What a user can set in MERLIN_TTS_PROVIDER: Merlin Cloud is never set, it is
+# what an environment with nothing else configured gets.
 PROVIDERS = (OPENAI, ELEVENLABS)
 
 # The OpenAI-compatible defaults are the reference Kokoro server's.
@@ -44,6 +50,11 @@ ELEVENLABS_SPEED = 1.0
 ELEVENLABS_OUTPUT = "mp3_44100_128"
 # ElevenLabs refuses a speed outside this range.
 ELEVENLABS_SPEED_RANGE = (0.7, 1.2)
+
+# The portal, as terminal/transcribe.py reaches it.
+MERLIN_CLOUD_API = "https://merlincloud.dev"
+CLOUD_SPEED = 1.0
+CLOUD_VOICE = "Merlin Cloud"
 
 # What the console may show for a voice id it knows.
 VOICE_NAMES = {ELEVENLABS_VOICE_FR: "Lucie", ELEVENLABS_VOICE_EN: "Sarah"}
@@ -165,9 +176,10 @@ def tts_config() -> TtsConfig | None:
     1. ``MERLIN_TTS_PROVIDER=elevenlabs`` with a key: ElevenLabs
        (``MERLIN_TTS_URL`` optional, ElevenLabs' API by default);
     2. ``MERLIN_TTS_URL`` set, provider ``openai`` or unset: OpenAI-compatible;
-    3. otherwise none. ``elevenlabs`` without a key, or a provider Merlin does
-       not know, is a configuration error and none too: ``unconfigured_reason()``
-       says which.
+    3. neither, and ``MERLIN_SAAS_TOKEN`` set: Merlin Cloud;
+    4. otherwise none. ``elevenlabs`` without a key, or a provider Merlin does
+       not know, is a configuration error and none too (never Merlin Cloud):
+       ``unconfigured_reason()`` says which.
     """
     env = os.environ.get
     provider = _provider_setting()
@@ -191,8 +203,22 @@ def tts_config() -> TtsConfig | None:
             provider=ELEVENLABS,
             voices=_other_voices(),
         )
-    if provider not in ("", OPENAI) or not url:
+    if provider not in ("", OPENAI):
         return None
+    if not url:
+        token = env("MERLIN_SAAS_TOKEN", "").strip()
+        if not token:
+            return None
+        return TtsConfig(
+            url=(env("MERLIN_SAAS_API", "").strip() or MERLIN_CLOUD_API).rstrip("/"),
+            api_key=token,
+            model="",
+            voice_fr=CLOUD_VOICE,
+            voice_en=CLOUD_VOICE,
+            speed=_speed(speed, CLOUD_SPEED),
+            format="mp3",
+            provider=CLOUD,
+        )
     return TtsConfig(
         url=url,
         api_key=api_key,
@@ -218,7 +244,10 @@ def unconfigured_reason() -> str:
 
 def voice_names(config: TtsConfig) -> dict[str, str]:
     """The console's languages and the voice each speaks with: a known
-    voice by its name, any other by its id."""
+    voice by its name, any other by its id. Merlin Cloud's voices are the
+    portal's to choose, so Merlin shows the service, not a voice."""
+    if config.provider == CLOUD:
+        return {"en": CLOUD_VOICE, "fr": CLOUD_VOICE}
     return {
         lang: VOICE_NAMES.get(voice, voice)
         for lang, voice in (("en", config.voice_en), ("fr", config.voice_fr))
@@ -346,9 +375,26 @@ def _elevenlabs_public(status: int, detail: str) -> str:
     return f"The voice service refused the request ({status})"
 
 
+def _cloud_request(text: str, lang: str, config: TtsConfig) -> _Request:
+    return _Request(
+        url=f"{config.url}/api/tts",
+        headers={"Authorization": f"Bearer {config.api_key}"},
+        body={"text": text, "lang": lang, "speed": config.speed},
+    )
+
+
+def _cloud_public(status: int, detail: str) -> str:
+    if status == 402:
+        return "Voice needs a Merlin Cloud subscription"
+    if status == 503:
+        return "Voice is unavailable on Merlin Cloud right now"
+    return f"The voice service refused the request ({status})"
+
+
 _PROVIDERS = {
     OPENAI: (_openai_request, _openai_public),
     ELEVENLABS: (_elevenlabs_request, _elevenlabs_public),
+    CLOUD: (_cloud_request, _cloud_public),
 }
 
 

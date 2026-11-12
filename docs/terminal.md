@@ -389,8 +389,11 @@ long output stay in the terminal: the voice says so instead of reading them.
 
 Voice mode needs three things, and the button, dimmed, says which is missing:
 
-1. **A voice**: ElevenLabs with your own key, or any text-to-speech server
-   that speaks the OpenAI `audio/speech` API.
+1. **A voice**. On Merlin Cloud there is nothing to set up: voice mode speaks
+   through Merlin Cloud with your subscription. Elsewhere (or to use your own
+   voice on Merlin Cloud), ElevenLabs with your own key, or any text-to-speech
+   server that speaks the OpenAI `audio/speech` API. Either one, once set,
+   takes over from Merlin Cloud.
 
    **ElevenLabs.** Put in your key (`-` reads it from stdin, so it stays out
    of your shell history) and choose the provider:

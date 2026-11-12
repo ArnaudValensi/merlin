@@ -99,7 +99,7 @@ WARM_UP_SENTENCE = {
     "en": "OK.",
     "fr": "D'accord.",
 }
-WARM_UP_PROVIDERS = frozenset({tts.ELEVENLABS})
+WARM_UP_PROVIDERS = frozenset({tts.ELEVENLABS, tts.CLOUD})
 
 REST_IN_TERMINAL = {
     "en": "The rest is in the terminal.",

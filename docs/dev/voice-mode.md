@@ -68,7 +68,15 @@ from Merlin by clip id.
   `xi-api-key`, JSON `{"text", "model_id", "language_code", "voice_settings":
   {"speed"}}`. The voice id is percent-encoded into the path; the speed is
   clamped to ElevenLabs' range, 0.7 to 1.2. The non-streaming endpoint: Merlin
-  plays whole clips.
+  plays whole clips. A model other than Flash v2.5 takes `language_code` too
+  (Multilingual v2 and Turbo v2.5 answered 200 with it on 2026-11-12).
+- **Merlin Cloud** (`cloud`), for an environment with nothing else set:
+  `POST {MERLIN_SAAS_API}/api/tts` (default `https://merlincloud.dev`, as
+  `terminal/transcribe.py`), `Authorization: Bearer <MERLIN_SAAS_TOKEN>`, JSON
+  `{"text", "lang", "speed"}`, mp3 back. The portal relays to ElevenLabs with
+  the platform's key and owns the model and the voices (`docs/architecture.md`
+  of merlin-saas, "Voice Relay"): Merlin sends neither. It is never set in
+  `MERLIN_TTS_PROVIDER`; it is what a configured token gets by default.
 
 ### Which one runs
 
@@ -79,10 +87,13 @@ from Merlin by clip id.
    `https://api.elevenlabs.io/v1`.
 2. `MERLIN_TTS_URL` set, provider `openai` or unset: OpenAI-compatible. An
    existing `MERLIN_TTS_URL` setup needs no new key.
-3. Otherwise none. `elevenlabs` without a key, or a provider Merlin does not
-   know, is a configuration error, not a fallback: `unconfigured_reason()`
-   gives the sentence start refuses with (the key is missing, the provider is
-   unknown, or how to configure one).
+3. Neither, and `MERLIN_SAAS_TOKEN` set: Merlin Cloud. Explicit configuration
+   always wins: the founder's Kokoro URL keeps his own Merlin on Kokoro even
+   though it holds a token.
+4. Otherwise none. `elevenlabs` without a key, or a provider Merlin does not
+   know, is a configuration error, not a fallback (not to Merlin Cloud
+   either): `unconfigured_reason()` gives the sentence start refuses with (the
+   key is missing, the provider is unknown, or how to configure one).
 
 `merlin config tts-provider <openai|elevenlabs|>` and `merlin config
 tts-api-key <key|->` set the two new keys (validated, one line each; the key is
@@ -100,15 +111,15 @@ the overrides meant for the other server.
 
 ### Defaults per provider
 
-| Key | OpenAI-compatible | ElevenLabs |
-|---|---|---|
-| `MERLIN_TTS_URL` | (required) | `https://api.elevenlabs.io/v1` |
-| `MERLIN_TTS_API_KEY` | none | (required) |
-| `MERLIN_TTS_MODEL` | `kokoro` | `eleven_flash_v2_5` |
-| `MERLIN_TTS_VOICE_EN` | `af_heart` | Sarah, `EXAVITQu4vr4xnSDxMaL` (a default voice) |
-| `MERLIN_TTS_VOICE_FR` | `ff_siwis` | Lucie, `YxrwjAKoUKULGd0g8K9Y` (a library voice: a paid plan) |
-| `MERLIN_TTS_SPEED` | `1.05` | `1.0` (sent clamped to 0.7 to 1.2) |
-| `MERLIN_TTS_FORMAT` | `wav`; start refuses one the browser cannot decode (`pcm`) | not read: always mp3 |
+| Key | OpenAI-compatible | ElevenLabs | Merlin Cloud |
+|---|---|---|---|
+| `MERLIN_TTS_URL` | (required) | `https://api.elevenlabs.io/v1` | unset (set, it selects OpenAI-compatible) |
+| `MERLIN_TTS_API_KEY` | none | (required) | not read: the environment token |
+| `MERLIN_TTS_MODEL` | `kokoro` | `eleven_flash_v2_5` | not read: the portal's |
+| `MERLIN_TTS_VOICE_EN` | `af_heart` | Sarah, `EXAVITQu4vr4xnSDxMaL` (a default voice) | not read: the portal's (Sarah) |
+| `MERLIN_TTS_VOICE_FR` | `ff_siwis` | Lucie, `YxrwjAKoUKULGd0g8K9Y` (a library voice: a paid plan) | not read: the portal's (Lucie) |
+| `MERLIN_TTS_SPEED` | `1.05` | `1.0` (sent clamped to 0.7 to 1.2) | `1.0` (the portal clamps it) |
+| `MERLIN_TTS_FORMAT` | `wav`; start refuses one the browser cannot decode (`pcm`) | not read: always mp3 | not read: always mp3 |
 
 Every key is read from the environment and `~/.merlin/config.env` at start.
 `TtsConfig.format` is the effective format, so the content type of a clip
@@ -122,7 +133,9 @@ then the English voice. Only keys of exactly two letters are read, and a
 language that is not two letters gets the English voice. The console's
 languages are still `en` and `fr` (`LANGS` in `routes.py`).
 `capability()["voices"]` shows the voice for each: a voice Merlin knows by its
-name (Lucie, Sarah), any other by its id.
+name (Lucie, Sarah), any other by its id, and `Merlin Cloud` for both
+languages with the Merlin Cloud provider (the portal chooses, Merlin does not
+know which).
 
 ### Errors
 
@@ -140,20 +153,28 @@ detail (what the service said, OpenAI's `error.message` or ElevenLabs'
 | ElevenLabs | 402, or `quota_exceeded` / `paid_plan_required` in the detail (ElevenLabs sends these with a 401 too) | The voice service plan does not allow this (quota or paid voice) |
 | ElevenLabs | 401, 403 | The voice service refused the key |
 | ElevenLabs | other | The voice service refused the request (`<status>`) |
+| Merlin Cloud | 402 (no account access) | Voice needs a Merlin Cloud subscription |
+| Merlin Cloud | 503 (the relay is not configured, or ElevenLabs refused the platform's key or plan) | Voice is unavailable on Merlin Cloud right now |
+| Merlin Cloud | other | The voice service refused the request (`<status>`) |
+
+Merlin's own server output never carries a provider's URL either: `main.py`
+sets the `httpx` logger to WARNING, which otherwise logs every request's full
+URL at INFO.
 
 ### Warm-up
-
-A model other than Flash v2.5 takes `language_code` too (Multilingual v2 and
-Turbo v2.5 answered 200 with it on 2026-11-12).
 
 An ElevenLabs library voice that has not been used for a while answers its
 first request in 8 to 10 s (measured on 2026-11-12); a default voice does not.
 So when a session starts, and when its language changes, the session sends one
 short synthesis in that language ("OK.", "D'accord.") and throws the audio
 away (`_start_warm_up()`). It runs in the background: start never waits for
-it, a failure is only logged, stop cancels it. It runs for ElevenLabs and not
-for an OpenAI-compatible server (`WARM_UP_PROVIDERS`), which has no cold cloud
-voice to wake.
+it, a failure is only logged, stop cancels it. It runs for ElevenLabs and Merlin Cloud and not for an OpenAI-compatible
+server (`WARM_UP_PROVIDERS`), which has no cold cloud voice to wake.
+
+The e2e servers never reach Merlin Cloud: `tests/e2e/conftest.py` drops any
+ambient `MERLIN_TTS_*` and, for a server started with a token and no
+`MERLIN_TTS_URL`, sets a dead local one (`http://127.0.0.1:9/v1`), which wins
+over Merlin Cloud; `test_project_switcher.py` checks it.
 
 ## Speech text
 

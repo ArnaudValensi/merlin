@@ -104,7 +104,17 @@ def start_merlin(
             "MERLIN_ACTIVITY_HOOKS": "off",
         }
     )
+    # The voice provider follows only what the test gives it: nothing from
+    # the shell running the suite.
+    for key in [k for k in env if k.startswith("MERLIN_TTS_")]:
+        del env[key]
     env.update(extra_env or {})
+    if env.get("MERLIN_SAAS_TOKEN") and "MERLIN_TTS_URL" not in env:
+        # With a token and no voice of its own, Merlin speaks through Merlin
+        # Cloud, at MERLIN_SAAS_API (merlincloud.dev by default): a voice
+        # session's warm-up would reach production. An explicit URL wins over
+        # Merlin Cloud, and nothing listens on port 9.
+        env["MERLIN_TTS_URL"] = "http://127.0.0.1:9/v1"
     port = free_port()
     proc = subprocess.Popen(
         ["uv", "run", "main.py", "--port", str(port)],

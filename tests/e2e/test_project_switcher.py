@@ -192,6 +192,17 @@ class TestSaaSMode:
 
         return ctx, page
 
+    def test_voice_never_speaks_through_production(self, browser, saas_server):
+        """A token and no voice of its own would mean Merlin Cloud at
+        merlincloud.dev: the fixture pins a dead local voice server instead."""
+        ctx = browser.new_context()
+        page = ctx.new_page()
+        _login(page, saas_server)
+        status = page.request.get(f"{saas_server}/api/voice/status").json()
+        assert status["available"] is True
+        assert "Merlin Cloud" not in status["voices"].values()
+        ctx.close()
+
     def test_switcher_visible_saas_mode(self, browser, saas_server):
         """MERLIN_SAAS_TOKEN set → environment switcher container exists."""
         ctx, page = self._setup_page_with_mock(browser, saas_server)

@@ -453,3 +453,136 @@ class TestValidation:
         with pytest.raises(ValueError) as exc:
             tts.validate_api_key(f"sk_SECRET{sep}X=1")
         assert "SECRET" not in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Merlin Cloud (C.1 to C.3)
+# ---------------------------------------------------------------------------
+
+TOKEN = "mrl_SECRET_environment_token"
+
+
+def _cloud(**overrides):
+    values = dict(
+        url="http://127.0.0.1:9",
+        api_key=TOKEN,
+        model="",
+        voice_fr="Merlin Cloud",
+        voice_en="Merlin Cloud",
+        speed=1.0,
+        format="mp3",
+        provider="cloud",
+    )
+    values.update(overrides)
+    return tts.TtsConfig(**values)
+
+
+class TestMerlinCloudSelection:
+    def test_a_token_and_nothing_else_is_merlin_cloud(self, monkeypatch):
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", TOKEN)
+        assert tts.tts_config() == tts.TtsConfig(
+            url="https://merlincloud.dev",
+            api_key=TOKEN,
+            model="",
+            voice_fr="Merlin Cloud",
+            voice_en="Merlin Cloud",
+            speed=1.0,
+            format="mp3",
+            provider="cloud",
+        )
+
+    def test_the_portal_follows_merlin_saas_api(self, monkeypatch):
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", TOKEN)
+        monkeypatch.setenv("MERLIN_SAAS_API", "http://127.0.0.1:3000/")
+        assert tts.tts_config().url == "http://127.0.0.1:3000"
+
+    def test_explicit_openai_without_a_url_is_still_merlin_cloud(self, monkeypatch):
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", TOKEN)
+        _env(monkeypatch, PROVIDER="openai")
+        assert tts.tts_config().provider == "cloud"
+
+    def test_a_configuration_error_never_falls_back_to_merlin_cloud(self, monkeypatch):
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", TOKEN)
+        _env(monkeypatch, PROVIDER="elevenlabs")
+        assert tts.tts_config() is None
+        assert tts.unconfigured_reason() == tts.NO_ELEVENLABS_KEY
+        _env(monkeypatch, PROVIDER="kokoro")
+        assert tts.tts_config() is None
+        assert tts.unconfigured_reason() == tts.UNKNOWN_PROVIDER
+
+    def test_speed_and_format_keys(self, monkeypatch):
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", TOKEN)
+        _env(monkeypatch, SPEED="1.1", FORMAT="wav", MODEL="kokoro", VOICE_FR="x")
+        config = tts.tts_config()
+        # The speed is the user's; the portal owns model, voices and format.
+        assert config.speed == 1.1
+        assert (config.format, config.model, config.voice_fr) == (
+            "mp3",
+            "",
+            "Merlin Cloud",
+        )
+
+
+class TestMerlinCloudRequest:
+    def test_url_auth_and_body(self):
+        rec = Recorder()
+        audio = _say("Bonjour.", "fr", _cloud(speed=1.1), rec)
+        assert audio == b"ID3audio"
+        [request] = rec.requests
+        assert str(request.url) == "http://127.0.0.1:9/api/tts"
+        assert request.headers["authorization"] == f"Bearer {TOKEN}"
+        assert "xi-api-key" not in request.headers
+        # No voice and no model: the portal chooses them.
+        assert json.loads(request.content) == {
+            "text": "Bonjour.",
+            "lang": "fr",
+            "speed": 1.1,
+        }
+
+    @pytest.mark.parametrize(
+        "status, public",
+        [
+            (402, "Voice needs a Merlin Cloud subscription"),
+            (503, "Voice is unavailable on Merlin Cloud right now"),
+            (502, "The voice service refused the request (502)"),
+            (401, "The voice service refused the request (401)"),
+            (413, "The voice service refused the request (413)"),
+        ],
+    )
+    def test_refusals(self, status, public):
+        body = {"detail": f"portal said something with {TOKEN}"}
+        with pytest.raises(tts.TtsRefused) as exc:
+            _say("Hi.", "en", _cloud(), Recorder(status=status, json_body=body))
+        assert exc.value.public == public
+        assert TOKEN not in str(exc.value) and "127.0.0.1:9" not in str(exc.value)
+
+    def test_unreachable_and_timeout_as_for_any_provider(self):
+        def down(request):
+            raise httpx.ConnectError("refused", request=request)
+
+        def slow(request):
+            raise httpx.ReadTimeout("slow", request=request)
+
+        with pytest.raises(tts.TtsUnreachable, match="unreachable"):
+            _say("Hi.", "en", _cloud(), down)
+        with pytest.raises(tts.TtsUnreachable, match="timed out"):
+            _say("Hi.", "en", _cloud(), slow)
+
+    def test_served_as_mpeg(self):
+        voice = session.VoiceSession("s:@1", "en", config=_cloud(), provider="claude")
+        assert voice._content_type() == "audio/mpeg"
+
+
+class TestMerlinCloudStatus:
+    def test_available_with_the_service_name_and_no_secret(self, monkeypatch):
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", TOKEN)
+        monkeypatch.setenv("MERLIN_SAAS_API", "http://10.9.8.7:3000")
+        app = FastAPI()
+        app.include_router(routes.api_router, prefix="/api/voice")
+        r = TestClient(app).get("/api/voice/status")
+        assert r.json() == {
+            "available": True,
+            "reason": None,
+            "voices": {"en": "Merlin Cloud", "fr": "Merlin Cloud"},
+        }
+        assert TOKEN not in r.text and "10.9.8.7" not in r.text

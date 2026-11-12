@@ -1830,6 +1830,21 @@ class TestWarmUp:
         assert "error" not in pages.states()
         assert any("warm-up" in r.getMessage() for r in caplog.records)
 
+    def test_merlin_cloud_warms_up_too(self, tmux, window, fast, synth, monkeypatch):
+        target, _, _ = window
+        pages = Pages()
+        monkeypatch.setenv("MERLIN_SAAS_TOKEN", "mrl_token")
+        monkeypatch.setenv("MERLIN_SAAS_API", "http://127.0.0.1:9")
+
+        async def go():
+            running = await session.start_session(target, "fr", broadcast=pages)
+            assert running.config.provider == "cloud"
+            await self._settled(running)
+            await session.stop_session(target)
+
+        asyncio.run(go())
+        assert synth.calls == [("D'accord.", "fr")]
+
     def test_no_warm_up_for_an_openai_compatible_server(
         self, tmux, window, tts_server, fast, synth, monkeypatch
     ):
