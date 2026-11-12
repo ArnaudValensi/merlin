@@ -389,8 +389,27 @@ long output stay in the terminal: the voice says so instead of reading them.
 
 Voice mode needs three things, and the button, dimmed, says which is missing:
 
-1. **A text-to-speech server** that speaks the OpenAI `audio/speech` API. Point
-   Merlin at its API root:
+1. **A voice**: ElevenLabs with your own key, or any text-to-speech server
+   that speaks the OpenAI `audio/speech` API.
+
+   **ElevenLabs.** Put in your key (`-` reads it from stdin, so it stays out
+   of your shell history) and choose the provider:
+
+   ```bash
+   merlin config tts-api-key -
+   merlin config tts-provider elevenlabs
+   ```
+
+   Merlin uses the Flash v2.5 model, Lucie for French and Sarah for English.
+   Lucie is a library voice, which needs a paid ElevenLabs plan (Starter is
+   enough); on the free plan, set your own French voice with
+   `MERLIN_TTS_VOICE_FR`. Optional keys in `~/.merlin/config.env`:
+   `MERLIN_TTS_VOICE_EN`, `MERLIN_TTS_VOICE_FR` (ElevenLabs voice ids),
+   `MERLIN_TTS_VOICE_<LANG>` for another language (`MERLIN_TTS_VOICE_DE`),
+   `MERLIN_TTS_SPEED` (default `1.0`, kept between 0.7 and 1.2),
+   `MERLIN_TTS_MODEL`.
+
+   **An OpenAI-compatible server.** Point Merlin at its API root:
 
    ```bash
    merlin config tts-url http://127.0.0.1:8880/v1
@@ -407,8 +426,10 @@ Voice mode needs three things, and the button, dimmed, says which is missing:
    Run `--help` for the options (port, models directory, offline, API key).
    Optional keys in `~/.merlin/config.env`: `MERLIN_TTS_API_KEY`,
    `MERLIN_TTS_VOICE_EN` (default `af_heart`), `MERLIN_TTS_VOICE_FR` (default
-   `ff_siwis`), `MERLIN_TTS_SPEED` (default `1.05`), `MERLIN_TTS_MODEL`,
-   `MERLIN_TTS_FORMAT`.
+   `ff_siwis`), `MERLIN_TTS_VOICE_<LANG>`, `MERLIN_TTS_SPEED` (default
+   `1.05`), `MERLIN_TTS_MODEL`, `MERLIN_TTS_FORMAT`.
+
+   Restart Merlin after changing any of these (`merlin restart`).
 2. **Transcription**, the same backend as dictation (above).
 3. **Claude Code in the window, with Merlin's agent hooks** (the ones behind the
    [agent-state pills](#agent-state-pills)). Voice mode adds one hook that tells

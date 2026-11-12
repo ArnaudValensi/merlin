@@ -610,6 +610,12 @@ Settable keys:
   tts-url             Voice mode text-to-speech server, the root of an
                       OpenAI-compatible API (POST <url>/audio/speech);
                       an empty value turns voice mode off
+  tts-provider        Voice mode provider: openai (an OpenAI-compatible
+                      server at tts-url, the default) or elevenlabs (your
+                      own ElevenLabs key); an empty value clears it
+  tts-api-key         The voice provider's key (never printed back); "-"
+                      reads it from stdin, out of the shell history;
+                      an empty value removes it
 
 Examples:
   merlin config notes-dir                        # Print notes directory
@@ -619,6 +625,8 @@ Examples:
   merlin config agent-state-hooks auto           # Always install the pill hook
   merlin config agent-state-hooks off            # Remove it and stop asking
   merlin config tts-url http://127.0.0.1:8880/v1  # Voice mode via a local Kokoro
+  merlin config tts-provider elevenlabs          # Voice mode via ElevenLabs,
+  merlin config tts-api-key <key>                #   with your own key
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -665,13 +673,15 @@ def _get_config_values() -> dict[str, str]:
         "extensions-dir": str(paths.extensions_dir()),
         "agent-state-hooks": skills.agent_state_hooks_mode(),
         "tts-url": os.environ.get("MERLIN_TTS_URL", ""),
+        "tts-provider": os.environ.get("MERLIN_TTS_PROVIDER", ""),
+        "tts-api-key": "(set)" if os.environ.get("MERLIN_TTS_API_KEY") else "",
         "version": get_version(),
     }
 
 
 # Config keys the CLI can write (everything else in _get_config_values is a
 # resolved path / read-only info).
-_SETTABLE_CONFIG_KEYS = ("agent-state-hooks", "tts-url")
+_SETTABLE_CONFIG_KEYS = ("agent-state-hooks", "tts-url", "tts-provider", "tts-api-key")
 
 
 def run_agent() -> None:
@@ -774,6 +784,30 @@ def _set_config(key: str | None, value: str) -> None:
             sys.exit(1)
         skills._config_env_write(tts.URL_KEY, url)
         print(f"tts-url = {url or '(off)'}")
+        print("Restart Merlin to apply it (merlin restart).")
+    elif key == "tts-provider":
+        from voice import tts
+
+        try:
+            provider = tts.validate_provider(value)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        skills._config_env_write(tts.PROVIDER_KEY, provider)
+        print(f"tts-provider = {provider or '(default: openai)'}")
+        print("Restart Merlin to apply it (merlin restart).")
+    elif key == "tts-api-key":
+        from voice import tts
+
+        if value == "-":
+            value = sys.stdin.readline()
+        try:
+            api_key = tts.validate_api_key(value)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        skills._config_env_write(tts.API_KEY_KEY, api_key)
+        print(f"tts-api-key = {'(set)' if api_key else '(off)'}")
         print("Restart Merlin to apply it (merlin restart).")
 
 

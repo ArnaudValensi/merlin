@@ -24,7 +24,7 @@ POST /api/voice/say {target, text, id} ──→  send-keys the message, Enter (
   ←── \x00{voice: heard}                     user line   → caption
   ←── \x00{voice: activity}                  tool_use    → activity label
                                              text block  → speakable → Chunker
-                                               → POST {base}/audio/speech ──→  OpenAI-compatible
+                                               → tts.synthesize() ─────────→  the provider
   ←── \x00{voice: say id, text}  ←──────────── in-memory audio store  ←──────  audio bytes
 GET /api/voice/audio/{id} → WebAudio, in order, analyser drives the scope
   ←── \x00{voice: turn_end}                 turn_duration line / state left busy
@@ -36,7 +36,7 @@ modules (`mount_module(voice, "voice")` in `main.py`, API under `/api/voice`):
 
 | File | Role |
 |---|---|
-| `voice/tts.py` | The TTS client: config, `synthesize()`, typed errors |
+| `voice/tts.py` | The TTS client: provider selection, config, `synthesize()`, typed errors |
 | `voice/speech.py` | `speakable()` and `Chunker`: markdown to spoken text, sentence-sized pieces |
 | `voice/transcript.py` | The transcript reader (the Codex seam) and `find_transcript()` |
 | `voice/session.py` | `VoiceSession` per window, the audio store, start refusals, the registry |
@@ -49,33 +49,99 @@ modules (`mount_module(voice, "voice")` in `main.py`, API under `/api/voice`):
 
 ## The TTS seam
 
-Merlin speaks one API and nothing else: OpenAI's `POST {base}/audio/speech`,
-JSON `{"model", "input", "voice", "response_format", "speed"}` in, audio bytes
-out. Any server that speaks it works: the reference Kokoro server, another
-local engine behind a compatible shim, or a cloud provider. There is no
-provider-specific code in Merlin, no browser `speechSynthesis`, and no other
-fallback. The URL and key never reach the page: `/api/voice/status` and
-`/api/voice/check` say only whether voice mode is available and why not, and
-the page fetches audio from Merlin by clip id.
+`synthesize(text, lang)` is the one way Merlin speaks. Behind it sit providers,
+each a small pair of functions in `voice/tts.py`: one turns a text into a
+request, one turns a refusal into a fixed sentence. There is no browser
+`speechSynthesis` and no fallback from one provider to another. The URL and
+the key never reach the page: `/api/voice/status` and `/api/voice/check` say
+only whether voice mode is available and why not, and the page fetches audio
+from Merlin by clip id.
 
-Config keys, read from the environment and `~/.merlin/config.env`
-(`tts_config()`):
+### The providers
 
-| Key | Default | Meaning |
+- **OpenAI-compatible** (`openai`): `POST {MERLIN_TTS_URL}/audio/speech`, JSON
+  `{"model", "input", "voice", "response_format", "speed"}`, the key (if any) as
+  `Authorization: Bearer`. Any server that speaks it works: the reference Kokoro
+  server, another local engine behind a compatible shim, a cloud provider.
+- **ElevenLabs** (`elevenlabs`), with the user's own key:
+  `POST {url}/text-to-speech/{voice_id}?output_format=mp3_44100_128`, header
+  `xi-api-key`, JSON `{"text", "model_id", "language_code", "voice_settings":
+  {"speed"}}`. The voice id is percent-encoded into the path; the speed is
+  clamped to ElevenLabs' range, 0.7 to 1.2. The non-streaming endpoint: Merlin
+  plays whole clips.
+
+### Which one runs
+
+`tts_config()` picks, explicit configuration first:
+
+1. `MERLIN_TTS_PROVIDER=elevenlabs` with a non-empty `MERLIN_TTS_API_KEY`:
+   ElevenLabs. `MERLIN_TTS_URL` is optional and defaults to
+   `https://api.elevenlabs.io/v1`.
+2. `MERLIN_TTS_URL` set, provider `openai` or unset: OpenAI-compatible. An
+   existing `MERLIN_TTS_URL` setup needs no new key.
+3. Otherwise none. `elevenlabs` without a key, or a provider Merlin does not
+   know, is a configuration error, not a fallback: `unconfigured_reason()`
+   gives the sentence start refuses with (the key is missing, the provider is
+   unknown, or how to configure one).
+
+`merlin config tts-provider <openai|elevenlabs|>` and `merlin config
+tts-api-key <key|->` set the two new keys (validated, one line each; the key is
+never printed back, `merlin config` shows it as `(set)`, and `-` reads it from
+stdin).
+
+### Defaults per provider
+
+| Key | OpenAI-compatible | ElevenLabs |
 |---|---|---|
-| `MERLIN_TTS_URL` | (off) | API root, for example `http://127.0.0.1:8880/v1`. `merlin config tts-url <url>` sets it (validated, no whitespace or control characters) |
-| `MERLIN_TTS_API_KEY` | none | Sent as `Authorization: Bearer` |
-| `MERLIN_TTS_MODEL` | `kokoro` | The `model` field |
-| `MERLIN_TTS_VOICE_EN` | `af_heart` | Voice for English |
-| `MERLIN_TTS_VOICE_FR` | `ff_siwis` | Voice for French |
-| `MERLIN_TTS_SPEED` | `1.05` | The `speed` field |
-| `MERLIN_TTS_FORMAT` | `wav` | `response_format`; start refuses one the browser cannot decode (`pcm`) |
+| `MERLIN_TTS_URL` | (required) | `https://api.elevenlabs.io/v1` |
+| `MERLIN_TTS_API_KEY` | none | (required) |
+| `MERLIN_TTS_MODEL` | `kokoro` | `eleven_flash_v2_5` |
+| `MERLIN_TTS_VOICE_EN` | `af_heart` | Sarah, `EXAVITQu4vr4xnSDxMaL` (a default voice) |
+| `MERLIN_TTS_VOICE_FR` | `ff_siwis` | Lucie, `YxrwjAKoUKULGd0g8K9Y` (a library voice: a paid plan) |
+| `MERLIN_TTS_SPEED` | `1.05` | `1.0` (sent clamped to 0.7 to 1.2) |
+| `MERLIN_TTS_FORMAT` | `wav`; start refuses one the browser cannot decode (`pcm`) | not read: always mp3 |
 
-`synthesize(text, lang)` is async (httpx) with an overall 30 s deadline on top
-of the per-operation timeouts. It raises `TtsNotConfigured`, `TtsUnreachable`
+Every key is read from the environment and `~/.merlin/config.env` at start.
+`TtsConfig.format` is the effective format, so the content type of a clip
+(`PLAYABLE_FORMATS`, `audio/mpeg` for mp3) follows the provider.
+
+### A voice per language
+
+`voice_for(lang)` takes `MERLIN_TTS_VOICE_<LANG>` (upper-case ISO 639-1 code,
+`MERLIN_TTS_VOICE_DE`) for any language, then the provider's default for it,
+then the English voice. Only keys of exactly two letters are read, and a
+language that is not two letters gets the English voice. The console's
+languages are still `en` and `fr` (`LANGS` in `routes.py`).
+`capability()["voices"]` shows the voice for each: a voice Merlin knows by its
+name (Lucie, Sarah), any other by its id.
+
+### Errors
+
+`synthesize()` is async (httpx) with an overall 30 s deadline on top of the
+per-operation timeouts. It raises `TtsNotConfigured`, `TtsUnreachable`
 (connection refused, timed out) or `TtsRefused` (an HTTP error, an empty body).
 Each carries `public`, a fixed browser-safe sentence for the console; the
-detail goes to the log with the URL and key redacted.
+detail (what the service said, OpenAI's `error.message` or ElevenLabs'
+`detail.status` and `message`) goes to the log with the URL and key redacted.
+
+| Provider | Answer | Public sentence |
+|---|---|---|
+| OpenAI-compatible | 401, 403 | The voice server refused the key (`<status>`) |
+| OpenAI-compatible | other | The voice server refused the request (`<status>`) |
+| ElevenLabs | 402, or `quota_exceeded` / `paid_plan_required` in the detail (ElevenLabs sends these with a 401 too) | The voice service plan does not allow this (quota or paid voice) |
+| ElevenLabs | 401, 403 | The voice service refused the key |
+| ElevenLabs | other | The voice service refused the request (`<status>`) |
+
+### Warm-up
+
+An ElevenLabs library voice that has not been used for a while answers its
+first request in 8 to 10 s (measured on 2026-11-12); a default voice does not.
+So when a session starts, and when its language changes, the session sends one
+short synthesis in that language ("OK.", "D'accord.") and throws the audio
+away (`_start_warm_up()`). It runs in the background: start never waits for
+it, a failure is only logged, stop cancels it. It runs for ElevenLabs and not
+for an OpenAI-compatible server (`WARM_UP_PROVIDERS`), which has no cold cloud
+voice to wake.
 
 ## Speech text
 
@@ -503,7 +569,8 @@ Ti: ready in about 2 s with the files present, a sentence synthesized in about
 ## Testing
 
 - Unit: `tests/unit/test_voice_*.py` (client against a fake server and the
-  reference server's HTTP layer, the server's download and preflight,
+  reference server's HTTP layer, provider selection and the ElevenLabs request
+  and refusals through an injected `httpx.MockTransport`, the warm-up, the server's download and preflight,
   `speakable`/`Chunker`, the reader on real transcript lines, the hooks against
   a private tmux server, the session lifecycle and bounds, the console server
   side), `tests/js/voice-core.test.js` (the console model).

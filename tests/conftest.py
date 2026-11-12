@@ -76,6 +76,14 @@ def _isolated_merlin_home(monkeypatch, tmp_path):
     monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
     monkeypatch.delenv("MERLIN_DEV", raising=False)
     monkeypatch.setenv("MERLIN_FEATURES", "timeline")
+    # The voice provider follows these (voice/tts.py): an ambient one, from a
+    # shell that sourced config.env, would pick a provider a test did not set.
+    for key in list(os.environ):
+        if key.startswith("MERLIN_TTS_") or key in (
+            "MERLIN_SAAS_TOKEN",
+            "MERLIN_SAAS_API",
+        ):
+            monkeypatch.delenv(key)
     paths._dev_mode_override = None
     yield
     paths._dev_mode_override = None

@@ -92,6 +92,15 @@ ASK_SENTENCE = {
     "fr": "L'agent a besoin de ta réponse.",
 }
 
+# Said once and thrown away when a session starts or changes language, so a
+# cloud voice that went cold (a library voice takes seconds on its first
+# request) is warm by the first answer.
+WARM_UP_SENTENCE = {
+    "en": "OK.",
+    "fr": "D'accord.",
+}
+WARM_UP_PROVIDERS = frozenset({tts.ELEVENLABS})
+
 REST_IN_TERMINAL = {
     "en": "The rest is in the terminal.",
     "fr": "La suite est dans le terminal.",
@@ -353,6 +362,7 @@ class VoiceSession:
         # The in-flight @voice write: a cancelled start must let it land
         # before clearing it, or the clear could run first.
         self._marking: asyncio.Future | None = None
+        self._warm_up: asyncio.Task | None = None
         self._stopped = False
         self._messages: OrderedDict[str, Message] = OrderedDict()
 
@@ -385,6 +395,7 @@ class VoiceSession:
                 asyncio.create_task(self._watch(), name=f"voice-watch {self.target}"),
                 asyncio.create_task(self._speak(), name=f"voice-speak {self.target}"),
             ]
+            self._start_warm_up()
             await self._set_state("listening")
         except BaseException:
             await asyncio.shield(self._teardown())
@@ -394,10 +405,11 @@ class VoiceSession:
         """Cancel the tasks, clear the mark, drop the audio. Idempotent."""
         self._stopped = True
         current = asyncio.current_task()
-        for task in self._tasks:
+        tasks = [*self._tasks, *([self._warm_up] if self._warm_up else [])]
+        for task in tasks:
             if task is not current:
                 task.cancel()
-        for task in self._tasks:
+        for task in tasks:
             if task is not current:
                 try:
                     await task
@@ -527,7 +539,42 @@ class VoiceSession:
             await self._set_state("thinking")
 
     def set_lang(self, lang: str) -> None:
+        changed = lang != self.lang
         self.lang = lang
+        if changed and not self._stopped:
+            self._start_warm_up()
+
+    # -- warm-up --------------------------------------------------------------
+
+    def _start_warm_up(self) -> None:
+        """Warm the voice for the session's language in the background: never
+        awaited by start, and a failure is only logged. Only for the cloud
+        providers (a local server has no cold voice to wake)."""
+        if self.config.provider not in WARM_UP_PROVIDERS:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if self._warm_up is not None:
+            self._warm_up.cancel()
+        self._warm_up = asyncio.create_task(
+            self._run_warm_up(self.lang), name=f"voice-warm-up {self.target}"
+        )
+
+    async def _run_warm_up(self, lang: str) -> None:
+        sentence = WARM_UP_SENTENCE.get(lang, WARM_UP_SENTENCE["en"])
+        started = time.monotonic()
+        try:
+            await tts.synthesize(sentence, lang, config=self.config)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("voice warm-up (%s) failed: %s", lang, e)
+            return
+        logger.info(
+            "voice warm-up (%s) took %.0f ms", lang, (time.monotonic() - started) * 1000
+        )
 
     async def set_view(self, view: str) -> bool:
         """Say what the console shows now: the agent's next prompt follows."""
@@ -918,7 +965,7 @@ async def preflight(target: str) -> tuple[tts.TtsConfig, str]:
         raise StartRefused("Not a terminal window")
     config = tts.tts_config()
     if config is None:
-        raise StartRefused("No voice server configured (merlin config tts-url <url>)")
+        raise StartRefused(tts.unconfigured_reason())
     if config.format not in PLAYABLE_FORMATS:
         raise StartRefused(
             f"The voice format {config.format!r} cannot be played by the browser"

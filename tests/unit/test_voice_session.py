@@ -1718,6 +1718,136 @@ class TestLifecycle:
             assert s.stopped and all(t.done() for t in s._tasks)
 
 
+class WarmUpSynth:
+    """Replaces tts.synthesize: records each call, can hold or fail them."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, str]] = []
+        self.release = asyncio.Event()
+        self.hold = False
+        self.fail = False
+        self.cancelled = 0
+
+    async def __call__(self, text, lang, *, config=None, client=None, deadline=None):
+        from voice import tts
+
+        self.calls.append((text, lang))
+        if self.hold:
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                self.cancelled += 1
+                raise
+        if self.fail:
+            raise tts.TtsRefused(
+                "refused (401: bad key)", "The voice service refused the key"
+            )
+        return b"ID3"
+
+
+class TestWarmUp:
+    """A.9: one short synthesis at start and on a language change, in the
+    background, for the cloud providers only."""
+
+    @pytest.fixture
+    def synth(self, monkeypatch):
+        fake = WarmUpSynth()
+        monkeypatch.setattr(session.tts, "synthesize", fake)
+        return fake
+
+    @pytest.fixture
+    def eleven(self, monkeypatch):
+        monkeypatch.setenv("MERLIN_TTS_PROVIDER", "elevenlabs")
+        monkeypatch.setenv("MERLIN_TTS_API_KEY", "sk_el")
+
+    async def _settled(self, running):
+        if running._warm_up is not None:
+            await asyncio.wait([running._warm_up], timeout=5)
+
+    def test_start_warms_the_voice_without_waiting_for_it(
+        self, tmux, window, fast, eleven, synth
+    ):
+        target, _, _ = window
+        pages = Pages()
+        synth.hold = True
+
+        async def go():
+            # The warm-up is held: start returns all the same.
+            running = await asyncio.wait_for(
+                session.start_session(target, "fr", broadcast=pages), 5
+            )
+            assert running.state == "listening"
+            await asyncio.sleep(0)
+            assert synth.calls == [("D'accord.", "fr")]
+            assert not running._warm_up.done()
+            # Stopping cancels a warm-up still running.
+            await session.stop_session(target)
+            assert running._warm_up.done() and synth.cancelled == 1
+
+        asyncio.run(go())
+        # Never spoken to the page.
+        assert not pages.events("say")
+
+    def test_a_language_change_warms_the_new_voice(
+        self, tmux, window, fast, eleven, synth
+    ):
+        target, _, _ = window
+        pages = Pages()
+
+        async def go():
+            running = await session.start_session(target, "en", broadcast=pages)
+            await self._settled(running)
+            running.set_lang("en")  # unchanged: nothing to warm
+            await self._settled(running)
+            running.set_lang("fr")
+            await self._settled(running)
+            # A page opening on the running session in another language.
+            await session.start_session(target, "en", broadcast=pages)
+            await self._settled(running)
+            await session.stop_session(target)
+
+        asyncio.run(go())
+        assert synth.calls == [("OK.", "en"), ("D'accord.", "fr"), ("OK.", "en")]
+
+    def test_a_failing_warm_up_is_only_logged(
+        self, tmux, window, fast, eleven, synth, caplog
+    ):
+        target, _, _ = window
+        pages = Pages()
+        synth.fail = True
+
+        async def go():
+            running = await session.start_session(target, "en", broadcast=pages)
+            await self._settled(running)
+            assert running.state == "listening" and not running.stopped
+            assert session.get(target) is running
+            await session.stop_session(target)
+
+        with caplog.at_level("WARNING", logger="merlin.voice"):
+            asyncio.run(go())
+        assert synth.calls == [("OK.", "en")]
+        assert not pages.events("error")
+        assert "error" not in pages.states()
+        assert any("warm-up" in r.getMessage() for r in caplog.records)
+
+    def test_no_warm_up_for_an_openai_compatible_server(
+        self, tmux, window, tts_server, fast, synth, monkeypatch
+    ):
+        target, _, _ = window
+        pages = Pages()
+        monkeypatch.setenv("MERLIN_TTS_FORMAT", "wav")
+
+        async def go():
+            running = await session.start_session(target, "en", broadcast=pages)
+            running.set_lang("fr")
+            await asyncio.sleep(0.05)
+            assert running._warm_up is None
+            await session.stop_session(target)
+
+        asyncio.run(go())
+        assert synth.calls == []
+
+
 class TestBrowserSafeErrors:
     def test_upstream_details_never_reach_the_pages(
         self, tmux, window, fast, monkeypatch

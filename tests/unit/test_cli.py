@@ -816,3 +816,79 @@ class TestTtsUrlConfig:
             run_config("tts-url", f"http://localhost:8880/v1{sep}UNRELATED_KEY=changed")
         assert exc_info.value.code == 1
         assert (home / "config.env").read_bytes() == before
+
+
+class TestTtsProviderConfig:
+    """`merlin config tts-provider` and `tts-api-key`."""
+
+    @pytest.fixture
+    def home(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MERLIN_HOME", str(tmp_path))
+        (tmp_path / "config.env").write_text("DASHBOARD_PASS=keep-me\n")
+        return tmp_path
+
+    def test_sets_the_provider(self, home, capsys):
+        run_config("tts-provider", " ElevenLabs ")
+        assert "tts-provider = elevenlabs" in capsys.readouterr().out
+        assert (home / "config.env").read_text() == (
+            "DASHBOARD_PASS=keep-me\nMERLIN_TTS_PROVIDER=elevenlabs\n"
+        )
+
+    def test_empty_clears_the_provider(self, home, capsys):
+        run_config("tts-provider", "elevenlabs")
+        run_config("tts-provider", "")
+        assert "MERLIN_TTS_PROVIDER=\n" in (home / "config.env").read_text()
+        assert "(default: openai)" in capsys.readouterr().out
+
+    def test_rejects_an_unknown_provider(self, home, capsys):
+        before = (home / "config.env").read_bytes()
+        with pytest.raises(SystemExit) as exc_info:
+            run_config("tts-provider", "kokoro")
+        assert exc_info.value.code == 1
+        assert "openai or elevenlabs" in capsys.readouterr().err
+        assert (home / "config.env").read_bytes() == before
+
+    def test_sets_the_key_without_printing_it(self, home, capsys):
+        run_config("tts-api-key", "sk_SECRET_123")
+        out = capsys.readouterr().out
+        assert "tts-api-key = (set)" in out and "sk_SECRET_123" not in out
+        assert "MERLIN_TTS_API_KEY=sk_SECRET_123\n" in (
+            (home / "config.env").read_text()
+        )
+        assert (home / "config.env").stat().st_mode & 0o777 == 0o600
+
+    def test_reads_the_key_from_stdin(self, home, capsys, monkeypatch):
+        import io
+
+        monkeypatch.setattr("sys.stdin", io.StringIO("sk_FROM_STDIN\n"))
+        run_config("tts-api-key", "-")
+        assert "sk_FROM_STDIN" not in capsys.readouterr().out
+        assert "MERLIN_TTS_API_KEY=sk_FROM_STDIN\n" in (
+            (home / "config.env").read_text()
+        )
+
+    def test_rejects_a_key_on_two_lines_without_echoing_it(self, home, capsys):
+        before = (home / "config.env").read_bytes()
+        with pytest.raises(SystemExit):
+            run_config("tts-api-key", "sk_SECRET\nUNRELATED_KEY=changed")
+        captured = capsys.readouterr()
+        assert "sk_SECRET" not in captured.err + captured.out
+        assert (home / "config.env").read_bytes() == before
+
+    def test_the_listing_shows_the_provider_and_hides_the_key(
+        self, home, capsys, monkeypatch
+    ):
+        run_config("tts-provider", "elevenlabs")
+        run_config("tts-api-key", "sk_SECRET_123")
+        capsys.readouterr()
+        run_config(None)
+        listing = capsys.readouterr().out
+        assert "sk_SECRET_123" not in listing
+        rows = {
+            parts[0]: parts[1] if len(parts) > 1 else ""
+            for parts in (line.split(None, 1) for line in listing.splitlines())
+        }
+        assert rows["tts-provider"] == "elevenlabs"
+        assert rows["tts-api-key"] == "(set)"
+        run_config("tts-api-key")
+        assert capsys.readouterr().out.strip() == "(set)"

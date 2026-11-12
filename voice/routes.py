@@ -32,15 +32,8 @@ def capability() -> dict:
     """Whether voice mode can run at all, and why not when it cannot."""
     config = tts.tts_config()
     if config is None:
-        return {
-            "available": False,
-            "reason": "No voice server configured (merlin config tts-url <url>)",
-        }
-    return {
-        "available": True,
-        "reason": None,
-        "voices": {"en": config.voice_en, "fr": config.voice_fr},
-    }
+        return {"available": False, "reason": tts.unconfigured_reason()}
+    return {"available": True, "reason": None, "voices": tts.voice_names(config)}
 
 
 class Target(BaseModel):
