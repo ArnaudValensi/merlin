@@ -4,6 +4,15 @@ All notable user-facing changes to Merlin are documented in this file.
 
 ## Unreleased
 
+## v0.43.0 (2026-11-15)
+
+### Added
+- **Voice mode**: Talk with the Claude Code agent in a terminal window, hands free. Merlin transcribes what you say, sends it when you say the end word ("over", "terminé") or tap, and reads the agent's answer aloud, in English or French.
+- **ElevenLabs voices and a Merlin Cloud voice**: Voice mode can speak through ElevenLabs with your own key (`merlin config tts-provider elevenlabs`, `merlin config tts-api-key -`), with natural English and French voices by default. On Merlin Cloud it works with nothing to set up. An OpenAI-compatible server such as Kokoro still works as before.
+- **Mute the microphone in voice mode**: A mic button stops listening while the console stays open, for when someone else talks nearby, until you tap it again.
+- **A native terminal**: The terminal page now shows real text from tmux instead of a drawn canvas, with native selection and scrolling, its own input field and key toolbar, and file and web links that open. It is the default; the classic terminal stays in the settings as Legacy for now.
+- **Get your workspace back after a reboot or a power cut**: Merlin now keeps a snapshot of your tmux sessions, saved every 15 seconds when something changed. After the machine restarts, the first page you open offers to restore them: every session and window comes back with its layout and directories, and every Claude Code and Codex conversation resumes where it was, with its launch options. Other programs come back as a shell in their directory; Merlin never reruns them.
+
 ### Changed
 - **Voice mode next to your terminal**: On a computer, voice mode opens as a bar over the status bar: the terminal stays in view and usable, and the agent writes as usual while its prose is read aloud. **Show terminal** and **Full screen** switch at any time, on a phone too, and Merlin remembers your choice.
 - **Voice mode speaks plainly and calmly**: The console names your window and says what it is doing (Listening, Working, Speaking) instead of the radio codes, call sign and made-up frequency. Colour now only says whose turn it is, without the filled blocks. The bar keeps its height while you talk, so your terminal stays still; only an error makes room, to show in full.
@@ -14,6 +23,7 @@ All notable user-facing changes to Merlin are documented in this file.
 - **The event log is now `logs/events.jsonl`**: Startup moves the old `logs/engine-log.jsonl` there and removes the logs nothing reads any more (`logs/raw-sessions/`, `logs/claude/`, `logs/cron_runner.log`, `sessions/`).
 - **A job's window waits for you**: A run that succeeded keeps its window until the job runs again or for a day, so a night's run is still there in the morning. A window you step into is yours: Merlin never closes it, and it comes back after a reboot in the `merlin-jobs-kept` session. A job can keep all its windows with **Keep each run's window until I close it** (`--keep-window`).
 - **A Codex job in a directory Codex does not trust fails at once**: Codex runs no hook there, so the run used to wait for its deadline. The run log now says how to fix it.
+- **Voice Send answers at once**: A tap on Send is acknowledged straight away even on a weak network, and what you said is kept and sent once the connection comes back, never twice.
 
 ### Removed
 - **The Discord bot and `merlin chat`**: Its page, the discord skill and the job Discord fields are gone. Old settings are dropped from `config.env` when Merlin next rewrites it.
@@ -24,11 +34,6 @@ All notable user-facing changes to Merlin are documented in this file.
 - **Passwords and tokens no longer reach your terminals**: A tmux server started by Merlin inherited its dashboard password and Merlin Cloud token, and handed them to every shell, agent and job. New windows no longer get them, and Merlin cleans a running server at startup. A shell already open keeps its copy until you close it.
 - **`merlin restart` applies `config.env`**: Restarted from a tmux window, Merlin used to read that window's old copy of a setting instead of the file. A changed `MERLIN_FEATURES` could be ignored, and the Timeline lose its hooks.
 - **A finished command window stays silent until you ask for a shell**: It waits for Enter before starting one, because that shell's slow first prompt used to read as someone stepping in.
-
-### Added
-- **Get your workspace back after a reboot or a power cut**: Merlin now keeps a snapshot of your tmux sessions, saved every 15 seconds when something changed. After the machine restarts, the first page you open offers to restore them: every session and window comes back with its layout and directories, and every Claude Code and Codex conversation resumes where it was, with its launch options. Other programs come back as a shell in their directory; Merlin never reruns them.
-
-### Fixed
 - **Test suite no longer picks up your feature flags**: An exported `MERLIN_FEATURES` no longer makes the app-flag tests fail.
 
 ## v0.42.0 (2026-10-05)
