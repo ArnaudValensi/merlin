@@ -14,7 +14,13 @@ from timeline import routes
 from timeline.store import ActivityStore
 
 
-NOW = datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc)
+# Two days ago at noon: inside the 90-day retention whatever today is (a fixed
+# date ages out of it and the writer's cleanup deletes the partition under test).
+NOW = (datetime.now(timezone.utc) - timedelta(days=2)).replace(
+    hour=12, minute=0, second=0, microsecond=0
+)
+DAY = NOW.date().isoformat()
+NEXT_DAY = (NOW + timedelta(days=1)).date().isoformat()
 
 
 @pytest.fixture
@@ -200,7 +206,7 @@ def test_capture_health_is_returned_separately(client, monkeypatch):
         lambda _directory: {
             "dropped": 3,
             "last_error": "daily-cap",
-            "updated_at": "2026-08-15T12:00:00Z",
+            "updated_at": f"{DAY}T12:00:00Z",
         },
     )
 
@@ -277,7 +283,7 @@ def test_combined_filters_grouping_and_no_results(client):
             "since": NOW.isoformat(),
             "until": (NOW + timedelta(days=8)).isoformat(),
         },
-        {"since": "2026-08-15T12:00:00", "until": NOW.isoformat()},
+        {"since": f"{DAY}T12:00:00", "until": NOW.isoformat()},
         {"limit": 10001},
         {"limit": 0},
         {"grouping": "unknown"},

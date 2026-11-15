@@ -21,7 +21,13 @@ from timeline.store import ActivityStore, ActivityStoreError
 from timeline.writer import WriterError, append_record, read_capture_health
 
 
-NOW = datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc)
+# Two days ago at noon: inside the 90-day retention whatever today is (a fixed
+# date ages out of it and the writer's cleanup deletes the partition under test).
+NOW = (datetime.now(timezone.utc) - timedelta(days=2)).replace(
+    hour=12, minute=0, second=0, microsecond=0
+)
+DAY = NOW.date().isoformat()
+NEXT_DAY = (NOW + timedelta(days=1)).date().isoformat()
 
 
 def event(
@@ -120,7 +126,7 @@ def test_dependency_free_and_pydantic_protocol_reject_scalar_attributes():
     "changes",
     [
         {"event_id": "not-a-uuid"},
-        {"timestamp": "2026-08-15T12:00:00"},
+        {"timestamp": f"{DAY}T12:00:00"},
         {"kind": "Not Dotted"},
         {"phase": "start", "span_id": None, "status": "running"},
         {"phase": "point", "span_id": "unexpected"},
@@ -153,7 +159,7 @@ def test_append_is_idempotent_and_enforces_private_permissions(tmp_path):
     assert len(first.path.read_text().splitlines()) == 1
     assert (store.directory.stat().st_mode & 0o777) == 0o700
     assert (first.path.stat().st_mode & 0o777) == 0o600
-    index_root = store.directory / ".event-ids" / "2026-08-15"
+    index_root = store.directory / ".event-ids" / DAY
     assert index_root.parent.stat().st_mode & 0o777 == 0o700
     assert index_root.stat().st_mode & 0o777 == 0o700
     assert all(path.stat().st_mode & 0o777 == 0o600 for path in index_root.iterdir())
@@ -164,7 +170,7 @@ def test_event_id_index_recovers_unindexed_partition_tail(tmp_path):
     first = event()
     append_record(first, directory=directory, strict=True)
     unindexed = event()
-    path = directory / "2026-08-15.jsonl"
+    path = directory / f"{DAY}.jsonl"
     with path.open("a") as handle:
         handle.write(json.dumps(unindexed) + "\n")
 
@@ -200,7 +206,7 @@ def test_unavailable_event_id_index_drops_write_instead_of_scanning_partition(
 ):
     directory = tmp_path / "activity"
     append_record(event(), directory=directory, strict=True)
-    partition = directory / "2026-08-15.jsonl"
+    partition = directory / f"{DAY}.jsonl"
     before = partition.read_bytes()
     monkeypatch.setattr(
         writer,
@@ -220,7 +226,7 @@ def test_partition_lock_contention_fails_open_within_bounded_budget(
 ):
     directory = tmp_path / "activity"
     append_record(event(), directory=directory, strict=True)
-    partition = directory / "2026-08-15.jsonl"
+    partition = directory / f"{DAY}.jsonl"
     lock_fd = os.open(partition, os.O_RDWR)
     fcntl.flock(lock_fd, fcntl.LOCK_EX)
     monkeypatch.setattr(writer, "LOCK_TIMEOUT_SECONDS", 0.02)
@@ -243,7 +249,7 @@ def test_many_processes_append_complete_unique_lines(tmp_path):
         results = pool.map(_append_worker, [(str(directory), i) for i in range(160)])
     records = [
         json.loads(line)
-        for line in (directory / "2026-08-15.jsonl").read_text().splitlines()
+        for line in (directory / f"{DAY}.jsonl").read_text().splitlines()
     ]
     assert results == [(True, False)] * 160
     assert len(records) == 160
@@ -260,8 +266,8 @@ def test_daily_partition_boundary_and_stable_read_order(tmp_path):
     result = store.read_range(NOW - timedelta(minutes=1), NOW + timedelta(days=2))
     assert [item.name for item in result.events] == ["B", "A", "Later"]
     assert {path.name for path in store.directory.glob("*.jsonl")} == {
-        "2026-08-15.jsonl",
-        "2026-08-16.jsonl",
+        f"{DAY}.jsonl",
+        f"{NEXT_DAY}.jsonl",
     }
 
 
@@ -271,7 +277,7 @@ def test_cursor_reads_only_new_complete_records_and_recovers_truncated_tail(tmp_
     first = store.read_range(NOW - timedelta(hours=1), NOW + timedelta(hours=1))
     assert [item.name for item in first.events] == ["First"]
 
-    path = store.directory / "2026-08-15.jsonl"
+    path = store.directory / f"{DAY}.jsonl"
     with path.open("ab") as handle:
         handle.write(b'{"event_id":"truncated"')
     cut = store.read_range(
@@ -375,7 +381,7 @@ def test_span_context_index_repairs_a_replaced_partition(tmp_path):
         span_id="replacement",
         status="running",
     )
-    partition = store.directory / "2026-08-15.jsonl"
+    partition = store.directory / f"{DAY}.jsonl"
     temporary = store.directory / "replacement.jsonl"
     temporary.write_text(json.dumps(replacement) + "\n")
     os.replace(temporary, partition)
@@ -419,7 +425,7 @@ def test_span_context_index_rebuilds_an_old_schema_without_an_anomaly(tmp_path):
 def test_reader_counts_malformed_unknown_version_and_duplicate_lines(tmp_path):
     store = ActivityStore(tmp_path / "activity")
     store.directory.mkdir(parents=True)
-    path = store.directory / "2026-08-15.jsonl"
+    path = store.directory / f"{DAY}.jsonl"
     valid = event()
     future = {**event(), "schema_version": 2}
     path.write_text(
@@ -457,9 +463,11 @@ def test_finish_without_start_duplicate_finish_and_clock_skew_are_retained(tmp_p
 def test_retention_removes_only_expired_partitions_and_never_today(tmp_path):
     store = ActivityStore(tmp_path / "activity", retention_days=90)
     store.directory.mkdir(parents=True)
-    expired = store.directory / "2026-05-16.jsonl"
-    boundary = store.directory / "2026-05-17.jsonl"
-    today = store.directory / "2026-08-15.jsonl"
+    expired = store.directory / f"{(NOW - timedelta(days=91)).date().isoformat()}.jsonl"
+    boundary = (
+        store.directory / f"{(NOW - timedelta(days=90)).date().isoformat()}.jsonl"
+    )
+    today = store.directory / f"{DAY}.jsonl"
     unrelated = store.directory / "keep.txt"
     for path in (expired, boundary, today, unrelated):
         path.write_text("x")
@@ -534,11 +542,11 @@ def test_range_limit_cursor_and_invalid_inputs(tmp_path):
 def test_partition_permissions_are_repaired_on_append(tmp_path):
     store = ActivityStore(tmp_path / "activity")
     store.directory.mkdir(mode=0o755)
-    path = store.directory / "2026-08-15.jsonl"
+    path = store.directory / f"{DAY}.jsonl"
     path.write_text("")
     path.chmod(0o644)
     index_parent = store.directory / ".event-ids"
-    index_root = index_parent / "2026-08-15"
+    index_root = index_parent / DAY
     index_root.mkdir(parents=True)
     index_parent.chmod(0o755)
     index_root.chmod(0o755)
