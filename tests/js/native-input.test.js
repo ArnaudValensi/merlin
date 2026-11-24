@@ -775,6 +775,53 @@ test('the document: an Option dead key after a mouse selection is Meta, the fiel
   assert.equal(docKey('Dead', { altKey: true, code: 'KeyE', isComposing: true }).defaultPrevented, false);
 });
 
+test('the document: a key on a focused control is the control\'s, not the terminal\'s', () => {
+  const h = harness();
+  h.field.blur();
+  // The elements a key can land on: a tag and what closest() finds above it.
+  const el = (tagName, above) => ({
+    nodeType: 1, tagName, isContentEditable: false,
+    closest(sel) {
+      const names = sel.split(',').map((x) => x.trim());
+      const matches = (n) => names.some((x) => x === n.tagName.toLowerCase()
+        || (x === 'a[href]' && n.tagName === 'A' && n.href)
+        || (x === '[role="dialog"]' && n.role === 'dialog')
+        || (x === '[tabindex]' && n.tabIndex != null));
+      for (let n = this; n; n = n.parent) if (matches(n)) return n;
+      return null;
+    },
+    parent: above || null,
+  });
+  const docKey = (target, key) => {
+    const e = { key, code: '', ctrlKey: false, altKey: false, shiftKey: false, metaKey: false,
+      isComposing: false, keyCode: 0, defaultPrevented: false, target,
+      preventDefault() { this.defaultPrevented = true; } };
+    for (const f of h.docListeners.keydown || []) f(e);
+    return e;
+  };
+  // Enter on a button (the voice console's Stop, reached with Tab) activates
+  // the button; a key inside a dialog, on a link or on anything holding the
+  // focus with a tabindex is that element's too. The field is left alone.
+  const dialog = Object.assign(el('DIV'), { role: 'dialog' });
+  for (const target of [
+    el('BUTTON'),
+    el('SPAN', el('BUTTON')),
+    Object.assign(el('A'), { href: '/files' }),
+    el('SPAN', dialog),
+    Object.assign(el('DIV'), { tabIndex: -1 }),
+    el('SELECT'),
+  ]) {
+    assert.equal(docKey(target, 'Enter').defaultPrevented, false, target.tagName);
+  }
+  assert.deepEqual(h.sent, []);
+  assert.equal(globalThis.document.activeElement, null);
+  // On the page itself (a mouse selection took the focus): the terminal's.
+  const e = docKey(el('BODY'), 'Enter');
+  assert.ok(e.defaultPrevented);
+  assert.deepEqual(h.sent, [['input', '\r']]);
+  assert.equal(globalThis.document.activeElement, h.field);
+});
+
 // The edits a browser that keeps a dropped composition still delivers: a
 // composing beforeinput/input pair with the field grown, then its commit.
 function lateComposition(h, value) {

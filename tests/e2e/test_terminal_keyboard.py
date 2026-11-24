@@ -18,6 +18,8 @@ pytest.importorskip("playwright")
 
 from playwright.sync_api import sync_playwright
 
+from terminal_support import INPUT, open_terminal  # noqa: E402
+
 pytestmark = pytest.mark.skipif(
     shutil.which("tmux") is None, reason="web terminal needs tmux"
 )
@@ -62,8 +64,7 @@ def phone(server):
         )
         ctx.add_init_script(FAKE_VIEWPORT)
         page = ctx.new_page()
-        page.goto(f"{server}/terminal?terminal=classic")
-        page.wait_for_selector(".xterm-screen", timeout=30000)
+        open_terminal(page, server)
         yield page
         ctx.close()
         browser.close()
@@ -79,13 +80,13 @@ def keyboard_layout(page):
 
 
 def test_keyboard_lost_in_background_is_dropped_on_return(phone):
-    phone.evaluate("() => document.querySelector('.xterm-helper-textarea').focus()")
+    phone.evaluate(f"() => document.querySelector('{INPUT}').focus()")
     phone.evaluate("() => window.__kb.resize(500)")
     assert keyboard_layout(phone) == {"open": True, "height": "500px"}
 
     phone.evaluate("() => window.__kb.setHidden(true)")
     focused = phone.evaluate(
-        "() => document.activeElement === document.querySelector('.xterm-helper-textarea')"
+        f"() => document.activeElement === document.querySelector('{INPUT}')"
     )
     assert not focused, "the terminal kept its focus into the background"
 

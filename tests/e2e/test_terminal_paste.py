@@ -1,7 +1,7 @@
 """E2E tests for the web terminal's paste paths, in a real browser.
 
-Every paste entry point (button, Ctrl+V, right-click) converges on
-handlePaste(), which walks the ladder in terminal/templates/clipboard-core.js.
+Every paste entry point (button, Ctrl+V, right-click) converges on the page's
+paste handler, which walks the ladder in terminal/templates/clipboard-core.js.
 tests/js/clipboard-core.test.js checks that ladder in isolation; this file
 checks it is actually wired to the terminal — that a paste reaches the shell
 exactly once and that a failure reports the right thing.
@@ -32,6 +32,15 @@ pytest.importorskip("playwright")
 
 from playwright.sync_api import sync_playwright
 
+from terminal_support import (  # noqa: E402
+    TERMINAL,
+    clear_line,
+    open_terminal,
+    ready,
+    screen_text,
+    wait_native,
+)
+
 pytestmark = pytest.mark.skipif(
     shutil.which("tmux") is None, reason="web terminal needs tmux"
 )
@@ -47,9 +56,8 @@ def terminal(server):
             permissions=["clipboard-read", "clipboard-write"],
         )
         page = ctx.new_page()
-        page.goto(f"{server}/terminal?terminal=classic")
-        page.wait_for_selector(".xterm-screen", timeout=30000)
-        page.wait_for_timeout(3000)  # let tmux draw its first prompt
+        open_terminal(page, server)
+        ready(page)  # the first prompt is drawn
         yield page
         ctx.close()
         browser.close()
@@ -89,15 +97,10 @@ FAKE_DENIED_READ = """() => {
     });
 }"""
 
-SCREEN_TEXT = (
-    "() => Array.from(document.querySelectorAll('.xterm-rows > div'))"
-    ".map(r => r.textContent).join('\\n')"
-)
-
 
 def _reset_line(page):
     """Clear the shell line so a leftover paste cannot be miscounted."""
-    page.click(".xterm-screen")
+    page.click(TERMINAL)
     page.keyboard.press("Control+u")
     page.wait_for_timeout(400)
 
@@ -105,10 +108,10 @@ def _reset_line(page):
 def _paste_count(page, marker, action):
     """Run `action` and report how many more times `marker` is on screen."""
     _reset_line(page)
-    before = page.evaluate(SCREEN_TEXT).count(marker)
+    before = screen_text(page).count(marker)
     action()
     page.wait_for_timeout(1200)
-    return page.evaluate(SCREEN_TEXT).count(marker) - before
+    return screen_text(page).count(marker) - before
 
 
 def _status(page):
@@ -135,7 +138,7 @@ def test_ctrl_v_pastes_once(terminal):
     terminal.evaluate("t => navigator.clipboard.writeText(t)", "CTRL_V_MARK")
 
     def press():
-        terminal.click(".xterm-screen")
+        terminal.click(TERMINAL)
         terminal.keyboard.press("Control+v")
 
     assert _paste_count(terminal, "CTRL_V_MARK", press) == 1
@@ -147,7 +150,7 @@ def test_right_click_pastes_once(terminal):
         _paste_count(
             terminal,
             "RIGHT_CLICK_MARK",
-            lambda: terminal.click(".xterm-screen", button="right"),
+            lambda: terminal.click(TERMINAL, button="right"),
         )
         == 1
     )
@@ -168,8 +171,8 @@ def test_unusable_read_falls_back_to_read_text(terminal):
     assert terminal.evaluate("() => window.__readTextCalls") == 1
     assert "Clipboard blocked" not in _status(terminal)
     terminal.reload()
-    terminal.wait_for_selector(".xterm-screen", timeout=30000)
-    terminal.wait_for_timeout(2500)
+    wait_native(terminal)
+    clear_line(terminal)
 
 
 def test_denied_read_does_not_prompt_twice(terminal):
@@ -188,8 +191,8 @@ def test_denied_read_does_not_prompt_twice(terminal):
         == "blocked"
     )
     terminal.reload()
-    terminal.wait_for_selector(".xterm-screen", timeout=30000)
-    terminal.wait_for_timeout(2500)
+    wait_native(terminal)
+    clear_line(terminal)
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +208,7 @@ PNG_BYTES = bytes.fromhex(
 DROP_FILES = """(names) => {
     const dt = new DataTransfer();
     for (const n of names) dt.items.add(new File([n], n, { type: 'text/plain' }));
-    const target = document.getElementById('terminal-container');
+    const target = document.getElementById('nt-container');
     target.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
 }"""
 

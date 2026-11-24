@@ -589,9 +589,10 @@ price of rewinding the page's confirmed rows when the window grows back.
   from keydown as tmux key names (`Core.keyAction`; Alt is Meta, from the
   key's code when Option composes a character on a Mac), which tmux turns
   into the bytes of the pane's modes; text, plain Enter and plain Backspace go
-  through the field. Keys typed while nothing editable has the focus (a
-  mouse selection took it) go to the terminal and give the field the focus
-  back. Ctrl+C over a selection is the browser's copy; Ctrl+Shift+C copies
+  through the field. Keys typed while nothing that takes keys has the focus
+  (a mouse selection took it, onto the page) go to the terminal and give the
+  field the focus back; a key on a focused button, link, select or dialog
+  (the voice console's, say) is that control's, as it is on any page. Ctrl+C over a selection is the browser's copy; Ctrl+Shift+C copies
   the selection or the last text a program copied; Ctrl+V (Cmd+V on a Mac,
   where Ctrl+V stays the program's) and Ctrl+Shift+V are the browser's own
   paste, read from the paste event (text through the bridge's paste path,

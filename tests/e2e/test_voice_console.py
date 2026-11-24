@@ -34,6 +34,8 @@ pytest.importorskip("playwright")
 
 from playwright.sync_api import sync_playwright
 
+from terminal_support import INPUT, TERMINAL, open_terminal  # noqa: E402
+
 pytestmark = pytest.mark.skipif(
     shutil.which("tmux") is None, reason="web terminal needs tmux"
 )
@@ -200,15 +202,11 @@ def quiet_browser(playwright):
     b.close()
 
 
-# The classic terminal and the native one (/terminal/native) host the same
-# console through window.MerlinTerminal and the same voice frames.
-LEGACY = "/terminal?terminal=classic"
-PAGES = pytest.mark.parametrize("path", [LEGACY, "/terminal/native"])
+# The terminal hosts the console through window.MerlinTerminal and the voice
+# frames of its socket.
 
 
-def _open(
-    browser, server, viewport=None, scale=1, view="full", path=LEGACY, timings=None
-):
+def _open(browser, server, viewport=None, scale=1, view="full", timings=None):
     ctx = browser.new_context(
         viewport=viewport or {"width": 1100, "height": 760},
         device_scale_factor=scale,
@@ -251,18 +249,7 @@ def _open(
             }, 20);
         })();"""
     )
-    page.goto(f"{server}{path}")
-    if path == LEGACY:
-        page.wait_for_selector(".xterm-screen", timeout=30000)
-    else:
-        page.wait_for_function(
-            "() => window.MerlinNativeTerminalPage && window.MerlinNativeTerminalPage.engine.pane",
-            timeout=30000,
-        )
-    page.wait_for_function(
-        "() => window.MerlinTerminal && window.MerlinTerminal.currentWindow()",
-        timeout=20000,
-    )
+    open_terminal(page, server)
     # Record every voice frame and every clip fetched, in order.
     page.evaluate(
         """() => {
@@ -352,11 +339,10 @@ def _start_voice(page, target):
 # ---------------------------------------------------------------------------
 
 
-@PAGES
 def test_a_spoken_turn_goes_round_and_the_console_listens_again(
-    browser, server, tmux_env, tts, tmp_path, path
+    browser, server, tmux_env, tts, tmp_path
 ):
-    ctx, page, fetched = _open(browser, server, path=path)
+    ctx, page, fetched = _open(browser, server)
     try:
         session = page.evaluate("() => window.MerlinTerminal.currentSession()")
         target, _ = _agent_window(tmux_env, session, tmp_path)
@@ -964,7 +950,7 @@ def test_the_bar_has_the_mic_button_and_says_the_mic_is_off(
         assert page.evaluate(bar) == height
         # Like the bar's other buttons, a click hands the keys back.
         page.wait_for_function(
-            "() => document.activeElement.classList.contains('xterm-helper-textarea')",
+            f"() => document.activeElement === document.querySelector('{INPUT}')",
             timeout=3000,
         )
         page.click("#voice-console .vc-mic")
@@ -1024,11 +1010,11 @@ def test_a_wide_screen_opens_the_bar_and_the_terminal_stays_in_use(
     try:
         session = page.evaluate("() => window.MerlinTerminal.currentSession()")
         target, _ = _agent_window(tmux_env, session, tmp_path)
-        height = "() => document.getElementById('terminal-container').getBoundingClientRect().height"
+        height = "() => document.getElementById('nt-container').getBoundingClientRect().height"
         before = page.evaluate(height)
         _start_voice(page, target)
 
-        # The bar sits in the terminal's column: xterm keeps the rest of it.
+        # The bar sits in the terminal's column: the terminal keeps the rest of it.
         assert page.get_attribute("#voice-console", "data-view") == "dock"
         assert _option(tmux_env, target, "@voice") == "screen"
         bar = page.locator("#voice-console").bounding_box()
@@ -1037,7 +1023,7 @@ def test_a_wide_screen_opens_the_bar_and_the_terminal_stays_in_use(
         assert bar["y"] + bar["height"] <= status["y"] + 0.5
         page.wait_for_function(f"() => ({height})() < {before}", timeout=5000)
         assert page.evaluate(height) > before - 100
-        assert page.is_visible(".xterm-screen")
+        assert page.is_visible(TERMINAL)
         # No two ears on the one mic.
         assert page.is_hidden("#mic-btn")
         assert not page.is_visible("#voice-console [data-act=tap]")
@@ -1112,7 +1098,7 @@ def test_the_bar_keeps_its_height_through_a_turn_and_grows_only_for_an_error(
             return v.mode();
         }"""
         bar = "() => document.getElementById('voice-console').getBoundingClientRect().height"
-        terminal = "() => document.getElementById('terminal-container').getBoundingClientRect().height"
+        terminal = "() => document.getElementById('nt-container').getBoundingClientRect().height"
         question = "Allow the agent to run the deployment script? " * 4
         heights, rows = {}, {}
         for state, text in (
@@ -1211,7 +1197,9 @@ def test_full_screen_is_a_dialog_with_a_real_button_for_the_tap(
         session = page.evaluate("() => window.MerlinTerminal.currentSession()")
         target, _ = _agent_window(tmux_env, session, tmp_path)
         _start_voice(page, target)
-        terminal_inert = "() => document.getElementById('terminal-container').closest('[inert]') !== null"
+        terminal_inert = (
+            "() => document.getElementById('nt-container').closest('[inert]') !== null"
+        )
         assert not page.evaluate(terminal_inert)
 
         # From the keyboard, a button of the bar keeps the keys on the bar; the
@@ -1231,7 +1219,7 @@ def test_full_screen_is_a_dialog_with_a_real_button_for_the_tap(
         page.evaluate(thinking)
         page.click("#voice-console [data-act=stop]")
         page.wait_for_function(
-            "() => document.activeElement.classList.contains('xterm-helper-textarea')",
+            f"() => document.activeElement === document.querySelector('{INPUT}')",
             timeout=3000,
         )
         # The language is the status bar's picker, and the session hears of it.
@@ -1293,7 +1281,7 @@ def test_full_screen_is_a_dialog_with_a_real_button_for_the_tap(
         page.click("#voice-console [data-view-toggle]")
         assert not page.evaluate(terminal_inert)
         page.wait_for_function(
-            "() => document.activeElement && document.activeElement.classList.contains('xterm-helper-textarea')",
+            f"() => document.activeElement === document.querySelector('{INPUT}')",
             timeout=3000,
         )
         page.click("#voice-console [data-act=exit]")
@@ -1566,11 +1554,10 @@ def test_skipping_one_stalled_answer_keeps_the_other_recoverable(
         ctx.close()
 
 
-@PAGES
 def test_a_window_without_claude_says_why_and_a_closed_window_ends_the_console(
-    browser, server, tmux_env, tts, tmp_path, path
+    browser, server, tmux_env, tts, tmp_path
 ):
-    ctx, page, _ = _open(browser, server, path=path)
+    ctx, page, _ = _open(browser, server)
     try:
         session = page.evaluate("() => window.MerlinTerminal.currentSession()")
         shell = _tmux(
@@ -1583,9 +1570,9 @@ def test_a_window_without_claude_says_why_and_a_closed_window_ends_the_console(
         )
         assert "No Claude Code session" in page.get_attribute("#voice-btn", "title")
         page.click("#voice-btn")
-        # Written into the classic screen, a notice over the native one.
+        # A notice over the terminal.
         page.wait_for_function(
-            "() => (document.querySelector('.xterm-rows') || document.getElementById('nt-notice'))"
+            "() => document.getElementById('nt-notice')"
             ".innerText.includes('No Claude Code session')",
             timeout=5000,
         )

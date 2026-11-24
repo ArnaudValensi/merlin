@@ -26,6 +26,7 @@ from app_stream_support import (  # noqa: E402
     stop_all,
     wait_live,
 )
+from terminal_support import open_terminal  # noqa: E402
 
 
 def _gst_has(*names: str) -> bool:
@@ -266,11 +267,7 @@ def test_the_player_starts_muted_and_the_first_tap_brings_the_sound(
 def _terminal(browser, server, **context_args):
     context = browser.new_context(**context_args)
     page = context.new_page()
-    page.goto(f"{server}/terminal?terminal=classic")
-    page.wait_for_function(
-        "() => window.MerlinTerminal && window.MerlinTerminal.currentWindow()",
-        timeout=20000,
-    )
+    open_terminal(page, server)
     return context, page
 
 
@@ -333,7 +330,7 @@ def test_the_mini_player_stays_quiet_until_asked(
         page.screenshot(path=str(SHOTS / "terminal-sound-mobile.png"))
         speaker.tap()
         page.wait_for_function(f"!{video}.muted")
-        assert page.url.endswith("/terminal"), "the speaker is not a tap on the player"
+        assert "/apps/" not in page.url, "the speaker is not a tap on the player"
         assert page.evaluate("localStorage.getItem('app-sound-mini')") == "1"
     finally:
         context.close()

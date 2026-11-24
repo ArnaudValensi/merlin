@@ -22,6 +22,7 @@ pytest.importorskip("playwright")
 from playwright.sync_api import expect, sync_playwright
 
 from conftest import start_merlin, stop_merlin  # noqa: E402
+from terminal_support import open_terminal  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     shutil.which("tmux") is None, reason="tmux not installed"
@@ -142,7 +143,7 @@ def test_restore_rebuilds_the_missing_sessions(page, seeded):
 
 def test_dismiss_drops_the_offer(page, seeded):
     server, _ = seeded(["gamma"])
-    page.goto(f"{server.url}/terminal?terminal=classic")
+    open_terminal(page, server.url)
     banner = page.locator("#workspace-restore")
     expect(banner).to_be_visible()
     banner.get_by_role("button", name="Dismiss").click()

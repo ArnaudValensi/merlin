@@ -34,6 +34,8 @@ pytest.importorskip("playwright")
 
 from playwright.sync_api import sync_playwright
 
+from terminal_support import open_terminal  # noqa: E402
+
 pytestmark = pytest.mark.skipif(
     shutil.which("tmux") is None, reason="web terminal needs tmux"
 )
@@ -78,12 +80,7 @@ def _open_terminal(browser, server):
         viewport={"width": 1100, "height": 720}, permissions=["microphone"]
     )
     page = ctx.new_page()
-    page.goto(f"{server}/terminal?terminal=classic")
-    page.wait_for_selector(".xterm-screen", timeout=30000)
-    page.wait_for_function(
-        "() => window.MerlinTerminal && window.MerlinTerminal.currentWindow()",
-        timeout=20000,
-    )
+    open_terminal(page, server)
     return ctx, page
 
 

@@ -21,12 +21,10 @@ Run: uv run scripts.py test-e2e   (or pytest tests/e2e/test_terminal_native_pari
 Requires: chromium + tmux.
 """
 
-import json
 import re
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -38,6 +36,19 @@ from playwright.sync_api import sync_playwright
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import tmux_isolation  # noqa: E402
 from conftest import start_merlin, stop_merlin  # noqa: E402
+from terminal_support import (  # noqa: E402
+    DESKTOP,
+    ENGINE,
+    clear_line,
+    count,
+    open_terminal,
+    ready,
+    sent_frames,
+    status,
+    wait_count,
+    wait_native,
+    wait_value,
+)
 
 pytestmark = pytest.mark.skipif(
     shutil.which("tmux") is None, reason="web terminal needs tmux"
@@ -46,10 +57,6 @@ pytestmark = pytest.mark.skipif(
 # Voice needs a transcription backend for the mic button to record at all; the
 # uploads are intercepted, so the key is never used.
 MERLIN_OPTIONS = {"extra_env": {"OPENAI_API_KEY": "sk-e2e-test"}}
-
-ENGINE = "window.MerlinNativeTerminalPage.engine"
-SCREEN = f"{ENGINE}.renderer.screenText()"
-DESKTOP = {"viewport": {"width": 1100, "height": 720}}
 
 
 @pytest.fixture(scope="module")
@@ -82,76 +89,7 @@ def tmux(env: dict, *args: str) -> str:
 
 
 def _native(page, server, query: str = "") -> None:
-    page.goto(f"{server}/terminal/native{query}")
-    wait_native(page)
-
-
-def wait_native(page) -> None:
-    page.wait_for_function(
-        f"window.MerlinNativeTerminalPage && {ENGINE}.pane"
-        " && window.MerlinTerminal.currentWindow()"
-        f" && {ENGINE}.size.cols === {ENGINE}.renderer.cols",
-        timeout=20000,
-    )
-
-
-def ready(page) -> None:
-    """The shell's prompt is the last line shown."""
-    page.wait_for_function(
-        f"""() => {{
-            const ls = {SCREEN}.split('\\n').map(l => l.trim()).filter(Boolean);
-            return ls.length > 0 && ls[ls.length - 1].endsWith('%');
-        }}""",
-        timeout=20000,
-    )
-
-
-def clear_line(page) -> None:
-    page.click("#nt-container")
-    page.keyboard.press("Control+u")
-    page.keyboard.type("clear")
-    page.keyboard.press("Enter")
-    ready(page)
-
-
-def count(page, marker: str) -> int:
-    return page.evaluate(SCREEN).count(marker)
-
-
-def wait_count(page, marker: str, n: int, timeout: int = 8000) -> None:
-    page.wait_for_function(
-        f"m => {SCREEN}.split(m).length - 1 >= {n}", arg=marker, timeout=timeout
-    )
-
-
-def wait_value(page, expression: str, expected, timeout: float = 8.0) -> None:
-    """Until ``expression`` evaluates to ``expected``. For anything async:
-    wait_for_function takes a returned promise for a truthy value."""
-    deadline = time.monotonic() + timeout
-    value = page.evaluate(expression)
-    while value != expected and time.monotonic() < deadline:
-        page.wait_for_timeout(50)
-        value = page.evaluate(expression)
-    assert value == expected
-
-
-def status(page) -> str:
-    return " ".join((page.text_content("#terminal-status") or "").split())
-
-
-def sent_frames(page) -> list:
-    """Every JSON message the page sends on its terminal socket from now on."""
-    frames: list = []
-
-    def on_ws(ws):
-        def sent(payload):
-            if isinstance(payload, str) and payload.startswith("{"):
-                frames.append(json.loads(payload))
-
-        ws.on("framesent", sent)
-
-    page.on("websocket", on_ws)
-    return frames
+    open_terminal(page, server, query, path="/terminal/native")
 
 
 @pytest.fixture

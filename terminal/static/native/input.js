@@ -30,6 +30,15 @@
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
   }
 
+  // A key for a control that takes keys itself (a text field, a button, a
+  // link, a dialog or anything else that holds the focus) is not the
+  // terminal's: Enter on a focused button activates the button.
+  function takesKeys(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (editable(el)) return true;
+    return !!(el.closest && el.closest('button, a[href], summary, [role="dialog"], [tabindex]'));
+  }
+
   // The toolbar's sticky modifiers: Ctrl, Alt and Shift apply to the next key
   // from the toolbar or a keyboard, then clear.
   class Modifiers {
@@ -379,11 +388,11 @@
       this.sendKey(action);
     }
 
-    // Keys typed while no text field has the focus (a mouse selection takes
-    // it off the field): they go to the terminal, and the field takes the
-    // focus back for what follows.
+    // Keys typed while nothing that takes keys has the focus (a mouse
+    // selection takes it off the field, onto the page): they go to the
+    // terminal, and the field takes the focus back for what follows.
     onDocumentKeyDown(e) {
-      if (e.defaultPrevented || e.target === this.field || editable(e.target)) return;
+      if (e.defaultPrevented || e.target === this.field || takesKeys(e.target)) return;
       if (e.isComposing) return;
       const dead = this.deadKey(e);
       if (e.keyCode === 229 && !dead) return;

@@ -16,6 +16,8 @@ pytest.importorskip("playwright")
 
 from playwright.sync_api import sync_playwright
 
+from terminal_support import open_terminal  # noqa: E402
+
 MERLIN_OPTIONS = {"config": "MERLIN_ENV_COLOR=blue\n"}
 
 BLUE = "#60a5fa"
@@ -39,7 +41,7 @@ def page(browser):
 
 
 def test_page_links_carry_the_color(page, server):
-    page.goto(f"{server}/terminal?terminal=classic")
+    open_terminal(page, server)
     icon = page.get_attribute('link[rel="icon"][type="image/svg+xml"]', "href")
     assert icon == "/static/favicon.svg?c=blue"
     assert page.get_attribute('link[rel="manifest"]', "href") == (
@@ -106,7 +108,7 @@ def test_a_click_saves_and_the_next_load_reflects_it(page, server, merlin):
         "/static/favicon.svg?c=red"
     )
     # And on the next load, from the setting.
-    page.goto(f"{server}/terminal?terminal=classic")
+    open_terminal(page, server)
     assert page.get_attribute('link[rel="manifest"]', "href") == (
         "/manifest.webmanifest?c=red"
     )

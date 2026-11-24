@@ -25,6 +25,7 @@ from app_stream_support import (  # noqa: E402
     wait_live,
 )
 from conftest import ROOT, start_merlin, stop_merlin  # noqa: E402
+from terminal_support import open_terminal  # noqa: E402
 
 MERLIN_OPTIONS = APP_OPTIONS
 pytestmark = requires_streaming
@@ -175,11 +176,7 @@ def test_missing_prerequisites(tmp_path_factory, browser, no_xvfb_path):
         assert result.returncode == 1
         assert "Missing Xvfb" in result.stderr
 
-        page.goto(f"{server.url}/terminal?terminal=classic")
-        page.wait_for_function(
-            "() => window.MerlinTerminal && window.MerlinTerminal.currentWindow()",
-            timeout=20000,
-        )
+        open_terminal(page, server.url)
         page.wait_for_timeout(1500)
         assert page.locator("#app-btn").is_hidden()
     finally:

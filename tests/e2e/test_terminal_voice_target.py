@@ -21,6 +21,8 @@ pytest.importorskip("playwright")
 
 from playwright.sync_api import sync_playwright
 
+from terminal_support import open_terminal  # noqa: E402
+
 pytestmark = pytest.mark.skipif(
     shutil.which("tmux") is None, reason="web terminal needs tmux"
 )
@@ -57,13 +59,8 @@ def test_recording_sends_the_stopped_window_as_target(server):
                 ),
             )
 
-            page.goto(f"{server}/terminal?terminal=classic")
-            page.wait_for_selector(".xterm-screen", timeout=30000)
-            # The page learns its window from the first session control frame.
-            page.wait_for_function(
-                "() => window.MerlinTerminal && window.MerlinTerminal.currentWindow()",
-                timeout=20000,
-            )
+            # Attached: the page learned its window from the session frame.
+            open_terminal(page, server)
             target = page.evaluate(
                 "() => window.MerlinTerminal.currentSession() + ':'"
                 " + window.MerlinTerminal.currentWindow()"

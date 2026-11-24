@@ -19,6 +19,7 @@ from app_stream_support import (  # noqa: E402
     stop_all,
     wait_live,
 )
+from terminal_support import open_terminal  # noqa: E402
 
 MERLIN_OPTIONS = APP_OPTIONS
 pytestmark = requires_streaming
@@ -45,21 +46,14 @@ def _clean(merlin):
     stop_all(merlin)
 
 
-# The classic terminal and the native one (/terminal/native) carry the same
-# Apps button and panel (terminal-status-bar.html, terminal-panels.html), fed by
-# the same merlin:terminal-window event.
-LEGACY = "/terminal?terminal=classic"
-PAGES = pytest.mark.parametrize("path", [LEGACY, "/terminal/native"])
+# The terminal carries the Apps button and panel (terminal-status-bar.html,
+# terminal-panels.html), fed by the merlin:terminal-window event.
 
 
-def _terminal(browser, server, path=LEGACY, **context_args):
+def _terminal(browser, server, **context_args):
     context = browser.new_context(**context_args)
     page = context.new_page()
-    page.goto(f"{server}{path}")
-    page.wait_for_function(
-        "() => window.MerlinTerminal && window.MerlinTerminal.currentWindow()",
-        timeout=20000,
-    )
+    open_terminal(page, server)
     return context, page
 
 
@@ -80,11 +74,8 @@ def _launch_from(merlin, page, tmp_path, name="probe") -> dict:
     return launch_probe(merlin, tmp_path / f"{name}.log", name, env={"TMUX_PANE": pane})
 
 
-@PAGES
-def test_button_toast_and_docked_panel(merlin, browser, server, tmp_path, path):
-    context, page = _terminal(
-        browser, server, path, viewport={"width": 1400, "height": 820}
-    )
+def test_button_toast_and_docked_panel(merlin, browser, server, tmp_path):
+    context, page = _terminal(browser, server, viewport={"width": 1400, "height": 820})
     try:
         page.wait_for_timeout(1000)  # the first poll records existing apps
         handle = _launch_from(merlin, page, tmp_path)
@@ -123,11 +114,8 @@ def test_button_toast_and_docked_panel(merlin, browser, server, tmp_path, path):
         context.close()
 
 
-@PAGES
-def test_button_only_on_the_launching_window(merlin, browser, server, tmp_path, path):
-    context, page = _terminal(
-        browser, server, path, viewport={"width": 1400, "height": 820}
-    )
+def test_button_only_on_the_launching_window(merlin, browser, server, tmp_path):
+    context, page = _terminal(browser, server, viewport={"width": 1400, "height": 820})
     try:
         _launch_from(merlin, page, tmp_path)
         page.wait_for_selector("#app-btn:not([hidden])", timeout=10000)

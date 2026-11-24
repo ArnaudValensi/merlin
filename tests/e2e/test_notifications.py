@@ -22,6 +22,9 @@ pytest.importorskip("playwright")
 
 from playwright.sync_api import sync_playwright
 
+from terminal_support import open_terminal as open_native  # noqa: E402
+from terminal_support import wait_native  # noqa: E402
+
 pytestmark = pytest.mark.skipif(
     shutil.which("tmux") is None, reason="the watcher needs tmux"
 )
@@ -87,9 +90,8 @@ def page(browser, server):
 
 
 def open_terminal(page, server, query=""):
-    page.goto(f"{server}/terminal?terminal=classic{query.replace('?', '&', 1)}")
-    page.wait_for_selector(".xterm-screen", timeout=30000)
-    # The first session frame proves the tmux client is attached.
+    # Attached: the first session frame proved it (terminal_support).
+    open_native(page, server, query)
     page.wait_for_function(
         "window.MerlinTerminal && window.MerlinTerminal.currentSession()", timeout=30000
     )
@@ -151,7 +153,7 @@ def test_transition_notifies_badges_and_titles(page, server, tmux_env, agent_win
 
     # A reload replays nothing: the first poll sends no cursor.
     page.reload()
-    page.wait_for_selector(".xterm-screen", timeout=30000)
+    wait_native(page)
     page.wait_for_function("document.title.startsWith('(1) ')", timeout=10000)
     page.wait_for_timeout(4500)
     assert page.evaluate("window.__notifs.length") == 0
@@ -349,7 +351,7 @@ def test_deep_link_is_kept_until_the_socket_is_confirmed(
     ctx.add_init_script(HOLD_FIRST_FRAME)
     pg = ctx.new_page()
     try:
-        pg.goto(f"{server}/terminal?terminal=classic&target={SESSION}:{wid}")
+        pg.goto(f"{server}/terminal?target={SESSION}:{wid}")
         pg.wait_for_function("window.__frameHeld === true", timeout=30000)
         pg.wait_for_timeout(500)
         # No confirmed session yet: the target must still be in the URL.
@@ -461,12 +463,12 @@ def test_worker_registers_and_never_intercepts(page, server):
     assert scope == f"{server}/"
     # Once the worker controls the page, a request still goes to the network.
     page.reload()
-    page.wait_for_selector(".xterm-screen", timeout=30000)
+    wait_native(page)
     page.wait_for_function("navigator.serviceWorker.controller !== null", timeout=10000)
     with page.expect_response("**/api/notifications/status") as resp:
         page.evaluate("fetch('/api/notifications/status')")
     assert resp.value.from_service_worker is False
-    with page.expect_response("**/terminal") as resp:
+    with page.expect_response(re.compile(r"/terminal(/native)?$")) as resp:
         page.reload()
     assert resp.value.from_service_worker is False
 
@@ -927,7 +929,7 @@ def test_browser_refusing_to_unsubscribe_keeps_both_sides_on(
         # On the page that finds the removal (the reload), not on a fresh
         # navigation: the notice is that page's state.
         pg.reload()
-        pg.wait_for_selector(".xterm-screen", timeout=30000)
+        wait_native(pg)
         pg.evaluate("navigator.serviceWorker.ready")
         pg.click("#notif-btn")
         pg.wait_for_selector("#notif-toggle", timeout=15000)
