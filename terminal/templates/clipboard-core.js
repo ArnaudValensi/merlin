@@ -2,15 +2,15 @@
  * Merlin clipboard core — the one implementation of "read the browser
  * clipboard and tell me what is in it".
  *
- * This file is a Jinja partial, included verbatim by BOTH terminal.html (the
- * real terminal) and clipboard-test.html (the /clipboard-test diagnostic
- * page). That is deliberate: the two used to carry hand-copied versions of the
+ * This file is a Jinja partial, included verbatim by BOTH the terminal page
+ * (through terminal-chrome.html) and clipboard-test.html (the /clipboard-test
+ * diagnostic page). That is deliberate: the two used to carry hand-copied versions of the
  * same ladder, they drifted, and the diagnostic page ended up reporting
  * success on paths where the terminal showed "Clipboard blocked". Every
  * clipboard read must go through readClipboard() so what you debug is what
  * runs.
  *
- * It is pure logic: no DOM, no xterm, no globals beyond the clipboard object
+ * It is pure logic: no DOM, no terminal, no globals beyond the clipboard object
  * handed to it. That is what makes tests/js/clipboard-core.test.js able to
  * replay each browser's behaviour without a browser.
  *

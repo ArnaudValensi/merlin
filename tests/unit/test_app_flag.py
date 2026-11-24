@@ -101,7 +101,7 @@ class TestServer:
 
     def test_flag_off_terminal_has_no_app_button(self, monkeypatch):
         with TestClient(app_mod.app) as client:
-            pages = [client.get(p).text for p in ("/terminal", "/terminal/native")]
+            pages = [client.get("/terminal").text]
         for html in pages:
             assert 'id="app-btn"' not in html
             assert 'id="app-panel"' not in html
@@ -117,7 +117,7 @@ class TestServer:
             assert any(i.get("url") == "/apps" for i in app_mod.nav_items)
             with TestClient(app_mod.app) as client:
                 assert client.get("/apps").status_code == 200
-                pages = [client.get(p).text for p in ("/terminal", "/terminal/native")]
+                pages = [client.get("/terminal").text]
             for html in pages:
                 assert 'id="app-btn"' in html
                 assert 'id="app-panel"' in html

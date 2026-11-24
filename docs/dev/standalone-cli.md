@@ -145,7 +145,7 @@ stderr and in `merlin.log`) when a required tool is missing:
 | Dependency | Check | Refused when |
 |------------|-------|--------------|
 | fd | `_check_fd()` | not on PATH (`fd` or `fdfind`) |
-| tmux | `_check_tmux()` | not on PATH, `tmux -V` older than `terminal.native.MIN_TMUX` (3.8) or unreadable, or a server already running on the default socket that is older (read with `list-sessions -F '#{version}'`, which creates nothing) |
+| tmux | `_check_tmux()` | not on PATH, `tmux -V` older than `terminal.native.MIN_TMUX` (3.8) or unreadable, or a server already running on the default socket that is older or cannot be read (`list-sessions -F '#{version}'`, which creates nothing; tmux's own no-server lines are fine) |
 
 Only the server's start is gated: `merlin job`, `merlin config`, `merlin
 workspace` and the other commands that do not start the server never run the

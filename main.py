@@ -1162,7 +1162,7 @@ commits_set_startup_cwd(str(CWD))
 mount_module(files, "files")  # /api/files + /files + /static/files, authed
 mount_module(commits, "commits")  # /api/commits + /commits + /static/commits
 # terminal is now a normal module: /api/terminal + /terminal authed by the
-# framework, and its /ws/terminal WebSocket wired via register_routes(app).
+# framework, and its /ws/terminal2 WebSocket wired via register_routes(app).
 mount_module(terminal, "terminal")
 
 # Job API + page — URL_SLUG="jobs" maps api_router → /api/jobs, page_router → /jobs

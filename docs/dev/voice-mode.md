@@ -352,7 +352,7 @@ One session, two ways to show it, chosen per page. **Full screen** (`full`, the
 default on a phone) covers the terminal and shows no conversation text: a phone
 on a mount or a walk. **The bar** (`dock`, the default with a fine pointer on a
 screen at least 900 px wide) moves `#voice-console` into the terminal's column,
-over the status bar, so xterm refits around it and the terminal keeps its keys;
+over the status bar, so the terminal refits around it and keeps its keys;
 what the answer says is on screen in the terminal itself. A button switches the
 view at any time, and the choice is kept in `localStorage` (`voice-view`).
 

@@ -244,7 +244,7 @@ any when a page sends none.
 The banner markup sits in `templates/base.html`, in `.main-banners` with the
 agent-state consent banner (same `consent-banner` classes, green accent). On
 the terminal page `.main-banners` floats over the split on desktop (see
-`terminal.html`), so two banners stack instead of overlapping.
+`terminal-chrome.html`), so two banners stack instead of overlapping.
 `workspace/static/restore.js` fetches the offer on load, then every 15 s while
 the banner is hidden and the page visible, and when the page becomes visible
 again, so a crash shows up without a reload. A crash offer is titled "tmux

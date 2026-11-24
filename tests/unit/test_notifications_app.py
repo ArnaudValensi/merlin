@@ -118,10 +118,6 @@ class TestServiceWorker:
         assert "postMessage({ type: 'deep-link', target: target })" in src
         assert "data.target" in src  # the click reads the raw target
         # The page must carry the raw target for the worker to relay.
-        page = (ROOT / "terminal/templates/terminal.html").read_text()
-        assert "navigator.serviceWorker.addEventListener('message'" in page
-        assert "d.type !== 'deep-link'" in page
-        assert "window.MerlinTerminal.switchSession(t)" in page
         native = (ROOT / "terminal/static/native/page.js").read_text()
         assert "navigator.serviceWorker.addEventListener('message'" in native
         assert "d.type !== 'deep-link'" in native

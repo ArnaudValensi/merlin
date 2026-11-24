@@ -202,10 +202,11 @@ an older cursor neither replays nor regresses the cursor.
   is not the installed app gets the install sentence under the toggle, over HTTPS only:
   without a secure context the HTTPS sentence comes first and alone, since an installed
   app over plain HTTP gets no push either.
-- **The deep link.** `/terminal?target=<session>:<window_id>` is applied by `terminal.html`
-  on the first confirmed session frame and only then stripped from the URL.
+- **The deep link.** `/terminal?target=<session>:<window_id>` is applied by the terminal
+  page (`terminal/static/native/page.js`) on the first confirmed session frame and only
+  then stripped from the URL.
 
-**Reconnect after a suspension** (`terminal.html`): `visibilitychange` records when the
+**Reconnect after a suspension** (`page.js`): `visibilitychange` records when the
 page left the foreground. Back after 2 to 60 seconds, the page sends a `{type: "ping"}`
 control message and the socket answers `pong`, and no pong within 3 seconds replaces the
 socket. After 60 seconds or more, or a back-forward-cache restore, the socket is replaced

@@ -182,7 +182,7 @@ def test_toolbar_new_window_inherits_current_cwd(tmp_path):
         before = tmux(
             "list-windows", "-t", "toolbar", "-F", "#{window_id}"
         ).stdout.split()
-        os.write(master_fd, b"\x1bOQ")  # xterm.js sends this for toolbar F2.
+        os.write(master_fd, b"\x1bOQ")  # what a terminal sends for F2.
 
         after = before
         deadline = time.monotonic() + 5

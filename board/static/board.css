@@ -486,7 +486,7 @@
 
 /* ---- Mobile ergonomics (base): thumb-first, bottom-oriented -------------
    The panel is a sheet that leaves the terminal's bottom bar visible (its
-   `bottom` offset is set to the bar height in terminal.html), so the far-right
+   `bottom` offset is set to the bar height in terminal-chrome.html), so the far-right
    Sessions button toggles it in place. Controls sit at the bottom (thumb zone):
    status line at top, list bottom-anchored, filter just above the bar. A grabber
    affords swipe-down to dismiss. */
@@ -503,7 +503,7 @@
 /* ---- Desktop: docked, in-flow panel + draggable divider ----------------- */
 
 @media (min-width: 769px) {
-  /* .main becomes flex-row in terminal.html (must win the cascade over the
+  /* .main becomes flex-row in terminal-chrome.html (must win the cascade over the
      terminal's own .main rule); the panel is an in-flow child here. */
   .sessions-panel {
     position: static;

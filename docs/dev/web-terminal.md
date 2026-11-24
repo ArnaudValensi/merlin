@@ -1,68 +1,117 @@
 # Web Terminal — Internals
 
-Implementation reference for the browser-based terminal (the classic page
-below, and the [native terminal](#native-terminal-terminalnative) beside it). The user guide is
-[`docs/terminal.md`](../terminal.md); this doc covers how it is built.
-
-The classic page (**Legacy** in the settings) is deprecated: the native page
-is the default, and the classic one is kept as a fallback for now and will be
-removed later. New terminal work goes to the native page.
+Implementation reference for the browser-based terminal, `/terminal`: tmux
+attached in control mode, its grid mirrored to the page as real DOM text in a
+native scrolling container, and a real text field for the keyboard. The user
+guide is [`docs/terminal.md`](../terminal.md); this doc covers how it is built.
+It was built by the native-terminal epic (`epics/cli/native-terminal/` in
+merlin-saas, journal included) beside the previous xterm.js terminal, which
+the legacy-terminal-removal epic then removed (`epics/cli/legacy-terminal-removal/`).
 
 ## Architecture
 
 ```
-Browser (xterm.js)
-  ↕ WebSocket (/ws/terminal)
-Dashboard (FastAPI)
-  ↕ asyncio PTY (openpty)
-tmux session ("merlin")
+Browser: real DOM text in a native scroll container, one real text field
+  ↕ WebSocket (/ws/terminal2): binary grid frames, \x00 + JSON control frames
+terminal/native.py: one tmux control-mode client per page (tmux -C, pipes)
+  ↕
+tmux 3.8 or newer (required at launch; checked again by the bridge)
   ↕
 zsh shell
 ```
 
+## Requirements: tmux 3.8
+
+Merlin refuses to start without tmux 3.8 or newer, in `main._check_tmux`,
+run by `_validate_config()` beside `_check_fd()` before anything starts:
+exit status 1, the reason on stderr and in `merlin.log`. The minimum is
+`native.MIN_TMUX` and the version is read with `native.parse_tmux_version`
+(one definition of each; a build without a number such as `master` passes).
+Two things are read, each bounded by `TMUX_PROBE_TIMEOUT` and with `$TMUX`
+withheld so the default server is meant, as the bridge does: the binary with
+`tmux -V` (no answer or a failure reads as unknown and refuses), then the
+server with `tmux list-sessions -F '#{version}'`, which creates, attaches and
+kills nothing. Its failure is classified from what tmux says: "no server
+running on" (a stale socket) or "error connecting to ... (No such file or
+directory)" (no socket) is no server, which is fine (Merlin starts one later);
+any other failure or no answer is a server Merlin cannot vouch for (a protocol
+mismatch after an upgrade, a socket tmux cannot open) and refuses, since the
+bridge would talk to it. An upgraded binary does not replace a server started
+by an older one, hence the second read. The messages name what was found and
+the way out (`tmux is not installed`, `tmux 3.4 is too old`, `A tmux 3.4
+server is still running`, `The tmux server could not be checked`, each
+followed by `Merlin needs tmux 3.8 or newer.`); `docs/getting-started.md`
+("tmux 3.8 or newer") has the troubleshooting entry for each. Only the
+server's start is gated: a CLI command that does not start the server never
+runs the check. `merlin restart` watches the relaunched process (uv, then the
+Python it starts, which is what writes the state file) until that state
+appears; when the process exits first, restart prints the last lines of
+`nohup.out`, where the refusal is. Pinned by `tests/unit/test_startup_checks.py`
+with a fake `tmux` first on PATH (missing, 3.4, 3.7c, 3.8, next-3.9, master, a
+binary that hangs or fails, a running server older than the binary, a server
+probe that fails or hangs): no test reaches the real default server.
+`install.sh` treats tmux as required and warns with the same advice when
+`tmux -V` is older than 3.8.
+
+**At run time**, a server can still be replaced by an older one while Merlin
+runs. The bridge checks the server it attaches to (below) and, when it is too
+old, sends the page an `unsupported` control frame and closes the socket with
+`CLOSE_UNSUPPORTED` (4426). The page shows it as its notice over the terminal
+(`#nt-notice`, `tmux 3.4 is too old. Merlin needs tmux 3.8 or newer.`), in
+the status bar, and does not reconnect from that close.
+
 ## Frontend
 
-### xterm.js Configuration
+### The page
 
-- **Font**: Geist Mono (Google Fonts CDN), 11px
-- **Theme**: Dracula-inspired (matches dashboard dark theme)
-- **Scrollback**: 5000 lines
-- **Addons**: FitAddon (auto-resize), WebLinksAddon (clickable URLs)
+`terminal/templates/terminal-native.html`: the terminal (`#nt-container`),
+the jump-to-bottom button, the notice line, the Copy pill, the input field
+(`#nt-input`), the toolbar, and the chrome it shares with nothing else any
+more but which stays in partials because the diagnostic page and the voice
+console reuse pieces of it: `terminal-status-bar.html` (the bottom bar) and
+its rules `terminal-status-bar.css`, `terminal-panels.html` (Sessions panel,
+Apps panel, notifications popover, voice console, folder picker),
+`terminal-head.html` (their stylesheets and early scripts) and
+`terminal-chrome.html` (board, notifications, Apps, the clipboard ladder, the
+session identity, the Sessions panel wiring). A narrow-screen rule of the bar
+(the status text gives way with an ellipsis, the buttons tighten below
+420 px) keeps every button on a phone's screen. The page's scripts are in
+`terminal/static/native/` (below); the vendored xterm.js (`xterm.min.js`,
+never opened) and its Unicode 11 addon are loaded for the decoder's parser.
 
 ### Connection
 
 ```javascript
-const attemptedIdentity = MerlinSessionIdentity.read();
-ws = new WebSocket(MerlinSessionIdentity.websocketUrl(location, attemptedIdentity));
+const attempted = MerlinSessionIdentity.read();
+engine.connect();  // wsUrl: MerlinSessionIdentity.websocketUrl(location, attempted)
 ```
 
+- `session-identity.js` builds the `/ws/terminal2` URL with the stored
+  identity (`tests/js/session-identity.test.js` pins it).
 - Auto-reconnect with exponential backoff (1s → 30s max)
 - Status indicator: green dot (connected), yellow (connecting), red (disconnected)
-- Auth failure (close code 4401) stops reconnection
+- Auth failure (close code 4401) stops reconnection; so does the `unsupported`
+  close (4426), see above.
 - The last server-confirmed tmux identity is stored in `sessionStorage`, which
   keeps browser tabs independent and survives a refresh in the same tab.
 - A `session` control frame replaces the stored identity after initial attach
   and after every session switch.
-- The server watches the attached tmux client every 500 ms. A native tmux
-  session switch emits the same confirmation frame without requiring a panel
-  action. Unchanged observations emit nothing.
 - A connection that closes before confirming its attempted identity normally
   removes that identity before retrying. Close code 1013 means the tmux sweep
   was temporarily unavailable, so the confirmed identity is preserved.
 - Cleanup is conditional, so an older socket cannot erase a newer confirmation.
 
-### Resize Handling
+### Addresses
 
-Terminal dimensions sync on:
-- Window resize
-- Orientation change (mobile)
-- ResizeObserver on container
-- Initial WebSocket connection
-
-Sends resize message:
-```json
-{"type": "resize", "cols": 80, "rows": 24}
-```
+`/terminal` renders the page; the manifest's `start_url` is `/terminal`.
+`/terminal/native`, the page's address while the previous terminal existed,
+answers a 307 redirect to `/terminal` that keeps the query (a deep link's
+`?target=`), for bookmarks and pages opened before the change. A
+`?terminal=` parameter, which once chose between two terminals, is ignored;
+the settings page has no terminal section, and `static/settings.js` removes
+the stale `merlin-terminal` key from `localStorage` on load (inside
+try/catch). Pinned by `tests/unit/test_terminal_pages.py` and the addresses
+tests of `tests/e2e/test_terminal_native_parity.py`.
 
 ### Installed App Bottom Bar
 
@@ -84,142 +133,73 @@ phone screenshot.
 The keyboard slides over the page without resizing it, and iOS scrolls a focused
 field into view only when a typed word is committed (a space, punctuation, return
 with predictive text on), so without help the input line stayed behind the keyboard
-until the first space. `followKeyboard()` in `terminal.html` sizes `.main` to
+until the first space. `followKeyboard()` in `page.js` sizes `.main` to
 `window.visualViewport.height` whenever it is smaller than the layout viewport and
 pins the scroll at the top, so the bottom bar and the input line land above the
 keyboard as it animates. It runs only on coarse-pointer devices and leaves a
 pinch-zoomed page alone. A backgrounded app loses its keyboard while it is
 suspended, so the closing resize never reaches the page: back in front, the column
 kept the keyboard height, and the terminal kept its focus with no keyboard showing
-until a tap. The page now blurs the focused field when it is hidden and measures
+until a tap. The page blurs the focused field when it is hidden and measures
 again on `visibilitychange`, `pageshow` and window `focus` (at once, next frame,
-300 ms later, as the viewport settles). The resize to the PTY is coalesced: `fitAddon.fit()` runs
-on every observer callback, the `resize` message goes out once, 120 ms after the
-last one, so tmux repaints once per keyboard or window movement. Playwright cannot
-open the iOS keyboard: verify on the phone, keyboard opening and closing, in a Safari
-tab and in the installed app.
-
-### Touch Gesture Implementation
-
-A transparent `#touch-overlay` div sits on top of the terminal and captures all touch events on mobile (`@media (pointer: coarse)`). On desktop, the overlay has `pointer-events: none` so mouse events pass through to xterm.js normally.
-
-The overlay exists because xterm.js's DOM renderer removes/recreates `<span>` elements during re-render — if a touch target element is removed mid-gesture, the browser fires `touchcancel` and kills the gesture. The overlay is a single stable element that never gets re-rendered.
-
-All touch gestures are translated to SGR mouse sequences sent directly to the PTY:
-
-**Vertical swipe → scroll:**
-- `\x1b[<64;1;1M` — scroll up
-- `\x1b[<65;1;1M` — scroll down
-- 20px per line threshold
-
-**Tap → click:**
-- `\x1b[<0;col;rowM` — button press at cell position
-- `\x1b[<0;col;rowm` — button release
-- Also calls `term.focus()` to open virtual keyboard
-
-**Horizontal drag → select:**
-- `\x1b[<0;col;rowM` — button press at start position
-- `\x1b[<32;col;rowM` — motion events during drag
-- `\x1b[<0;col;rowm` — button release at end position
-
-Gesture detection: after 8px of movement, vertical = scroll, horizontal = select.
+300 ms later, as the viewport settles). The window keeps its height while the
+keyboard is up (see `fit` in `engine.js`), so the program is not redrawn each
+time the keyboard moves. Playwright cannot open the iOS keyboard: verify on the
+phone, keyboard opening and closing, in a Safari tab and in the installed app
+(`tests/e2e/test_terminal_keyboard.py` drives a fake visual viewport for the
+backgrounded case).
 
 ### Clipboard Plumbing
 
-All copy operations go through `merlin-clip`, which writes OSC 52 directly to the tmux client TTY. All paste paths use one unified handler (`handlePaste()`), supporting text and images. Images upload to `/tmp/merlin-clipboard/` and the path is injected into the terminal.
+A program's copy goes through `merlin-clip`, which loads the text into the
+`merlin-clip` tmux paste buffer (and writes OSC 52 to a tty client, if one is
+attached); the bridge watches `%paste-buffer-changed` and sends the page a
+`clipboard` frame. The user's own copy is the platform's: a selection over
+real text. All paste paths use one unified handler, supporting text and images.
+Images upload to `/tmp/merlin-clipboard/` and the path is typed into the
+terminal.
 
-The read itself lives in `terminal/templates/clipboard-core.js` — a Jinja partial included by both `terminal.html` and `clipboard-test.html`, so the diagnostic page always runs exactly what the terminal runs. It tries `clipboard.read()` (the only API that returns images), then falls back to `clipboard.readText()` whenever `read()` came back with nothing pasteable. Do not add a second copy of that ladder anywhere: `tests/unit/test_clipboard_core.py` fails if you do, and the last time the logic existed twice the diagnostic page reported success on the path where the terminal was broken. Behaviour is covered by `tests/js/clipboard-core.test.js` (per-browser cases) and `tests/e2e/test_terminal_paste.py` (real browser).
+The read itself lives in `terminal/templates/clipboard-core.js` — a Jinja partial included by `terminal-chrome.html` and `clipboard-test.html`, so the diagnostic page always runs exactly what the terminal runs. It tries `clipboard.read()` (the only API that returns images), then falls back to `clipboard.readText()` whenever `read()` came back with nothing pasteable. Do not add a second copy of that ladder anywhere: `tests/unit/test_clipboard_core.py` fails if you do, and the last time the logic existed twice the diagnostic page reported success on the path where the terminal was broken. Behaviour is covered by `tests/js/clipboard-core.test.js` (per-browser cases) and `tests/e2e/test_terminal_paste.py` (real browser).
 
-**tmux configuration** (`terminal/tmux.conf`, NOT `~/.tmux.conf`): the web terminal starts tmux with `terminal/tmux.conf`, which loads first and sources `~/.tmux.conf` at the end. Mouse copy is handled by `copy-pipe-and-cancel "merlin-clip copy"` — copy text and send it to the browser clipboard in one step.
+**tmux configuration** (`terminal/tmux.conf`, NOT `~/.tmux.conf`): the web terminal starts tmux with `terminal/tmux.conf`, which loads first and sources `~/.tmux.conf` at the end. tmux's own mouse copy (a tty client's) is handled by `copy-pipe-and-cancel "merlin-clip copy"` — copy text and send it to the browser clipboard in one step.
 
-User-facing copy/paste recipes (shortcuts, pills, NeoVim config, `/terminal/clipboard-test`) live in [`docs/terminal.md`](../terminal.md).
+User-facing copy/paste recipes (shortcuts, pills, NeoVim config, `/terminal/clipboard-test`) live in [`docs/terminal.md`](../terminal.md); the whole clipboard design is in `docs/merlin-cli/clipboard.md` of merlin-saas.
 
 ## Backend
 
-### WebSocket Endpoint (`/ws/terminal`)
+### WebSocket Endpoint (`/ws/terminal2`)
 
-In `terminal/routes.py`:
+`native_ws` in `terminal/native.py`, wired through `register_routes(app)` in
+`terminal/routes.py` (the escape hatch: a WebSocket upgrade cannot use the
+HTTP auth dependency):
 
-1. Verify auth via session cookie
+1. Verify auth via session cookie; a refused login is accepted then closed
+   with 4401 (a socket closed before its handshake is answered reads as a
+   dropped network in a browser, which would reconnect for ever)
 2. Sweep the live tmux sessions and validate the optional browser identity
-3. On a transient sweep failure, close with code 1013 before any fork so the
-   browser retries without discarding its identity
-4. Select the attach command before the fork
-5. Fork a PTY (`pty.fork()`) running that tmux command
-6. Derive this client's tty from the PTY master (see "Client tty" below)
-7. Wrap the master fd in a `PtyBridge` (`terminal/pty_bridge.py`)
-8. Bidirectional relay:
-   - WebSocket → PTY: forward input via `bridge.write()`
-   - PTY → WebSocket: forward output via `bridge.read()` through an
-     incremental UTF-8 decoder (multibyte sequences can split across reads)
-9. Report the attached session as a NUL-prefixed control frame containing its
-   current `name`, `id`, `created`, `window_id`, `window_index`, and `window`
-   fields. The browser uses the display names for its tab title; stable ids
-   continue to own restoration and frame deduplication.
-10. Watch that client's current session and window and report native tmux
-    switches or window renames
-11. Handle resize and per-client session-switch messages
-12. Clean up on disconnect: close the bridge, then `terminate_client()`
-   SIGHUPs the tmux client, waits for it to exit, and escalates to SIGKILL
+3. On a transient sweep failure, close with code 1013 before any attach so
+   the browser retries without discarding its identity
+4. With no session (no server), read the installed binary's version: too old
+   is refused with the `unsupported` frame and `CLOSE_UNSUPPORTED`
+5. Attach a control client (`NativeBridge.start`): the attach ladder below in
+   control mode, the environment of "What a terminal inherits"; the server
+   it reached is asked for its version and the formats the bridge needs, and
+   refused the same way when too old
+6. Run the bridge: updates of the displayed pane, history on request, input,
+   paste, keys, resize, the `session` and `windows` frames, the clipboard
+   frames, the control messages (`switch`, `visibility`, `ping`,
+   `clipboard_sync`, `active`), see "Bridge" below
+7. Teardown detaches the control client only, never the session, and reaps
+   it (`terminal/control.py` `terminate_client`: SIGHUP, then SIGKILL after a
+   grace period, so a wedged client never lingers)
 
-### PTY Bridge (`terminal/pty_bridge.py`)
-
-All PTY I/O goes through the event loop on a **non-blocking** master fd
-(`loop.add_reader` / `add_writer`). This is a hard constraint, not a style
-choice: a blocking `os.read()` in an executor thread deadlocks in the macOS
-kernel if `os.close()` runs concurrently on the same PTY fd. Both threads
-enter uninterruptible sleep, the process survives SIGKILL, and the frozen
-event loop takes the SaaS tunnel down with it (2026-07-02 outage). With the
-bridge, no thread is ever inside a PTY syscall, so teardown cannot deadlock.
-
-Properties the tests pin down (`tests/unit/test_pty_bridge.py`):
-
-- **Backpressure**: reading pauses at a high-water mark when the WebSocket
-  consumer falls behind; the kernel PTY buffer then throttles the child.
-- **Write stalls**: a write that can't progress (child stopped draining)
-  gives up after a timeout instead of waiting forever.
-- **Teardown**: `close()` is synchronous, idempotent, wakes any waiting
-  reader/writer, and can never block.
-
-`add_reader`/`add_writer` are used instead of asyncio pipe transports
-deliberately: they are loop-agnostic (uvloop supports them on any fd,
-while its pipe transports reject TTYs).
-
-### Client tty
-
-Per-client switching (`tmux switch-client -c <tty>`) needs the tty of *this*
-browser's tmux client. It is **derived, not looked up**: the parent already holds
-the PTY master from `pty.fork()`, and `os.ptsname(master_fd)` names the slave
-side, which is exactly tmux's `client_tty`.
-
-This matters for three reasons:
-
-- **Portable by construction.** There is no `sys.platform` branch. The OS returns
-  a native string (`/dev/pts/N` on Linux, `/dev/ttysNNN` on macOS) and it goes
-  straight to tmux, which strips `/dev/` before matching clients. Linux CI runs
-  the same lines macOS runs. The previous implementation read
-  `/proc/<pid>/fd/0`, which does not exist on macOS: it returned `""`, every
-  caller treated that as "do nothing", and the Sessions panel silently could not
-  switch at all while the native tmux tabs kept working.
-- **No lookup to get wrong.** The value is known before the child execs, so
-  nothing has to search for it: no lookup can fail, return late, or name the
-  wrong client, and stale clients left over from a previous Merlin run are
-  irrelevant. This does not remove tmux's own attach window — a command aimed
-  at the tty finds no client until tmux has registered it — but switching is
-  user-initiated long after attach, and the session watcher simply reports
-  nothing until the client appears.
-- **A per-connection constant.** Callers never re-derive it and never have to
-  guard against an unknown tty. `os.ptsname` requires Python 3.13, which is why
-  `requires-python` is `>=3.13`.
-
-If the tty cannot be derived the connection is closed and the child reaped. It
-never degrades to a terminal that runs but cannot switch — that silent-degrade
-path is what hid the macOS breakage.
-
-The contract between this derivation and tmux is pinned by
-`tests/unit/test_terminal_client_tty.py`, which asserts the derived tty equals
-tmux's reported `#{client_tty}` and that `switch-client -c` on it moves that
-client. It runs unchanged on both platforms.
+`terminal/routes.py` keeps what the bridge shares with the rest of Merlin:
+`SessionReportState` (what each page displays and whether it is visible and
+focused), `_client_views`, `looking_at`, `looking_clients`,
+`displayed_targets` (read by the notifications suppression), `short_agent`,
+`broadcast_control` (voice errors and the voice frames, through a per-page
+outbox that drops a stalled page), `_sync_clipboard`, the transcription API,
+uploads and the cwd API.
 
 ### tmux Session Restoration
 
@@ -227,16 +207,18 @@ Each WebSocket owns one tmux client. Session restoration is chosen before that
 client starts, so a refresh never attaches to one session and visibly switches
 to another afterwards.
 
-The attach ladder is:
+The attach ladder (`terminal/tmux.py` `reconnect_argv`) is:
 
 1. If the session sweep fails for an operational reason, close the WebSocket
-   with code 1013 and retry. Do not fork tmux or change browser identity.
+   with code 1013 and retry. Do not attach or change browser identity.
 2. If the browser supplied `(session_id, session_created)` and both fields
-   exactly match a live sweep row, run `tmux attach -t <session_id>`.
+   exactly match a live sweep row, run `tmux -C attach -t <session_id>`.
 3. If the identity is absent or stale and any session exists, run bare
-   `tmux attach`. tmux chooses its most recently used session.
+   `tmux -C attach`. tmux chooses its most recently used session.
 4. If no tmux server exists, run
-   `tmux new-session -A -s merlin-dev -x 120 -y 40`.
+   `tmux -C new-session -A -s merlin-dev -x 120 -y 40` (under
+   `server_spawn_prefix`: its own transient scope under systemd, so the
+   server outlives a Merlin restart).
 
 The identity pair handles the important lifecycle cases:
 
@@ -251,6 +233,11 @@ The identity pair handles the important lifecycle cases:
 one shared choice. With tab-scoped storage, two tabs may restore different tmux
 sessions. If two tabs select the same session, normal tmux semantics still
 apply: that session's selected window is shared by both clients.
+
+A per-client switch (the Sessions panel, a deep link, a push tap) is a
+`switch-client` on the page's own control connection, then `select-window`
+when a window was named (its hooks run even when it is already current: a
+deep link is a visit, and the hook clears the done pill).
 
 ### Agent identity and activity history
 
@@ -345,17 +332,16 @@ Terminal access requires the same cookie auth as the rest of the dashboard. WebS
 
 | File | Purpose |
 |------|---------|
-| `terminal/routes.py` | WebSocket endpoint, transcription API (target-window injection) |
-| `terminal/pty_bridge.py` | Non-blocking PTY I/O, tmux client termination |
-| `templates/terminal.html` | xterm.js frontend, toolbar, clipboard, voice input |
+| `terminal/native.py`, `terminal/control.py` | The `/ws/terminal2` bridge, the tmux control-mode client and the client teardown |
+| `terminal/routes.py` | The page and its old address, the transcription API (target-window injection), uploads, cwd, the clipboard sync, the shared session report state and the broadcast |
+| `terminal/static/native/` | `core.js`, `renderer.js`, `engine.js`, `input.js`, `toolbar.js`, `page.js`, `native.css` |
+| `templates/terminal-native.html` | The page |
+| `templates/terminal-status-bar.html` and `.css`, `terminal-panels.html`, `terminal-head.html`, `terminal-chrome.html` | The chrome around the terminal |
+| `templates/session-identity.js`, `clipboard-core.js` | The per-tab identity and the socket URL; the paste ladder (also in `clipboard-test.html`) |
 | `terminal/transcribe.py` | Audio transcription (faster-whisper) |
-| `terminal/native.py`, `terminal/control.py` | Native terminal: the `/ws/terminal2` bridge, the tmux control-mode client |
-| `terminal/static/native/` | Native terminal: `core.js`, `renderer.js`, `engine.js`, `input.js`, `toolbar.js`, `page.js`, `native.css` |
-| `templates/terminal-native.html` | The native page |
-| `templates/terminal-choice.js` | The per-browser switch between the two pages |
-| `templates/terminal-status-bar.html` and `.css`, `terminal-panels.html`, `terminal-head.html`, `terminal-chrome.html` | The chrome both pages share |
+| `terminal/tmux.py`, `terminal/tmux.conf` | The attach ladder, the terminal environment, Merlin's tmux configuration |
 | `auth.py` | `verify_ws_cookie()` for WebSocket auth |
-| `main.py` | Mounts terminal router |
+| `main.py` | Mounts the terminal router; `_check_tmux` at launch |
 
 ## What a terminal inherits
 
@@ -377,80 +363,7 @@ at every start. A restart reads it there, `merlin job url` for the public host,
 and `merlin dashboard-url` for its login: only the operation that needs one reads it, so a program launched
 from a pane (`merlin app run`, say) gets none.
 
-## Native terminal (`/terminal/native`)
-
-A second terminal, built beside the classic one by the native-terminal epic
-(`epics/cli/native-terminal/` in merlin-saas, journal included), so a phone gets
-native momentum scrolling, native selection and copy, and a real text field for
-its keyboard. It is the default and replaces the classic page above, which is
-deprecated and kept as a fallback for now.
-
-**The switch** (`terminal/templates/terminal-choice.js`, inlined first on both
-pages): a per-browser choice in `localStorage` (`merlin-terminal`: `native`,
-the default when nothing is stored, or `classic`), set from Merlin's settings
-page (**Terminal**: New or Legacy, `static/settings.js`, the same key) or with
-`?terminal=classic` (or `native`) on either page. `/terminal` leads to the chosen page with the rest
-of its URL (a deep link's `?target=`), before any socket opens (the classic
-page's scripts see `MerlinTerminalChoice.leaving` and start nothing);
-`/terminal/native` always opens the native page. When the bridge says tmux is
-too old, the native page sends the tab back to the classic one
-(`sessionStorage`, so that tab stays there), which says why in one line: on
-the landing right after the fall back whatever the saved choice (a direct visit
-to `/terminal/native` keeps a Legacy choice), and on every classic load while
-the choice is the native one (saved, or nothing saved). The native page attaching again clears it.
-
-**Shared chrome.** Both pages include the same partials, so the bars, panels and
-their wiring cannot drift: `terminal-status-bar.html` (the bottom bar) and its
-rules `terminal-status-bar.css`, `terminal-panels.html` (Sessions panel, Apps
-panel, notifications popover, voice console, folder picker),
-`terminal-head.html` (their stylesheets and early scripts) and
-`terminal-chrome.html` (board, notifications, Apps, the clipboard ladder, the
-session identity, the Sessions panel wiring). The extraction left the classic
-page's rendered HTML byte for byte the same; what changed it afterwards is the
-switch (its script; the terminal menu it once added is gone, the choice is in
-the settings) and a narrow-screen rule of the
-bar (the status text gives way with an ellipsis, the buttons tighten below
-420 px) so every button stays on a phone's screen.
-
-```
-Browser: real DOM text in a native scroll container
-  ↕ WebSocket (/ws/terminal2): binary grid frames, \x00 + JSON control frames
-terminal/native.py: one tmux control-mode client per page (tmux -C, pipes)
-  ↕
-tmux 3.8 or newer (checked at launch; a server replaced by an older one
-while Merlin runs: the tab goes back to the classic terminal)
-```
-
-**The launch check** (`main._check_tmux`, run by `_validate_config()` beside
-`_check_fd()`, before anything starts). Merlin refuses to start, with exit
-status 1 and the reason on stderr and in `merlin.log`, when tmux is missing or
-older than `native.MIN_TMUX` (3.8; the version is read with
-`native.parse_tmux_version`, one definition of each, a build without a number
-such as `master` passes). Two things are read, each bounded by
-`TMUX_PROBE_TIMEOUT` and with `$TMUX` withheld so the default server is meant,
-as the bridge does: the binary with `tmux -V` (no answer reads as unknown and
-refuses), then the server with `tmux list-sessions -F '#{version}'`, which
-creates, attaches and kills nothing. Its failure is classified from what tmux
-says: "no server running on" (a stale socket) or "error connecting to ... (No
-such file or directory)" (no socket) is no server, which is fine (Merlin
-starts one later); any other failure or no answer is a server Merlin cannot
-vouch for (a protocol mismatch after an upgrade, say) and refuses, since the
-bridge would talk to it. An upgraded binary does not replace a server started
-by an older one, hence the second read. The messages name what was found and
-the way out (`tmux is not installed`, `tmux 3.4 is too old`, `A tmux 3.4
-server is still running`, `The tmux server could not be checked`, each
-followed by `Merlin needs tmux 3.8 or newer.`);
-`docs/getting-started.md` ("tmux 3.8 or newer") has the troubleshooting entry
-for each. Only the server's start is gated: a CLI command that does not start
-the server never runs the check. `merlin restart` watches the relaunched
-process (uv, then the Python it starts, which is what writes the state file)
-until that state appears; when the process exits first, restart prints the
-last lines of `nohup.out`, where the refusal is. Pinned by
-`tests/unit/test_startup_checks.py` with a fake `tmux` first on PATH (missing,
-3.4, 3.7c, 3.8, next-3.9, master, a binary that hangs or fails, a running
-server older than the binary, a server probe that fails or hangs): no test
-reaches the real default server. `install.sh` treats tmux as required and
-warns with the same advice when `tmux -V` is older than 3.8.
+## The terminal
 
 ### Bridge (`terminal/native.py`, `terminal/control.py`)
 
@@ -553,7 +466,7 @@ price of rewinding the page's confirmed rows when the window grows back.
   bytes (a value past 95 is a byte above 127) and go as `{"type": "input",
   "hex": ...}`, which the bridge sends as they are, up to 223 (past it the
   encoding has no value: nothing is sent, as xterm.js does).
-- `native.css`: the classic terminal's theme colours, styles, the cursor.
+- `native.css`: the dashboard's terminal theme colours, styles, the cursor.
 - `input.js`: the input, one real `textarea` (invisible: the terminal's own
   cursor shows where typing goes). On a touch screen it lies over the
   toolbar's Paste button, so a tap there pastes and a long press opens the
@@ -599,14 +512,14 @@ price of rewinding the page's confirmed rows when the window grows back.
   images to the page). Suggestions (autocorrect, predictions, spellcheck)
   are always off: they rewrite commands, and the setting that turned them
   on was dropped.
-- `toolbar.js`: the classic toolbar's keys (Esc, Tab, Shift+Tab, Enter, F3
+- `toolbar.js`: the toolbar's keys (Esc, Tab, Shift+Tab, Enter, F3
   to F5, the new-window button, the arrows repeating while held) and its
   sticky Ctrl, Alt and Shift, shared with the input (`MerlinNativeInput.Modifiers`):
   a modifier applies to the next key from the toolbar, a physical keyboard
   or a software keyboard, then clears. No button takes the focus.
 
-- `page.js`: the page around the engine, doing what the classic page does
-  around xterm.js through the same seams: `window.MerlinTerminal`
+- `page.js`: the page around the engine, through the seams the rest of
+  Merlin uses: `window.MerlinTerminal`
   (`switchSession`, `currentSession`, `currentWindow`, `currentTarget`,
   `focus`, `notice`, `lastPasteResult`, `probeStats`) for the Sessions panel,
   the bell, the voice console and the Apps panel; the `merlin:terminal-window`
@@ -629,8 +542,8 @@ price of rewinding the page's confirmed rows when the window grows back.
   makes the page select the word itself (a drag extends it), and iOS shows its
   own handles and Copy menu on that selection; the keyboard leaves and the
   layout waits for the selection to end, so the text stays under the finger.
-  What the classic page writes into its screen (a voice or upload error) is a notice
-  over the terminal (`#nt-notice`): this page shows tmux's grid only.
+  A message for the user (a voice or upload error, a tmux too old) is a notice
+  over the terminal (`#nt-notice`): the page shows tmux's grid only.
 
 The bridge accepts a key name only if tmux 3.8 parses it
 (`native.valid_key_name`): tmux types a name it cannot parse as literal text
@@ -652,7 +565,8 @@ phone produces), `tests/e2e/test_terminal_native.py` (the page in Chromium,
 desktop and phone emulation, and Firefox for copy) and
 `tests/e2e/test_terminal_native_input.py` (the exact bytes a recorder
 program reads, in Chromium and Firefox),
-`tests/e2e/test_terminal_native_parity.py` (the switch, the tabs and pills, the
-Sessions panel, paste, copy, uploads, cd, commits, voice, the probe),
-`tests/js/terminal-choice.test.js`, and the native variants of the Apps panel
-(`test_app_terminal.py`) and voice console (`test_voice_console.py`) tests.
+`tests/e2e/test_terminal_native_parity.py` (the addresses, the tabs and pills,
+the Sessions panel, paste, copy, uploads, cd, commits, voice, the probe), and
+every other terminal e2e file (`test_terminal_paste.py`, `test_terminal_keyboard.py`,
+`test_notifications.py`, `test_voice_console.py`, `test_app_terminal.py`, ...),
+which open the page through `tests/e2e/terminal_support.py`.

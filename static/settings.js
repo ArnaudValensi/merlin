@@ -64,34 +64,10 @@ const Settings = {
         this._save({ AGENT_STATE_HOOKS: mode }, 'toast-agent-state-hooks');
     },
 
-    // ── Terminal in this browser (native | classic, shown as Legacy) ──
-    // The key terminal/templates/terminal-choice.js reads; the native
-    // terminal when nothing is stored.
-    TERMINAL_KEY: 'merlin-terminal',
-
-    _highlightTerminal(mode) {
-        const group = document.getElementById('terminal-choice');
-        if (!group) return;
-        group.querySelectorAll('.settings-seg-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.mode === mode);
-        });
-    },
-
-    loadTerminal() {
-        let stored = null;
-        try { stored = localStorage.getItem(this.TERMINAL_KEY); } catch (e) { /* blocked storage */ }
-        this._highlightTerminal(stored === 'classic' ? 'classic' : 'native');
-    },
-
-    setTerminal(mode) {
-        try {
-            localStorage.setItem(this.TERMINAL_KEY, mode);
-        } catch (e) {
-            this._toast('toast-terminal', 'This browser blocks site storage', 'error');
-            return;
-        }
-        this._highlightTerminal(mode);
-        this._toast('toast-terminal', 'Saved');
+    // The per-browser choice between two terminals is gone (there is one):
+    // the key it was kept under is dropped from this browser's storage.
+    forgetTerminalChoice() {
+        try { localStorage.removeItem('merlin-terminal'); } catch (e) { /* blocked storage */ }
     },
 
     // ── Environment color (a palette name) ──
@@ -313,5 +289,5 @@ const Settings = {
 document.addEventListener('DOMContentLoaded', () => {
     Settings.loadPublicUrl();
     Settings.loadAgentStateHooks();
-    Settings.loadTerminal();
+    Settings.forgetTerminalChoice();
 });

@@ -1,21 +1,19 @@
-"""E2E tests for the native terminal's parity with the classic one, and the
-switch between them.
+"""E2E tests for the terminal page around its engine: what the page does
+through the seams the rest of Merlin uses.
 
-The native page (``/terminal/native``, ``terminal/static/native/page.js``)
-does what the classic page does around its terminal, through the same seams
-(``window.MerlinTerminal``, the Sessions panel, the shared status bar and
-panels): the deep link and the
-push-tap relay, the paste button and a right-click, uploads (picker, drop, a
-pasted image), ``clipboard_sync``, a program's copy (desktop and the phone's
-Copy pill), the cd and commits buttons, voice input and its target, the
-notices, the toolbar toggle, the reconnect probe. The switch
-(``terminal-choice.js``): native by default, a per-browser choice set in
-Merlin's settings that ``/terminal`` follows without opening a legacy socket,
-the URL parameter, and the fall back to the legacy page when tmux is too old.
+The page (``/terminal``, ``terminal/static/native/page.js``) serves the
+Sessions panel, the status bar and the panels through ``window.MerlinTerminal``:
+the deep link and the push-tap relay, the paste button and a right-click,
+uploads (picker, drop, a pasted image), ``clipboard_sync``, a program's copy
+(desktop and the phone's Copy pill), the cd and commits buttons, voice input
+and its target, the notices, the toolbar toggle, the reconnect probe. And the
+page's addresses: ``/terminal/native`` (its old one) redirects with the query,
+``?terminal=`` is ignored, the settings page has no terminal choice, and a tmux
+server too old while Merlin runs is a notice with no reconnect loop.
 
 The software keyboard following the visual viewport and the standalone
 padding cannot be produced by Playwright: they are on the founder's iPhone
-checklist (the epic's journal).
+checklist (the native-terminal epic's journal).
 
 Run: uv run scripts.py test-e2e   (or pytest tests/e2e/test_terminal_native_parity.py)
 Requires: chromium + tmux.
@@ -89,7 +87,7 @@ def tmux(env: dict, *args: str) -> str:
 
 
 def _native(page, server, query: str = "") -> None:
-    open_terminal(page, server, query, path="/terminal/native")
+    open_terminal(page, server, query)
 
 
 @pytest.fixture
@@ -123,129 +121,106 @@ def pane_line(env: dict, pane: str) -> str:
     return tmux(env, "capture-pane", "-p", "-t", pane).replace("\n", "")
 
 
-# -- the switch -----------------------------------------------------------------------
+# -- the addresses --------------------------------------------------------------------
 
 
-def test_the_switch_is_native_by_default_and_follows_the_choice(
+def test_the_old_native_address_redirects_with_its_query_and_the_parameter_is_ignored(
     browser, server, tmux_env
 ):
     ctx = browser.new_context(**DESKTOP)
     pg = ctx.new_page()
     sockets: list[str] = []
     pg.on("websocket", lambda ws: sockets.append(ws.url))
-    pg.goto(f"{server}/terminal")
-    wait_native(pg)
-    assert pg.url.endswith("/terminal/native")
-    assert pg.evaluate("localStorage.getItem('merlin-terminal')") is None
-    assert [
-        u for u in sockets if "/ws/terminal?" in u or u.endswith("/ws/terminal")
-    ] == []
-
-    # ?terminal=native: remembered, and the rest of the URL (a deep link)
-    # carried to the native page, which follows it.
-    wid = new_window(tmux_env)
+    wid = ""
     try:
+        # A bookmark or a page opened before the change: /terminal/native leads
+        # to /terminal with the deep link it carried, which the page follows.
+        pg.goto(f"{server}/terminal")
+        wait_native(pg)  # the first page creates the tmux server
+        wid = new_window(tmux_env)
         session = pg.evaluate("window.MerlinTerminal.currentSession()")
-        pg.goto(f"{server}/terminal?terminal=native&target={session}:{wid}")
+        pg.goto(f"{server}/terminal/native?target={session}:{wid}")
         wait_native(pg)
         pg.wait_for_function(
             f"window.MerlinTerminal.currentWindow() === '{wid}'", timeout=10000
         )
         pg.wait_for_function("!location.search.includes('target')", timeout=5000)
-        assert "terminal=" not in pg.url
-        assert pg.evaluate("localStorage.getItem('merlin-terminal')") == "native"
-
-        # /terminal now leads to the native page without a classic socket.
-        sockets.clear()
-        pg.goto(f"{server}/terminal")
+        assert pg.url.rstrip("/").endswith("/terminal")
+        # The old choice parameter opens the same page: there is one terminal,
+        # on one socket.
+        pg.goto(f"{server}/terminal?terminal=classic")
         wait_native(pg)
-        assert pg.url.endswith("/terminal/native")
+        assert pg.url.startswith(f"{server}/terminal")
+        assert "/terminal/native" not in pg.url
+        assert pg.locator("#nt-container").count() == 1
+        assert pg.locator(".xterm-screen").count() == 0
+        assert all("/ws/terminal2" in u for u in sockets), sockets
         assert [
             u for u in sockets if "/ws/terminal?" in u or u.endswith("/ws/terminal")
         ] == []
-
-        # Merlin's settings: New checked, Legacy is kept and /terminal follows.
-        seg = "#terminal-choice .settings-seg-btn"
-        pg.goto(f"{server}/settings")
-        pg.wait_for_selector(f"{seg}.active")
-        assert pg.get_attribute(f"{seg}.active", "data-mode") == "native"
-        pg.click(f"{seg}[data-mode=classic]")
-        assert pg.evaluate("localStorage.getItem('merlin-terminal')") == "classic"
-        pg.goto(f"{server}/terminal")
-        pg.wait_for_selector(".xterm-screen", timeout=30000)
-        assert pg.url.endswith("/terminal")
-        pg.goto(f"{server}/settings")
-        pg.wait_for_selector(f"{seg}.active")
-        assert pg.get_attribute(f"{seg}.active", "data-mode") == "classic"
-
-        # ?terminal=classic on the native page goes back too.
-        pg.goto(f"{server}/terminal?terminal=native")
-        wait_native(pg)
-        pg.goto(f"{server}/terminal/native?terminal=classic")
-        pg.wait_for_selector(".xterm-screen", timeout=30000)
-        assert pg.evaluate("localStorage.getItem('merlin-terminal')") == "classic"
     finally:
-        kill_window(tmux_env, wid)
+        if wid:
+            kill_window(tmux_env, wid)
         ctx.close()
 
 
-def test_a_tmux_too_old_sends_the_tab_back_to_the_classic_page(browser, server):
-    ctx = browser.new_context(**DESKTOP)
-    pg = ctx.new_page()
-    pg.goto(f"{server}/terminal?terminal=native")
-    wait_native(pg)
-    # What the bridge sends on a tmux older than it needs (Phase 2).
-    pg.evaluate(
-        f"{ENGINE}.opts.onControl({{type: 'unsupported', version: '3.4', minimum: '3.8'}})"
-    )
-    pg.wait_for_selector(".term-fallback", timeout=20000)
-    assert pg.url.endswith("/terminal")
-    assert "tmux 3.8" in pg.text_content(".term-fallback")
-    assert "3.4" in pg.text_content(".term-fallback")
-    pg.wait_for_selector(".xterm-screen", timeout=30000)
-    # The tab stays on the classic page; the choice itself is kept.
-    pg.goto(f"{server}/terminal")
-    pg.wait_for_selector(".xterm-screen", timeout=30000)
-    assert pg.url.endswith("/terminal")
-    assert pg.evaluate("localStorage.getItem('merlin-terminal')") == "native"
-    pg.wait_for_selector(".term-fallback", timeout=20000)
-    assert "tmux 3.8" in pg.text_content(".term-fallback")
-    # Asking for the new terminal again tries it again.
-    pg.goto(f"{server}/terminal?terminal=native")
-    wait_native(pg)
-    ctx.close()
-
-
-def test_a_direct_visit_on_an_old_tmux_says_why_without_changing_the_choice(
+def test_the_settings_page_has_no_terminal_choice_and_forgets_the_old_one(
     browser, server
 ):
-    for saved in (None, "classic"):
-        ctx = browser.new_context(**DESKTOP)
-        if saved:
-            ctx.add_init_script(
-                f"if (!sessionStorage.getItem('seeded')) {{ sessionStorage.setItem('seeded', '1');"
-                f" localStorage.setItem('merlin-terminal', '{saved}'); }}"
-            )
-        pg = ctx.new_page()
+    ctx = browser.new_context(**DESKTOP)
+    ctx.add_init_script(
+        "if (!sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1');"
+        " localStorage.setItem('merlin-terminal', 'classic'); }"
+    )
+    pg = ctx.new_page()
+    try:
+        pg.goto(f"{server}/settings")
+        pg.wait_for_selector("#env-color")
+        assert pg.locator("#terminal-choice").count() == 0
+        assert "Legacy" not in pg.inner_text("body")
+        pg.wait_for_function(
+            "localStorage.getItem('merlin-terminal') === null", timeout=5000
+        )
+        # And the terminal is the one terminal whatever the browser once chose.
+        pg.evaluate("localStorage.setItem('merlin-terminal', 'classic')")
         _native(pg, server)
+        assert pg.locator("#nt-container").count() == 1
+    finally:
+        ctx.close()
+
+
+def test_a_tmux_too_old_at_run_time_is_a_notice_with_no_reconnect_loop(browser, server):
+    """Merlin refuses to start without tmux 3.8, but the server can be replaced
+    by an older one while it runs: the bridge then sends ``unsupported`` and
+    closes with its code, and the page says so over the terminal, once, and
+    does not reconnect."""
+    ctx = browser.new_context(**DESKTOP)
+    pg = ctx.new_page()
+    sockets: list[str] = []
+    pg.on("websocket", lambda ws: sockets.append(ws.url))
+    try:
+        _native(pg, server)
+        opened = len(sockets)
+        # What the bridge sends on a tmux older than it needs, then its close.
         pg.evaluate(
             f"{ENGINE}.opts.onControl({{type: 'unsupported', version: '3.4', minimum: '3.8'}})"
         )
-        pg.wait_for_selector(".term-fallback", timeout=20000)
-        assert pg.url.endswith("/terminal")
-        assert "tmux 3.8" in pg.text_content(".term-fallback")
-        assert pg.evaluate("localStorage.getItem('merlin-terminal')") == saved
-        # With Legacy chosen, said once: the next legacy load is plain. With
-        # nothing saved the choice is the native terminal, so each load says
-        # why again.
-        pg.reload()
-        pg.wait_for_selector(".xterm-screen", timeout=30000)
-        pg.wait_for_timeout(300)
-        assert (pg.query_selector(".term-fallback") is None) == (saved == "classic")
-        # The native page attaching again clears the old fall back: its
-        # classic page has nothing to say afterwards either.
-        _native(pg, server)
-        assert pg.evaluate("sessionStorage.getItem('merlin-terminal-fallback')") is None
+        pg.wait_for_selector("#nt-notice:not([hidden])", timeout=5000)
+        assert (
+            pg.text_content("#nt-notice")
+            == "tmux 3.4 is too old. Merlin needs tmux 3.8 or newer."
+        )
+        assert "tmux 3.4 is too old" in pg.text_content("#status-text")
+        pg.evaluate(f"{ENGINE}.ws.close()")
+        pg.wait_for_timeout(3000)
+        assert len(sockets) == opened, "the page reconnected after a tmux too old"
+        assert (
+            pg.evaluate("document.getElementById('status-dot').className")
+            != "connecting"
+        )
+        assert not pg.locator("#nt-notice").is_hidden()
+        assert pg.url.startswith(f"{server}/terminal")
+    finally:
         ctx.close()
 
 
@@ -341,7 +316,7 @@ def test_the_paste_button_and_a_right_click_paste_once_and_sync(page):
     assert page.evaluate("window.MerlinTerminal.lastPasteResult().kind") == "text"
     clear_line(page)
 
-    # A right-click without a selection pastes, as in the classic page.
+    # A right-click without a selection pastes.
     page.evaluate("t => navigator.clipboard.writeText(t)", "RIGHT_CLICK_MARK")
     page.click("#nt-container", button="right")
     wait_count(page, "RIGHT_CLICK_MARK", 1)

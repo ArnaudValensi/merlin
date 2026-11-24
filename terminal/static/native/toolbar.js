@@ -1,4 +1,4 @@
-// Native terminal toolbar: the classic terminal's keys (Esc, Tab, Shift+Tab,
+// Native terminal toolbar: the keys (Esc, Tab, Shift+Tab,
 // the sticky Ctrl, Alt and Shift, Enter, the window keys F3, F4 and F5, the
 // new-window button, the arrows that repeat while held). A sticky modifier
 // applies to the next key from the toolbar or from a keyboard (the input

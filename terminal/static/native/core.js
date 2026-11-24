@@ -153,8 +153,8 @@
     let fg = colour(cell.getFgColorMode(), cell.getFgColor());
     const bg = colour(cell.getBgColorMode(), cell.getBgColor());
     const bold = cell.isBold();
-    // Bold text in the 8 base colours is drawn bright, as the classic terminal
-    // does (xterm.js drawBoldTextInBrightColors).
+    // Bold text in the 8 base colours is drawn bright (xterm.js's
+    // drawBoldTextInBrightColors, which the dashboard theme relied on).
     if (bold && fg && fg.n != null && fg.n < 8) fg = { n: fg.n + 8 };
     let c = '';
     let s = '';
@@ -293,8 +293,8 @@
     return s;
   }
 
-  // The classic terminal's WebLinksAddon pattern (U+0001 marks a column no
-  // URL can cross).
+  // xterm.js's WebLinksAddon pattern (U+0001 marks a column no URL can
+  // cross).
   const URL_RE = /https?:[/]{2}[^\s"'!*(){}|\\^<>`\u0001]*[^\s"':,.!?{}|\\^~[\]`()<>\u0001]/g;
 
   // Links of a logical line: ``texts`` are its rows' column strings
@@ -486,7 +486,7 @@
   // ``mods``: {ctrl, alt, shift, meta, altGraph}; ``code``: the event's
   // physical key (``KeyA``), for Alt and Ctrl on keys whose character is not
   // the letter (Option on a Mac composes: Option+h is ``˙``; a Cyrillic
-  // layout). Alt is Meta (ESC prefix), as in the classic terminal; Cmd/Win
+  // layout). Alt is Meta (ESC prefix); Cmd/Win
   // combinations and AltGr characters stay the browser's (null). Returns
   // {key: <tmux name>} or {data: <bytes as text>} or null.
   function keyAction(key, mods, code) {

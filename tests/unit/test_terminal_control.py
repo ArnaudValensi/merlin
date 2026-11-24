@@ -12,17 +12,19 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import signal
 import subprocess
 import time
 
 import pytest
 
 from terminal.control import (
-    ControlClient,
-    Reply,
     control_env,
+    ControlClient,
     hex_keys,
     quote,
+    Reply,
+    terminate_client,
     unescape,
 )
 
@@ -494,3 +496,52 @@ async def test_window_and_session_notifications(server):
         )
     finally:
         await client.close()
+
+
+# -- terminate_client: the tmux client is made to exit, whatever it does --------------
+
+
+def _fork_child(setup):
+    """Fork a child that runs setup() then sleeps. Never returns in child."""
+    pid = os.fork()
+    if pid == 0:
+        try:
+            setup()
+            time.sleep(30)
+        finally:
+            os._exit(0)
+    return pid
+
+
+def _assert_reaped(pid):
+    with pytest.raises(ChildProcessError):
+        os.waitpid(pid, os.WNOHANG)
+
+
+class TestTerminateClient:
+    def test_sighup_terminates_and_reaps(self):
+        pid = _fork_child(lambda: signal.signal(signal.SIGHUP, signal.SIG_DFL))
+        asyncio.run(terminate_client(pid, sighup_grace=2.0, sigkill_grace=1.0))
+        _assert_reaped(pid)
+
+    def test_escalates_to_sigkill_when_sighup_ignored(self):
+        pid = _fork_child(lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN))
+        asyncio.run(terminate_client(pid, sighup_grace=0.2, sigkill_grace=2.0))
+        _assert_reaped(pid)
+
+    def test_already_exited_child_is_reaped(self):
+        pid = os.fork()
+        if pid == 0:
+            os._exit(0)
+        time.sleep(0.1)
+        asyncio.run(terminate_client(pid))
+        _assert_reaped(pid)
+
+    def test_gone_pid_does_not_raise(self):
+        # A child that exited and was already reaped: the pid no longer
+        # exists. terminate_client must return without raising.
+        pid = os.fork()
+        if pid == 0:
+            os._exit(0)
+        os.waitpid(pid, 0)
+        asyncio.run(terminate_client(pid))

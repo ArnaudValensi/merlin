@@ -1,13 +1,12 @@
-"""Native terminal: the ``/ws/terminal2`` WebSocket, a tmux control-mode bridge.
+"""The terminal: the ``/ws/terminal2`` WebSocket, a tmux control-mode bridge.
 
-The classic terminal (``/ws/terminal``, ``terminal/routes.py``) runs a tmux
-client on a PTY and streams the screen tmux draws for it. This bridge attaches
-a tmux client in control mode instead (``terminal/control.py``), so nothing is
-drawn for it, and mirrors tmux's own grid of the displayed pane to the page:
-the rows of its screen and of its history, exactly as tmux holds them, with
-each row's wrap flag. The page turns rows into real DOM text in a native
-scrolling container and keeps the history itself, so it can scroll and select
-natively. Both terminals attach to the same tmux server and can be open at once.
+The bridge attaches a tmux client in control mode (``terminal/control.py``),
+so nothing is drawn for it, and mirrors tmux's own grid of the displayed pane
+to the page: the rows of its screen and of its history, exactly as tmux holds
+them, with each row's wrap flag. The page turns rows into real DOM text in a
+native scrolling container and keeps the history itself, so it can scroll and
+select natively. Any other tmux client (an SSH user's ``tmux attach``) shares
+the same server and sessions.
 
 Why the grid and not the raw output: tmux interprets every byte a program
 writes, and part of that interpretation (the current rendition, the charsets,
@@ -43,11 +42,14 @@ What the bridge guarantees (pinned by ``tests/unit/test_terminal_native.py``):
   as ``Escape`` or ``F2``, any key while a key table other than root is active),
   so the binding runs exactly as for a typed key; plainly otherwise, so tmux
   encodes it for the pane's own modes.
-- **The running server is checked.** The control connection asks the server it
-  attached to for its version and the formats the bridge needs; below 3.8 the
-  page gets an ``unsupported`` notice and falls back to the classic terminal.
-  The installed binary is only checked when no server runs (it would create
-  one). Every probe runs off the event loop and bounded.
+- **The running server is checked.** Merlin refuses to start without tmux 3.8
+  (``main._check_tmux``), but a server can be replaced by an older one while
+  Merlin runs: the control connection asks the server it attached to for its
+  version and the formats the bridge needs; below 3.8 the page gets an
+  ``unsupported`` notice and the socket closes with ``CLOSE_UNSUPPORTED``,
+  which the page shows and does not reconnect from. The installed binary is
+  only checked when no server runs (it would create one). Every probe runs
+  off the event loop and bounded.
 """
 
 from __future__ import annotations
@@ -70,7 +72,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from auth import verify_ws_cookie
 from board import sweep as board_sweep
-from terminal import routes as classic
+from terminal import routes
 from terminal.control import ControlClient, ControlError, hex_keys, quote
 from terminal.tmux import (
     parse_session_identity,
@@ -433,7 +435,7 @@ class NativeBridge:
         self.client = ControlClient(
             self._on_output, self._on_notification, decode_output=False
         )
-        self.report = classic.SessionReportState()
+        self.report = routes.SessionReportState()
         self.page_socket = _PageSocket(self)
         self.out = _Outbox()
         self.shown: _Shown | None = None
@@ -503,10 +505,10 @@ class NativeBridge:
         await self.client.command("refresh-client -B 'merlin-state:@*:#{@agent_state}'")
 
     async def run(self) -> None:
-        self.report.agent = classic.short_agent(self.ws.headers.get("user-agent", ""))
+        self.report.agent = routes.short_agent(self.ws.headers.get("user-agent", ""))
         # broadcast_control only calls send_text and close on it.
         self.report.websocket = cast(WebSocket, self.page_socket)
-        classic._client_views.add(self.report)
+        routes._client_views.add(self.report)
         self._tasks = [
             asyncio.create_task(self._sender()),
             asyncio.create_task(self._syncer()),
@@ -521,7 +523,7 @@ class NativeBridge:
             await self.close()
 
     async def close(self) -> None:
-        classic._client_views.discard(self.report)
+        routes._client_views.discard(self.report)
         self.report.outbox.clear()
         if self.report.sender is not None:
             self.report.sender.cancel()
@@ -716,7 +718,7 @@ class NativeBridge:
         self.dirty.set()
 
     def _report_session(self, current: board_sweep.ClientSession) -> None:
-        """The classic ``session`` control frame, through the outbox. What the
+        """The ``session`` control frame, through the outbox. What the
         page displays (``SessionReportState.last_reported``, read by
         ``looking_at``) changes when the frame has actually been sent."""
         if current == self.session_queued:
@@ -1061,7 +1063,7 @@ class NativeBridge:
             elif kind == "ping":
                 self.push_control({"type": "pong"})
             elif kind == "clipboard_sync":
-                classic._sync_clipboard(str(msg.get("text", "")))
+                routes._sync_clipboard(str(msg.get("text", "")))
         except (ValueError, TypeError):
             return
         except ControlError as e:
@@ -1141,8 +1143,8 @@ class NativeBridge:
             return
         (switched,) = await self.client.command(f"switch-client -t {quote(target)}")
         if switched.ok and ":" in target:
-            # As for the classic terminal: select-window fires the window
-            # hooks even when the window is already current.
+            # select-window fires the window hooks even when the window is
+            # already current (a deep link is a visit).
             await self.client.command(f"select-window -t {quote(target)}")
         await self.sync()
 
@@ -1244,7 +1246,7 @@ async def native_ws(websocket: WebSocket) -> None:
     try:
         await bridge.start(
             bridge.attach_argv(sessions, preferred),
-            classic._cwd or str(classic.PROJECT_ROOT),
+            routes._cwd or str(routes.PROJECT_ROOT),
         )
     except Unsupported as e:
         await _refuse(websocket, e.version)

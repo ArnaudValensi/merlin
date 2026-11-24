@@ -215,7 +215,7 @@ function initVoiceConsole() {
     function applyView() {
         const dock = view === "dock" && !!barSlot;
         root.dataset.view = dock ? "dock" : "full";
-        // In the flow of the terminal's column, so xterm refits around it.
+        // In the flow of the terminal's column, so the terminal refits around it.
         if (dock) barSlot.parentNode.insertBefore(root, barSlot);
         else if (root.parentNode !== fullParent) fullParent.appendChild(root);
         root.setAttribute("role", dock ? "region" : "dialog");

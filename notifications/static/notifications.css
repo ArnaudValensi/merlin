@@ -1,7 +1,7 @@
 /* Notifications popover: the sessions panel's visual language (dashboard.css
    vars, Geist, 6px radius). Docked above the bell on desktop, a sheet above
    the terminal's bottom bar on mobile. The bell itself is styled with the
-   other status-bar buttons in terminal.html. */
+   other status-bar buttons in terminal-chrome.html. */
 
 .notif-popover {
   position: fixed;

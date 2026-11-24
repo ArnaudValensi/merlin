@@ -1,7 +1,7 @@
 /* Apps in the web terminal: the status-bar ▶ button for apps started from the
  * current tmux window, a toast when one starts, a docked live panel on
  * desktop and a draggable mini-player on mobile. Loaded only when the Apps
- * feature flag is on (terminal.html guards the include).
+ * feature flag is on (terminal-chrome.html guards the include).
  */
 (function () {
     'use strict';

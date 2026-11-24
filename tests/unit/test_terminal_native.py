@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 from terminal import native
-from terminal import routes as classic
+from terminal import routes
 from terminal.control import ControlClient, Reply, quote
 from terminal.native import (
     FRAME_HISTORY,
@@ -205,7 +205,7 @@ def test_parse_shown_and_window():
     }
 
 
-def test_attach_ladder_is_the_classic_one_in_control_mode(monkeypatch):
+def test_attach_ladder_runs_in_control_mode(monkeypatch):
     from board.sweep import TmuxSession
     from terminal.tmux import SessionIdentity, tmux_conf_args
 
@@ -229,8 +229,8 @@ def test_attach_ladder_is_the_classic_one_in_control_mode(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_the_control_client_gets_the_terminal_environment(monkeypatch):
-    """The client may create the server, which every shell inherits: the same
-    environment rules as the classic terminal."""
+    """The client may create the server, which every shell inherits: the
+    terminal environment rules (terminal.tmux.terminal_process_env)."""
     monkeypatch.setenv("MERLIN_SAAS_TOKEN", "secret")
     monkeypatch.setenv("TMUX", "/tmp/elsewhere,1,0")
     seen: dict = {}
@@ -522,10 +522,10 @@ async def test_session_frames_and_broadcasts_share_the_one_timed_sender(monkeypa
     bridge._report_session(ClientSession("t", "$1", 1, "@1", 0, "sh"))
     run = asyncio.create_task(bridge.run())
     await asyncio.wait_for(stalled.wait(), 2)
-    await classic.broadcast_control({"type": "voice_error", "message": "x"})
+    await routes.broadcast_control({"type": "voice_error", "message": "x"})
     await asyncio.wait_for(run, 3)
     assert fake.closed
-    assert bridge.report not in classic._client_views
+    assert bridge.report not in routes._client_views
     # Never delivered: never counted as displayed.
     assert bridge.report.last_reported is None
 
@@ -718,7 +718,7 @@ async def test_attach_reports_session_windows_and_the_pane(server):
         _, header, _ = ws.frames(FRAME_UPDATE)[0]
         assert header["reset"] and header["pane"] == bridge.pane
         assert (header["cols"], header["rows"]) == (80, 24)
-        assert classic.looking_at(f"t:{session['window_id']}")
+        assert routes.looking_at(f"t:{session['window_id']}")
         assert tmux(
             "list-clients", "-F", "#{client_control_mode}|#{client_tty}"
         ).split() == ["1|"]
@@ -726,7 +726,7 @@ async def test_attach_reports_session_windows_and_the_pane(server):
         assert await _until(lambda: "hello-42" in ws.screen_text())
     finally:
         await _stop(bridge, task)
-    assert not classic.looking_at(f"t:{session['window_id']}")
+    assert not routes.looking_at(f"t:{session['window_id']}")
     assert tmux("ls", "-F", "#{session_name}").split() == ["t"]
     assert tmux("list-clients").strip() == ""
 
@@ -1168,8 +1168,8 @@ async def test_history_rows_by_absolute_number(server):
 # -- the clipboard -------------------------------------------------------------------
 
 
-class ClassicClient:
-    """A normal tmux client on a PTY, as the classic terminal runs one; what
+class TtyClient:
+    """A normal tmux client on a PTY (an SSH user's ``tmux attach``); what
     reaches its tty is read from the PTY master."""
 
     def __init__(self, socket: str, session: str) -> None:
@@ -1212,33 +1212,33 @@ def _osc52(text: str) -> bytes:
 
 @needs_tmux
 @pytest.mark.asyncio
-@pytest.mark.parametrize("classic_first", [True, False])
-async def test_merlin_clip_reaches_both_terminals_when_they_coexist(
-    server, classic_first
+@pytest.mark.parametrize("tty_first", [True, False])
+async def test_merlin_clip_reaches_a_tty_client_and_the_page_when_they_coexist(
+    server, tty_first
 ):
-    """A classic client and a native page on one session: whichever client
-    tmux calls current, the classic tty gets its OSC 52 and the native page a
-    clipboard frame, through the shell path and a provider path (stdout not
-    the pane, as when NeoVim runs merlin-clip)."""
+    """A tty client and a page on one session: whichever client tmux calls
+    current, the tty gets its OSC 52 and the page a clipboard frame, through
+    the shell path and a provider path (stdout not the pane, as when NeoVim
+    runs merlin-clip)."""
     socket, tmux, tmp = server
-    classic_client = None
-    if classic_first:
-        classic_client = ClassicClient(socket, "t")
+    tty_client = None
+    if tty_first:
+        tty_client = TtyClient(socket, "t")
         assert await _until(lambda: tmux("list-clients").strip() != "")
     bridge, ws, task = await _bridge(socket)
     try:
-        if classic_client is None:
-            classic_client = ClassicClient(socket, "t")
+        if tty_client is None:
+            tty_client = TtyClient(socket, "t")
             assert await _until(lambda: len(tmux("list-clients").split("\n")) >= 3)
         clip = quote(str(MERLIN_CLIP))
         await _run(bridge, f"printf shell-copy | sh {clip} copy")
-        assert await _until(lambda: _osc52("shell-copy") in classic_client.read())
+        assert await _until(lambda: _osc52("shell-copy") in tty_client.read())
         assert await _until(
             lambda: any(c.get("text") == "shell-copy" for c in ws.controls("clipboard"))
         )
         out = tmp / "provider-stdout"
         await _run(bridge, f"printf provider-copy | sh {clip} copy > {out}")
-        assert await _until(lambda: _osc52("provider-copy") in classic_client.read())
+        assert await _until(lambda: _osc52("provider-copy") in tty_client.read())
         assert await _until(
             lambda: any(
                 c.get("text") == "provider-copy" for c in ws.controls("clipboard")
@@ -1246,7 +1246,7 @@ async def test_merlin_clip_reaches_both_terminals_when_they_coexist(
         )
         assert out.read_bytes() == b""
     finally:
-        classic_client.close()
+        tty_client.close()
         await _stop(bridge, task)
 
 

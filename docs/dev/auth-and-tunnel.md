@@ -48,7 +48,7 @@ When `DASHBOARD_PASS` is empty, all routes are accessible without auth. Boot log
 
 ### WebSocket Auth
 
-Browsers send cookies on WebSocket upgrade requests. The terminal WebSocket (`/ws/terminal`) verifies the session cookie from the HTTP upgrade request:
+Browsers send cookies on WebSocket upgrade requests. The terminal WebSocket (`/ws/terminal2`) verifies the session cookie from the HTTP upgrade request, and accepts then closes with code 4401 when it fails (a close before the handshake is answered reads as a dropped network in a browser, which would reconnect for ever):
 
 ```python
 def verify_ws_cookie(request: Request) -> bool:

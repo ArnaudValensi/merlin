@@ -1,7 +1,7 @@
-{#- Shared by the classic and the native terminal pages: the Sessions panel,
-   the notifications bell, the Apps panel, the clipboard ladder, the session
-   identity, and the wiring of the Sessions panel. Nothing here knows which
-   terminal renders the pane: it talks to it through window.MerlinTerminal. -#}
+{#- The chrome around the terminal: the Sessions panel, the notifications
+   bell, the Apps panel, the clipboard ladder, the session identity, and the
+   wiring of the Sessions panel. Nothing here renders the pane: it talks to
+   the terminal through window.MerlinTerminal. -#}
 <script src="/static/vendor/sortable.min.js"></script>
 <script src="/static/board/board.js"></script>
 <script src="/static/notifications/notifications.js"></script>
@@ -99,14 +99,6 @@
     width: 7px; height: 7px; border-radius: 50%;
     background: var(--accent-blue);
 }
-/* The one-line notice of a tab the native page sent back here. */
-.term-fallback {
-    display: flex; align-items: center; gap: 8px; padding: 6px 12px;
-    background: var(--bg-card); border: 1px solid var(--accent-yellow); border-radius: 6px;
-    color: var(--text-primary); font-size: 12px;
-}
-.term-fallback span { flex: 1 1 auto; }
-.term-fallback button { background: none; border: 0; color: var(--text-muted); font-size: 16px; cursor: pointer; }
 </style>
 <script>
 // Sessions board wiring. Mobile: the button opens a fullscreen modal. Desktop:
@@ -114,8 +106,6 @@
 // and the header control toggle a collapse, and the divider resizes it — both
 // persisted. board.js renders the list into the panel.
 (function () {
-    // A classic page leaving for the native one (terminal-choice.js).
-    if (window.MerlinTerminalChoice && MerlinTerminalChoice.leaving) return;
     var btn = document.getElementById('sessions-btn');
     var panel = document.getElementById('sessions-panel');
     var backdrop = document.getElementById('sessions-backdrop');
@@ -170,8 +160,8 @@
     window.addEventListener('focus', refreshBoard);
     document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshBoard(); });
 
-    // Divider: drag the terminal/panel boundary on desktop. The terminal's
-    // ResizeObserver refits xterm as the panel width changes.
+    // Divider: drag the terminal/panel boundary on desktop. The terminal
+    // refits itself as the panel width changes.
     if (divider) {
         var dragging = false, lastW = 0;
         divider.addEventListener('pointerdown', function (e) {
@@ -222,11 +212,4 @@
         onWaiting: function (sids) { if (notif) notif.syncWaiting(sids); },
     });
 })();
-</script>
-<script>
-// On the legacy page of a tab the native page sent back, the notice saying
-// why.
-if (window.MerlinTerminalChoice && !MerlinTerminalChoice.leaving) {
-    MerlinTerminalChoice.showFallback();
-}
 </script>

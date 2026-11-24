@@ -82,7 +82,7 @@ const MerlinSessionIdentity = (() => {
 
     const websocketUrl = (location, value) => {
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const base = `${proto}//${location.host}/ws/terminal`;
+        const base = `${proto}//${location.host}/ws/terminal2`;
         const identity = normalize(value);
         if (!identity) return base;
         return (

@@ -34,13 +34,17 @@ import codecs
 import contextlib
 import logging
 import os
+import signal
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from terminal.pty_bridge import terminate_client
-
 logger = logging.getLogger("merlin.terminal")
+
+# How long a tmux client gets to leave after SIGHUP, then after SIGKILL.
+SIGHUP_GRACE = 2.0
+SIGKILL_GRACE = 1.0
+_REAP_POLL = 0.05
 
 # The stdout pipe is read in chunks of this size. The transport stops reading
 # while more than READ_HIGH_WATER bytes wait to be parsed, so a consumer that
@@ -356,3 +360,68 @@ def pid_alive(pid: int | None) -> bool:
     except OSError:
         return False
     return True
+
+
+# -- client process teardown --------------------------------------------------------
+
+
+def _try_reap(pid: int) -> bool:
+    """Non-blocking waitpid. True if the child is gone (or already reaped)."""
+    try:
+        reaped, _status = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        return True
+    return reaped != 0
+
+
+async def _wait_exit(pid: int, timeout: float) -> bool:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        if _try_reap(pid):
+            return True
+        if asyncio.get_running_loop().time() >= deadline:
+            return False
+        await asyncio.sleep(_REAP_POLL)
+
+
+async def terminate_client(
+    pid: int,
+    *,
+    sighup_grace: float = SIGHUP_GRACE,
+    sigkill_grace: float = SIGKILL_GRACE,
+) -> None:
+    """SIGHUP the tmux client and make sure it actually exits.
+
+    pid is the tmux *client* attached to the persistent session; the
+    session lives in the tmux server and survives. Escalates to SIGKILL
+    after a grace period so a wedged client can never linger (stuck clients
+    were part of the 2026-07-02 incident).
+    """
+    try:
+        os.kill(pid, signal.SIGHUP)
+    except ProcessLookupError:
+        _try_reap(pid)
+        return
+    except OSError:
+        return
+    try:
+        if await _wait_exit(pid, sighup_grace):
+            return
+        logger.warning("tmux client pid=%d ignored SIGHUP, sending SIGKILL", pid)
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            _try_reap(pid)
+            return
+        if await _wait_exit(pid, sigkill_grace):
+            return
+        logger.error("tmux client pid=%d survived SIGKILL", pid)
+    except asyncio.CancelledError:
+        # Handler cancelled (e.g. server shutdown): best-effort SIGKILL so
+        # the client cannot outlive us, then propagate the cancellation.
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+        _try_reap(pid)
+        raise

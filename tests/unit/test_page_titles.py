@@ -75,10 +75,6 @@ def test_failed_hostname_lookup_degrades_to_no_machine():
     ("relative_path", "integration"),
     [
         (
-            "terminal/templates/terminal.html",
-            "MerlinPageTitle.tmuxContext(ctl.name, ctl.window)",
-        ),
-        (
             "terminal/static/native/page.js",
             "MerlinPageTitle.tmuxContext(msg.name, msg.window)",
         ),

@@ -2,15 +2,13 @@
 {% block title %}term{% endblock %}
 
 {% block content %}
-{# First: ?terminal=classic on this page goes back to the classic one. #}
-<script>{% include "terminal-choice.js" %}
-MerlinTerminalChoice.route('native');</script>
 <div class="terminal-col">
 <div class="nt-page">
     <div id="nt-container"></div>
     <button id="nt-jump" class="nt-jump" type="button" hidden>Jump to bottom</button>
-    <!-- One line over the terminal: what the classic terminal writes into its
-         screen (a voice or upload error), since this one only shows tmux's. -->
+    <!-- One line over the terminal: a message for the user (a voice or
+         upload error, a tmux too old), since the terminal shows tmux's grid
+         only. -->
     <div id="nt-notice" class="nt-notice" role="status" hidden></div>
     <!-- A program copied text on a phone: the tap gives the browser the
          gesture its clipboard needs (docs/merlin-cli/clipboard.md). -->

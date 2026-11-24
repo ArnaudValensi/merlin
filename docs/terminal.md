@@ -121,9 +121,8 @@ your phone and your laptop each stay where you left them.
 - The Sessions button badge counts windows **waiting on you across all
   sessions**, so a background session that finishes still reaches you.
 
-In the classic terminal, the bottom row of window tabs is tmux's own status
-line, so it always shows the windows of whichever session you are currently
-on. The new terminal has no tab row (see [The new terminal](#the-new-terminal)).
+The terminal has no tab row: the status bar names the current window, the
+toolbar's arrows move between windows, and the Sessions panel lists them.
 
 ## Agent-state pills
 
@@ -206,21 +205,13 @@ Want to be told instead of looking? The bell in the bottom bar turns the same si
 browser notifications, an app badge and push to your phone. See
 [Notifications](notifications.md).
 
-## The new terminal
+## On a phone and on a desktop
 
-The new terminal is the default, made to feel native on a phone. The
-classic one, called **Legacy** in the settings, is deprecated: it is kept as
-a fallback for now and will be removed later. To use it in a browser, pick
-**Legacy** under **Terminal** in Merlin's settings (the gear next to the
-Merlin logo), or add `?terminal=classic` to the address; **New** in the same
-setting, or `?terminal=native`, comes back. The choice is remembered per
-browser and `/terminal` follows it. Both attach to the same tmux sessions and
-can be open at the same time. Merlin needs tmux 3.8 or newer and refuses to
-start without it (see [Getting started](getting-started.md#tmux-38-or-newer)):
-if a tmux server is replaced by an older one while Merlin runs, the page goes
-back to the legacy terminal and says why.
-
-What is different:
+The terminal is made to feel native on a phone and stays at least as good on
+a desktop. It needs tmux 3.8 or newer: Merlin refuses to start without it
+(see [Getting started](getting-started.md#tmux-38-or-newer)), and if a tmux
+server is replaced by an older one while Merlin runs, the page says so in a
+line over the terminal and stops until Merlin is restarted with a recent tmux.
 
 - **Scrolling** is the platform's own, with momentum, through the whole
   history (older rows load as you get to them). Output arriving while you
@@ -250,35 +241,32 @@ What is different:
   their [agent-state pills](#agent-state-pills).
 - **Size** follows the last device you used, as in tmux: a tap, a scroll or a
   key on one device gives the window that device's size.
-- **Paste** works as described below, except that a right-click over a
-  selection opens the browser's menu (so you can Copy); without a selection
-  it pastes. On a phone, tap the **Paste** button at the right of the key
-  toolbar, or long press it for the system's Paste menu. When a program
-  copies (`merlin-clip`, Claude Code's `/copy`), a green **Copy** pill offers
-  the tap a phone's clipboard requires.
-- A message the classic terminal writes into its screen (a voice or upload
-  error) is a line over the terminal: tap it to dismiss it.
+- **Paste** works as described below. A right-click over a selection opens
+  the browser's menu (so you can Copy); without a selection it pastes. On a
+  phone, tap the **Paste** button at the right of the key toolbar, or long
+  press it for the system's Paste menu. When a program copies
+  (`merlin-clip`, Claude Code's `/copy`), a green **Copy** pill offers the
+  tap a phone's clipboard requires.
+- A message for you (a voice or upload error) is a line over the terminal:
+  tap it to dismiss it.
 
 In full-screen programs (NeoVim, less, htop), a swipe scrolls the program,
 as wheel events when it asked for the mouse and as arrow keys otherwise.
 
 ## Copy and paste
 
-This section describes the classic terminal; what differs in the new one is
-listed under [The new terminal](#the-new-terminal).
+Desktop copy: select with the mouse, then Ctrl+C (Cmd+C on a Mac) or
+Ctrl+Shift+C; Ctrl+C with nothing selected stays SIGINT, never copy.
+Ctrl+Shift+C with nothing selected copies the last text a program copied.
 
-Desktop copy: select with the mouse; on release the selection lands in
-the OS clipboard with a "Copied!" flash. Ctrl+Shift+C copies your
-selection explicitly. Ctrl+C stays SIGINT, never copy.
+Paste, five ways: Ctrl+V, Ctrl+Shift+V, right-click on the terminal (with
+nothing selected), the Paste toolbar button, or a long press on that button
+on a phone for the system's own Paste menu. A "Pasted!" flash confirms;
+pastes are capped at 1 MB.
 
-Paste, five ways: Ctrl+V, Ctrl+Shift+V, right-click on the terminal, the
-clipboard toolbar button, or the mobile Paste pill (see mobile notes).
-A "Pasted!" flash confirms; pastes are capped at 1 MB.
-
-On macOS, paste is Cmd+V: it pastes text and images natively, with no
-browser clipboard prompt. Ctrl+V is deliberately not intercepted there;
-it reaches the terminal as quoted-insert (`^V`), the way native Mac
-terminals treat it.
+On macOS, paste is Cmd+V: it pastes text and images with no browser
+clipboard prompt. Ctrl+V is deliberately not intercepted there; it reaches
+the terminal as quoted-insert (`^V`), the way native Mac terminals treat it.
 
 Paste an image: with an image in the clipboard, any paste path uploads it
 to `/tmp/merlin-clipboard/` and types the file path into the terminal,
@@ -456,15 +444,14 @@ repo" if you are not in one.
 
 ## Mobile notes
 
-These notes are for the classic terminal; the new one uses the phone's own
-scrolling, selection and keyboard (see [The new terminal](#the-new-terminal)).
+Scrolling, selection and the keyboard are the phone's own (see
+[On a phone and on a desktop](#on-a-phone-and-on-a-desktop)).
 
-- Swipe vertically to scroll; tap to click and focus (which opens the
-  on-screen keyboard); rotating the phone resizes the terminal.
-- Drag horizontally to select text; on release a green **Copy** pill
-  appears near your finger, tap it to copy. Hold a finger still for half
-  a second for a blue **Paste** pill. The pills are not decoration:
-  mobile browsers only allow clipboard access from a real tap.
+- Tap the terminal to focus it (which opens the on-screen keyboard);
+  rotating the phone resizes the terminal.
+- A green **Copy** pill appears when a program copies: tap it to copy. The
+  pill is not decoration: mobile browsers only allow clipboard access from
+  a real tap.
 - Modifiers are sticky: tap Ctrl, Alt, or Shift to arm it (the button
   highlights), then press a key; it applies once and clears. Esc, Tab,
   `⇧Tab`, and `↵` send immediately. Arrow keys repeat when held.
@@ -503,3 +490,7 @@ scrolling, selection and keyboard (see [The new terminal](#the-new-terminal)).
   old` or `A tmux 3.4 server is still running`**: tmux 3.8 or newer is
   required. The message says what was found and what to do; the details are
   in [Getting started](getting-started.md#tmux-38-or-newer).
+- **"tmux 3.4 is too old" over the terminal while Merlin runs**: the tmux
+  server was replaced by an older one after Merlin started. Install a recent
+  tmux, `tmux kill-server` once the work in its sessions is saved, and
+  restart Merlin.

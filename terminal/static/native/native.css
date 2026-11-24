@@ -1,6 +1,6 @@
 /* Native terminal: real DOM text in a native scroll container
-   (terminal/static/native/renderer.js). The colours are the classic
-   terminal's theme (terminal/templates/terminal.html). */
+   (terminal/static/native/renderer.js). The colours are the dashboard's
+   terminal theme (Dracula-inspired). */
 .nt-term {
     --nt-bg: #282a36;
     --nt-fg: #f8f8f2;

@@ -44,7 +44,7 @@ Four planes, one process:
              ▼                         ▼                        ▼
 ┌────────────────────────┐  ┌──────────────────────┐  ┌──────────────────────┐
 │ terminal/              │  │ job/runner.py        │  │ webhooks/ front desk │
-│ xterm.js over a PTY    │  │ (spawned subprocess) │  │ secret check, then   │
+│ tmux control mode,     │  │ (spawned subprocess) │  │ secret check, then   │
 │ attached to tmux       │  │ due jobs, retention  │  │ job/webhook.py fires │
 └────────────┬───────────┘  └──────────┬───────────┘  └──────────┬───────────┘
              │                         │                        │

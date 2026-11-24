@@ -468,7 +468,7 @@ def test_worker_registers_and_never_intercepts(page, server):
     with page.expect_response("**/api/notifications/status") as resp:
         page.evaluate("fetch('/api/notifications/status')")
     assert resp.value.from_service_worker is False
-    with page.expect_response(re.compile(r"/terminal(/native)?$")) as resp:
+    with page.expect_response("**/terminal") as resp:
         page.reload()
     assert resp.value.from_service_worker is False
 

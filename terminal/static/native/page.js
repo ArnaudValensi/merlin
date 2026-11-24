@@ -1,21 +1,17 @@
-// The native terminal page (/terminal/native): everything around the engine
-// that the classic page (terminal/templates/terminal.html) does around
-// xterm.js, through the same seams. window.MerlinTerminal for the Sessions
+// The terminal page (/terminal): everything around the engine, through the
+// seams the rest of Merlin uses. window.MerlinTerminal for the Sessions
 // panel (board.js), the notifications bell, the voice console and the Apps
-// panel; the shared status bar and panels (terminal-status-bar.html,
+// panel; the status bar and panels (terminal-status-bar.html,
 // terminal-panels.html); the clipboard ladder (clipboard-core.js) and the
 // session identity (session-identity.js).
 //
-// What differs from the classic page, and why:
-// - The terminal shows tmux's grid only, so a message the classic page writes
-//   into its screen (a voice or upload error) is a notice over it.
+// - The terminal shows tmux's grid only, so a message for the user (a voice
+//   or upload error) is a notice over it.
 // - Selection and copy are the platform's: a right-click with a selection
-//   opens the browser's menu (Copy), without one it pastes as in the classic
-//   page; a phone's long press selects.
+//   opens the browser's menu (Copy), without one it pastes; a phone's long
+//   press selects.
 (function () {
   'use strict';
-  const Choice = window.MerlinTerminalChoice;
-  if (Choice && Choice.leaving) return;
   const Core = window.MerlinNativeCore;
 
   const $ = (id) => document.getElementById(id);
@@ -68,13 +64,14 @@
   }
 
   let noticeTimer = null;
-  // One line over the terminal, for a while or until tapped.
-  function notice(message, level) {
+  // One line over the terminal, for a while (or until tapped) unless it is
+  // to stay.
+  function notice(message, level, stay) {
     noticeEl.textContent = message;
     noticeEl.className = 'nt-notice' + (level === 'error' ? ' error' : '');
     noticeEl.hidden = false;
     clearTimeout(noticeTimer);
-    noticeTimer = setTimeout(() => { noticeEl.hidden = true; }, 8000);
+    if (!stay) noticeTimer = setTimeout(() => { noticeEl.hidden = true; }, 8000);
   }
   noticeEl.addEventListener('click', () => { noticeEl.hidden = true; });
   function showVoiceRefused(message) { notice(message || 'Voice input unavailable', 'warn'); }
@@ -90,7 +87,7 @@
 
   // Deep link: ?target=<session>:<window_id> switches this client to that
   // window once its tmux client is confirmed (the first session frame), then
-  // leaves the URL (as the classic page does).
+  // leaves the URL.
   let pendingTarget = '';
   try {
     const t = new URLSearchParams(location.search).get('target');
@@ -108,9 +105,6 @@
 
   function onSession(msg) {
     if (MerlinSessionIdentity.confirm(msg)) confirmed = true;
-    // Attached: whatever sent this tab back to the classic page before (an
-    // older tmux) no longer holds.
-    if (Choice && Choice.fallback()) Choice.clearFallback();
     current = msg;
     currentSession = msg.name || '';
     currentWindowId = msg.window_id || '';
@@ -148,7 +142,7 @@
     wsUrl: () => {
       attempted = MerlinSessionIdentity.read();
       confirmed = false;
-      return MerlinSessionIdentity.websocketUrl(location, attempted).replace('/ws/terminal', '/ws/terminal2');
+      return MerlinSessionIdentity.websocketUrl(location, attempted);
     },
     onOpen: () => {
       reconnectDelay = 1000;
@@ -168,12 +162,15 @@
         case 'voice_error': showVoiceRefused(msg.message); break;
         case 'voice': if (window.MerlinVoice) window.MerlinVoice.onFrame(msg); break;
         case 'paste_refused': flash(msg.reason || 'Paste refused', ''); break;
+        // The tmux server was replaced by one older than the bridge needs
+        // (Merlin itself refuses to start without tmux 3.8): said once, over
+        // the terminal, and the close that follows is not reconnected from.
         case 'unsupported': {
           stopped = true;
-          const why = 'The new terminal needs tmux ' + msg.minimum + ' or newer (this server runs '
-            + (msg.version || 'an unknown version') + '): this is the legacy terminal.';
-          if (Choice) Choice.fallBack(why);
-          else setStatus('disconnected', why);
+          const why = 'tmux ' + (msg.version || 'of an unknown version') + ' is too old. Merlin needs tmux '
+            + msg.minimum + ' or newer.';
+          notice(why, 'error', true);
+          setStatus('disconnected', why);
           break;
         }
         default: break;
@@ -376,8 +373,8 @@
   });
 
   // A right-click with a selection is the browser's menu (Copy); without one
-  // it pastes, as in the classic terminal. Not on a touch screen, where a
-  // long press is the platform's selection.
+  // it pastes. Not on a touch screen, where a long press is the platform's
+  // selection.
   container.addEventListener('contextmenu', (e) => {
     if (coarse || hasSelection()) return;
     e.preventDefault();
@@ -545,8 +542,7 @@
     setTimeout(() => micBtn.classList.remove('upload-done'), 500);
   }
 
-  // IndexedDB: the recording survives a network failure or a reload (the
-  // classic page's store, so a recording left by either page is retried).
+  // IndexedDB: the recording survives a network failure or a reload.
   function openVoiceDB() {
     return new Promise((resolve, reject) => {
       const req = indexedDB.open('merlin-voice', 1);
@@ -799,7 +795,7 @@
 
   // Follow the software keyboard: the page column is sized to the visual
   // viewport whenever the keyboard leaves less than the layout viewport, and
-  // the scroll is pinned at the top (as on the classic page).
+  // the scroll is pinned at the top.
   (function followKeyboard() {
     const vv = window.visualViewport;
     const main = document.querySelector('.main');

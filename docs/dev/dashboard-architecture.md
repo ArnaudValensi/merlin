@@ -458,18 +458,20 @@ files/
 ```
 terminal/
 ├── __init__.py            # Exports api_router, page_router, register_routes
-├── routes.py              # Pages + API; /ws/terminal WebSocket via register_routes (escape hatch)
+├── routes.py              # Page + API; /ws/terminal2 WebSocket via register_routes (escape hatch)
+├── native.py, control.py  # The tmux control-mode bridge and its client
+├── static/native/         # The page's scripts: decoder, renderer, engine, input, toolbar, page
 └── templates/
-    └── terminal.html      # xterm.js terminal, mobile toolbar, voice input
+    └── terminal-native.html   # The terminal page, its toolbar, the shared chrome partials
 ```
 
-**Pages:** `/terminal`
+**Pages:** `/terminal` (`/terminal/native`, its old address, redirects there with the query)
 
-**WebSocket:** `/ws/terminal` — bridges browser to a PTY/tmux session. Auth via session cookie on the WebSocket upgrade request (browsers send cookies automatically).
+**WebSocket:** `/ws/terminal2` — a tmux control-mode client per page; tmux's grid mirrored as real DOM text. Auth via session cookie on the WebSocket upgrade request (browsers send cookies automatically). Needs tmux 3.8, which Merlin requires at launch.
 
-**Features:** xterm.js terminal emulator, tmux session persistence (`merlin-dev`), mobile touch toolbar, voice input via Whisper transcription.
+**Features:** native scrolling, selection and keyboard on a phone, tmux session persistence (`merlin-dev`), mobile key toolbar, voice input via Whisper transcription.
 
-**CDN deps:** xterm.js, xterm-addon-fit, xterm-addon-web-links.
+**Vendored deps:** xterm.js (its parser only, never opened) and its Unicode 11 addon, for the decoder.
 
 **Note:** Terminal handles its own auth internally (WebSocket cookie check) rather than using `Depends(require_auth)` on the router.
 
@@ -537,14 +539,15 @@ This is the deliberate reversal of the old agents-only board (see the archived
 `sessions-board` epic, superseded by `session-switcher`).
 
 **Surface:** there is no page of its own. It renders **inside the web terminal**
-(`terminal/templates/terminal.html`) — a **fullscreen modal on mobile, a
-resizable docked panel on desktop** (terminal + panel are flex siblings under
-`.main`; a `#sessions-divider` drags the boundary, persisted in `localStorage`;
-the terminal's `ResizeObserver` refits xterm). A "Sessions" button sits far-right
-of the terminal status bar; its badge shows the waiting count **aggregated across
-all sessions**. `board.js` mounts via `window.SessionsBoard.init({container,
-onAttention, onJump, onClose})`. The bottom row of window tabs is tmux's own
-status line — `switch-client` makes it follow the current session for free.
+(`terminal/templates/terminal-panels.html`, wired by `terminal-chrome.html`) — a
+**fullscreen modal on mobile, a resizable docked panel on desktop** (terminal +
+panel are flex siblings under `.main`; a `#sessions-divider` drags the boundary,
+persisted in `localStorage`; the terminal refits itself). A "Sessions" button
+sits far-right of the terminal status bar; its badge shows the waiting count
+**aggregated across all sessions**. `board.js` mounts via
+`window.SessionsBoard.init({container, onAttention, onJump, onClose})`. The
+terminal draws no window tabs: the panel lists the windows, and `switch-client`
+on the page's own connection follows the current session.
 
 **Switching is per-client, over the WebSocket — not HTTP.** Only the terminal
 socket knows which tmux client this browser is (it derives the client tty with
@@ -758,7 +761,7 @@ This captures 18 screenshots (3 pages x 6 viewports). Read the PNGs to verify la
 Behind `MERLIN_FEATURES=app`; full reference in
 [`app-streaming.md`](app-streaming.md).
 
-- **Terminal**: `terminal.html` renders `#app-btn`, `#app-divider` and
+- **Terminal**: the terminal page renders `#app-btn`, `#app-divider` and
   `#app-panel` and includes `app/static/terminal-panel.*` and `client.js` only
   when `app_enabled` (flag on and the extension loaded). The page dispatches a
   generic `merlin:terminal-window` event (`session`, `windowId`, `window`)

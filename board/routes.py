@@ -2,7 +2,7 @@
 
 The framework mounts ``api_router`` at ``/api/board`` and serves ``STATIC_DIR``
 at ``/static/board`` (``board.css`` / ``board.js``). There is no page of its
-own: the switcher renders as a panel inside the web terminal (``terminal.html``),
+own: the switcher renders as a panel inside the web terminal (``terminal-native.html``),
 where the sessions actually live. See ``docs/dev/dashboard-architecture.md``.
 
 The switcher is a faithful view of tmux's session -> window tree plus an

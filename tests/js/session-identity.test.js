@@ -52,11 +52,11 @@ test('websocket URL carries an encoded identity before connection', () => {
 
     assert.equal(
         SessionIdentity.websocketUrl(location, identity('$12', 1700000000)),
-        'wss://demo.merlincloud.dev/ws/terminal?session_id=%2412&session_created=1700000000',
+        'wss://demo.merlincloud.dev/ws/terminal2?session_id=%2412&session_created=1700000000',
     );
     assert.equal(
         SessionIdentity.websocketUrl(location, null),
-        'wss://demo.merlincloud.dev/ws/terminal',
+        'wss://demo.merlincloud.dev/ws/terminal2',
     );
 });
 
@@ -99,7 +99,7 @@ test('failed storage access never prevents URL construction or confirmation', ()
     );
     assert.equal(
         SessionIdentity.websocketUrl({ protocol: 'http:', host: 'localhost:8000' }, null),
-        'ws://localhost:8000/ws/terminal',
+        'ws://localhost:8000/ws/terminal2',
     );
 });
 

@@ -1,5 +1,5 @@
-"""The two terminal pages render the same chrome (shared partials) and the
-switch between them (terminal-choice.js) runs first on both."""
+"""The terminal page: /terminal renders the native page with its chrome, and
+/terminal/native (its old address) redirects there with the query."""
 
 import json
 import re
@@ -26,7 +26,7 @@ def _get(path: str) -> str:
     return response.text
 
 
-SHARED_IDS = [
+CHROME_IDS = [
     "terminal-status",
     "status-dot",
     "status-text",
@@ -48,13 +48,15 @@ SHARED_IDS = [
     "commits-btn",
     "new-window-btn",
     "upload-file-input",
+    "nt-container",
+    "nt-input",
+    "nt-notice",
 ]
 
 
-@pytest.mark.parametrize("path", ["/terminal", "/terminal/native"])
-def test_both_pages_carry_the_shared_chrome(path):
-    html = _get(path)
-    for element in SHARED_IDS:
+def test_the_terminal_page_carries_its_chrome():
+    html = _get("/terminal")
+    for element in CHROME_IDS:
         assert html.count(f'id="{element}"') == 1, element
     # The voice button reads its capability from the page context.
     assert re.search(r'id="voice-btn"[^>]*data-mode="[^"]+"', html, re.S)
@@ -62,43 +64,70 @@ def test_both_pages_carry_the_shared_chrome(path):
         "board/board.js",
         "notifications/notifications.js",
         "folder-picker.js",
+        "/static/terminal/native/page.js",
     ):
         assert html.count(script) == 1, script
+    # The decoder's parser and the Unicode 11 widths, nothing else of xterm.js.
+    assert "/static/vendor/xterm.min.js" in html
+    assert "/static/vendor/xterm-addon-unicode11.min.js" in html
+    assert "xterm-addon-fit" not in html
+    assert "xterm-addon-web-links" not in html
+    assert "xterm.min.css" not in html
 
 
-@pytest.mark.parametrize(
-    "path,kind", [("/terminal", "classic"), ("/terminal/native", "native")]
-)
-def test_the_switch_runs_before_anything_else(path, kind):
-    html = _get(path)
-    route = html.index(f"MerlinTerminalChoice.route('{kind}')")
-    assert route < html.index('id="terminal-status"')
-    assert route < html.index("board/board.js")
-
-
-def test_no_page_has_a_terminal_menu_and_the_native_one_has_its_config():
-    classic = _get("/terminal")
-    native = _get("/terminal/native")
-    # The choice lives in Merlin's settings; no keyboard suggestions setting.
-    for html in (classic, native):
-        assert "term-menu" not in html
-        assert "suggestions" not in html.lower()
+def test_the_page_has_its_config_and_no_switch():
+    html = _get("/terminal")
+    # The choice between two terminals is gone, with its menu and parameter.
+    for gone in (
+        "MerlinTerminalChoice",
+        "terminal-choice",
+        "term-menu",
+        "term-fallback",
+    ):
+        assert gone not in html, gone
+    assert "suggestions" not in html.lower()
     config = re.search(
-        r'<script type="application/json" id="nt-config">(.*?)</script>', native, re.S
+        r'<script type="application/json" id="nt-config">(.*?)</script>', html, re.S
     )
     assert config
     data = json.loads(config.group(1))
     assert set(data) == {"homeDir", "voiceAvailable"}
     assert isinstance(data["voiceAvailable"], bool)
-    # No xterm.js renderer on the native page, its own scripts instead.
-    assert "xterm-addon-fit" not in native
-    assert "/static/terminal/native/page.js" in native
 
 
-def test_the_choice_script_is_free_of_jinja_delimiters():
-    """It is included as a template, so a stray delimiter is a 500 at runtime."""
-    from terminal import routes as tr
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/terminal/native", "/terminal"),
+        ("/terminal/native?target=dev:@3", "/terminal?target=dev:@3"),
+        (
+            "/terminal/native?terminal=classic&target=dev:@3",
+            "/terminal?terminal=classic&target=dev:@3",
+        ),
+    ],
+)
+def test_the_old_native_address_redirects_with_its_query(path, expected):
+    with TestClient(app_mod.app) as client:
+        response = client.get(path, follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == expected
+    with TestClient(app_mod.app) as client:
+        followed = client.get(path)
+    assert followed.status_code == 200
+    assert 'id="nt-container"' in followed.text
 
-    source = (tr.TERMINAL_TEMPLATES_DIR / "terminal-choice.js").read_text()
-    for delimiter in ("{{", "{%", "{#"):
-        assert delimiter not in source, delimiter
+
+def test_the_terminal_parameter_is_ignored():
+    html = _get("/terminal?terminal=classic")
+    assert 'id="nt-container"' in html
+    assert "xterm-screen" not in html
+
+
+def test_the_settings_page_has_no_terminal_section_and_drops_the_old_key():
+    html = _get("/settings")
+    assert "terminal-choice" not in html
+    assert "toast-terminal" not in html
+    assert ">Legacy<" not in html
+    js = _get("/static/settings.js")
+    assert "localStorage.removeItem('merlin-terminal')" in js
+    assert "setTerminal" not in js and "loadTerminal" not in js

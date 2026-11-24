@@ -30,7 +30,7 @@ def test_core_partial_is_free_of_jinja_delimiters():
         assert delimiter not in source, f"{delimiter} in clipboard-core.js"
 
 
-# The terminal pages (classic and native) get it through their shared chrome.
+# The terminal page gets it through its chrome.
 CHROME = '{% include "terminal-chrome.html" %}'
 NATIVE_PAGE_JS = tr.TERMINAL_TEMPLATES_DIR.parent / "static" / "native" / "page.js"
 
@@ -42,9 +42,8 @@ def test_every_page_includes_the_shared_core(template):
     assert INCLUDE in source
 
 
-@pytest.mark.parametrize("template", ["terminal.html", "terminal-native.html"])
-def test_both_terminal_pages_include_the_shared_chrome(template):
-    source = (tr.TERMINAL_TEMPLATES_DIR / template).read_text()
+def test_the_terminal_page_includes_the_shared_chrome():
+    source = (tr.TERMINAL_TEMPLATES_DIR / "terminal-native.html").read_text()
     assert CHROME in source
     assert INCLUDE not in source
 
@@ -52,7 +51,6 @@ def test_both_terminal_pages_include_the_shared_chrome(template):
 @pytest.mark.parametrize(
     "path",
     [
-        tr.TERMINAL_TEMPLATES_DIR / "terminal.html",
         tr.TERMINAL_TEMPLATES_DIR / "terminal-native.html",
         NATIVE_PAGE_JS,
     ],
