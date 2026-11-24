@@ -22,13 +22,14 @@ import logging
 import os
 import secrets
 import shutil
+import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, NoReturn
 from urllib.parse import quote
 
 from dotenv import load_dotenv
@@ -161,9 +162,6 @@ EXTENSIONS_NAV_ITEM = {
 
 # Will be extended by extensions
 nav_items: list[dict] = list(CORE_NAV_ITEMS)
-
-# Optional dependency availability (set by _check_optional_deps)
-TMUX_AVAILABLE: bool = True
 
 # fd binary name (fdfind on Ubuntu/Debian, fd elsewhere) — set by _check_fd()
 FD_BINARY: str = ""
@@ -1562,19 +1560,105 @@ def _check_fd() -> None:
     FD_BINARY = Path(fd).name
 
 
-def _check_optional_deps() -> None:
-    """Check optional dependencies and set up graceful degradation."""
-    global TMUX_AVAILABLE
+# How long a tmux probe at launch may take before it reads as no answer.
+TMUX_PROBE_TIMEOUT = 5.0
+TMUX_DOCS_URL = (
+    "https://github.com/ArnaudValensi/merlin/blob/master/docs/getting-started.md"
+    "#tmux-38-or-newer"
+)
 
+
+def _refuse_start(message: str) -> NoReturn:
+    """Print why Merlin does not start, on stderr and in the server log, and
+    exit with status 1 (the way a configuration error does)."""
+    print(message, file=sys.stderr)
+    record = logger.makeRecord(
+        logger.name, logging.ERROR, __file__, 0, "Start refused: " + message, (), None
+    )
+    for handler in logger.handlers:
+        # The console handler already shows stderr: only the log file.
+        if isinstance(handler, logging.FileHandler):
+            handler.handle(record)
+    raise SystemExit(1)
+
+
+def _tmux_probe(args: list[str]) -> str | None:
+    """stdout of ``tmux <args>`` on the default server (never the one of a
+    ``$TMUX`` Merlin was started under, which is what the terminal bridge
+    ignores too), or None when tmux failed, gave no answer in
+    ``TMUX_PROBE_TIMEOUT`` or could not run."""
+    env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
+    try:
+        result = subprocess.run(
+            ["tmux", *args],
+            capture_output=True,
+            text=True,
+            timeout=TMUX_PROBE_TIMEOUT,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _check_tmux() -> None:
+    """tmux 3.8 or newer is a hard requirement: the native terminal attaches in
+    control mode and reads formats older servers lack. Two things are checked:
+    the binary (``tmux -V``), then, only when a server already runs on the
+    default socket, the server (an upgraded binary never replaces a running
+    server, and the terminal talks to the server). The server is read with
+    ``list-sessions``: nothing is created, attached or killed, and no server
+    is fine (Merlin starts one later). Refuses with exit status 1."""
+    from terminal.native import MIN_TMUX, parse_tmux_version, supported
+
+    minimum = ".".join(map(str, MIN_TMUX))
+    need = f"Merlin needs tmux {minimum} or newer."
+    how = (
+        "Distribution packages are often older (Ubuntu 24.04 ships 3.4, Debian 12\n"
+        "ships 3.3): install it with Homebrew, or build it from source. See\n"
+        f"{TMUX_DOCS_URL}"
+    )
     if not shutil.which("tmux"):
-        TMUX_AVAILABLE = False
-        cmd = _install_cmd("tmux")
-        logger.warning("tmux not found — terminal disabled (install: %s)", cmd)
-        # Mark terminal nav item as disabled
-        for item in nav_items:
-            if item.get("url") == "/terminal":
-                item["disabled"] = True
-                item["tooltip"] = f"tmux required — install: {cmd}"
+        _refuse_start(
+            f"tmux is not installed. {need}\n"
+            f"\n"
+            f"    Install: {_install_cmd('tmux')}\n"
+            f"\n"
+            f"{how}"
+        )
+    raw = (_tmux_probe(["-V"]) or "").strip()
+    if not supported(parse_tmux_version(raw)):
+        found = (
+            f"{raw} is too old."
+            if raw
+            else "tmux did not report its version (tmux -V gave no answer)."
+        )
+        _refuse_start(f"{found} {need}\n\n{how}")
+    # A running server, read without creating one: list-sessions fails when
+    # there is no server, which is fine.
+    listed = _tmux_probe(["list-sessions", "-F", "#{version}"])
+    if listed is None:
+        return
+    versions = [line.strip() for line in listed.splitlines() if line.strip()]
+    server = versions[0] if versions else ""
+    if not supported(parse_tmux_version(server)):
+        found = (
+            f"A tmux {server} server"
+            if server
+            else "A tmux server that does not report its version"
+        )
+        _refuse_start(
+            f"{found} is still running. {need}\n"
+            f"\n"
+            f"Once a newer tmux is installed, the running server must be restarted:\n"
+            f"save the work in its sessions, then run: tmux kill-server\n"
+            f"\n"
+            f"{how}"
+        )
 
 
 def _validate_config() -> None:
@@ -1602,11 +1686,9 @@ def _validate_config() -> None:
             "DASHBOARD_PASS not set — running without auth (local-only is fine)"
         )
 
-    # fd is a hard requirement
+    # fd and tmux 3.8 are hard requirements
     _check_fd()
-
-    # Check optional deps (warns, doesn't fail)
-    _check_optional_deps()
+    _check_tmux()
 
 
 def start_server(port: int = 3123, host: str = "0.0.0.0") -> None:

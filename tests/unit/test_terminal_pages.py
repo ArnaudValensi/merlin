@@ -17,7 +17,6 @@ def _no_auth(monkeypatch):
     monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
     monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
     auth.configure("")
-    monkeypatch.setattr(app_mod, "TMUX_AVAILABLE", True)
 
 
 def _get(path: str) -> str:

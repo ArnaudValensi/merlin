@@ -7,10 +7,12 @@ per-system docs in this folder when you touch one.
 
 ## Requirements
 
-Python and [uv](https://docs.astral.sh/uv/); `fd` is a hard requirement
-(the boot error tells you how to install it). Optional: tmux (the web
-terminal needs it). Missing optional dependencies degrade gracefully at
-boot: a warning, a grayed-out nav item, never a crash.
+Python and [uv](https://docs.astral.sh/uv/); `fd` and tmux 3.8 or newer are
+hard requirements: Merlin refuses to start without them, and the boot error
+tells you how to install each (`main._check_fd`, `main._check_tmux`; the tmux
+check also reads a running server's version, and never creates one). See
+[`getting-started.md`](../getting-started.md#tmux-38-or-newer) for getting a
+recent tmux on a distribution that ships an old one.
 
 ## Run from a checkout
 

@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -375,15 +376,108 @@ class TestRestart:
         assert server_control.restart() == 0
         relaunch.assert_not_called()
 
-    def test_self_managed_restart_relaunches_on_same_port(self, monkeypatch):
+    def _child(self, *, exited: int | None = None, pid: int = 4242) -> mock.Mock:
+        proc = mock.Mock()
+        proc.pid = pid
+        proc.poll.return_value = exited
+        proc.returncode = exited
+        return proc
+
+    def test_self_managed_restart_relaunches_on_same_port(self, monkeypatch, capsys):
         monkeypatch.delenv("MERLIN_SUPERVISED", raising=False)
-        relaunch = mock.Mock()
+        proc = self._child()
+        relaunch = mock.Mock(return_value=proc)
         monkeypatch.setattr(server_control, "_relaunch", relaunch)
         monkeypatch.setattr(
             server_control, "stop_server", mock.Mock(return_value=(True, 8080))
         )
-        monkeypatch.setattr(server_control, "_server_running", lambda: True)
+        # The relaunched server published its state: it bound its port.
+        monkeypatch.setattr(server_control, "live_state", lambda: (proc.pid, 8080))
         monkeypatch.setattr(time, "sleep", lambda *_: None)
 
         assert server_control.restart() == 0
         relaunch.assert_called_once_with(8080)
+        assert "Merlin restarted." in capsys.readouterr().out
+
+    def test_a_refused_start_is_reported_with_the_reason(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        """The relaunched server exits at once (tmux too old, say): restart
+        says so, names the log and shows its last lines, and exits 1."""
+        monkeypatch.delenv("MERLIN_SUPERVISED", raising=False)
+        log = tmp_path / "nohup.out"
+        log.write_text(
+            "an older start\ntmux 3.4 is too old. Merlin needs tmux 3.8 or newer.\n"
+        )
+        monkeypatch.setattr(server_control, "_relaunch_log", lambda: log)
+        monkeypatch.setattr(
+            server_control, "_relaunch", lambda port=None: self._child(exited=1)
+        )
+        monkeypatch.setattr(
+            server_control, "stop_server", mock.Mock(return_value=(True, 8080))
+        )
+        monkeypatch.setattr(server_control, "live_state", lambda: (None, None))
+        monkeypatch.setattr(time, "sleep", lambda *_: None)
+
+        assert server_control.restart() == 1
+        out = capsys.readouterr().out
+        assert "Merlin failed to start (exit status 1)" in out
+        assert str(log) in out
+        assert "tmux 3.4 is too old. Merlin needs tmux 3.8 or newer." in out
+
+    def test_a_slow_start_is_reported_as_pending_not_failed(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        monkeypatch.delenv("MERLIN_SUPERVISED", raising=False)
+        monkeypatch.setattr(server_control, "START_TIMEOUT", 0.0)
+        monkeypatch.setattr(server_control, "_relaunch_log", lambda: tmp_path / "n")
+        monkeypatch.setattr(
+            server_control, "_relaunch", lambda port=None: self._child()
+        )
+        monkeypatch.setattr(
+            server_control, "stop_server", mock.Mock(return_value=(True, 8080))
+        )
+        monkeypatch.setattr(server_control, "live_state", lambda: (None, None))
+        monkeypatch.setattr(time, "sleep", lambda *_: None)
+
+        assert server_control.restart() == 0
+        assert "still starting (PID 4242)" in capsys.readouterr().out
+
+
+class TestWaitForStart:
+    """With real child processes: the state file is what proves a start."""
+
+    def test_a_child_that_exits_reads_as_exited(self):
+        proc = subprocess.Popen([sys.executable, "-c", "raise SystemExit(1)"])
+        try:
+            assert server_control._wait_for_start(proc, timeout=10) == "exited"
+        finally:
+            proc.wait(timeout=5)
+
+    def test_a_child_that_publishes_its_state_reads_as_started(self, env):
+        code = (
+            "import os, sys, time\n"
+            "sys.path.insert(0, os.getcwd())\n"
+            "import paths\n"
+            "paths.write_server_state(os.getpid(), 3124)\n"
+            "time.sleep(30)\n"
+        )
+        proc = subprocess.Popen(
+            [sys.executable, "-c", code],
+            cwd=str(Path(__file__).resolve().parents[2]),
+            env={**os.environ, "MERLIN_HOME": os.environ["MERLIN_HOME"]},
+        )
+        try:
+            with mock.patch.object(server_control, "pid_is_merlin", return_value=True):
+                assert server_control._wait_for_start(proc, timeout=10) == "started"
+        finally:
+            proc.kill()
+            proc.wait(timeout=5)
+
+    def test_a_child_still_running_without_state_reads_as_pending(self):
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            assert server_control._wait_for_start(proc, timeout=0.3) == "pending"
+        finally:
+            proc.kill()
+            proc.wait(timeout=5)

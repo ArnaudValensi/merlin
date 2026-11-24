@@ -417,8 +417,35 @@ Browser: real DOM text in a native scroll container
   ↕ WebSocket (/ws/terminal2): binary grid frames, \x00 + JSON control frames
 terminal/native.py: one tmux control-mode client per page (tmux -C, pipes)
   ↕
-tmux 3.8 or newer (older: the tab goes back to the classic terminal)
+tmux 3.8 or newer (checked at launch; a server replaced by an older one
+while Merlin runs: the tab goes back to the classic terminal)
 ```
+
+**The launch check** (`main._check_tmux`, run by `_validate_config()` beside
+`_check_fd()`, before anything starts). Merlin refuses to start, with exit
+status 1 and the reason on stderr and in `merlin.log`, when tmux is missing or
+older than `native.MIN_TMUX` (3.8; the version is read with
+`native.parse_tmux_version`, one definition of each, a build without a number
+such as `master` passes). Two things are read, each bounded by
+`TMUX_PROBE_TIMEOUT` and with `$TMUX` withheld so the default server is meant,
+as the bridge does: the binary with `tmux -V` (no answer reads as unknown and
+refuses), then, only when a server already runs on the default socket, the
+server with `tmux list-sessions -F '#{version}'`, which creates, attaches and
+kills nothing and simply fails when there is no server (fine: Merlin starts
+one later). An upgraded binary does not replace a server started by an older
+one, and the bridge talks to the server, hence the second read. The messages
+name what was found and the way out (`tmux is not installed`, `tmux 3.4 is
+too old`, `A tmux 3.4 server is still running`, each followed by `Merlin
+needs tmux 3.8 or newer.`); `docs/getting-started.md` ("tmux 3.8 or newer")
+has the troubleshooting entry for each. Only the server's start is gated: a
+CLI command that does not start the server never runs the check. `merlin
+restart` watches the relaunched process until it publishes its state file;
+when it exits first, restart prints the last lines of `nohup.out`, where the
+refusal is. Pinned by `tests/unit/test_startup_checks.py` with a fake `tmux`
+first on PATH (missing, 3.4, 3.7c, 3.8, next-3.9, master, a binary that
+hangs, a running server older than the binary): no test reaches the real
+default server. `install.sh` treats tmux as required and warns with the same
+advice when `tmux -V` is older than 3.8.
 
 ### Bridge (`terminal/native.py`, `terminal/control.py`)
 

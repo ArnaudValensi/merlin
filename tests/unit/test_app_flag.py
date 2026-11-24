@@ -100,7 +100,6 @@ class TestServer:
         assert not any(i.get("url") == "/apps" for i in app_mod.nav_items)
 
     def test_flag_off_terminal_has_no_app_button(self, monkeypatch):
-        monkeypatch.setattr(app_mod, "TMUX_AVAILABLE", True)
         with TestClient(app_mod.app) as client:
             pages = [client.get(p).text for p in ("/terminal", "/terminal/native")]
         for html in pages:
@@ -109,7 +108,6 @@ class TestServer:
 
     def test_flag_on_loads_page_nav_and_terminal_button(self, monkeypatch):
         monkeypatch.setenv("MERLIN_FEATURES", "app")
-        monkeypatch.setattr(app_mod, "TMUX_AVAILABLE", True)
         routes = list(app_mod.app.router.routes)
         nav = list(app_mod.nav_items)
         try:

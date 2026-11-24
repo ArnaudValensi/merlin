@@ -215,8 +215,10 @@ a fallback for now and will be removed later. To use it in a browser, pick
 Merlin logo), or add `?terminal=classic` to the address; **New** in the same
 setting, or `?terminal=native`, comes back. The choice is remembered per
 browser and `/terminal` follows it. Both attach to the same tmux sessions and
-can be open at the same time. The new terminal needs tmux 3.8 or newer: on an
-older one the page goes back to the legacy terminal and says why.
+can be open at the same time. Merlin needs tmux 3.8 or newer and refuses to
+start without it (see [Getting started](getting-started.md#tmux-38-or-newer)):
+if a tmux server is replaced by an older one while Merlin runs, the page goes
+back to the legacy terminal and says why.
 
 What is different:
 
@@ -497,5 +499,7 @@ scrolling, selection and keyboard (see [The new terminal](#the-new-terminal)).
   was blocked; press Ctrl+Shift+C to copy the same text explicitly.
 - **"Unauthorized — reload page"**: your session cookie expired; reload
   and log in again.
-- **"Terminal unavailable"**: tmux is not installed on the host; the page
-  shows the install command.
+- **Merlin does not start and says `tmux is not installed`, `tmux 3.4 is too
+  old` or `A tmux 3.4 server is still running`**: tmux 3.8 or newer is
+  required. The message says what was found and what to do; the details are
+  in [Getting started](getting-started.md#tmux-38-or-newer).

@@ -192,19 +192,6 @@ body {
 .sidebar-nav a:hover { background: var(--bg-hover); color: var(--text-primary); }
 .sidebar-nav a.active { background: var(--bg-card); color: var(--accent-blue); }
 
-.sidebar-nav .nav-disabled {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 7px 12px;
-    color: var(--text-muted);
-    opacity: 0.4;
-    cursor: not-allowed;
-    font-size: 13px;
-    white-space: nowrap;
-    overflow: hidden;
-}
-
 .sidebar-nav .nav-icon {
     width: 20px;
     height: 20px;
@@ -301,8 +288,7 @@ html.sc .sidebar .sidebar-nav {
     padding: 4px 8px;
 }
 
-html.sc .sidebar .sidebar-nav a,
-html.sc .sidebar .sidebar-nav .nav-disabled {
+html.sc .sidebar .sidebar-nav a {
     width: 36px;
     height: 36px;
     padding: 0;
@@ -351,13 +337,11 @@ html.sc .sidebar .sidebar-collapse-btn {
 
 /* Collapsed tooltip on hover */
 html.sc .sidebar .sidebar-nav a,
-html.sc .sidebar .sidebar-nav .nav-disabled,
 html.sc .sidebar .env-item {
     position: relative;
 }
 
 html.sc .sidebar .sidebar-nav a::after,
-html.sc .sidebar .sidebar-nav .nav-disabled::after,
 html.sc .sidebar .env-item::after {
     content: attr(data-tooltip);
     position: absolute;
@@ -379,7 +363,6 @@ html.sc .sidebar .env-item::after {
 }
 
 html.sc .sidebar .sidebar-nav a:hover::after,
-html.sc .sidebar .sidebar-nav .nav-disabled:hover::after,
 html.sc .sidebar .env-item:hover::after {
     opacity: 1;
 }
@@ -716,8 +699,7 @@ html.sc .main {
     
 
     /* Bigger touch targets on mobile */
-    .sidebar-nav a,
-    .sidebar-nav .nav-disabled {
+    .sidebar-nav a {
         padding: 10px 12px;
         font-size: 14px;
         min-height: 44px;
@@ -744,8 +726,7 @@ html.sc .main {
     html.sc .sidebar .sidebar-settings { display: block; }
     html.sc .sidebar .sidebar-header { justify-content: flex-start; padding: 20px 16px; }
     html.sc .sidebar .sidebar-nav { padding: 12px 8px; }
-    html.sc .sidebar .sidebar-nav a,
-    html.sc .sidebar .sidebar-nav .nav-disabled {
+    html.sc .sidebar .sidebar-nav a {
         justify-content: flex-start;
         padding: 10px 12px;
         width: auto;

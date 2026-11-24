@@ -25,7 +25,6 @@ def client(monkeypatch):
     original_machine = resolve_machine_name()
     register_template_globals(machine_name="atlas")
     monkeypatch.setattr(app_mod, "DASHBOARD_PASS", "")
-    monkeypatch.setattr(app_mod, "TMUX_AVAILABLE", True)
     monkeypatch.delenv("MERLIN_SAAS_TOKEN", raising=False)
     auth.configure("")
     with TestClient(app_mod.app) as test_client:

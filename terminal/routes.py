@@ -313,16 +313,6 @@ def _app_enabled() -> bool:
 
 @page_router.get("", response_class=HTMLResponse)
 def terminal_page(request: Request):
-    # Check if tmux is available (set by main.py)
-    import main as _main
-
-    if not getattr(_main, "TMUX_AVAILABLE", True):
-        return HTMLResponse(
-            "<h2>Terminal unavailable</h2>"
-            "<p>tmux is not installed. The web terminal requires tmux.</p>"
-            f"<p>Install: <code>{_main._install_cmd('tmux')}</code></p>",
-            status_code=503,
-        )
     from voice.routes import capability as voice_mode_capability
 
     return templates.TemplateResponse(
@@ -341,10 +331,6 @@ def terminal_page(request: Request):
 def terminal_native_page(request: Request):
     """The native terminal (``/ws/terminal2``, ``terminal/native.py``): tmux's
     grid as real DOM text in a native scrolling container."""
-    import main as _main
-
-    if not getattr(_main, "TMUX_AVAILABLE", True):
-        return HTMLResponse("<h2>Terminal unavailable</h2>", status_code=503)
     from voice.routes import capability as voice_mode_capability
 
     # The classic page's context: the shared status bar and panels read it.

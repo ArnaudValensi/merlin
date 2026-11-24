@@ -106,7 +106,7 @@ Read-only — use the Settings/Extensions UI or edit `config.env` directly to ch
 Installer steps:
 1. Print banner
 2. Check/install uv (required)
-3. Check/install tmux (optional)
+3. Check/install tmux (required at runtime, 3.8 or newer: the installer warns when `tmux -V` is older)
 4. Fetch latest release tag from GitHub API
 5. Download and extract tarball to `~/.merlin/versions/<tag>/`
 6. Create `~/.merlin/current` symlink (atomic: `ln -sfn` + `mv -Tf`)
@@ -137,12 +137,19 @@ stale — there is no generated `~/.merlin/bin/merlin` to drift.
 
 Old versions are kept for manual rollback: `ln -sfn ~/.merlin/versions/0.1.0 ~/.merlin/current`
 
-## Graceful Degradation
+## Required tools at launch
 
-At startup, `main.py` checks for optional dependencies:
+`main._validate_config()` refuses to start (exit status 1, the reason on
+stderr and in `merlin.log`) when a required tool is missing:
 
-| Dependency | If Missing |
-|------------|------------|
-| tmux | Terminal nav grayed out, `/terminal` returns 503, boot warning |
+| Dependency | Check | Refused when |
+|------------|-------|--------------|
+| fd | `_check_fd()` | not on PATH (`fd` or `fdfind`) |
+| tmux | `_check_tmux()` | not on PATH, `tmux -V` older than `terminal.native.MIN_TMUX` (3.8) or unreadable, or a server already running on the default socket that is older (read with `list-sessions -F '#{version}'`, which creates nothing) |
 
-Package manager detection (apt/pacman/brew) provides correct install commands in warnings and UI tooltips.
+Only the server's start is gated: `merlin job`, `merlin config`, `merlin
+workspace` and the other commands that do not start the server never run the
+checks. Package manager detection (apt/pacman/brew) provides the install
+command in the message. `merlin restart` watches the relaunched server until
+it publishes its state file; when it exits first, restart prints the last lines
+of `nohup.out`, where the refusal is.

@@ -63,17 +63,10 @@
         <div class="sidebar-body">
             <nav class="sidebar-nav">
                 {% for item in nav_items %}
-                {% if item.disabled %}
-                <span class="nav-disabled" title="{{ item.tooltip | default('Unavailable') }}" data-tooltip="{{ item.label }}">
-                    <span class="nav-icon">{{ item.icon | safe }}</span>
-                    <span class="nav-label">{{ item.label }}</span>
-                </span>
-                {% else %}
                 <a href="{{ item.url }}" data-tooltip="{{ item.label }}">
                     <span class="nav-icon">{{ item.icon | safe }}{% if item.url == '/extensions' and extensions_error_count is defined and extensions_error_count > 0 %}<span class="nav-badge"></span>{% endif %}</span>
                     <span class="nav-label">{{ item.label }}</span>
                 </a>
-                {% endif %}
                 {% endfor %}
             </nav>
             {% if saas_mode %}

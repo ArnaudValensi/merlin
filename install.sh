@@ -178,29 +178,84 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 3: Check for tmux (optional)
+# Step 3: Check for tmux (required at runtime, 3.8 or newer)
 # ---------------------------------------------------------------------------
+# The installer completes without it, but merlin refuses to start until tmux
+# 3.8 or newer is installed: the web terminal attaches to tmux in control
+# mode and reads what older servers do not report. Distribution packages
+# are often older (Ubuntu 24.04 ships 3.4, Debian 12 ships 3.3).
+
+TMUX_MIN_MAJOR=3
+TMUX_MIN_MINOR=8
+TMUX_DOCS="https://github.com/ArnaudValensi/merlin/blob/master/docs/getting-started.md#tmux-38-or-newer"
+
+# tmux_version_ok "tmux 3.4": 0 when the version is 3.8 or newer. A build
+# without a number (master) is newer than any release and passes, as it
+# does in merlin itself.
+tmux_version_ok() {
+    local text="$1" major minor
+    text="${text#tmux }"
+    if [[ "$text" == "master" ]]; then
+        return 0
+    fi
+    if [[ "$text" =~ ([0-9]+)\.([0-9]+) ]]; then
+        major="${BASH_REMATCH[1]}"
+        minor="${BASH_REMATCH[2]}"
+    else
+        return 1
+    fi
+    if (( major > TMUX_MIN_MAJOR )); then return 0; fi
+    if (( major == TMUX_MIN_MAJOR && minor >= TMUX_MIN_MINOR )); then return 0; fi
+    return 1
+}
+
+# warn_tmux_too_old "tmux 3.4": the same advice merlin prints when it refuses
+# to start.
+warn_tmux_too_old() {
+    warn "$1 is too old. Merlin needs tmux $TMUX_MIN_MAJOR.$TMUX_MIN_MINOR or newer and will not start without it."
+    warn "Distribution packages are often older: install it with Homebrew, or build it from source."
+    warn "See $TMUX_DOCS"
+}
+
+# check_tmux_version: reads tmux -V and warns when it is older than 3.8.
+check_tmux_version() {
+    local found
+    found=$(tmux -V 2>/dev/null || true)
+    if [[ -z "$found" ]]; then
+        warn "tmux did not report its version (tmux -V). Merlin needs tmux $TMUX_MIN_MAJOR.$TMUX_MIN_MINOR or newer."
+        return
+    fi
+    if tmux_version_ok "$found"; then
+        info "$found"
+    else
+        warn_tmux_too_old "$found"
+    fi
+}
 
 step "Checking for tmux..."
 if command -v tmux >/dev/null 2>&1; then
     info "tmux found"
+    check_tmux_version
 else
-    warn "tmux not found (optional — needed for web terminal)"
+    warn "tmux not found (required: merlin needs tmux $TMUX_MIN_MAJOR.$TMUX_MIN_MINOR or newer and will not start without it)"
     cmd=$(install_cmd tmux)
     if $NON_INTERACTIVE; then
-        info "Skipped (non-interactive). Install later: ${cmd:-via your package manager}"
+        warn "Skipped (non-interactive). Install before starting merlin: ${cmd:-via your package manager}"
     elif [[ -n "$cmd" ]]; then
         if confirm "Install tmux? ($cmd)"; then
             if install_pkg tmux; then
                 info "tmux installed"
+                if ! $DRY_RUN && command -v tmux >/dev/null 2>&1; then
+                    check_tmux_version
+                fi
             else
-                warn "tmux installation failed. Install later: $cmd"
+                warn "tmux installation failed. Install before starting merlin: $cmd"
             fi
         else
-            info "Skipped. Install later: $cmd"
+            warn "Skipped. Install before starting merlin: $cmd"
         fi
     else
-        info "No supported package manager found. Install tmux manually."
+        warn "No supported package manager found. Install tmux $TMUX_MIN_MAJOR.$TMUX_MIN_MINOR or newer: $TMUX_DOCS"
     fi
 fi
 

@@ -10,9 +10,43 @@ Merlin runs as one process on your machine: a web dashboard on port 3123 with a 
 curl -fsSL https://raw.githubusercontent.com/ArnaudValensi/merlin/master/install.sh | bash
 ```
 
-The installer needs `uv` (it offers to install it if missing) and checks for two more tools, offering to install what is missing: fd (required, Merlin will not start without it) and tmux (optional, needed for the web terminal). It downloads the latest release into `~/.merlin/versions/<tag>/`, points the `~/.merlin/current` symlink at it, and offers to add `~/.merlin/current/bin` to your PATH in your shell rc.
+The installer needs `uv` (it offers to install it if missing) and checks for two more tools, offering to install what is missing: fd and tmux. Both are required, and Merlin will not start without them. tmux must be **3.8 or newer**: the installer reads `tmux -V` and warns when the one it finds is older (see [tmux 3.8 or newer](#tmux-38-or-newer) below). It downloads the latest release into `~/.merlin/versions/<tag>/`, points the `~/.merlin/current` symlink at it, and offers to add `~/.merlin/current/bin` to your PATH in your shell rc.
 
 When it finishes: run `merlin` to start (you may need to restart your shell first).
+
+### tmux 3.8 or newer
+
+Merlin's web terminal attaches to tmux in control mode and mirrors tmux's own
+grid of the pane, which needs formats and fixes that arrived in tmux 3.8. So
+Merlin refuses to start when tmux is missing or older than 3.8, with a message
+that says what it found. Distribution packages are often older: Ubuntu 24.04
+ships 3.4 and Debian 12 ships 3.3, so their packages are not enough. Two ways
+to get a recent one:
+
+- **Homebrew** (macOS and Linux): `brew install tmux` gives the current
+  release. On Linux, [install Homebrew](https://brew.sh) first and make sure
+  its `bin` comes before the distribution's in your PATH, so `tmux` resolves
+  to the new one.
+- **Build from source** (Linux): tmux needs a C compiler, make, pkg-config, and
+  the libevent and ncurses development headers. On Ubuntu or Debian:
+
+  ```bash
+  sudo apt install -y build-essential pkg-config libevent-dev libncurses-dev bison
+  curl -fsSLO https://github.com/tmux/tmux/releases/download/3.8/tmux-3.8.tar.gz
+  tar xzf tmux-3.8.tar.gz && cd tmux-3.8
+  ./configure && make && sudo make install   # installs /usr/local/bin/tmux
+  tmux -V                                     # tmux 3.8
+  ```
+
+  Remove the distribution's tmux (`sudo apt remove tmux`) or keep
+  `/usr/local/bin` ahead of `/usr/bin` in your PATH, so there is one `tmux`
+  on the machine: a shell and Merlin must use the same binary, or the shell's
+  `tmux attach` fails with a protocol version mismatch against Merlin's server.
+
+A tmux **server** started by an older binary keeps running after the upgrade,
+and Merlin checks it too (`tmux list-sessions -F '#{version}'`). Once the new
+tmux is installed, save the work in the old server's sessions, then run
+`tmux kill-server`, and start Merlin again.
 
 ## Run the setup wizard
 
@@ -155,7 +189,10 @@ Inside `~/.merlin`:
 
 - **`merlin: command not found` right after install**: the PATH line went into your shell rc but your current shell predates it. `source` the rc or restart your shell.
 - **`Error: fd is not installed`**: fd is a hard requirement (the installer offers it); the error message tells you how to install it.
-- **tmux missing**: boot prints a warning, the Terminal nav item is grayed out with an install tooltip, everything else still works.
+- **`tmux is not installed. Merlin needs tmux 3.8 or newer.`**: tmux is a hard requirement; the message gives the install command for your package manager. Check the version it installs (`tmux -V`): if it is older than 3.8, see [tmux 3.8 or newer](#tmux-38-or-newer).
+- **`tmux 3.4 is too old. Merlin needs tmux 3.8 or newer.`** (or any version under 3.8): your distribution's package is too old. Install a recent tmux with Homebrew or build it from source ([tmux 3.8 or newer](#tmux-38-or-newer)), and make sure `tmux -V` in a new shell shows it.
+- **`A tmux 3.4 server is still running. Merlin needs tmux 3.8 or newer.`**: the binary is recent but a server started by the old one is still up, and the terminal talks to the server. Save the work in its sessions (`tmux attach`, finish what runs there), then `tmux kill-server`, then start Merlin again. It starts a new server with the new tmux.
+- **`tmux did not report its version (tmux -V gave no answer).`**: the `tmux` on your PATH is not a working tmux (a wrapper that hangs, a broken install). Run `tmux -V` yourself; it should print `tmux 3.8` or newer within a second.
 - **Wrong password at login**: the form says so and returns 401. The password is whatever you set in `merlin setup`.
 - **`merlin dashboard-url` prints localhost but you reach Merlin through a tunnel**: the command cannot know your tunnel's address. Set `MERLIN_DASHBOARD_URL` in `config.env` to the public URL.
 - **Bad update**: revert with `ln -sfn ~/.merlin/versions/<old> ~/.merlin/current`; old versions are never deleted.

@@ -60,6 +60,75 @@ class TestDryRun:
         result = run_installer()
         assert "Checking for tmux" in result.stdout
 
+    def test_tmux_is_required_and_its_version_read(self, tmp_path):
+        """tmux is a hard requirement (3.8 or newer): the installer reads
+        `tmux -V` and warns, with the same advice merlin prints at launch,
+        when the version is older, then finishes the install."""
+        fake = tmp_path / "bin" / "tmux"
+        fake.parent.mkdir()
+        fake.write_text('#!/bin/sh\necho "tmux 3.4"\n')
+        fake.chmod(0o755)
+        result = run_installer(
+            env_overrides={"PATH": f"{fake.parent}{os.pathsep}{os.environ['PATH']}"}
+        )
+        assert result.returncode == 0
+        assert "tmux 3.4 is too old. Merlin needs tmux 3.8 or newer" in result.stdout
+        assert "Homebrew" in result.stdout
+        assert "getting-started.md#tmux-38-or-newer" in result.stdout
+        assert "Merlin installed" in result.stdout
+
+    def test_a_supported_tmux_is_reported_without_a_warning(self, tmp_path):
+        fake = tmp_path / "bin" / "tmux"
+        fake.parent.mkdir()
+        fake.write_text('#!/bin/sh\necho "tmux 3.8"\n')
+        fake.chmod(0o755)
+        result = run_installer(
+            env_overrides={"PATH": f"{fake.parent}{os.pathsep}{os.environ['PATH']}"}
+        )
+        assert result.returncode == 0
+        assert "tmux 3.8" in result.stdout
+        assert "too old" not in result.stdout
+
+    def test_a_missing_tmux_is_required_not_optional(self, tmp_path):
+        """With no tmux on PATH the installer says it is required, not
+        optional, and still completes."""
+        # A mirror of PATH without tmux: every executable of the real PATH
+        # under one directory, through a wrapper that execs the real one.
+        # Version-manager shim directories (pyenv, asdf, mise) are left out:
+        # a shim resolves its target through PATH and would loop on its own
+        # wrapper. The dry run only prints `uv --version`, so a fake uv
+        # stands in when the real one was a shim.
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        seen: set[str] = set()
+        for directory in os.environ.get("PATH", "").split(os.pathsep):
+            if "shims" in Path(directory).parts:
+                continue
+            try:
+                names = os.listdir(directory)
+            except OSError:
+                continue
+            for name in names:
+                real = Path(directory) / name
+                if name in seen or name == "tmux" or not os.access(real, os.X_OK):
+                    continue
+                if real.is_dir():
+                    continue
+                seen.add(name)
+                wrapper = bin_dir / name
+                wrapper.write_text(f'#!/bin/sh\nexec "{real}" "$@"\n')
+                wrapper.chmod(0o755)
+        if "uv" not in seen:
+            fake_uv = bin_dir / "uv"
+            fake_uv.write_text('#!/bin/sh\necho "uv 0.0.0 (test)"\n')
+            fake_uv.chmod(0o755)
+        result = run_installer(env_overrides={"PATH": str(bin_dir)})
+        assert result.returncode == 0, result.stdout + result.stderr
+        tmux_step = result.stdout.split("Checking for tmux")[1].split("Fetching")[0]
+        assert "tmux not found (required" in tmux_step
+        assert "will not start without it" in tmux_step
+        assert "optional" not in tmux_step
+
     def test_does_not_check_cloudflared(self):
         """cloudflared was removed with the bundled tunnel; the installer
         must not prompt for it anymore."""
@@ -129,8 +198,8 @@ class TestNonInteractive:
         assert result.returncode == 0
         assert "Merlin installed" in result.stdout
         # System packages that are absent must be skipped, never
-        # sudo-installed (fd is required at runtime but still not worth a
-        # sudo prompt inside a non-interactive install).
+        # sudo-installed (fd and tmux are required at runtime but still not
+        # worth a sudo prompt inside a non-interactive install).
         if "tmux not found" in result.stdout:
             assert "Skipped (non-interactive)" in result.stdout
         if "fd not found" in result.stdout:

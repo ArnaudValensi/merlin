@@ -264,7 +264,7 @@ def _relaunch_env() -> dict[str, str]:
     return env
 
 
-def _relaunch(port: int | None = None) -> None:
+def _relaunch(port: int | None = None) -> subprocess.Popen:
     """Start a fresh, detached server via `uv run`, on the same port it was on.
 
     `uv run` re-resolves the venv for the app directory (the new version after an
@@ -278,8 +278,8 @@ def _relaunch(port: int | None = None) -> None:
     cmd = ["uv", "run", "cli.py", "start"]
     if port is not None:
         cmd += ["--port", str(port)]
-    out = open(app_dir / "nohup.out", "ab")  # noqa: SIM115 — handed to the child
-    subprocess.Popen(
+    out = open(_relaunch_log(), "ab")  # noqa: SIM115 — handed to the child
+    return subprocess.Popen(
         cmd,
         cwd=str(app_dir),
         env=_relaunch_env(),
@@ -290,15 +290,40 @@ def _relaunch(port: int | None = None) -> None:
     )
 
 
-def _server_running() -> bool:
+def _relaunch_log():
+    """Where a relaunched server's stdout and stderr go: the reason a start
+    was refused (a missing tmux, a bad config) is written there."""
+    return paths.app_dir() / "nohup.out"
+
+
+# How long `merlin restart` waits for the relaunched server to bind.
+START_TIMEOUT = 20.0
+
+
+def _wait_for_start(proc: subprocess.Popen, timeout: float = START_TIMEOUT) -> str:
+    """Watch the relaunched server until it publishes its state (it bound its
+    port), exits, or `timeout` passes. Returns "started", "exited" or
+    "pending"."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if proc.poll() is not None:
+            return "exited"
+        pid, _ = live_state()
+        if pid == proc.pid:
+            return "started"
+        if time.monotonic() >= deadline:
+            return "pending"
+        time.sleep(0.2)
+
+
+def _log_tail(lines: int = 12) -> str:
+    """The last `lines` lines of the relaunch log, or "" when it cannot be read."""
     try:
-        result = subprocess.run(
-            ["pgrep", "-u", str(os.getuid()), "-f", "python.*cli.py"],
-            capture_output=True,
-        )
+        with open(_relaunch_log(), "rb") as f:
+            data = f.read()
     except OSError:
-        return False
-    return result.returncode == 0
+        return ""
+    return b"\n".join(data.splitlines()[-lines:]).decode("utf-8", "replace")
 
 
 def restart() -> int:
@@ -315,12 +340,23 @@ def restart() -> int:
         print("Supervised mode: stopped; the service manager will restart Merlin.")
         return 0
 
-    _relaunch(port)
-    time.sleep(2)
-    if _server_running():
+    proc = _relaunch(port)
+    outcome = _wait_for_start(proc, START_TIMEOUT)
+    if outcome == "started":
         print("Merlin restarted.")
         return 0
-    print("Merlin failed to start — check nohup.out")
+    log = _relaunch_log()
+    if outcome == "pending":
+        print(
+            f"Merlin is still starting (PID {proc.pid}). If it does not come up, see {log}"
+        )
+        return 0
+    print(
+        f"Merlin failed to start (exit status {proc.returncode}). The reason is in {log}:"
+    )
+    tail = _log_tail()
+    if tail:
+        print("\n".join("  " + line for line in tail.splitlines()))
     return 1
 
 

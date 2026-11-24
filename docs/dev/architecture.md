@@ -161,8 +161,9 @@ cli.py (merlin start)
         ├── structured_log.cleanup_old_logs()  (event-log retention)
         ├── _validate_config()
         │     ├── Check DASHBOARD_PASS (warn if empty)
-        │     └── _check_optional_deps()
-        │           └── tmux missing → TMUX_AVAILABLE=False, disable nav item
+        │     ├── _check_fd()  (exit 1 when fd is missing)
+        │     └── _check_tmux()  (exit 1 when tmux is missing, older than 3.8,
+        │           or an older server is still running; see web-terminal.md)
         │
         ├── _rebuild_skill_registry()  (aggregate ~/.merlin/skills, refresh
         │     the ~/.claude, ~/.agents and $CODEX_HOME shims, reconcile the
