@@ -300,16 +300,31 @@ def _relaunch_log():
 START_TIMEOUT = 20.0
 
 
+def _descends_from(pid: int, ancestor: int, depth: int = 4) -> bool:
+    """Whether `pid` is `ancestor` or one of its descendants, a few levels
+    deep. The relaunch is `uv run cli.py start`: uv is the process we hold,
+    the server that publishes its state is the Python it starts under it."""
+    for _ in range(depth):
+        if pid == ancestor:
+            return True
+        parent = _parent_pid(pid)
+        if parent is None or parent <= 1:
+            return False
+        pid = parent
+    return pid == ancestor
+
+
 def _wait_for_start(proc: subprocess.Popen, timeout: float = START_TIMEOUT) -> str:
     """Watch the relaunched server until it publishes its state (it bound its
     port), exits, or `timeout` passes. Returns "started", "exited" or
-    "pending"."""
+    "pending". The state is the relaunch's only when the live Merlin that
+    wrote it runs under `proc` (uv, then its Python child)."""
     deadline = time.monotonic() + timeout
     while True:
         if proc.poll() is not None:
             return "exited"
         pid, _ = live_state()
-        if pid == proc.pid:
+        if pid is not None and _descends_from(pid, proc.pid):
             return "started"
         if time.monotonic() >= deadline:
             return "pending"

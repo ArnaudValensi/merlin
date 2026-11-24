@@ -474,6 +474,47 @@ class TestWaitForStart:
             proc.kill()
             proc.wait(timeout=5)
 
+    def test_the_python_under_uv_is_recognised_as_the_relaunch(self, env):
+        """The relaunch is `uv run cli.py start`: the Popen is uv, the state
+        file is written by the Python it starts. Same topology here with a
+        shell standing for uv."""
+        code = (
+            "import os, sys, time\n"
+            "sys.path.insert(0, os.getcwd())\n"
+            "import paths\n"
+            "paths.write_server_state(os.getpid(), 3124)\n"
+            "time.sleep(30)\n"
+        )
+        # Python runs as the shell's child (started in the background and
+        # waited for): a shell would otherwise exec its last command and
+        # become the Python itself.
+        proc = subprocess.Popen(
+            ["sh", "-c", '"$0" -c "$1" & wait $!', sys.executable, code],
+            cwd=str(Path(__file__).resolve().parents[2]),
+            env={**os.environ, "MERLIN_HOME": os.environ["MERLIN_HOME"]},
+        )
+        try:
+            with mock.patch.object(server_control, "pid_is_merlin", return_value=True):
+                assert server_control._wait_for_start(proc, timeout=10) == "started"
+            state = paths.read_server_state()
+            assert state is not None and state["pid"] != proc.pid
+            assert server_control._parent_pid(state["pid"]) == proc.pid
+        finally:
+            proc.kill()
+            proc.wait(timeout=5)
+
+    def test_a_state_written_by_an_unrelated_process_is_not_the_relaunch(self, env):
+        """Another live Merlin's state (not under the relaunch) does not count
+        as the relaunched server starting."""
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            paths.write_server_state(os.getpid(), 3124)  # this test process
+            with mock.patch.object(server_control, "pid_is_merlin", return_value=True):
+                assert server_control._wait_for_start(proc, timeout=0.5) == "pending"
+        finally:
+            proc.kill()
+            proc.wait(timeout=5)
+
     def test_a_child_still_running_without_state_reads_as_pending(self):
         proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         try:

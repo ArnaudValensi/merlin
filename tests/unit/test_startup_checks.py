@@ -3,9 +3,11 @@ tmux 3.8 requirement (a fake ``tmux`` first on PATH, so no test reaches the
 real default server) and the order of ``_validate_config``."""
 
 import os
+import shutil
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -82,29 +84,42 @@ class TestInstallCmd:
 NEED = "Merlin needs tmux 3.8 or newer."
 
 
+NO_SERVER_ENOENT = (
+    "error connecting to /tmp/tmux-1000/default (No such file or directory)"
+)
+NO_SERVER_REFUSED = "no server running on /tmp/tmux-1000/default"
+SLEEP = shutil.which("sleep") or "/bin/sleep"
+
+
 def install_fake_tmux(
     tmp_path: Path,
     monkeypatch,
     *,
     version: str | None,
     server: str | None = None,
-    hang: bool = False,
+    server_error: str = NO_SERVER_ENOENT,
+    hang: str | None = None,
 ) -> Path:
     """A ``tmux`` first on PATH that answers ``-V`` with ``version`` (None:
-    no tmux on PATH at all) and ``list-sessions`` with ``server`` (None: no
-    server running, exit 1). Every call is appended to ``calls.log`` with the
-    TMUX it saw. ``hang`` makes it sleep instead of answering."""
+    no tmux on PATH at all) and ``list-sessions`` with ``server`` (None: exit
+    1 with ``server_error`` on stderr, what tmux prints when there is no
+    server unless the test says otherwise). Every call is appended to
+    ``calls.log`` with the TMUX it saw. ``hang`` names the command that
+    sleeps instead of answering (``"-V"`` or ``"list-sessions"``)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log = tmp_path / "calls.log"
     if version is not None:
         body = f'#!/bin/sh\necho "$* TMUX=${{TMUX-unset}}" >> "{log}"\n'
-        if hang:
-            body += "exec sleep 30\n"
         body += 'case "$1" in\n'
-        body += f'  -V) echo "{version}"; exit 0 ;;\n'
-        if server is None:
-            body += '  list-sessions) echo "no server running" >&2; exit 1 ;;\n'
+        if hang == "-V":
+            body += f"  -V) exec {SLEEP} 30 ;;\n"
+        else:
+            body += f'  -V) echo "{version}"; exit 0 ;;\n'
+        if hang == "list-sessions":
+            body += f"  list-sessions) exec {SLEEP} 30 ;;\n"
+        elif server is None:
+            body += f'  list-sessions) echo "{server_error}" >&2; exit 1 ;;\n'
         else:
             body += f'  list-sessions) echo "{server}"; exit 0 ;;\n'
         body += "esac\nexit 1\n"
@@ -153,12 +168,19 @@ class TestTmuxLaunchCheck:
         assert "Homebrew" in err and "getting-started.md#tmux-38-or-newer" in err
 
     @pytest.mark.parametrize("version", ["tmux 3.8", "tmux next-3.9", "tmux master"])
+    @pytest.mark.parametrize(
+        "no_server", [NO_SERVER_ENOENT, NO_SERVER_REFUSED], ids=["no-socket", "stale"]
+    )
     def test_a_supported_binary_with_no_server_starts(
-        self, tmp_path, monkeypatch, capsys, version
+        self, tmp_path, monkeypatch, capsys, version, no_server
     ):
+        """No server: no socket (ENOENT), or a stale socket nobody listens
+        on (ECONNREFUSED), the two ways tmux says it (tmux/client.c)."""
         import main
 
-        log = install_fake_tmux(tmp_path, monkeypatch, version=version)
+        log = install_fake_tmux(
+            tmp_path, monkeypatch, version=version, server_error=no_server
+        )
         monkeypatch.setenv("TMUX", "/tmp/tmux-0/other,1,0")
         main._check_tmux()  # no exit
         assert refusal(capsys) == ""
@@ -176,15 +198,102 @@ class TestTmuxLaunchCheck:
     def test_a_binary_that_hangs_reads_as_unknown_and_refuses(
         self, tmp_path, monkeypatch, capsys
     ):
+        """The fake sleeps (an absolute sleep: PATH holds the fake alone) and
+        the probe's timeout ends it: the refusal names the timeout, and the
+        check took at least that long and not the sleep's 30 seconds."""
         import main
 
-        install_fake_tmux(tmp_path, monkeypatch, version="tmux 3.8", hang=True)
+        log = install_fake_tmux(tmp_path, monkeypatch, version="tmux 3.8", hang="-V")
         monkeypatch.setattr(main, "TMUX_PROBE_TIMEOUT", 0.5)
+        started = time.monotonic()
+        with pytest.raises(SystemExit) as exc:
+            main._check_tmux()
+        elapsed = time.monotonic() - started
+        assert exc.value.code == 1
+        assert 0.5 <= elapsed < 10
+        err = refusal(capsys)
+        assert "tmux -V gave no answer in 0.5 seconds" in err and NEED in err
+        assert log.read_text().splitlines() == ["-V TMUX=unset"]
+
+    def test_a_binary_whose_version_command_fails_refuses(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        import main
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        fake = bin_dir / "tmux"
+        fake.write_text('#!/bin/sh\necho "tmux: unknown option -- V" >&2\nexit 1\n')
+        fake.chmod(0o755)
+        monkeypatch.setenv("PATH", str(bin_dir))
         with pytest.raises(SystemExit) as exc:
             main._check_tmux()
         assert exc.value.code == 1
         err = refusal(capsys)
-        assert "tmux did not report its version" in err and NEED in err
+        assert "tmux -V failed: tmux: unknown option -- V" in err and NEED in err
+
+    def test_a_server_probe_that_fails_for_another_reason_refuses(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """A server is there but tmux could not read it (a protocol mismatch
+        between an upgraded client and the old server, say): not "no server"."""
+        import main
+
+        install_fake_tmux(
+            tmp_path,
+            monkeypatch,
+            version="tmux 3.8",
+            server_error="protocol version mismatch (client 8, server 7)",
+        )
+        with pytest.raises(SystemExit) as exc:
+            main._check_tmux()
+        assert exc.value.code == 1
+        err = refusal(capsys)
+        assert (
+            "The tmux server could not be checked (tmux list-sessions"
+            " failed: protocol version mismatch (client 8, server 7))."
+        ) in err
+        assert NEED in err and "tmux kill-server" in err
+
+    def test_a_socket_tmux_cannot_open_refuses_with_its_words(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Seen for real: a TMUX_TMPDIR too long for a unix socket. Not "no
+        server" (ENOENT, ECONNREFUSED), so the start is refused, quoting tmux."""
+        import main
+
+        install_fake_tmux(
+            tmp_path,
+            monkeypatch,
+            version="tmux 3.8",
+            server_error="error connecting to /very/long/path/tmux-1000/default (File name too long)",
+        )
+        with pytest.raises(SystemExit) as exc:
+            main._check_tmux()
+        assert exc.value.code == 1
+        err = refusal(capsys)
+        assert "The tmux server could not be checked (tmux list-sessions failed:" in err
+        assert "(File name too long))." in err
+
+    def test_a_server_probe_that_hangs_refuses(self, tmp_path, monkeypatch, capsys):
+        import main
+
+        log = install_fake_tmux(
+            tmp_path, monkeypatch, version="tmux 3.8", hang="list-sessions"
+        )
+        monkeypatch.setattr(main, "TMUX_PROBE_TIMEOUT", 0.5)
+        started = time.monotonic()
+        with pytest.raises(SystemExit) as exc:
+            main._check_tmux()
+        elapsed = time.monotonic() - started
+        assert exc.value.code == 1
+        assert 0.5 <= elapsed < 10
+        err = refusal(capsys)
+        assert (
+            "The tmux server could not be checked (tmux list-sessions"
+            " gave no answer in 0.5 seconds)."
+        ) in err
+        assert len(log.read_text().splitlines()) == 2
 
     def test_a_running_server_older_than_the_binary_refuses(
         self, tmp_path, monkeypatch, capsys

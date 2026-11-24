@@ -20,6 +20,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -1582,11 +1583,12 @@ def _refuse_start(message: str) -> NoReturn:
     raise SystemExit(1)
 
 
-def _tmux_probe(args: list[str]) -> str | None:
-    """stdout of ``tmux <args>`` on the default server (never the one of a
-    ``$TMUX`` Merlin was started under, which is what the terminal bridge
-    ignores too), or None when tmux failed, gave no answer in
-    ``TMUX_PROBE_TIMEOUT`` or could not run."""
+def _tmux_probe(args: list[str]) -> tuple[str, str, str]:
+    """``tmux <args>`` on the default server (never the one of a ``$TMUX``
+    Merlin was started under, which is what the terminal bridge ignores too).
+    Returns ``(status, stdout, stderr)`` with status ``"ok"`` (exit 0),
+    ``"failed"`` (another exit status, stderr says why), ``"timeout"`` (no
+    answer in ``TMUX_PROBE_TIMEOUT``) or ``"error"`` (it could not run)."""
     env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
     try:
         result = subprocess.run(
@@ -1598,11 +1600,24 @@ def _tmux_probe(args: list[str]) -> str | None:
             stdin=subprocess.DEVNULL,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return None
+    except subprocess.TimeoutExpired:
+        return "timeout", "", ""
+    except (OSError, subprocess.SubprocessError) as e:
+        return "error", "", str(e)
     if result.returncode != 0:
-        return None
-    return result.stdout
+        return "failed", result.stdout, result.stderr
+    return "ok", result.stdout, result.stderr
+
+
+# What tmux says when no server is listening on the socket it was aimed at
+# (tmux/client.c: ECONNREFUSED on a stale socket, ENOENT when there is none).
+_NO_SERVER = re.compile(
+    r"^no server running on |^error connecting to .*\((No such file or directory|Connection refused)\)"
+)
+
+
+def _no_tmux_server(stderr: str) -> bool:
+    return any(_NO_SERVER.search(line.strip()) for line in stderr.splitlines())
 
 
 def _check_tmux() -> None:
@@ -1611,8 +1626,9 @@ def _check_tmux() -> None:
     the binary (``tmux -V``), then, only when a server already runs on the
     default socket, the server (an upgraded binary never replaces a running
     server, and the terminal talks to the server). The server is read with
-    ``list-sessions``: nothing is created, attached or killed, and no server
-    is fine (Merlin starts one later). Refuses with exit status 1."""
+    ``list-sessions``: nothing is created, attached or killed. No server is
+    fine (Merlin starts one later); a server that cannot be checked is not.
+    Refuses with exit status 1."""
     from terminal.native import MIN_TMUX, parse_tmux_version, supported
 
     minimum = ".".join(map(str, MIN_TMUX))
@@ -1622,6 +1638,10 @@ def _check_tmux() -> None:
         "ships 3.3): install it with Homebrew, or build it from source. See\n"
         f"{TMUX_DOCS_URL}"
     )
+    restart_server = (
+        "A server started by an older tmux keeps running after the upgrade. Save the\n"
+        "work in its sessions, then run: tmux kill-server"
+    )
     if not shutil.which("tmux"):
         _refuse_start(
             f"tmux is not installed. {need}\n"
@@ -1630,20 +1650,45 @@ def _check_tmux() -> None:
             f"\n"
             f"{how}"
         )
-    raw = (_tmux_probe(["-V"]) or "").strip()
+    status, out, err = _tmux_probe(["-V"])
+    raw = out.strip() if status == "ok" else ""
     if not supported(parse_tmux_version(raw)):
-        found = (
-            f"{raw} is too old."
-            if raw
-            else "tmux did not report its version (tmux -V gave no answer)."
-        )
+        if raw:
+            found = f"{raw} is too old."
+        elif status == "timeout":
+            found = (
+                "tmux did not report its version (tmux -V gave no answer in"
+                f" {TMUX_PROBE_TIMEOUT:g} seconds)."
+            )
+        else:
+            reason = (err or out).strip().splitlines()
+            found = "tmux did not report its version (tmux -V failed" + (
+                f": {reason[0]})." if reason else ")."
+            )
         _refuse_start(f"{found} {need}\n\n{how}")
-    # A running server, read without creating one: list-sessions fails when
-    # there is no server, which is fine.
-    listed = _tmux_probe(["list-sessions", "-F", "#{version}"])
-    if listed is None:
+    # A running server, read without creating one. tmux fails when there is
+    # no server, which is fine; any other failure (a protocol mismatch with
+    # an old server, a socket tmux cannot open) is a server Merlin cannot
+    # vouch for, and the terminal could not reach it either.
+    status, out, err = _tmux_probe(["list-sessions", "-F", "#{version}"])
+    if status == "failed" and _no_tmux_server(err):
         return
-    versions = [line.strip() for line in listed.splitlines() if line.strip()]
+    if status != "ok":
+        if status == "timeout":
+            reason = (
+                f"tmux list-sessions gave no answer in {TMUX_PROBE_TIMEOUT:g} seconds"
+            )
+        else:
+            lines = (err or out).strip().splitlines()
+            reason = "tmux list-sessions failed" + (f": {lines[0]}" if lines else "")
+        _refuse_start(
+            f"The tmux server could not be checked ({reason}). {need}\n"
+            f"\n"
+            f"{restart_server}\n"
+            f"\n"
+            f"{how}"
+        )
+    versions = [line.strip() for line in out.splitlines() if line.strip()]
     server = versions[0] if versions else ""
     if not supported(parse_tmux_version(server)):
         found = (
@@ -1651,14 +1696,7 @@ def _check_tmux() -> None:
             if server
             else "A tmux server that does not report its version"
         )
-        _refuse_start(
-            f"{found} is still running. {need}\n"
-            f"\n"
-            f"Once a newer tmux is installed, the running server must be restarted:\n"
-            f"save the work in its sessions, then run: tmux kill-server\n"
-            f"\n"
-            f"{how}"
-        )
+        _refuse_start(f"{found} is still running. {need}\n\n{restart_server}\n\n{how}")
 
 
 def _validate_config() -> None:
