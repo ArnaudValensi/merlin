@@ -187,7 +187,7 @@ cli.py (merlin start)
 | `paths.py` | Path resolution (dev mode vs installed) |
 | `lib/skills.py` | Skill registry, canonical aggregation, shims, the agent-state hook reconcilers (see [`skill-system.md`](skill-system.md)) |
 | `lib/structured_log.py`, `lib/event_log.py` | The event log writer and its typed reader (see [`logging-system.md`](logging-system.md)) |
-| `terminal/` | The web terminal: PTY bridge, tmux, the agent hooks (`terminal/hooks/`), dictation (`terminal/transcribe.py`) |
+| `terminal/` | The web terminal: the tmux control-mode bridge, the agent hooks (`terminal/hooks/`), dictation (`terminal/transcribe.py`) |
 | `board/` | The tmux sweep (`board/sweep.py`) and the Sessions board |
 | `notifications/` | The attention watcher, the event content, Web Push |
 | `job/agents.py` | The agent table: launch lines, the bypass warning, launch problems |

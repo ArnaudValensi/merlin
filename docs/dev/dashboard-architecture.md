@@ -549,18 +549,17 @@ sits far-right of the terminal status bar; its badge shows the waiting count
 terminal draws no window tabs: the panel lists the windows, and `switch-client`
 on the page's own connection follows the current session.
 
-**Switching is per-client, over the WebSocket — not HTTP.** Only the terminal
-socket knows which tmux client this browser is (it derives the client tty with
-`os.ptsname()` on the PTY master `pty.fork()` returned, which *is* the pts given
-to the tmux client). Tapping a session
-sends `{type:"switch", target:"<session>"}`; tapping a window sends
-`target:"<session>:<window_id>"` (switch + select in one call). The server runs
-`tmux switch-client -c <tty> -t <target>` so one browser tab never moves another,
-then replies with a NUL-prefixed `{type:"session"}` control frame naming the
-client's current session. The terminal JS intercepts that frame (never writes it
-to the screen) and calls `SessionsBoard.setCurrentSession()`. The board polls
+**Switching is per-client, over the WebSocket, not HTTP.** Each page owns one
+tmux control client (`terminal/native.py`), so only its socket can move that
+client. Tapping a session sends `{type:"switch", target:"<session>"}`; tapping
+a window sends `target:"<session>:<window_id>"` (switch + select in one call).
+The bridge runs `switch-client -t <target>` on its own control connection, then
+`select-window` when a window was named, so one browser tab never moves
+another, then sends a NUL-prefixed `{type:"session"}` control frame naming the
+client's current session. The page intercepts that frame (never a row of the
+terminal) and calls `SessionsBoard.setCurrentSession()`. The board polls
 `GET /api/board?current=<name>` so the tree can mark the current session.
-`window.MerlinTerminal.switchSession(target)` is the bridge board.js calls.
+`window.MerlinTerminal.switchSession(target)` is the seam board.js calls.
 
 **Data flow.** The switcher never owns the live signal — tmux does. `GET
 /api/board` runs `tmux list-sessions -F` + `tmux list-windows -a -F` (`sweep.py`)

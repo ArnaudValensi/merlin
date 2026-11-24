@@ -394,7 +394,7 @@ def focus_window(session: str, window_id: str) -> bool:
 def switch_client(tty: str, target: str) -> bool:
     """Point one client (by tty) at ``target`` (``session`` or ``session:window``).
 
-    Per-client: uses ``switch-client -c <tty>`` so only this browser's tmux
+    Per-client: uses ``switch-client -c <tty>`` so only that tmux
     client moves. ``session:window`` both switches session and selects the
     window in one call, which is how cross-session jump-to-window works.
     """

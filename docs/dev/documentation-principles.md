@@ -59,7 +59,7 @@ Every page doc follows the same shape, in this order:
 
 Allowed only when they explain behavior the user experiences. Litmus
 test: tmux persistence belongs in `terminal.md` (it explains why your
-session survives closing the tab); the WebSocket/PTY plumbing and escape
+session survives closing the tab); the WebSocket/tmux plumbing and escape
 sequence tables do not (they go to `docs/dev/`).
 
 ## Screenshots

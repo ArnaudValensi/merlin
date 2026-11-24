@@ -37,7 +37,7 @@ Startup removes what older releases left: `logs/raw-sessions/`, `logs/claude/`, 
 | **Job** | Scheduler tick or webhook fire → a run in its window → supervised to its record → run log written | `job/__init__.py`, `job/runner.py`, `job/runs.py`, `job/supervisor.py`, `job/logs.py` |
 | **Webhook** | The front desk checks the secret and fires, or rejects | `webhooks/`, `job/webhook.py` |
 | **HTTP request** | FastAPI handles request → file browse, auth, API, static files | `main.py`, `files/`, `commits/`, `auth.py` |
-| **WebSocket** | Terminal session → PTY bridge → tmux | `terminal/routes.py` |
+| **WebSocket** | Terminal page → control-mode bridge → tmux | `terminal/native.py` |
 | **Attention** | A window finished or asks → an event, routed to the page and the push sender | `notifications/routes.py` (the routing record), `notifications/push.py` (delivery failures) |
 | **Tunnel lifecycle** | SaaS tunnel (Merlin Cloud) → connect, reconnect, fail | `saas_tunnel.py` |
 | **App lifecycle** | Startup and shutdown | `main.py` |
@@ -48,7 +48,7 @@ All Python loggers use the `merlin.*` tree. The root `merlin` logger has a `Rota
 
 ```
 merlin                      → merlin.log (RotatingFileHandler, 10 MB × 5)
-├── merlin.terminal         (WebSocket connect/disconnect, PTY errors)
+├── merlin.terminal         (WebSocket connect/disconnect, tmux control errors)
 ├── merlin.saas_tunnel      (SaaS portal tunnel)
 ├── merlin.ssh              (SSH server events)
 ├── merlin.job             (job dispatch, runs, supervision, retention)
@@ -192,7 +192,7 @@ These parts of the app produce no structured events (though app-level errors go 
 | `webhooks/` | The front desk — writes `webhook_request` for every outcome |
 | `notifications/routes.py` | Writes `attention_routed` for every routed notification event |
 | `notifications/push.py` | Writes `push_failed` and `push_removed` on delivery failures |
-| `terminal/routes.py` | Terminal WebSocket — logs connect/disconnect, PTY errors |
+| `terminal/native.py`, `terminal/control.py` | Terminal WebSocket: logs connect/disconnect, tmux control errors |
 | `saas_tunnel.py` | SaaS tunnel — logs connect/disconnect, port forwarding, auth |
 | `ssh_server.py` | SSH server — logs host key, sessions, PTY operations |
 | `notes/git_ops.py` | Notes — logs git operation failures |
