@@ -477,7 +477,11 @@ class TestWaitForStart:
     def test_the_python_under_uv_is_recognised_as_the_relaunch(self, env):
         """The relaunch is `uv run cli.py start`: the Popen is uv, the state
         file is written by the Python it starts. Same topology here with a
-        shell standing for uv."""
+        shell standing for uv: Python runs as the shell's child (started in
+        the background and waited for, since a shell would exec its last
+        command and become the Python itself), the shell prints the child's
+        PID and stops it when it is itself stopped, so the teardown leaves no
+        process behind whatever the test asserted."""
         code = (
             "import os, sys, time\n"
             "sys.path.insert(0, os.getcwd())\n"
@@ -485,23 +489,35 @@ class TestWaitForStart:
             "paths.write_server_state(os.getpid(), 3124)\n"
             "time.sleep(30)\n"
         )
-        # Python runs as the shell's child (started in the background and
-        # waited for): a shell would otherwise exec its last command and
-        # become the Python itself.
+        launcher = (
+            '"$0" -c "$1" & child=$!; echo "$child"; '
+            "trap 'kill $child 2>/dev/null' TERM INT; wait $child"
+        )
         proc = subprocess.Popen(
-            ["sh", "-c", '"$0" -c "$1" & wait $!', sys.executable, code],
+            ["sh", "-c", launcher, sys.executable, code],
             cwd=str(Path(__file__).resolve().parents[2]),
             env={**os.environ, "MERLIN_HOME": os.environ["MERLIN_HOME"]},
+            stdout=subprocess.PIPE,
+            text=True,
         )
+        assert proc.stdout is not None
+        child_pid = int(proc.stdout.readline().strip())
         try:
             with mock.patch.object(server_control, "pid_is_merlin", return_value=True):
                 assert server_control._wait_for_start(proc, timeout=10) == "started"
             state = paths.read_server_state()
-            assert state is not None and state["pid"] != proc.pid
-            assert server_control._parent_pid(state["pid"]) == proc.pid
+            assert state is not None and state["pid"] == child_pid != proc.pid
+            assert server_control._parent_pid(child_pid) == proc.pid
         finally:
-            proc.kill()
+            proc.terminate()  # the shell stops its child and waits for it
             proc.wait(timeout=5)
+            proc.stdout.close()
+            deadline = time.monotonic() + 5
+            while server_control._pid_alive(child_pid) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert not server_control._pid_alive(child_pid), (
+                "the Python child outlived the test"
+            )
 
     def test_a_state_written_by_an_unrelated_process_is_not_the_relaunch(self, env):
         """Another live Merlin's state (not under the relaunch) does not count
